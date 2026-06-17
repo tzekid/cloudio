@@ -33,9 +33,18 @@ pub fn secrets(allocator: Allocator, input: []const u8) ![]u8 {
 }
 
 pub fn tokenResponse(allocator: Allocator, input: []const u8) ![]u8 {
-    const redacted = try secrets(allocator, input);
+    const redacted = try providerResponse(allocator, input);
     defer allocator.free(redacted);
     return try redactJsonStringKey(allocator, redacted, "value");
+}
+
+pub fn providerResponse(allocator: Allocator, input: []const u8) ![]u8 {
+    const redacted = try secrets(allocator, input);
+    if (try redactJsonCursorContinuations(allocator, redacted)) |rewritten| {
+        allocator.free(redacted);
+        return rewritten;
+    }
+    return redacted;
 }
 
 fn redactJsonStringKey(allocator: Allocator, input: []const u8, key: []const u8) ![]u8 {
@@ -96,6 +105,72 @@ fn redactJsonSecretStringKeys(allocator: Allocator, input: []const u8) ![]u8 {
         idx += 1;
     }
     return try out.toOwnedSlice(allocator);
+}
+
+const CursorContext = enum {
+    normal,
+    result_info,
+    cursor_root,
+    cursors,
+};
+
+fn redactJsonCursorContinuations(allocator: Allocator, input: []const u8) !?[]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, input, .{}) catch return null;
+    defer parsed.deinit();
+    redactCursorContinuations(&parsed.value, .normal);
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+    try std.json.Stringify.value(parsed.value, .{}, &out.writer);
+    return try out.toOwnedSlice();
+}
+
+fn redactCursorContinuations(value: *std.json.Value, context: CursorContext) void {
+    switch (value.*) {
+        .array => |*array| {
+            for (array.items) |*item| redactCursorContinuations(item, .normal);
+        },
+        .object => |*object| {
+            const object_context: CursorContext = if (context == .normal and objectHasRootCursorShape(object.*)) .cursor_root else context;
+            var it = object.iterator();
+            while (it.next()) |entry| {
+                const key = entry.key_ptr.*;
+                if (shouldRedactCursorField(object_context, key)) {
+                    entry.value_ptr.* = .{ .string = "[REDACTED]" };
+                    continue;
+                }
+                const child_context: CursorContext = if (std.ascii.eqlIgnoreCase(key, "result_info"))
+                    .result_info
+                else if (object_context == .result_info and std.ascii.eqlIgnoreCase(key, "cursors"))
+                    .cursors
+                else
+                    .normal;
+                redactCursorContinuations(entry.value_ptr, child_context);
+            }
+        },
+        else => {},
+    }
+}
+
+fn objectHasRootCursorShape(object: std.json.ObjectMap) bool {
+    if (object.get("cursor") == null) return false;
+    return object.get("list_complete") != null or
+        object.get("is_truncated") != null or
+        object.get("keys") != null or
+        object.get("items") != null or
+        object.get("objects") != null or
+        object.get("vectors") != null or
+        object.get("data") != null;
+}
+
+fn shouldRedactCursorField(context: CursorContext, key: []const u8) bool {
+    return switch (context) {
+        .result_info => std.ascii.eqlIgnoreCase(key, "cursor") or
+            std.ascii.eqlIgnoreCase(key, "next") or
+            std.ascii.eqlIgnoreCase(key, "previous"),
+        .cursor_root => std.ascii.eqlIgnoreCase(key, "cursor"),
+        .cursors => true,
+        .normal => false,
+    };
 }
 
 const JsonKey = struct {
@@ -282,4 +357,19 @@ test "token response redaction hides JSON token value fields" {
     try std.testing.expect(std.mem.indexOf(u8, redacted, "abcdefghijklmnopqrstuvwxyz0123456789abcd") == null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"value\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"name\":\"token\"") != null);
+}
+
+test "provider response redaction hides cursor continuations without hiding unrelated after fields" {
+    const allocator = std.testing.allocator;
+    const input =
+        \\{"after":"2026-06-17T00:00:00Z","result":[],"result_info":{"cursor":"root-token","next":"next-token","cursors":{"after":"after-token","before":"before-token"}},"keys":[],"list_complete":false,"cursor":"root-page-token"}
+    ;
+    const redacted = try providerResponse(allocator, input);
+    defer allocator.free(redacted);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "root-token") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "next-token") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "after-token") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "before-token") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "root-page-token") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "2026-06-17T00:00:00Z") != null);
 }

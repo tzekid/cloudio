@@ -60,6 +60,18 @@ const CapturedRoutePage = struct {
     }
 };
 
+const CapturePageRef = union(enum) {
+    page: usize,
+    cursor: usize,
+
+    fn index(self: CapturePageRef) usize {
+        return switch (self) {
+            .page => |value| value,
+            .cursor => |value| value,
+        };
+    }
+};
+
 pub const Paths = struct {
     cloudflare_manifest: []const u8 = "coverage/generated/cloudflare.jsonl",
     hostinger_manifest: []const u8 = "coverage/generated/hostinger.jsonl",
@@ -477,7 +489,12 @@ pub fn captureRouteReadResultJson(gpa: Allocator, db: *Db, route: provider_route
 }
 
 fn capturePaginatedRouteReadMetadataJson(io: Io, gpa: Allocator, db: *Db, client: provider_dispatch.Client, route: provider_routes.Route, request: Request, options: CaptureOptions) ![]u8 {
-    if (!routeSupportsPageQuery(route)) return error.RoutePaginationUnsupported;
+    if (routeSupportsPageQuery(route)) return try capturePagePaginatedRouteReadMetadataJson(io, gpa, db, client, route, request, options);
+    if (routeSupportsCursorQuery(route)) return try captureCursorPaginatedRouteReadMetadataJson(io, gpa, db, client, route, request, options);
+    return error.RoutePaginationUnsupported;
+}
+
+fn capturePagePaginatedRouteReadMetadataJson(io: Io, gpa: Allocator, db: *Db, client: provider_dispatch.Client, route: provider_routes.Route, request: Request, options: CaptureOptions) ![]u8 {
     const max_pages = if (options.max_pages == 0) default_capture_max_pages else options.max_pages;
     var pages = std.ArrayList(CapturedRoutePage).empty;
     defer deinitCapturedPageList(&pages, gpa);
@@ -488,7 +505,7 @@ fn capturePaginatedRouteReadMetadataJson(io: Io, gpa: Allocator, db: *Db, client
         defer page_request.deinit(gpa);
         const result = try client.callReadRouteResultRequest(io, gpa, route, page_request.request);
         defer result.deinit(gpa);
-        const captured = try captureRouteReadPageResult(gpa, db, route, page_request.request, result, options, page);
+        const captured = try captureRouteReadPageResult(gpa, db, route, page_request.request, result, options, .{ .page = page });
         pages.append(gpa, captured) catch |err| {
             captured.deinit(gpa);
             return err;
@@ -503,14 +520,52 @@ fn capturePaginatedRouteReadMetadataJson(io: Io, gpa: Allocator, db: *Db, client
     return try routePaginatedCaptureMetadataJson(gpa, route, pages.items, max_pages);
 }
 
-fn captureRouteReadPageResult(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, result: provider_dispatch.ReadRouteResult, options: CaptureOptions, page: ?usize) !CapturedRoutePage {
-    const endpoint = try route.renderRequestPath(gpa, request);
+fn captureCursorPaginatedRouteReadMetadataJson(io: Io, gpa: Allocator, db: *Db, client: provider_dispatch.Client, route: provider_routes.Route, request: Request, options: CaptureOptions) ![]u8 {
+    const max_pages = if (options.max_pages == 0) default_capture_max_pages else options.max_pages;
+    var pages = std.ArrayList(CapturedRoutePage).empty;
+    defer deinitCapturedPageList(&pages, gpa);
+
+    var page_index: usize = 1;
+    var next_cursor: ?[]u8 = null;
+    defer if (next_cursor) |cursor| gpa.free(cursor);
+
+    while (page_index <= max_pages) : (page_index += 1) {
+        var owned_request: ?OwnedQueryRequest = null;
+        defer if (owned_request) |owned| owned.deinit(gpa);
+        const effective_request = if (next_cursor) |cursor| blk: {
+            owned_request = try requestWithCursor(gpa, request, cursor);
+            break :blk owned_request.?.request;
+        } else request;
+
+        const result = try client.callReadRouteResultRequest(io, gpa, route, effective_request);
+        defer result.deinit(gpa);
+        const captured = try captureRouteReadPageResult(gpa, db, route, effective_request, result, options, .{ .cursor = page_index });
+        pages.append(gpa, captured) catch |err| {
+            captured.deinit(gpa);
+            return err;
+        };
+
+        const status = result.statusCode();
+        if (status < 200 or status >= 300) break;
+        var cursor_info = (try net_pagination.cursorInfo(gpa, result.response.body)) orelse break;
+        defer cursor_info.deinit(gpa);
+        if (!cursor_info.hasNext()) break;
+        const cursor_value = cursor_info.next_cursor orelse break;
+        if (next_cursor) |old| gpa.free(old);
+        next_cursor = try gpa.dupe(u8, cursor_value);
+    }
+
+    return try routePaginatedCaptureMetadataJson(gpa, route, pages.items, max_pages);
+}
+
+fn captureRouteReadPageResult(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, result: provider_dispatch.ReadRouteResult, options: CaptureOptions, page_ref: ?CapturePageRef) !CapturedRoutePage {
+    const endpoint = try captureEndpoint(gpa, route, request);
     errdefer gpa.free(endpoint);
     const operation = route.operation_id orelse route.path_template;
     const kind = options.kind orelse operation;
-    const target = try captureTarget(gpa, options.target, endpoint, page);
+    const target = try captureTarget(gpa, options.target, endpoint, page_ref);
     defer if (target.owned) |owned| gpa.free(owned);
-    const summary_label = try captureSummaryLabel(gpa, operation, page);
+    const summary_label = try captureSummaryLabel(gpa, operation, page_ref);
     defer gpa.free(summary_label);
     const stored = try collector_capture.storeResponseWithSnapshotId(gpa, db, .{
         .provider = route.provider.name(),
@@ -526,16 +581,18 @@ fn captureRouteReadPageResult(gpa: Allocator, db: *Db, route: provider_routes.Ro
     defer gpa.free(audit_detail);
     try db.insertAudit("route.capture", result.statusText(), audit_detail);
     const pagination = net_pagination.pageInfo(result.response.body);
+    const cursor_info = try net_pagination.cursorInfo(gpa, result.response.body);
+    defer if (cursor_info) |info| info.deinit(gpa);
     return .{
-        .page = page orelse 1,
+        .page = if (page_ref) |ref| ref.index() else 1,
         .endpoint = endpoint,
         .snapshot_id = stored.snapshot_id,
         .http_status = result.statusCode(),
         .status_text = result.statusText(),
         .body_bytes = result.response.body.len,
-        .pagination_envelope = if (pagination) |info| info.envelope else null,
-        .data_len = if (pagination) |info| info.data_len else null,
-        .has_next = if (pagination) |info| info.hasNext() else false,
+        .pagination_envelope = if (pagination) |info| info.envelope else if (cursor_info) |info| info.envelope else null,
+        .data_len = if (pagination) |info| info.data_len else if (cursor_info) |info| info.data_len else null,
+        .has_next = if (pagination) |info| info.hasNext() else if (cursor_info) |info| info.hasNext() else false,
     };
 }
 
@@ -671,47 +728,62 @@ const CaptureTarget = struct {
     owned: ?[]u8 = null,
 };
 
-fn captureTarget(gpa: Allocator, base_target: ?[]const u8, endpoint: []const u8, page: ?usize) !CaptureTarget {
-    const page_value = page orelse return .{ .value = base_target orelse endpoint };
+fn captureTarget(gpa: Allocator, base_target: ?[]const u8, endpoint: []const u8, page_ref: ?CapturePageRef) !CaptureTarget {
+    const ref = page_ref orelse return .{ .value = base_target orelse endpoint };
     if (base_target) |target| {
-        const owned = try std.fmt.allocPrint(gpa, "{s}?page={d}", .{ target, page_value });
+        const owned = switch (ref) {
+            .page => |page_value| try std.fmt.allocPrint(gpa, "{s}?page={d}", .{ target, page_value }),
+            .cursor => |page_value| try std.fmt.allocPrint(gpa, "{s}?cursor_page={d}", .{ target, page_value }),
+        };
         return .{ .value = owned, .owned = owned };
     }
     return .{ .value = endpoint };
 }
 
-fn captureSummaryLabel(gpa: Allocator, operation: []const u8, page: ?usize) ![]u8 {
-    if (page) |page_value| return try std.fmt.allocPrint(gpa, "{s} page {d}", .{ operation, page_value });
-    return try gpa.dupe(u8, operation);
+fn captureSummaryLabel(gpa: Allocator, operation: []const u8, page_ref: ?CapturePageRef) ![]u8 {
+    const ref = page_ref orelse return try gpa.dupe(u8, operation);
+    return switch (ref) {
+        .page => |page_value| try std.fmt.allocPrint(gpa, "{s} page {d}", .{ operation, page_value }),
+        .cursor => |page_value| try std.fmt.allocPrint(gpa, "{s} cursor page {d}", .{ operation, page_value }),
+    };
 }
 
-const OwnedPageRequest = struct {
+const OwnedQueryRequest = struct {
     request: Request,
     query_params: []provider_routes.QueryParam,
-    page_value: []u8,
+    value: []u8,
 
-    fn deinit(self: OwnedPageRequest, gpa: Allocator) void {
+    fn deinit(self: OwnedQueryRequest, gpa: Allocator) void {
         gpa.free(self.query_params);
-        gpa.free(self.page_value);
+        gpa.free(self.value);
     }
 };
 
-fn requestWithPage(gpa: Allocator, request: Request, page: usize) !OwnedPageRequest {
+fn requestWithPage(gpa: Allocator, request: Request, page: usize) !OwnedQueryRequest {
     const page_value = try std.fmt.allocPrint(gpa, "{d}", .{page});
-    errdefer gpa.free(page_value);
+    return try requestWithQueryOverrideOwned(gpa, request, "page", page_value);
+}
+
+fn requestWithCursor(gpa: Allocator, request: Request, cursor: []const u8) !OwnedQueryRequest {
+    const cursor_value = try gpa.dupe(u8, cursor);
+    return try requestWithQueryOverrideOwned(gpa, request, "cursor", cursor_value);
+}
+
+fn requestWithQueryOverrideOwned(gpa: Allocator, request: Request, name: []const u8, owned_value: []u8) !OwnedQueryRequest {
+    errdefer gpa.free(owned_value);
     var query_count: usize = 1;
     for (request.query_params) |param| {
-        if (!std.mem.eql(u8, param.name, "page")) query_count += 1;
+        if (!std.mem.eql(u8, param.name, name)) query_count += 1;
     }
     const query_params = try gpa.alloc(provider_routes.QueryParam, query_count);
     errdefer gpa.free(query_params);
     var index: usize = 0;
     for (request.query_params) |param| {
-        if (std.mem.eql(u8, param.name, "page")) continue;
+        if (std.mem.eql(u8, param.name, name)) continue;
         query_params[index] = param;
         index += 1;
     }
-    query_params[index] = .{ .name = "page", .value = page_value };
+    query_params[index] = .{ .name = name, .value = owned_value };
     return .{
         .request = .{
             .path_params = request.path_params,
@@ -720,7 +792,7 @@ fn requestWithPage(gpa: Allocator, request: Request, page: usize) !OwnedPageRequ
             .body = request.body,
         },
         .query_params = query_params,
-        .page_value = page_value,
+        .value = owned_value,
     };
 }
 
@@ -728,6 +800,55 @@ fn routeSupportsPageQuery(route: provider_routes.Route) bool {
     for (route.query_params) |param| {
         if (std.mem.eql(u8, param.name, "page")) return true;
     }
+    return false;
+}
+
+fn routeSupportsCursorQuery(route: provider_routes.Route) bool {
+    for (route.query_params) |param| {
+        if (std.mem.eql(u8, param.name, "cursor")) return true;
+    }
+    return false;
+}
+
+fn captureEndpoint(gpa: Allocator, route: provider_routes.Route, request: Request) ![]u8 {
+    const endpoint = try route.renderRequestPath(gpa, request);
+    errdefer gpa.free(endpoint);
+    if (!requestHasQueryParam(request, "cursor")) return endpoint;
+    const sanitized = try redactedCursorEndpoint(gpa, endpoint);
+    gpa.free(endpoint);
+    return sanitized;
+}
+
+fn requestHasQueryParam(request: Request, name: []const u8) bool {
+    for (request.query_params) |param| {
+        if (std.mem.eql(u8, param.name, name)) return true;
+    }
+    return false;
+}
+
+fn redactedCursorEndpoint(gpa: Allocator, endpoint: []const u8) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    var first = true;
+    var parts = std.mem.splitScalar(u8, endpoint, '&');
+    while (parts.next()) |part| {
+        if (!first) try out.writer.writeByte('&');
+        first = false;
+        if (isCursorQueryPart(part)) {
+            const eq = std.mem.indexOfScalar(u8, part, '=') orelse part.len;
+            try out.writer.writeAll(part[0..eq]);
+            try out.writer.writeAll("=<redacted-cursor>");
+        } else {
+            try out.writer.writeAll(part);
+        }
+    }
+    return try out.toOwnedSlice();
+}
+
+fn isCursorQueryPart(part: []const u8) bool {
+    if (std.mem.startsWith(u8, part, "cursor=")) return true;
+    if (std.mem.endsWith(u8, part, "?cursor")) return true;
+    if (std.mem.indexOf(u8, part, "?cursor=")) |_| return true;
     return false;
 }
 
@@ -1312,7 +1433,7 @@ test "captures paginated generic route pages into snapshots and metadata" {
         first_request.request,
         first_result,
         .{ .kind = "route-public-keys", .target = "public-keys" },
-        1,
+        .{ .page = 1 },
     );
     defer first_page.deinit(allocator);
 
@@ -1330,7 +1451,7 @@ test "captures paginated generic route pages into snapshots and metadata" {
         second_request.request,
         second_result,
         .{ .kind = "route-public-keys", .target = "public-keys" },
-        2,
+        .{ .page = 2 },
     );
     defer second_page.deinit(allocator);
 
@@ -1401,7 +1522,7 @@ test "captures Cloudflare result_info paginated generic route pages" {
         first_request.request,
         first_result,
         .{ .kind = "route-cloudflare-accounts", .target = "accounts" },
-        1,
+        .{ .page = 1 },
     );
     defer first_page.deinit(allocator);
 
@@ -1419,7 +1540,7 @@ test "captures Cloudflare result_info paginated generic route pages" {
         second_request.request,
         second_result,
         .{ .kind = "route-cloudflare-accounts", .target = "accounts" },
-        2,
+        .{ .page = 2 },
     );
     defer second_page.deinit(allocator);
 
@@ -1433,6 +1554,94 @@ test "captures Cloudflare result_info paginated generic route pages" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"pagination_envelope\":\"result_info\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"data_len\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"has_next\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "secret-one") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "secret-two") == null);
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("snapshots"));
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("provider_raw"));
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("audit_events"));
+}
+
+test "captures Cloudflare cursor paginated generic route pages without leaking cursors" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/route-cloudflare-cursor-capture.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Zone Rulesets","method":"GET","path":"/zones/{zone_id}/rulesets","operation_id":"listZoneRulesets","path_params":[{"name":"zone_id","required":true,"style":null,"explode":null,"schema":{"schema_refs":["#/components/schemas/rulesets_ZoneId"],"types":["string"],"formats":[],"enum_values":[]}}],"query_params":[{"name":"cursor","required":false,"style":null,"explode":null,"schema":{"schema_refs":["#/components/schemas/rulesets_Cursor"],"types":["string"],"formats":[],"enum_values":[]}},{"name":"per_page","required":false,"style":null,"explode":null,"schema":{"schema_refs":["#/components/schemas/rulesets_PerPage"],"types":["integer"],"formats":[],"enum_values":[]}}],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/rulesets_Response","#/components/schemas/rulesets_ResultInfo","#/components/schemas/rulesets_Ruleset"]}],"security":{"required":true,"alternatives":[["api_email","api_key"],["api_token"]]},"support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"POC reads zone ruleset lists by explicit zone ID and during configured-domain refresh as redacted raw provider data."}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"GET","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_getVirtualMachinesV1","path_params":[],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ok"}
+        \\
+    ;
+
+    var routes = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .cloudflare, .operation_id = "listZoneRulesets" });
+    defer routes.deinit(allocator);
+    const route = try selectSingleRoute(routes.items);
+    try std.testing.expect(!routeSupportsPageQuery(route.route));
+    try std.testing.expect(routeSupportsCursorQuery(route.route));
+
+    const base_request = Request{
+        .path_params = &.{.{ .name = "zone_id", .value = "zone-one" }},
+        .query_params = &.{
+            .{ .name = "cursor", .value = "old-cursor" },
+            .{ .name = "per_page", .value = "1" },
+        },
+    };
+    const cursor_request = try requestWithCursor(allocator, base_request, "opaque-next-cursor");
+    defer cursor_request.deinit(allocator);
+    const cursor_path = try route.route.renderRequestPath(allocator, cursor_request.request);
+    defer allocator.free(cursor_path);
+    try std.testing.expect(std.mem.indexOf(u8, cursor_path, "old-cursor") == null);
+    try std.testing.expect(std.mem.indexOf(u8, cursor_path, "per_page=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cursor_path, "cursor=opaque-next-cursor") != null);
+
+    const first_body = try allocator.dupe(u8,
+        \\{"result":[{"id":"ruleset-one","token":"secret-one"}],"result_info":{"cursors":{"after":"opaque-next-cursor"}},"success":true,"errors":[],"messages":[]}
+    );
+    const first_result = provider_dispatch.matchReadRouteResponse(route.route, .{ .status = .ok, .body = first_body });
+    defer first_result.deinit(allocator);
+    const first_page = try captureRouteReadPageResult(
+        allocator,
+        &db,
+        route.route,
+        base_request,
+        first_result,
+        .{ .kind = "route-cloudflare-rulesets", .target = "rulesets" },
+        .{ .cursor = 1 },
+    );
+    defer first_page.deinit(allocator);
+
+    const second_body = try allocator.dupe(u8,
+        \\{"result":[{"id":"ruleset-two","token":"secret-two"}],"result_info":{"cursors":{"after":""}},"success":true,"errors":[],"messages":[]}
+    );
+    const second_result = provider_dispatch.matchReadRouteResponse(route.route, .{ .status = .ok, .body = second_body });
+    defer second_result.deinit(allocator);
+    const second_page = try captureRouteReadPageResult(
+        allocator,
+        &db,
+        route.route,
+        cursor_request.request,
+        second_result,
+        .{ .kind = "route-cloudflare-rulesets", .target = "rulesets" },
+        .{ .cursor = 2 },
+    );
+    defer second_page.deinit(allocator);
+
+    const pages = [_]CapturedRoutePage{ first_page, second_page };
+    const json = try routePaginatedCaptureMetadataJson(allocator, route.route, pages[0..], 5);
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"paginated\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"captured_pages\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"pagination_envelope\":\"cursor_result_info\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cursor=<redacted-cursor>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "opaque-next-cursor") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "secret-one") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "secret-two") == null);
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("snapshots"));

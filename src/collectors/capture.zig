@@ -40,7 +40,7 @@ pub fn storeResponseWithSnapshotId(gpa: Allocator, db: *Db, input: ResponseCaptu
     const redacted = if (std.mem.indexOf(u8, input.kind, "token") != null)
         try core_redact.tokenResponse(gpa, body)
     else
-        try core_redact.secrets(gpa, body);
+        try core_redact.providerResponse(gpa, body);
     errdefer gpa.free(redacted);
     const summary = try net_http.summary(gpa, input.summary_label, input.status);
     defer gpa.free(summary);
@@ -123,13 +123,14 @@ test "captures redacted provider response into snapshots and provider raw" {
         .summary_label = "auth check",
         .endpoint = "/fixture",
         .status = .ok,
-        .body = "Authorization: Bearer abcdefghijklmnopqrstuvwxyz\n{\"ok\":true}",
+        .body = "{\"Authorization\":\"Bearer abcdefghijklmnopqrstuvwxyz\",\"result_info\":{\"cursors\":{\"after\":\"opaque-next-cursor\"}},\"success\":true}",
         .capture_output = true,
     });
     defer output.deinit(allocator);
 
     try std.testing.expect(output.text != null);
     try std.testing.expect(std.mem.indexOf(u8, output.text.?, "abcdefghijklmnopqrstuvwxyz") == null);
+    try std.testing.expect(std.mem.indexOf(u8, output.text.?, "opaque-next-cursor") == null);
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("provider_raw"));
 }
