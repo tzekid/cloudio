@@ -42,7 +42,7 @@ Generic provider route dispatch:
 ```sh
 zig build run -- route plan cloudflare --operation accounts-list-accounts
 zig build run -- route read cloudflare --operation accounts-list-accounts
-zig build run -- route capture cloudflare --operation accounts-list-accounts --kind route-cloudflare-accounts --target accounts
+zig build run -- route capture cloudflare --operation accounts-list-accounts --kind route-cloudflare-accounts --target accounts --paginate --max-pages 5
 zig build run -- route plan hostinger --operation VPS_getVirtualMachinesV1
 zig build run -- route read hostinger --operation VPS_getVirtualMachinesV1
 zig build run -- route capture hostinger --operation VPS_getVirtualMachinesV1 --kind route-hostinger-vps --target vps
@@ -51,7 +51,7 @@ zig build run -- route dry-run hostinger --operation VPS_purchaseNewVirtualMachi
 zig build run -- route dry-run cloudflare --operation argo-smart-routing-patch-argo-smart-routing-setting --path-param zone_id=<zone-id> --body-content-type application/json
 ```
 
-`route plan` never sends HTTP. `route read` executes only generated bodyless `GET`/read routes with the configured provider credentials and prints response metadata without response bodies. `route capture` executes the same safe read path, redacts the response once, stores it in `snapshots` and `provider_raw`, writes a `route.capture` audit event, and still prints metadata only. `route capture --paginate` follows generated `page` query parameters for page-envelope reads up to `--max-pages`. `route dry-run` renders mutation plans with `will_execute:false`; it validates path/query/header/body metadata but never sends a provider write.
+`route plan` never sends HTTP. `route read` executes only generated bodyless `GET`/read routes with the configured provider credentials and prints response metadata without response bodies. `route capture` executes the same safe read path, redacts the response once, stores it in `snapshots` and `provider_raw`, writes a `route.capture` audit event, and still prints metadata only. `route capture --paginate` follows generated `page` query parameters for recognized Cloudflare `result_info` and Hostinger `data/meta` page envelopes up to `--max-pages`, storing each page as a separate redacted snapshot. `route dry-run` renders mutation plans with `will_execute:false`; it validates path/query/header/body metadata but never sends a provider write.
 
 Useful read-only Cloudflare checks:
 

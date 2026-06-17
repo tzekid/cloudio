@@ -51,6 +51,7 @@ const CapturedRoutePage = struct {
     http_status: u16,
     status_text: []const u8,
     body_bytes: usize,
+    pagination_envelope: ?net_pagination.Envelope,
     data_len: ?usize,
     has_next: bool,
 
@@ -495,7 +496,7 @@ fn capturePaginatedRouteReadMetadataJson(io: Io, gpa: Allocator, db: *Db, client
 
         const status = result.statusCode();
         if (status < 200 or status >= 300) break;
-        const pagination = net_pagination.dataPageInfo(result.response.body) orelse break;
+        const pagination = net_pagination.pageInfo(result.response.body) orelse break;
         if (!pagination.hasNext()) break;
     }
 
@@ -524,7 +525,7 @@ fn captureRouteReadPageResult(gpa: Allocator, db: *Db, route: provider_routes.Ro
     const audit_detail = try std.fmt.allocPrint(gpa, "{s}/{s} {s}", .{ route.provider.name(), operation, endpoint });
     defer gpa.free(audit_detail);
     try db.insertAudit("route.capture", result.statusText(), audit_detail);
-    const pagination = net_pagination.dataPageInfo(result.response.body);
+    const pagination = net_pagination.pageInfo(result.response.body);
     return .{
         .page = page orelse 1,
         .endpoint = endpoint,
@@ -532,6 +533,7 @@ fn captureRouteReadPageResult(gpa: Allocator, db: *Db, route: provider_routes.Ro
         .http_status = result.statusCode(),
         .status_text = result.statusText(),
         .body_bytes = result.response.body.len,
+        .pagination_envelope = if (pagination) |info| info.envelope else null,
         .data_len = if (pagination) |info| info.data_len else null,
         .has_next = if (pagination) |info| info.hasNext() else false,
     };
@@ -640,6 +642,11 @@ fn writeCapturedPageJson(writer: anytype, page: CapturedRoutePage) !void {
     try writer.writeAll("\"body_bytes\":");
     try writer.print("{d}", .{page.body_bytes});
     try writer.writeByte(',');
+    if (page.pagination_envelope) |envelope| {
+        try writeJsonField(writer, "pagination_envelope", envelope.name(), true);
+    } else {
+        try writer.writeAll("\"pagination_envelope\":null,");
+    }
     if (page.data_len) |data_len| {
         try writer.writeAll("\"data_len\":");
         try writer.print("{d}", .{data_len});
@@ -1334,6 +1341,96 @@ test "captures paginated generic route pages into snapshots and metadata" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"paginated\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"captured_pages\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"snapshots\":[1,2]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"pagination_envelope\":\"data_meta\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"data_len\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"has_next\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "secret-one") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "secret-two") == null);
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("snapshots"));
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("provider_raw"));
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("audit_events"));
+}
+
+test "captures Cloudflare result_info paginated generic route pages" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/route-cloudflare-paged-capture.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list-accounts","path_params":[],"query_params":[{"name":"direction","required":false,"style":null,"explode":null,"schema":{"schema_refs":[],"types":["string"],"formats":[],"enum_values":["asc","desc"]}},{"name":"name","required":false,"style":null,"explode":null,"schema":{"schema_refs":[],"types":["string"],"formats":[],"enum_values":[]}},{"name":"page","required":false,"style":null,"explode":null,"schema":{"schema_refs":[],"types":["number"],"formats":[],"enum_values":[]}},{"name":"per_page","required":false,"style":null,"explode":null,"schema":{"schema_refs":[],"types":["number"],"formats":[],"enum_values":[]}}],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/iam_response_collection_accounts"]}],"security":{"required":true,"alternatives":[["api_email","api_key"]]},"support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"POC lists accounts and stores raw/account summary data."}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"GET","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_getVirtualMachinesV1","path_params":[],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ok"}
+        \\
+    ;
+
+    var routes = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .cloudflare, .operation_id = "accounts-list-accounts" });
+    defer routes.deinit(allocator);
+    const route = try selectSingleRoute(routes.items);
+    try std.testing.expect(routeSupportsPageQuery(route.route));
+
+    const base_request = Request{
+        .query_params = &.{
+            .{ .name = "page", .value = "7" },
+            .{ .name = "per_page", .value = "1" },
+        },
+    };
+    const first_request = try requestWithPage(allocator, base_request, 1);
+    defer first_request.deinit(allocator);
+    const first_path = try route.route.renderRequestPath(allocator, first_request.request);
+    defer allocator.free(first_path);
+    try std.testing.expect(std.mem.indexOf(u8, first_path, "page=7") == null);
+    try std.testing.expect(std.mem.indexOf(u8, first_path, "per_page=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, first_path, "page=1") != null);
+
+    const first_body = try allocator.dupe(u8,
+        \\{"result":[{"id":"account-one","token":"secret-one"}],"result_info":{"page":1,"per_page":1,"total_pages":2,"count":1,"total_count":2},"success":true,"errors":[],"messages":[]}
+    );
+    const first_result = provider_dispatch.matchReadRouteResponse(route.route, .{ .status = .ok, .body = first_body });
+    defer first_result.deinit(allocator);
+    const first_page = try captureRouteReadPageResult(
+        allocator,
+        &db,
+        route.route,
+        first_request.request,
+        first_result,
+        .{ .kind = "route-cloudflare-accounts", .target = "accounts" },
+        1,
+    );
+    defer first_page.deinit(allocator);
+
+    const second_request = try requestWithPage(allocator, base_request, 2);
+    defer second_request.deinit(allocator);
+    const second_body = try allocator.dupe(u8,
+        \\{"result":[{"id":"account-two","token":"secret-two"}],"result_info":{"page":2,"per_page":1,"total_pages":2,"count":1,"total_count":2},"success":true,"errors":[],"messages":[]}
+    );
+    const second_result = provider_dispatch.matchReadRouteResponse(route.route, .{ .status = .ok, .body = second_body });
+    defer second_result.deinit(allocator);
+    const second_page = try captureRouteReadPageResult(
+        allocator,
+        &db,
+        route.route,
+        second_request.request,
+        second_result,
+        .{ .kind = "route-cloudflare-accounts", .target = "accounts" },
+        2,
+    );
+    defer second_page.deinit(allocator);
+
+    const pages = [_]CapturedRoutePage{ first_page, second_page };
+    const json = try routePaginatedCaptureMetadataJson(allocator, route.route, pages[0..], 5);
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"paginated\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"captured_pages\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"snapshots\":[1,2]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"pagination_envelope\":\"result_info\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"data_len\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"has_next\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "secret-one") == null);
