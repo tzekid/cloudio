@@ -24,6 +24,7 @@ pub const memberships_path = "/memberships";
 pub const user_tokens_path = "/user/tokens";
 pub const user_tokens_verify_path = "/user/tokens/verify";
 pub const user_token_permission_groups_path = "/user/tokens/permission_groups";
+pub const cloudforce_one_rules_base_path = "/cloudforce-one/rules";
 
 pub const Auth = struct {
     token: ?[]const u8 = null,
@@ -208,6 +209,12 @@ pub const Client = struct {
 
     pub fn getRulesetEndpoint(self: Client, io: Io, gpa: Allocator, scope: RulesetScope, scope_id: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) !net_http.Response {
         const url = try rulesetReadUrl(gpa, self.base_url_override, scope, scope_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getCloudforceOneRuleEndpoint(self: Client, io: Io, gpa: Allocator, account_id: []const u8, endpoint: CloudforceOneRuleReadEndpoint, args: CloudforceOneRuleReadArgs) !net_http.Response {
+        const url = try cloudforceOneRuleReadUrl(gpa, self.base_url_override, account_id, endpoint, args);
         defer gpa.free(url);
         return try self.get(io, gpa, url);
     }
@@ -2401,6 +2408,167 @@ pub const RulesetMutationArgs = struct {
     rule_id: ?[]const u8 = null,
 };
 
+pub const CloudforceOneRuleReadEndpoint = enum {
+    list,
+    managed,
+    search,
+    stats,
+    tree,
+    rule,
+
+    pub fn parse(value: []const u8) ?CloudforceOneRuleReadEndpoint {
+        if (std.mem.eql(u8, value, "list") or std.mem.eql(u8, value, "rules")) return .list;
+        if (std.mem.eql(u8, value, "managed") or std.mem.eql(u8, value, "managed-rules")) return .managed;
+        if (std.mem.eql(u8, value, "search")) return .search;
+        if (std.mem.eql(u8, value, "stats") or std.mem.eql(u8, value, "dashboard-stats")) return .stats;
+        if (std.mem.eql(u8, value, "tree") or std.mem.eql(u8, value, "folder-tree")) return .tree;
+        if (std.mem.eql(u8, value, "show") or std.mem.eql(u8, value, "rule") or std.mem.eql(u8, value, "detail") or std.mem.eql(u8, value, "details")) return .rule;
+        return null;
+    }
+
+    pub fn commandName(self: CloudforceOneRuleReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "list",
+            .managed => "managed",
+            .search => "search",
+            .stats => "stats",
+            .tree => "tree",
+            .rule => "show",
+        };
+    }
+
+    pub fn label(self: CloudforceOneRuleReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "cloudforce-one-rules",
+            .managed => "cloudforce-one-managed-rules",
+            .search => "cloudforce-one-rule-search",
+            .stats => "cloudforce-one-rule-stats",
+            .tree => "cloudforce-one-rule-tree",
+            .rule => "cloudforce-one-rule",
+        };
+    }
+
+    pub fn operationId(self: CloudforceOneRuleReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "cloudforce-one-list-rules",
+            .managed => "cloudforce-one-get-managed-rules",
+            .search => "cloudforce-one-search-rules",
+            .stats => "cloudforce-one-get-rule-stats",
+            .tree => "cloudforce-one-get-rule-tree",
+            .rule => "cloudforce-one-get-rule",
+        };
+    }
+
+    pub fn summary(self: CloudforceOneRuleReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "List Cloudforce One rules",
+            .managed => "Get Cloudforce One managed rules",
+            .search => "Search Cloudforce One rules",
+            .stats => "Get Cloudforce One rule dashboard stats",
+            .tree => "Get Cloudforce One rule folder tree structure",
+            .rule => "Get a Cloudforce One rule",
+        };
+    }
+
+    pub fn requiresRuleId(self: CloudforceOneRuleReadEndpoint) bool {
+        return self == .rule;
+    }
+
+    pub fn requiresQuery(self: CloudforceOneRuleReadEndpoint) bool {
+        return self == .search;
+    }
+
+    pub fn allowsListFilters(self: CloudforceOneRuleReadEndpoint) bool {
+        return self == .list or self == .search;
+    }
+};
+
+pub const CloudforceOneRuleReadArgs = struct {
+    rule_id: ?[]const u8 = null,
+    namespace: ?[]const u8 = null,
+    recursive: ?[]const u8 = null,
+    search_filter: ?[]const u8 = null,
+    is_public: ?[]const u8 = null,
+    limit: ?[]const u8 = null,
+    offset: ?[]const u8 = null,
+    query: ?[]const u8 = null,
+    mode: ?[]const u8 = null,
+    language: ?[]const u8 = null,
+};
+
+pub const CloudforceOneRuleMutationEndpoint = enum {
+    create,
+    update,
+    delete_rule,
+    delete_all,
+    validate,
+
+    pub fn parse(value: []const u8) ?CloudforceOneRuleMutationEndpoint {
+        if (std.mem.eql(u8, value, "create") or std.mem.eql(u8, value, "add")) return .create;
+        if (std.mem.eql(u8, value, "update") or std.mem.eql(u8, value, "put")) return .update;
+        if (std.mem.eql(u8, value, "delete") or std.mem.eql(u8, value, "delete-rule") or std.mem.eql(u8, value, "remove")) return .delete_rule;
+        if (std.mem.eql(u8, value, "delete-all") or std.mem.eql(u8, value, "clear")) return .delete_all;
+        if (std.mem.eql(u8, value, "validate")) return .validate;
+        return null;
+    }
+
+    pub fn commandName(self: CloudforceOneRuleMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "create",
+            .update => "update",
+            .delete_rule => "delete",
+            .delete_all => "delete-all",
+            .validate => "validate",
+        };
+    }
+
+    pub fn method(self: CloudforceOneRuleMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create, .validate => "POST",
+            .update => "PUT",
+            .delete_rule, .delete_all => "DELETE",
+        };
+    }
+
+    pub fn operationId(self: CloudforceOneRuleMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "cloudforce-one-create-rule",
+            .update => "cloudforce-one-update-rule",
+            .delete_rule => "cloudforce-one-delete-rule",
+            .delete_all => "cloudforce-one-delete-all-rules",
+            .validate => "cloudforce-one-validate-rule",
+        };
+    }
+
+    pub fn summary(self: CloudforceOneRuleMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "Create a Cloudforce One rule",
+            .update => "Update a Cloudforce One rule",
+            .delete_rule => "Delete a Cloudforce One rule",
+            .delete_all => "Delete all Cloudforce One rules",
+            .validate => "Validate a Cloudforce One rule with context",
+        };
+    }
+
+    pub fn requestBodySchemaRef(self: CloudforceOneRuleMutationEndpoint) ?[]const u8 {
+        return switch (self) {
+            .create => "#/components/schemas/cloudforce-one_CreateRule",
+            .update => "#/components/schemas/cloudforce-one_UpdateRule",
+            .validate => "object",
+            .delete_rule, .delete_all => null,
+        };
+    }
+
+    pub fn requiresRuleId(self: CloudforceOneRuleMutationEndpoint) bool {
+        return self == .update or self == .delete_rule;
+    }
+};
+
+pub const CloudforceOneRuleMutationArgs = struct {
+    account_id: []const u8,
+    rule_id: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -4580,6 +4748,71 @@ pub fn rulesetMutationPlanJson(gpa: Allocator, endpoint: RulesetMutationEndpoint
     });
 }
 
+pub fn cloudforceOneRuleReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: CloudforceOneRuleReadEndpoint, args: CloudforceOneRuleReadArgs) ![]u8 {
+    const path = try cloudforceOneRuleReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn cloudforceOneRuleCollectionPath(gpa: Allocator, account_id: []const u8) ![]u8 {
+    const escaped_account_id = try pathEscape(gpa, account_id);
+    defer gpa.free(escaped_account_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}{s}", .{ accounts_path, escaped_account_id, cloudforce_one_rules_base_path });
+}
+
+pub fn cloudforceOneRuleReadPath(gpa: Allocator, account_id: []const u8, endpoint: CloudforceOneRuleReadEndpoint, args: CloudforceOneRuleReadArgs) ![]u8 {
+    const base_path = try cloudforceOneRuleCollectionPath(gpa, account_id);
+    defer gpa.free(base_path);
+
+    return switch (endpoint) {
+        .list => try appendCloudforceOneRuleFilters(gpa, base_path, args, false),
+        .managed => try std.fmt.allocPrint(gpa, "{s}/managed", .{base_path}),
+        .search => blk: {
+            if (args.query == null) return error.MissingCloudforceOneRuleSearchQuery;
+            const search_path = try std.fmt.allocPrint(gpa, "{s}/search", .{base_path});
+            defer gpa.free(search_path);
+            break :blk try appendCloudforceOneRuleFilters(gpa, search_path, args, true);
+        },
+        .stats => try std.fmt.allocPrint(gpa, "{s}/stats", .{base_path}),
+        .tree => try std.fmt.allocPrint(gpa, "{s}/tree", .{base_path}),
+        .rule => blk: {
+            const rule_id = args.rule_id orelse return error.MissingCloudforceOneRuleId;
+            const escaped_rule_id = try pathEscape(gpa, rule_id);
+            defer gpa.free(escaped_rule_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, escaped_rule_id });
+        },
+    };
+}
+
+pub fn cloudforceOneRuleMutationPath(gpa: Allocator, endpoint: CloudforceOneRuleMutationEndpoint, args: CloudforceOneRuleMutationArgs) ![]u8 {
+    const base_path = try cloudforceOneRuleCollectionPath(gpa, args.account_id);
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .create, .delete_all => try gpa.dupe(u8, base_path),
+        .validate => try std.fmt.allocPrint(gpa, "{s}/validate", .{base_path}),
+        .update, .delete_rule => blk: {
+            const rule_id = args.rule_id orelse return error.MissingCloudforceOneRuleId;
+            const escaped_rule_id = try pathEscape(gpa, rule_id);
+            defer gpa.free(escaped_rule_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, escaped_rule_id });
+        },
+    };
+}
+
+pub fn cloudforceOneRuleMutationPlanJson(gpa: Allocator, endpoint: CloudforceOneRuleMutationEndpoint, args: CloudforceOneRuleMutationArgs) ![]u8 {
+    const path = try cloudforceOneRuleMutationPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try dryRunPlanJson(gpa, .{
+        .group = "Rules",
+        .operation = endpoint.commandName(),
+        .operation_id = endpoint.operationId(),
+        .summary = endpoint.summary(),
+        .method = endpoint.method(),
+        .path = path,
+        .request_body_schema = endpoint.requestBodySchemaRef(),
+    });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -5143,6 +5376,20 @@ fn appendQuery(gpa: Allocator, base_path: []const u8, params: []const QueryParam
         try out.writer.writeAll(escaped);
     }
     return try out.toOwnedSlice();
+}
+
+fn appendCloudforceOneRuleFilters(gpa: Allocator, base_path: []const u8, args: CloudforceOneRuleReadArgs, include_search_query: bool) ![]u8 {
+    return try appendQuery(gpa, base_path, &[_]QueryParam{
+        .{ .name = "namespace", .value = args.namespace },
+        .{ .name = "recursive", .value = args.recursive },
+        .{ .name = "search", .value = args.search_filter },
+        .{ .name = "is_public", .value = args.is_public },
+        .{ .name = "limit", .value = args.limit },
+        .{ .name = "offset", .value = args.offset },
+        .{ .name = "query", .value = if (include_search_query) args.query else null },
+        .{ .name = "mode", .value = if (include_search_query) args.mode else null },
+        .{ .name = "language", .value = if (include_search_query) args.language else null },
+    });
 }
 
 pub fn pathEscape(gpa: Allocator, value: []const u8) ![]u8 {
@@ -5951,6 +6198,89 @@ test "builds Cloudflare ruleset paths and dry-run plans" {
     try std.testing.expectError(error.MissingCloudflareRulesetPhase, rulesetReadPath(allocator, .account, "acct/1", .entrypoint, .{}));
     try std.testing.expectError(error.MissingCloudflareRulesetVersion, rulesetReadPath(allocator, .account, "acct/1", .version, .{ .ruleset_id = "ruleset/1" }));
     try std.testing.expectError(error.MissingCloudflareRulesetRuleId, rulesetMutationPlanJson(allocator, .update_rule, .{ .scope = .account, .scope_id = "acct/1", .ruleset_id = "ruleset/1" }));
+}
+
+test "cloudforce one rule endpoints map to official operation metadata" {
+    try std.testing.expectEqual(CloudforceOneRuleReadEndpoint.list, CloudforceOneRuleReadEndpoint.parse("rules").?);
+    try std.testing.expectEqual(CloudforceOneRuleReadEndpoint.managed, CloudforceOneRuleReadEndpoint.parse("managed-rules").?);
+    try std.testing.expectEqual(CloudforceOneRuleReadEndpoint.rule, CloudforceOneRuleReadEndpoint.parse("detail").?);
+    try std.testing.expectEqualStrings("cloudforce-one-list-rules", CloudforceOneRuleReadEndpoint.list.operationId());
+    try std.testing.expectEqualStrings("cloudforce-one-get-managed-rules", CloudforceOneRuleReadEndpoint.managed.operationId());
+    try std.testing.expectEqualStrings("cloudforce-one-search-rules", CloudforceOneRuleReadEndpoint.search.operationId());
+    try std.testing.expectEqualStrings("cloudforce-one-get-rule-stats", CloudforceOneRuleReadEndpoint.stats.operationId());
+    try std.testing.expectEqualStrings("cloudforce-one-get-rule-tree", CloudforceOneRuleReadEndpoint.tree.operationId());
+    try std.testing.expectEqualStrings("cloudforce-one-get-rule", CloudforceOneRuleReadEndpoint.rule.operationId());
+    try std.testing.expect(CloudforceOneRuleReadEndpoint.rule.requiresRuleId());
+    try std.testing.expect(CloudforceOneRuleReadEndpoint.search.requiresQuery());
+    try std.testing.expect(CloudforceOneRuleReadEndpoint.list.allowsListFilters());
+    try std.testing.expect(!CloudforceOneRuleReadEndpoint.stats.allowsListFilters());
+
+    try std.testing.expectEqual(CloudforceOneRuleMutationEndpoint.delete_all, CloudforceOneRuleMutationEndpoint.parse("clear").?);
+    try std.testing.expectEqualStrings("POST", CloudforceOneRuleMutationEndpoint.create.method());
+    try std.testing.expectEqualStrings("PUT", CloudforceOneRuleMutationEndpoint.update.method());
+    try std.testing.expectEqualStrings("DELETE", CloudforceOneRuleMutationEndpoint.delete_rule.method());
+    try std.testing.expectEqualStrings("cloudforce-one-validate-rule", CloudforceOneRuleMutationEndpoint.validate.operationId());
+    try std.testing.expectEqualStrings("#/components/schemas/cloudforce-one_CreateRule", CloudforceOneRuleMutationEndpoint.create.requestBodySchemaRef().?);
+    try std.testing.expectEqualStrings("#/components/schemas/cloudforce-one_UpdateRule", CloudforceOneRuleMutationEndpoint.update.requestBodySchemaRef().?);
+    try std.testing.expectEqualStrings("object", CloudforceOneRuleMutationEndpoint.validate.requestBodySchemaRef().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), CloudforceOneRuleMutationEndpoint.delete_all.requestBodySchemaRef());
+    try std.testing.expect(CloudforceOneRuleMutationEndpoint.update.requiresRuleId());
+}
+
+test "builds Cloudforce One rule paths and dry-run plans" {
+    const allocator = std.testing.allocator;
+
+    const list = try cloudforceOneRuleReadUrl(allocator, base_url, "acct/1", .list, .{ .namespace = "yara/workers", .recursive = "true", .limit = "25" });
+    defer allocator.free(list);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/cloudforce-one/rules?namespace=yara%2Fworkers&recursive=true&limit=25", list);
+
+    const search = try cloudforceOneRuleReadPath(allocator, "acct/1", .search, .{ .query = "proxy worker", .mode = "hybrid", .language = "yara" });
+    defer allocator.free(search);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/cloudforce-one/rules/search?query=proxy%20worker&mode=hybrid&language=yara", search);
+
+    const show = try cloudforceOneRuleReadPath(allocator, "acct/1", .rule, .{ .rule_id = "rule/1" });
+    defer allocator.free(show);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/cloudforce-one/rules/rule%2F1", show);
+
+    const managed = try cloudforceOneRuleReadPath(allocator, "acct/1", .managed, .{});
+    defer allocator.free(managed);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/cloudforce-one/rules/managed", managed);
+
+    const stats = try cloudforceOneRuleReadPath(allocator, "acct/1", .stats, .{});
+    defer allocator.free(stats);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/cloudforce-one/rules/stats", stats);
+
+    const tree = try cloudforceOneRuleReadPath(allocator, "acct/1", .tree, .{});
+    defer allocator.free(tree);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/cloudforce-one/rules/tree", tree);
+
+    const create = try cloudforceOneRuleMutationPlanJson(allocator, .create, .{ .account_id = "acct/1" });
+    defer allocator.free(create);
+    try std.testing.expect(std.mem.indexOf(u8, create, "\"group\":\"Rules\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, create, "\"operation_id\":\"cloudforce-one-create-rule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, create, "\"path\":\"/accounts/acct%2F1/cloudforce-one/rules\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, create, "\"request_body_schema\":\"#/components/schemas/cloudforce-one_CreateRule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, create, "\"will_execute\":false") != null);
+
+    const update = try cloudforceOneRuleMutationPlanJson(allocator, .update, .{ .account_id = "acct/1", .rule_id = "rule/1" });
+    defer allocator.free(update);
+    try std.testing.expect(std.mem.indexOf(u8, update, "\"operation_id\":\"cloudforce-one-update-rule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update, "\"method\":\"PUT\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update, "\"path\":\"/accounts/acct%2F1/cloudforce-one/rules/rule%2F1\"") != null);
+
+    const validate = try cloudforceOneRuleMutationPlanJson(allocator, .validate, .{ .account_id = "acct/1" });
+    defer allocator.free(validate);
+    try std.testing.expect(std.mem.indexOf(u8, validate, "\"operation_id\":\"cloudforce-one-validate-rule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, validate, "\"request_body_schema\":\"object\"") != null);
+
+    const delete_all = try cloudforceOneRuleMutationPlanJson(allocator, .delete_all, .{ .account_id = "acct/1" });
+    defer allocator.free(delete_all);
+    try std.testing.expect(std.mem.indexOf(u8, delete_all, "\"operation_id\":\"cloudforce-one-delete-all-rules\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, delete_all, "\"request_body_schema\":null") != null);
+
+    try std.testing.expectError(error.MissingCloudforceOneRuleSearchQuery, cloudforceOneRuleReadPath(allocator, "acct/1", .search, .{}));
+    try std.testing.expectError(error.MissingCloudforceOneRuleId, cloudforceOneRuleReadPath(allocator, "acct/1", .rule, .{}));
+    try std.testing.expectError(error.MissingCloudforceOneRuleId, cloudforceOneRuleMutationPlanJson(allocator, .delete_rule, .{ .account_id = "acct/1" }));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

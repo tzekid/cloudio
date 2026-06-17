@@ -22,6 +22,10 @@ pub const AccountTokenMutationArgs = collector_cloudflare.AccountTokenMutationAr
 pub const AccountTokenMutationEndpoint = collector_cloudflare.AccountTokenMutationEndpoint;
 pub const AccountUserGroupMemberMutationArgs = collector_cloudflare.AccountUserGroupMemberMutationArgs;
 pub const AccountUserGroupMemberMutationEndpoint = collector_cloudflare.AccountUserGroupMemberMutationEndpoint;
+pub const CloudforceOneRuleMutationArgs = collector_cloudflare.CloudforceOneRuleMutationArgs;
+pub const CloudforceOneRuleMutationEndpoint = collector_cloudflare.CloudforceOneRuleMutationEndpoint;
+pub const CloudforceOneRuleReadArgs = collector_cloudflare.CloudforceOneRuleReadArgs;
+pub const CloudforceOneRuleReadEndpoint = collector_cloudflare.CloudforceOneRuleReadEndpoint;
 pub const DnsAnalyticsEndpoint = collector_cloudflare.DnsAnalyticsEndpoint;
 pub const DnsFirewallMutationArgs = collector_cloudflare.DnsFirewallMutationArgs;
 pub const DnsFirewallMutationEndpoint = collector_cloudflare.DnsFirewallMutationEndpoint;
@@ -192,6 +196,10 @@ pub fn collectRulesetEndpoint(ctx: Context, scope: RulesetScope, scope_id: []con
     return try collector_cloudflare.collectRulesetEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, scope, scope_id, endpoint, args, true);
 }
 
+pub fn collectCloudforceOneRuleEndpoint(ctx: Context, account_id: []const u8, endpoint: CloudforceOneRuleReadEndpoint, args: CloudforceOneRuleReadArgs) !Output {
+    return try collector_cloudflare.collectCloudforceOneRuleEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, args, true);
+}
+
 pub fn collectIdentityEndpoint(ctx: Context, endpoint: IdentityEndpoint) !Output {
     return try collector_cloudflare.collectIdentityEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, endpoint, true);
 }
@@ -314,6 +322,10 @@ pub fn planResourceTaggingMutation(ctx: Context, endpoint: ResourceTaggingMutati
 
 pub fn planRulesetMutation(ctx: Context, endpoint: RulesetMutationEndpoint, args: RulesetMutationArgs) !Output {
     return .{ .text = try provider_cloudflare.rulesetMutationPlanJson(ctx.gpa, endpoint, args) };
+}
+
+pub fn planCloudforceOneRuleMutation(ctx: Context, endpoint: CloudforceOneRuleMutationEndpoint, args: CloudforceOneRuleMutationArgs) !Output {
+    return .{ .text = try provider_cloudflare.cloudforceOneRuleMutationPlanJson(ctx.gpa, endpoint, args) };
 }
 
 pub fn collectZoneSetting(ctx: Context, domain: []const u8, setting_id: []const u8) !Output {

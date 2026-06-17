@@ -77,6 +77,10 @@ zig build run -- cloudflare rulesets account entrypoint <account-id> http_reques
 zig build run -- cloudflare rulesets zone list <zone-id>
 zig build run -- cloudflare rulesets zone show <zone-id> <ruleset-id>
 zig build run -- cloudflare rulesets zone rules-by-tag <zone-id> <ruleset-id> <version> <tag>
+zig build run -- cloudflare cloudforce-one-rules list <account-id> namespace=yara/workers recursive=true
+zig build run -- cloudflare cloudforce-one-rules search <account-id> "proxy worker" mode=hybrid language=yara
+zig build run -- cloudflare cloudforce-one-rules stats <account-id>
+zig build run -- cloudflare cloudforce-one-rules show <account-id> <rule-id>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru
@@ -119,6 +123,9 @@ zig build run -- cloudflare dry-run rulesets account create <account-id>
 zig build run -- cloudflare dry-run rulesets account update-rule <account-id> <ruleset-id> <rule-id>
 zig build run -- cloudflare dry-run rulesets zone update-entrypoint <zone-id> http_request_firewall_custom
 zig build run -- cloudflare dry-run rulesets zone delete-version <zone-id> <ruleset-id> <version>
+zig build run -- cloudflare dry-run cloudforce-one-rules create <account-id>
+zig build run -- cloudflare dry-run cloudforce-one-rules update <account-id> <rule-id>
+zig build run -- cloudflare dry-run cloudforce-one-rules delete-all <account-id>
 zig build run -- cloudflare dry-run token create
 zig build run -- cloudflare dry-run token roll <token-id>
 zig build run -- cloudflare dry-run account create

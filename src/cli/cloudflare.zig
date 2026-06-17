@@ -50,6 +50,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandResourceTags(ctx, args);
     } else if (std.mem.eql(u8, sub, "rulesets") or std.mem.eql(u8, sub, "ruleset")) {
         try commandRulesets(ctx, args);
+    } else if (std.mem.eql(u8, sub, "cloudforce-one-rules") or std.mem.eql(u8, sub, "cf1-rules")) {
+        try commandCloudforceOneRules(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -89,6 +91,7 @@ fn commandDryRun(ctx: Context, args: []const []const u8) !void {
     if (std.mem.eql(u8, args[1], "health-checks") or std.mem.eql(u8, args[1], "health")) return try commandDryRunHealthChecks(ctx, args);
     if (std.mem.eql(u8, args[1], "resource-tags") or std.mem.eql(u8, args[1], "tags")) return try commandDryRunResourceTags(ctx, args);
     if (std.mem.eql(u8, args[1], "rulesets") or std.mem.eql(u8, args[1], "ruleset")) return try commandDryRunRulesets(ctx, args);
+    if (std.mem.eql(u8, args[1], "cloudforce-one-rules") or std.mem.eql(u8, args[1], "cf1-rules")) return try commandDryRunCloudforceOneRules(ctx, args);
     std.debug.print("unknown cloudflare dry-run target: {s}\n", .{args[1]});
 }
 
@@ -523,6 +526,26 @@ fn commandDryRunRulesets(ctx: Context, args: []const []const u8) !void {
     cli_render.printOutput(ctx.gpa, try app_cloudflare.planRulesetMutation(appContext(ctx), endpoint, mutation_args));
 }
 
+fn commandDryRunCloudforceOneRules(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("operation and account id required for dry-run cloudforce-one-rules\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.CloudforceOneRuleMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown cloudforce-one-rules dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    var mutation_args: app_cloudflare.CloudforceOneRuleMutationArgs = .{ .account_id = args[3] };
+    if (endpoint.requiresRuleId()) {
+        if (args.len < 5) {
+            std.debug.print("rule id required for dry-run cloudforce-one-rules {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        mutation_args.rule_id = args[4];
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planCloudforceOneRuleMutation(appContext(ctx), endpoint, mutation_args));
+}
+
 fn commandDns(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1) {
         cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
@@ -799,6 +822,46 @@ fn commandRulesets(ctx: Context, args: []const []const u8) !void {
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectRulesetEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
 }
 
+fn commandCloudforceOneRules(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("cloudforce-one-rules command and account id required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.CloudforceOneRuleReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown cloudforce-one-rules command: {s}\n", .{args[1]});
+        return;
+    };
+    const account_id = args[2];
+    var index: usize = 3;
+    var read_args: app_cloudflare.CloudforceOneRuleReadArgs = .{};
+
+    if (endpoint.requiresRuleId()) {
+        if (args.len <= index) {
+            std.debug.print("rule id required for cloudforce-one-rules {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.rule_id = args[index];
+        index += 1;
+    } else if (endpoint.requiresQuery() and args.len > index and !isKeyValue(args[index])) {
+        read_args.query = args[index];
+        index += 1;
+    }
+
+    while (index < args.len) : (index += 1) {
+        if (!applyCloudforceOneRuleFilter(&read_args, args[index])) {
+            std.debug.print("unknown cloudforce-one-rules filter: {s}\n", .{args[index]});
+            return;
+        }
+    }
+
+    if (endpoint.requiresQuery() and read_args.query == null) {
+        std.debug.print("query required for cloudforce-one-rules search\n", .{});
+        return;
+    }
+
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectCloudforceOneRuleEndpoint(appContext(ctx), account_id, endpoint, read_args));
+}
+
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
     if (args.len > 1 and std.mem.eql(u8, args[1], "zsk")) {
         const domain = if (args.len > 2) args[2] else ctx.domains[0];
@@ -993,6 +1056,38 @@ fn commandSetting(ctx: Context, args: []const []const u8) !void {
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneSetting(appContext(ctx), domain, args[1]));
 }
 
+fn isKeyValue(value: []const u8) bool {
+    return std.mem.indexOfScalar(u8, value, '=') != null;
+}
+
+fn applyCloudforceOneRuleFilter(args: *app_cloudflare.CloudforceOneRuleReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "namespace")) {
+        args.namespace = value;
+    } else if (std.mem.eql(u8, key, "recursive")) {
+        args.recursive = value;
+    } else if (std.mem.eql(u8, key, "search")) {
+        args.search_filter = value;
+    } else if (std.mem.eql(u8, key, "is_public") or std.mem.eql(u8, key, "public")) {
+        args.is_public = value;
+    } else if (std.mem.eql(u8, key, "limit")) {
+        args.limit = value;
+    } else if (std.mem.eql(u8, key, "offset")) {
+        args.offset = value;
+    } else if (std.mem.eql(u8, key, "query")) {
+        args.query = value;
+    } else if (std.mem.eql(u8, key, "mode")) {
+        args.mode = value;
+    } else if (std.mem.eql(u8, key, "language")) {
+        args.language = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 fn appContext(ctx: Context) app_cloudflare.Context {
     return .{
         .io = ctx.io,
@@ -1010,4 +1105,22 @@ test "cloudflare domain commands use explicit or default domain" {
 
     const zone_explicit = [_][]const u8{ "zone", "example.net" };
     try std.testing.expectEqualStrings("example.net", app_cloudflare.selectedDomain(configured[0..], zone_explicit[0..]));
+}
+
+test "cloudforce one rule filters parse key value arguments" {
+    var args: app_cloudflare.CloudforceOneRuleReadArgs = .{};
+    try std.testing.expect(applyCloudforceOneRuleFilter(&args, "namespace=yara/workers"));
+    try std.testing.expect(applyCloudforceOneRuleFilter(&args, "recursive=true"));
+    try std.testing.expect(applyCloudforceOneRuleFilter(&args, "search=malicious"));
+    try std.testing.expect(applyCloudforceOneRuleFilter(&args, "public=false"));
+    try std.testing.expect(applyCloudforceOneRuleFilter(&args, "limit=25"));
+    try std.testing.expect(applyCloudforceOneRuleFilter(&args, "offset=10"));
+    try std.testing.expect(applyCloudforceOneRuleFilter(&args, "query=proxy worker"));
+    try std.testing.expect(applyCloudforceOneRuleFilter(&args, "mode=hybrid"));
+    try std.testing.expect(applyCloudforceOneRuleFilter(&args, "language=yara"));
+    try std.testing.expect(!applyCloudforceOneRuleFilter(&args, "unknown=value"));
+    try std.testing.expect(!applyCloudforceOneRuleFilter(&args, "namespace"));
+    try std.testing.expectEqualStrings("yara/workers", args.namespace.?);
+    try std.testing.expectEqualStrings("malicious", args.search_filter.?);
+    try std.testing.expectEqualStrings("proxy worker", args.query.?);
 }
