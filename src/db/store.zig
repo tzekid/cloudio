@@ -61,6 +61,64 @@ pub const NameValueRows = struct {
     }
 };
 
+pub const InventoryFilter = struct {
+    provider: ?[]const u8 = null,
+    domain: ?[]const u8 = null,
+    query: ?[]const u8 = null,
+    limit: i64 = 200,
+};
+
+pub const InventoryItem = struct {
+    provider: []u8,
+    kind: []u8,
+    resource_id: []u8,
+    scope: []u8,
+    scope_id: []u8,
+    display_name: []u8,
+    status: []u8,
+    category: []u8,
+    domain: []u8,
+    username: []u8,
+    account_id: []u8,
+    zone_id: []u8,
+    related_id: []u8,
+    flag: []u8,
+    created_at_source: []u8,
+    updated_at_source: []u8,
+    expires_at_source: []u8,
+    updated_at: []u8,
+
+    pub fn deinit(self: InventoryItem, allocator: Allocator) void {
+        allocator.free(self.provider);
+        allocator.free(self.kind);
+        allocator.free(self.resource_id);
+        allocator.free(self.scope);
+        allocator.free(self.scope_id);
+        allocator.free(self.display_name);
+        allocator.free(self.status);
+        allocator.free(self.category);
+        allocator.free(self.domain);
+        allocator.free(self.username);
+        allocator.free(self.account_id);
+        allocator.free(self.zone_id);
+        allocator.free(self.related_id);
+        allocator.free(self.flag);
+        allocator.free(self.created_at_source);
+        allocator.free(self.updated_at_source);
+        allocator.free(self.expires_at_source);
+        allocator.free(self.updated_at);
+    }
+};
+
+pub const InventoryItems = struct {
+    items: []InventoryItem,
+
+    pub fn deinit(self: *InventoryItems, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const ProjectDetails = struct {
     name: []u8,
     source: []u8,
@@ -629,6 +687,77 @@ pub const Db = struct {
         );
     }
 
+    pub fn inventoryItems(self: *Db, gpa: Allocator, filter: InventoryFilter) !InventoryItems {
+        const stmt = try self.prepare(
+            \\SELECT provider, kind, resource_id, scope, scope_id, display_name, status, category, domain, username, account_id, zone_id, related_id, flag, created_at_source, updated_at_source, expires_at_source, updated_at
+            \\FROM (
+            \\  SELECT 'cloudflare' AS provider,
+            \\         kind,
+            \\         resource_id,
+            \\         COALESCE(scope, '') AS scope,
+            \\         COALESCE(scope_id, '') AS scope_id,
+            \\         COALESCE(display_name, '') AS display_name,
+            \\         COALESCE(status, '') AS status,
+            \\         COALESCE(category, '') AS category,
+            \\         COALESCE(domain, '') AS domain,
+            \\         '' AS username,
+            \\         COALESCE(account_id, '') AS account_id,
+            \\         COALESCE(zone_id, '') AS zone_id,
+            \\         COALESCE(related_id, '') AS related_id,
+            \\         COALESCE(flag, '') AS flag,
+            \\         COALESCE(created_at_source, '') AS created_at_source,
+            \\         COALESCE(updated_at_source, '') AS updated_at_source,
+            \\         COALESCE(expires_at_source, '') AS expires_at_source,
+            \\         updated_at
+            \\  FROM cloudflare_inventory_items
+            \\  UNION ALL
+            \\  SELECT 'hostinger' AS provider,
+            \\         kind,
+            \\         resource_id,
+            \\         '' AS scope,
+            \\         '' AS scope_id,
+            \\         COALESCE(display_name, '') AS display_name,
+            \\         COALESCE(status, '') AS status,
+            \\         COALESCE(category, '') AS category,
+            \\         COALESCE(domain, '') AS domain,
+            \\         COALESCE(username, '') AS username,
+            \\         '' AS account_id,
+            \\         '' AS zone_id,
+            \\         COALESCE(related_id, '') AS related_id,
+            \\         COALESCE(flag, '') AS flag,
+            \\         COALESCE(created_at_source, '') AS created_at_source,
+            \\         COALESCE(updated_at_source, '') AS updated_at_source,
+            \\         COALESCE(expires_at_source, '') AS expires_at_source,
+            \\         updated_at
+            \\  FROM hostinger_inventory_items
+            \\)
+            \\WHERE (? IS NULL OR provider = ?)
+            \\  AND (? IS NULL OR domain = ?)
+            \\  AND (? IS NULL OR lower(provider || ' ' || kind || ' ' || resource_id || ' ' || scope || ' ' || scope_id || ' ' || display_name || ' ' || status || ' ' || category || ' ' || domain || ' ' || username || ' ' || account_id || ' ' || zone_id || ' ' || related_id || ' ' || flag) LIKE '%' || lower(?) || '%')
+            \\ORDER BY updated_at DESC, provider, kind, resource_id
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindTextOpt(stmt, 1, filter.provider);
+        try bindTextOpt(stmt, 2, filter.provider);
+        try bindTextOpt(stmt, 3, filter.domain);
+        try bindTextOpt(stmt, 4, filter.domain);
+        try bindTextOpt(stmt, 5, filter.query);
+        try bindTextOpt(stmt, 6, filter.query);
+        try bindI64(stmt, 7, if (filter.limit > 0) filter.limit else 200);
+
+        var rows = std.ArrayList(InventoryItem).empty;
+        errdefer deinitInventoryItemList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try inventoryItemFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
     pub fn caddyUpstreams(self: *Db, gpa: Allocator) !NameValueRows {
         return try self.nameValueRows(gpa, "SELECT host, upstream FROM caddy_upstreams ORDER BY host, upstream");
     }
@@ -767,6 +896,11 @@ fn deinitNameValueList(rows: *std.ArrayList(NameValueRow), allocator: Allocator)
     rows.deinit(allocator);
 }
 
+fn deinitInventoryItemList(rows: *std.ArrayList(InventoryItem), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
 fn deinitMetricList(rows: *std.ArrayList(MetricRow), allocator: Allocator) void {
     for (rows.items) |row| row.deinit(allocator);
     rows.deinit(allocator);
@@ -849,6 +983,65 @@ fn nameValueRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !NameV
     };
 }
 
+fn inventoryItemFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !InventoryItem {
+    const provider = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(provider);
+    const kind = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(kind);
+    const resource_id = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(resource_id);
+    const scope = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(scope);
+    const scope_id = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(scope_id);
+    const display_name = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(display_name);
+    const status = try dupeColumn(allocator, stmt, 6);
+    errdefer allocator.free(status);
+    const category = try dupeColumn(allocator, stmt, 7);
+    errdefer allocator.free(category);
+    const domain = try dupeColumn(allocator, stmt, 8);
+    errdefer allocator.free(domain);
+    const username = try dupeColumn(allocator, stmt, 9);
+    errdefer allocator.free(username);
+    const account_id = try dupeColumn(allocator, stmt, 10);
+    errdefer allocator.free(account_id);
+    const zone_id = try dupeColumn(allocator, stmt, 11);
+    errdefer allocator.free(zone_id);
+    const related_id = try dupeColumn(allocator, stmt, 12);
+    errdefer allocator.free(related_id);
+    const flag = try dupeColumn(allocator, stmt, 13);
+    errdefer allocator.free(flag);
+    const created_at_source = try dupeColumn(allocator, stmt, 14);
+    errdefer allocator.free(created_at_source);
+    const updated_at_source = try dupeColumn(allocator, stmt, 15);
+    errdefer allocator.free(updated_at_source);
+    const expires_at_source = try dupeColumn(allocator, stmt, 16);
+    errdefer allocator.free(expires_at_source);
+    const updated_at = try dupeColumn(allocator, stmt, 17);
+    errdefer allocator.free(updated_at);
+    return .{
+        .provider = provider,
+        .kind = kind,
+        .resource_id = resource_id,
+        .scope = scope,
+        .scope_id = scope_id,
+        .display_name = display_name,
+        .status = status,
+        .category = category,
+        .domain = domain,
+        .username = username,
+        .account_id = account_id,
+        .zone_id = zone_id,
+        .related_id = related_id,
+        .flag = flag,
+        .created_at_source = created_at_source,
+        .updated_at_source = updated_at_source,
+        .expires_at_source = expires_at_source,
+        .updated_at = updated_at,
+    };
+}
+
 fn projectDetailsFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !ProjectDetails {
     const name = try dupeColumn(allocator, stmt, 0);
     errdefer allocator.free(name);
@@ -928,4 +1121,35 @@ test "audit events can be inserted and queried as a read model" {
     try std.testing.expectEqualStrings("caddy.diff", rows.items[0].action);
     try std.testing.expectEqualStrings("dry_run", rows.items[0].status);
     try std.testing.expectEqualStrings("rendered only", rows.items[0].detail);
+}
+
+test "provider inventory read model joins and filters typed inventory" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudio-inventory.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    try db.upsertCloudflareInventoryItem("dns-records|zone|zone-1|record-1", "dns-records", "record-1", "zone", "zone-1", "plosca.ru", "active", "A", "plosca.ru", "acct-1", "zone-1", "76.13.130.170", "dns_only", null, "2026-06-17T00:00:00Z", null, "{\"id\":\"record-1\"}");
+    try db.upsertHostingerInventoryItem("hostinger-websites||plosca.ru", "hostinger-websites", "plosca.ru", "plosca.ru", "enabled", "main", "plosca.ru", "u123", "12345", "enabled", "2026-01-01T00:00:00Z", null, null, "{\"domain\":\"plosca.ru\"}");
+
+    var all = try db.inventoryItems(allocator, .{});
+    defer all.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), all.items.len);
+
+    var cloudflare = try db.inventoryItems(allocator, .{ .provider = "cloudflare" });
+    defer cloudflare.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), cloudflare.items.len);
+    try std.testing.expectEqualStrings("cloudflare", cloudflare.items[0].provider);
+    try std.testing.expectEqualStrings("zone", cloudflare.items[0].scope);
+    try std.testing.expectEqualStrings("zone-1", cloudflare.items[0].scope_id);
+
+    var query = try db.inventoryItems(allocator, .{ .query = "u123" });
+    defer query.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), query.items.len);
+    try std.testing.expectEqualStrings("hostinger", query.items[0].provider);
+    try std.testing.expectEqualStrings("u123", query.items[0].username);
 }

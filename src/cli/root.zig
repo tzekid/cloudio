@@ -11,6 +11,7 @@ const cli_caddy = @import("cli_caddy");
 const cli_cloudflare = @import("cli_cloudflare");
 const cli_coverage = @import("cli_coverage");
 const cli_hostinger = @import("cli_hostinger");
+const cli_inventory = @import("cli_inventory");
 const cli_projects = @import("cli_projects");
 const cli_route = @import("cli_route");
 const cli_system = @import("cli_system");
@@ -47,6 +48,11 @@ pub fn run(init: std.process.Init) !void {
         try commandRefresh(init.io, init.gpa, cfg, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "overview")) {
         try commandOverview(init.gpa, &db);
+    } else if (std.mem.eql(u8, cmd, "inventory")) {
+        try cli_inventory.run(.{
+            .gpa = init.gpa,
+            .db = &db,
+        }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "export")) {
         try commandExport(init.gpa, &db);
     } else if (std.mem.eql(u8, cmd, "coverage")) {
@@ -116,6 +122,7 @@ fn usage() void {
         \\  cloudio doctor
         \\  cloudio refresh [--all|--cloudflare|--hostinger|--caddy|--system|--projects]
         \\  cloudio overview
+        \\  cloudio inventory [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>]
         \\  cloudio export
         \\  cloudio coverage summary|tags|routes [all|cloudflare|hostinger] [tag-query] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>]
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]

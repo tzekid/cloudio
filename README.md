@@ -13,6 +13,7 @@ zig build run -- init
 zig build run -- doctor
 zig build run -- refresh --all
 zig build run -- overview
+zig build run -- inventory
 zig build run -- log
 ```
 
@@ -36,6 +37,14 @@ api_token = "hapi_..."
 Cloudio also auto-loads ignored `.env` and `.env.fish` files before reading process environment. Supported credential names are `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, `HOSTINGER_API_TOKEN`, and `HAPI_API_TOKEN`.
 
 Each `refresh` writes a redacted `.cloudio/latest-run.log` with collector selection, credential presence, table counts, and the snapshots captured during that refresh. Empty provider response bodies are stored as structured diagnostic JSON with the HTTP status and endpoint so failed reads do not disappear as blank logs.
+
+Central inventory reads join the typed Cloudflare and Hostinger inventory projections without calling live provider APIs:
+
+```sh
+zig build run -- inventory
+zig build run -- inventory cloudflare --domain plosca.ru
+zig build run -- inventory hostinger --query plosca.ru --limit 50
+```
 
 Generic provider route dispatch:
 
