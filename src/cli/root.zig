@@ -60,6 +60,7 @@ pub fn run(init: std.process.Init) !void {
             .gpa = init.gpa,
             .cloudflare_auth = .{ .cloudflare = cloudflareAuth(cfg) },
             .hostinger_token = cfg.hostinger_api_token,
+            .db = &db,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "log")) {
         try commandLog(init.io, init.gpa, cfg);
@@ -118,7 +119,7 @@ fn usage() void {
         \\  cloudio export
         \\  cloudio coverage summary|tags|routes [all|cloudflare|hostinger] [tag-query] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>]
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]
-        \\  cloudio route plan|read|dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
+        \\  cloudio route plan|read|capture|dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\  cloudio log
         \\  cloudio cloudflare account [list]|account show <account-id>|account profile <account-id>|account organizations <account-id>
         \\  cloudio cloudflare account dns-record-usage <account-id>

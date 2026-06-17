@@ -255,11 +255,14 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "collector_capture", .module = collector_capture_mod },
             .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
+    linkSqlite(app_coverage_mod);
 
     const app_doctor_mod = b.createModule(.{
         .root_source_file = b.path("src/app/doctor.zig"),

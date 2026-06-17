@@ -68,6 +68,7 @@ test "facade exposes stable integration modules" {
     _ = app.caddy.Context;
     _ = app.cloudflare.Context;
     _ = app.coverage.Summary;
+    _ = app.coverage.CaptureOptions;
     _ = app.doctor.Report;
     _ = app.exports.writeRecentSnapshotsJson;
     _ = app.hostinger.Context;

@@ -1,9 +1,12 @@
 const std = @import("std");
+const collector_capture = @import("collector_capture");
 const core_json = @import("core_json");
+const db_store = @import("db_store");
 const provider_dispatch = @import("provider_dispatch");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
+const Db = db_store.Db;
 const Io = std.Io;
 
 const max_manifest_bytes = 8 * 1024 * 1024;
@@ -31,6 +34,11 @@ pub const HeaderParam = provider_routes.HeaderParam;
 pub const Request = provider_routes.Request;
 pub const BodyInput = provider_routes.BodyInput;
 pub const Auth = provider_dispatch.Auth;
+pub const CaptureOptions = struct {
+    kind: ?[]const u8 = null,
+    target: ?[]const u8 = null,
+};
+pub const DbHandle = Db;
 
 pub const Paths = struct {
     cloudflare_manifest: []const u8 = "coverage/generated/cloudflare.jsonl",
@@ -409,6 +417,16 @@ pub fn routeReadMetadataJson(io: Io, gpa: Allocator, paths: Paths, input: RouteP
     return try provider_dispatch.readRouteResultMetadataJson(gpa, route.route, result);
 }
 
+pub fn routeCaptureReadMetadataJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, auth: Auth, db: *Db, options: CaptureOptions) ![]u8 {
+    var routes = try loadRoutes(io, gpa, paths, input.filter);
+    defer routes.deinit(gpa);
+    const route = try selectSingleRoute(routes.items);
+    const client = provider_dispatch.Client.init(auth);
+    const result = try client.callReadRouteResultRequest(io, gpa, route.route, input.request);
+    defer result.deinit(gpa);
+    return try captureRouteReadResultJson(gpa, db, route.route, input.request, result, options);
+}
+
 pub fn routeDryRunJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, auth: Auth) ![]u8 {
     var routes = try loadRoutes(io, gpa, paths, input.filter);
     defer routes.deinit(gpa);
@@ -431,6 +449,29 @@ pub fn routePlanJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostin
     return try routePlanJsonFromRoutes(gpa, routes.items, input.request);
 }
 
+pub fn captureRouteReadResultJson(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, result: provider_dispatch.ReadRouteResult, options: CaptureOptions) ![]u8 {
+    const endpoint = try route.renderRequestPath(gpa, request);
+    defer gpa.free(endpoint);
+    const operation = route.operation_id orelse route.path_template;
+    const kind = options.kind orelse operation;
+    const target = options.target orelse endpoint;
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = route.provider.name(),
+        .kind = kind,
+        .target = target,
+        .summary_label = operation,
+        .endpoint = endpoint,
+        .status = result.response.status,
+        .body = result.response.body,
+    });
+    defer gpa.free(redacted);
+    const snapshot_id = try db.latestSnapshotId();
+    const audit_detail = try std.fmt.allocPrint(gpa, "{s}/{s} {s}", .{ route.provider.name(), operation, endpoint });
+    defer gpa.free(audit_detail);
+    try db.insertAudit("route.capture", result.statusText(), audit_detail);
+    return try routeCaptureMetadataJson(gpa, route, result, snapshot_id, endpoint, kind, target);
+}
+
 pub fn writeRoutePlanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, writer: anytype) !void {
     const json = try routePlanJson(io, gpa, paths, input);
     defer gpa.free(json);
@@ -447,6 +488,45 @@ fn selectSingleRoute(routes: []const CoverageRoute) !CoverageRoute {
     if (routes.len == 0) return error.ProviderRoutePlanNotFound;
     if (routes.len != 1) return error.ProviderRoutePlanAmbiguous;
     return routes[0];
+}
+
+fn routeCaptureMetadataJson(gpa: Allocator, route: provider_routes.Route, result: provider_dispatch.ReadRouteResult, snapshot_id: i64, endpoint: []const u8, kind: []const u8, target: []const u8) ![]u8 {
+    const read_json = try provider_dispatch.readRouteResultMetadataJson(gpa, route, result);
+    defer gpa.free(read_json);
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    const writer = &out.writer;
+    try writer.writeAll("{");
+    try writeJsonField(writer, "provider", route.provider.name(), true);
+    try writeJsonField(writer, "operation", route.operation_id orelse route.path_template, true);
+    if (route.operation_id) |id| {
+        try writeJsonField(writer, "operation_id", id, true);
+    } else {
+        try writer.writeAll("\"operation_id\":null,");
+    }
+    try writeJsonField(writer, "method", route.method.name(), true);
+    try writeJsonField(writer, "endpoint", endpoint, true);
+    try writer.writeAll("\"snapshot_id\":");
+    try writer.print("{d}", .{snapshot_id});
+    try writer.writeByte(',');
+    try writer.writeAll("\"captured\":true,");
+    try writer.writeAll("\"provider_raw\":true,");
+    try writer.writeAll("\"snapshot\":{");
+    try writeJsonField(writer, "source", route.provider.name(), true);
+    try writeJsonField(writer, "kind", kind, true);
+    try writeJsonField(writer, "target", target, false);
+    try writer.writeAll("},");
+    try writer.writeAll("\"read\":");
+    try writer.writeAll(read_json);
+    try writer.writeAll("}");
+    return try out.toOwnedSlice();
+}
+
+fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    try core_json.writeString(writer, value);
+    if (trailing_comma) try writer.writeByte(',');
 }
 
 fn summarizeProvider(gpa: Allocator, provider: []const u8, text: []const u8, summary: *ProviderSummary) !void {
@@ -925,4 +1005,52 @@ test "renders exact provider route dry-runs through the shared route contract" {
             .{ .cloudflare = .{ .token = "test-token" } },
         ),
     );
+}
+
+test "captures generic route read results into snapshots and provider raw" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/route-capture.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ok"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"GET","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_getVirtualMachinesV1","path_params":[],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/VPS.V1.VirtualMachine.VirtualMachineCollection"]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"POC lists VPS."}
+        \\
+    ;
+
+    var routes = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .operation_id = "VPS_getVirtualMachinesV1" });
+    defer routes.deinit(allocator);
+    const route = try selectSingleRoute(routes.items);
+    const body = try allocator.dupe(u8, "{\"password\":\"super-secret-password\",\"data\":[]}");
+    const result = provider_dispatch.matchReadRouteResponse(route.route, .{ .status = .ok, .body = body });
+    defer result.deinit(allocator);
+
+    const json = try captureRouteReadResultJson(
+        allocator,
+        &db,
+        route.route,
+        .{},
+        result,
+        .{ .kind = "route-vps-inventory", .target = "test-vps-list" },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"captured\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"provider_raw\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"snapshot_id\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"route-vps-inventory\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"target\":\"test-vps-list\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"body_included\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "super-secret-password") == null);
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("provider_raw"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("audit_events"));
 }
