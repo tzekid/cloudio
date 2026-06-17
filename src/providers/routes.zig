@@ -120,6 +120,17 @@ pub const RequestBody = struct {
     }
 };
 
+pub const Response = struct {
+    status: []u8,
+    content_types: [][]u8,
+    schema_refs: [][]u8,
+
+    pub fn primarySchemaRef(self: Response) ?[]const u8 {
+        if (self.schema_refs.len == 0) return null;
+        return self.schema_refs[0];
+    }
+};
+
 pub const Route = struct {
     provider: Provider,
     tag: []u8,
@@ -129,6 +140,7 @@ pub const Route = struct {
     path_params: []RouteParam,
     query_params: []RouteParam,
     request_body: RequestBody,
+    responses: []Response,
     support: Support,
     mode: Mode,
     deprecated: bool,
@@ -161,6 +173,8 @@ pub const Route = struct {
         errdefer freeRouteParams(gpa, query_params);
         const request_body = try parseRequestBody(gpa, value);
         errdefer freeRequestBody(gpa, request_body);
+        const responses = try parseResponses(gpa, value);
+        errdefer freeResponses(gpa, responses);
 
         return .{
             .provider = provider,
@@ -171,6 +185,7 @@ pub const Route = struct {
             .path_params = path_params,
             .query_params = query_params,
             .request_body = request_body,
+            .responses = responses,
             .support = support,
             .mode = mode,
             .deprecated = deprecated,
@@ -184,6 +199,7 @@ pub const Route = struct {
         freeRouteParams(gpa, self.path_params);
         freeRouteParams(gpa, self.query_params);
         freeRequestBody(gpa, self.request_body);
+        freeResponses(gpa, self.responses);
     }
 
     pub fn isRoutable(self: Route) bool {
@@ -224,6 +240,13 @@ pub const Route = struct {
         defer gpa.free(path);
         const base_url = base_url_override orelse self.provider.baseUrl();
         return try std.fmt.allocPrint(gpa, "{s}{s}", .{ base_url, path });
+    }
+
+    pub fn findResponse(self: Route, status: []const u8) ?*const Response {
+        for (self.responses) |*response| {
+            if (std.mem.eql(u8, response.status, status)) return response;
+        }
+        return null;
     }
 };
 
@@ -490,6 +513,31 @@ fn parseRequestBody(gpa: Allocator, value: std.json.Value) !RequestBody {
     };
 }
 
+fn parseResponses(gpa: Allocator, value: std.json.Value) ![]Response {
+    const field_value = core_json.field(value, "responses") orelse return error.InvalidProviderRoute;
+    if (field_value != .array) return error.InvalidProviderRoute;
+
+    var rows = std.ArrayList(Response).empty;
+    errdefer deinitResponseList(&rows, gpa);
+    for (field_value.array.items) |item| {
+        if (item != .object) return error.InvalidProviderRoute;
+        const status = core_json.fieldString(item, "status") orelse return error.InvalidProviderRoute;
+        if (containsResponseStatus(rows.items, status)) continue;
+        const status_owned = try gpa.dupe(u8, status);
+        errdefer gpa.free(status_owned);
+        const content_types = try parseStringArray(gpa, item, "content_types");
+        errdefer freeStringArray(gpa, content_types);
+        const schema_refs = try parseStringArray(gpa, item, "schema_refs");
+        errdefer freeStringArray(gpa, schema_refs);
+        try rows.append(gpa, .{
+            .status = status_owned,
+            .content_types = content_types,
+            .schema_refs = schema_refs,
+        });
+    }
+    return try rows.toOwnedSlice(gpa);
+}
+
 fn parseStringArray(gpa: Allocator, value: std.json.Value, field_name: []const u8) ![][]u8 {
     const field_value = core_json.field(value, field_name) orelse return error.InvalidProviderRoute;
     if (field_value != .array) return error.InvalidProviderRoute;
@@ -516,6 +564,15 @@ fn freeRequestBody(gpa: Allocator, body: RequestBody) void {
     freeStringArray(gpa, body.schema_refs);
 }
 
+fn freeResponses(gpa: Allocator, responses: []Response) void {
+    for (responses) |response| {
+        gpa.free(response.status);
+        freeStringArray(gpa, response.content_types);
+        freeStringArray(gpa, response.schema_refs);
+    }
+    gpa.free(responses);
+}
+
 fn freeStringArray(gpa: Allocator, items: [][]u8) void {
     for (items) |item| gpa.free(item);
     gpa.free(items);
@@ -533,6 +590,15 @@ fn deinitRouteParamList(rows: *std.ArrayList(RouteParam), gpa: Allocator) void {
 
 fn deinitStringList(rows: *std.ArrayList([]u8), gpa: Allocator) void {
     for (rows.items) |item| gpa.free(item);
+    rows.deinit(gpa);
+}
+
+fn deinitResponseList(rows: *std.ArrayList(Response), gpa: Allocator) void {
+    for (rows.items) |response| {
+        gpa.free(response.status);
+        freeStringArray(gpa, response.content_types);
+        freeStringArray(gpa, response.schema_refs);
+    }
     rows.deinit(gpa);
 }
 
@@ -562,6 +628,13 @@ fn containsQueryParam(params: []const QueryParam, candidate: []const u8) bool {
     return false;
 }
 
+fn containsResponseStatus(responses: []const Response, candidate: []const u8) bool {
+    for (responses) |response| {
+        if (std.mem.eql(u8, response.status, candidate)) return true;
+    }
+    return false;
+}
+
 fn findParam(params: []const PathParam, name: []const u8) ?[]const u8 {
     for (params) |param| {
         if (std.mem.eql(u8, param.name, name)) return param.value;
@@ -586,6 +659,7 @@ test "loads generated route metadata for both providers" {
     try std.testing.expectEqual(Provider.hostinger, hostinger_vps.provider);
     try std.testing.expectEqual(Method.GET, hostinger_vps.method);
     try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines", hostinger_vps.path_template);
+    try std.testing.expect(hostinger_vps.responses.len > 0);
 }
 
 test "body-required GET routes are not generic read-routable" {
@@ -681,6 +755,27 @@ test "loads request body metadata from generated manifests" {
     try std.testing.expect(multipart_route.request_body.required);
     try expectString(multipart_route.request_body.content_types, "multipart/form-data");
     try std.testing.expectEqual(@as(usize, 0), multipart_route.request_body.schema_refs.len);
+}
+
+test "loads response metadata from generated manifests" {
+    const allocator = std.testing.allocator;
+
+    const cloudflare_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "accounts-list-accounts")) orelse return error.TestExpectedRoute;
+    defer cloudflare_route.deinit(allocator);
+    const cloudflare_success = cloudflare_route.findResponse("200") orelse return error.TestExpectedResponse;
+    try expectString(cloudflare_success.content_types, "application/json");
+    try expectString(cloudflare_success.schema_refs, "#/components/schemas/iam_response_collection_accounts");
+    try std.testing.expectEqualStrings("#/components/schemas/iam_response_collection_accounts", cloudflare_success.primarySchemaRef() orelse "");
+    const cloudflare_error = cloudflare_route.findResponse("4XX") orelse return error.TestExpectedResponse;
+    try expectString(cloudflare_error.schema_refs, "#/components/schemas/iam_api-response-common-failure");
+
+    const hostinger_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getVirtualMachinesV1")) orelse return error.TestExpectedRoute;
+    defer hostinger_route.deinit(allocator);
+    const hostinger_success = hostinger_route.findResponse("200") orelse return error.TestExpectedResponse;
+    try expectString(hostinger_success.content_types, "application/json");
+    try expectString(hostinger_success.schema_refs, "#/components/schemas/VPS.V1.VirtualMachine.VirtualMachineCollection");
+    const hostinger_auth_error = hostinger_route.findResponse("401") orelse return error.TestExpectedResponse;
+    try std.testing.expectEqual(@as(usize, 0), hostinger_auth_error.schema_refs.len);
 }
 
 test "renders validated query parameters for route paths and urls" {

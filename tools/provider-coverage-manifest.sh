@@ -126,6 +126,19 @@ generate_manifest() {
             }
         end;
 
+    def operation_responses($root; $operation):
+      ($operation.responses // {})
+      | to_entries
+      | sort_by(.key)
+      | map(
+          (.value | deref($root)) as $response
+          | {
+              status: .key,
+              content_types: (($response.content // {}) | keys | sort),
+              schema_refs: ([($response.content // {}) | to_entries[] | (.value.schema // null) | schema_refs[]] | unique | sort)
+            }
+        );
+
     def default_coverage($method; $deprecated; $body):
       if $deprecated then
         {
@@ -183,6 +196,7 @@ generate_manifest() {
         path_params: operation_params($root; $path_item; $operation; "path"),
         query_params: operation_params($root; $path_item; $operation; "query"),
         request_body: $body,
+        responses: operation_responses($root; $operation),
         support: $coverage.support,
         mode: $coverage.mode,
         tests: $coverage.tests,
@@ -217,6 +231,14 @@ validate_manifest() {
       (all($row.request_body.content_types[]; type == "string")) and
       ($row.request_body.schema_refs | type == "array") and
       (all($row.request_body.schema_refs[]; type == "string")) and
+      ($row.responses | type == "array") and
+      (all($row.responses[]; (
+        (.status | type == "string") and
+        (.content_types | type == "array") and
+        (all(.content_types[]; type == "string")) and
+        (.schema_refs | type == "array") and
+        (all(.schema_refs[]; type == "string"))
+      ))) and
       (["implemented", "partial", "planned", "blocked_permission", "unsafe_mutation", "deprecated", "not_applicable"] | index($row.support)) and
       (["read", "dry_run", "write", "none"] | index($row.mode)) and
       ($row.tests | type == "string") and
@@ -256,7 +278,7 @@ generate_all() {
     --argjson cloudflare_operations "$cloudflare_count" \
     --argjson hostinger_operations "$hostinger_count" \
     '{
-      schema_version: 2,
+      schema_version: 3,
       sources: {
         cloudflare: $cloudflare_url,
         hostinger: $hostinger_url

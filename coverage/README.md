@@ -16,7 +16,7 @@ zig build coverage-check
 
 `cloudio coverage` reads the checked-in generated manifests and prints local support/mode counts. `cloudio coverage tags [all|cloudflare|hostinger]` groups those counts by upstream tag so provider expansions can be reviewed by tag group. `cloudio coverage routes [all|cloudflare|hostinger] [tag-query] [--support <status>] [--mode <mode>]` lists the exact manifest routes for a provider, optional tag substring, and optional support/mode filters before implementation work begins. These commands do not fetch upstream specs. Use `zig build coverage-check` when you need to confirm those generated manifests still match the latest official OpenAPI sources.
 
-`src/providers/routes.zig` also consumes these generated JSONL manifests as the provider-neutral route metadata source. It provides lookup by operation ID or method/path template, route support/mode/deprecation state, official path/query parameter requirements, request-body requirements, path-placeholder extraction, required-query validation, and escaped path/query/URL rendering for Cloudflare and Hostinger without invoking HTTP. `src/providers/dispatch.zig` uses that metadata to execute generic `GET`/`read` calls through provider auth and to render body-aware `will_execute:false` dry-run plans for mutation routes.
+`src/providers/routes.zig` also consumes these generated JSONL manifests as the provider-neutral route metadata source. It provides lookup by operation ID or method/path template, route support/mode/deprecation state, official path/query parameter requirements, request-body requirements, response status/content/schema metadata, path-placeholder extraction, required-query validation, and escaped path/query/URL rendering for Cloudflare and Hostinger without invoking HTTP. `src/providers/dispatch.zig` uses that metadata to execute generic `GET`/`read` calls through provider auth and to render body-aware `will_execute:false` dry-run plans for mutation routes.
 
 The manifest is intentionally conservative:
 
@@ -28,6 +28,7 @@ The manifest is intentionally conservative:
 - spec/transport contradictions are marked `not_applicable` instead of left as open-ended planned work when Cloudio intentionally does not model the upstream contract
 - `path_params` and `query_params` are generated from operation/path-level OpenAPI parameters, including shared `$ref` entries under `components.parameters`
 - `request_body` is generated from inline or shared OpenAPI request bodies and records whether a body is required, accepted content types, and schema references
+- `responses` is generated from inline or shared OpenAPI responses and records status, content types, and schema references
 
 Normal `zig build test` stays offline; coverage generation and checks are explicit networked steps.
 
@@ -38,4 +39,5 @@ Override rows are validated during generation:
 - `support` and `mode` must use the allowed coverage vocabulary
 - generated `path_params` and `query_params` must be arrays of `{name, required}` objects
 - generated `request_body` must be an object with `required`, `content_types`, and `schema_refs`
+- generated `responses` must be arrays of `{status, content_types, schema_refs}` objects
 - every override must still match an operation in the latest official OpenAPI spec
