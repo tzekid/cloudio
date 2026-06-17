@@ -136,6 +136,8 @@ fn usage() void {
         \\  cloudio cloudflare health-checks endpoint list <account-id>|endpoint show <account-id> <healthcheck-id>
         \\  cloudio cloudflare health-checks zone list <zone-id>|zone show|preview <zone-id> <healthcheck-id>
         \\  cloudio cloudflare health-checks smart-shield list <zone-id>|smart-shield show <zone-id> <healthcheck-id>
+        \\  cloudio cloudflare resource-tags account tags|keys|resources|values <account-id> [resource-type] [resource-id]
+        \\  cloudio cloudflare resource-tags zone tags <zone-id> [resource-type] [resource-id]
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>
@@ -164,6 +166,8 @@ fn usage() void {
         \\  cloudio cloudflare dry-run health-checks zone create <zone-id>|update|patch|delete <zone-id> <healthcheck-id>
         \\  cloudio cloudflare dry-run health-checks preview create <zone-id>|delete <zone-id> <preview-id>
         \\  cloudio cloudflare dry-run health-checks smart-shield create <zone-id>|update|patch|delete <zone-id> <healthcheck-id>
+        \\  cloudio cloudflare dry-run resource-tags account set|delete <account-id>
+        \\  cloudio cloudflare dry-run resource-tags zone set|delete <zone-id>
         \\  cloudio cloudflare dry-run token create
         \\  cloudio cloudflare dry-run token delete|update|roll <token-id>
         \\  cloudio cloudflare dry-run account create|batch-move

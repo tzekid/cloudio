@@ -38,6 +38,12 @@ pub const LoadBalancingMutationEndpoint = collector_cloudflare.LoadBalancingMuta
 pub const LoadBalancingMutationResource = collector_cloudflare.LoadBalancingMutationResource;
 pub const LoadBalancingUserReadEndpoint = collector_cloudflare.LoadBalancingUserReadEndpoint;
 pub const LoadBalancingZoneReadEndpoint = collector_cloudflare.LoadBalancingZoneReadEndpoint;
+pub const ResourceTaggingAccountReadArgs = collector_cloudflare.ResourceTaggingAccountReadArgs;
+pub const ResourceTaggingAccountReadEndpoint = collector_cloudflare.ResourceTaggingAccountReadEndpoint;
+pub const ResourceTaggingMutationArgs = collector_cloudflare.ResourceTaggingMutationArgs;
+pub const ResourceTaggingMutationEndpoint = collector_cloudflare.ResourceTaggingMutationEndpoint;
+pub const ResourceTaggingMutationResource = collector_cloudflare.ResourceTaggingMutationResource;
+pub const ResourceTaggingZoneReadArgs = collector_cloudflare.ResourceTaggingZoneReadArgs;
 pub const SecondaryDnsAccountMutationArgs = collector_cloudflare.SecondaryDnsAccountMutationArgs;
 pub const SecondaryDnsAccountMutationEndpoint = collector_cloudflare.SecondaryDnsAccountMutationEndpoint;
 pub const SecondaryDnsAccountResource = collector_cloudflare.SecondaryDnsAccountResource;
@@ -169,6 +175,14 @@ pub fn collectSmartShieldHealthCheck(ctx: Context, zone_id: []const u8, endpoint
     return try collector_cloudflare.collectSmartShieldHealthCheck(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, healthcheck_id, true);
 }
 
+pub fn collectResourceTaggingAccountEndpoint(ctx: Context, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) !Output {
+    return try collector_cloudflare.collectResourceTaggingAccountEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, args, true);
+}
+
+pub fn collectResourceTaggingZoneTags(ctx: Context, zone_id: []const u8, args: ResourceTaggingZoneReadArgs) !Output {
+    return try collector_cloudflare.collectResourceTaggingZoneTags(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, args, true);
+}
+
 pub fn collectIdentityEndpoint(ctx: Context, endpoint: IdentityEndpoint) !Output {
     return try collector_cloudflare.collectIdentityEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, endpoint, true);
 }
@@ -283,6 +297,10 @@ pub fn planLoadBalancingMutation(ctx: Context, endpoint: LoadBalancingMutationEn
 
 pub fn planHealthCheckMutation(ctx: Context, endpoint: HealthCheckMutationEndpoint, args: HealthCheckMutationArgs) !Output {
     return .{ .text = try provider_cloudflare.healthCheckMutationPlanJson(ctx.gpa, endpoint, args) };
+}
+
+pub fn planResourceTaggingMutation(ctx: Context, endpoint: ResourceTaggingMutationEndpoint, args: ResourceTaggingMutationArgs) !Output {
+    return .{ .text = try provider_cloudflare.resourceTaggingMutationPlanJson(ctx.gpa, endpoint, args) };
 }
 
 pub fn collectZoneSetting(ctx: Context, domain: []const u8, setting_id: []const u8) !Output {

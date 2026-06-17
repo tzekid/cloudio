@@ -67,6 +67,10 @@ zig build run -- cloudflare health-checks endpoint show <account-id> <healthchec
 zig build run -- cloudflare health-checks zone list <zone-id>
 zig build run -- cloudflare health-checks zone preview <zone-id> <preview-id>
 zig build run -- cloudflare health-checks smart-shield list <zone-id>
+zig build run -- cloudflare resource-tags account keys <account-id>
+zig build run -- cloudflare resource-tags account resources <account-id> zone
+zig build run -- cloudflare resource-tags account values <account-id> managed-by
+zig build run -- cloudflare resource-tags zone tags <zone-id> zone <zone-id>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru
@@ -103,6 +107,8 @@ zig build run -- cloudflare dry-run health-checks endpoint create <account-id>
 zig build run -- cloudflare dry-run health-checks zone patch <zone-id> <healthcheck-id>
 zig build run -- cloudflare dry-run health-checks preview delete <zone-id> <preview-id>
 zig build run -- cloudflare dry-run health-checks smart-shield update <zone-id> <healthcheck-id>
+zig build run -- cloudflare dry-run resource-tags account set <account-id>
+zig build run -- cloudflare dry-run resource-tags zone delete <zone-id>
 zig build run -- cloudflare dry-run token create
 zig build run -- cloudflare dry-run token roll <token-id>
 zig build run -- cloudflare dry-run account create

@@ -46,6 +46,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandLoadBalancing(ctx, args);
     } else if (std.mem.eql(u8, sub, "health-checks") or std.mem.eql(u8, sub, "health")) {
         try commandHealthChecks(ctx, args);
+    } else if (std.mem.eql(u8, sub, "resource-tags") or std.mem.eql(u8, sub, "tags")) {
+        try commandResourceTags(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -83,6 +85,7 @@ fn commandDryRun(ctx: Context, args: []const []const u8) !void {
     if (std.mem.eql(u8, args[1], "dns-settings")) return try commandDryRunDnsSettings(ctx, args);
     if (std.mem.eql(u8, args[1], "load-balancing") or std.mem.eql(u8, args[1], "lb")) return try commandDryRunLoadBalancing(ctx, args);
     if (std.mem.eql(u8, args[1], "health-checks") or std.mem.eql(u8, args[1], "health")) return try commandDryRunHealthChecks(ctx, args);
+    if (std.mem.eql(u8, args[1], "resource-tags") or std.mem.eql(u8, args[1], "tags")) return try commandDryRunResourceTags(ctx, args);
     std.debug.print("unknown cloudflare dry-run target: {s}\n", .{args[1]});
 }
 
@@ -442,6 +445,26 @@ fn commandDryRunHealthChecks(ctx: Context, args: []const []const u8) !void {
     }));
 }
 
+fn commandDryRunResourceTags(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 5) {
+        std.debug.print("scope, operation, and id required for dry-run resource-tags\n", .{});
+        return;
+    }
+    const resource = app_cloudflare.ResourceTaggingMutationResource.parse(args[2]) orelse {
+        std.debug.print("unknown resource-tags dry-run scope: {s}\n", .{args[2]});
+        return;
+    };
+    const endpoint = app_cloudflare.ResourceTaggingMutationEndpoint.parse(args[3]) orelse {
+        std.debug.print("unknown resource-tags dry-run operation: {s}\n", .{args[3]});
+        return;
+    };
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planResourceTaggingMutation(appContext(ctx), endpoint, .{
+        .resource = resource,
+        .account_id = if (resource.usesAccountId()) args[4] else null,
+        .zone_id = if (resource.usesAccountId()) null else args[4],
+    }));
+}
+
 fn commandDns(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1) {
         cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
@@ -614,6 +637,56 @@ fn commandHealthChecks(ctx: Context, args: []const []const u8) !void {
         return;
     }
     std.debug.print("unknown health-checks scope: {s}\n", .{args[1]});
+}
+
+fn commandResourceTags(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("resource-tags account|zone command required\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "account")) {
+        const endpoint = app_cloudflare.ResourceTaggingAccountReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown resource-tags account command: {s}\n", .{args[2]});
+            return;
+        };
+        if (args.len < 4) {
+            std.debug.print("account id required for resource-tags account {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        if (endpoint.requiresTagKey() and args.len < 5) {
+            std.debug.print("tag key required for resource-tags account {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        const read_args: app_cloudflare.ResourceTaggingAccountReadArgs = switch (endpoint) {
+            .tags => .{
+                .resource_type = if (args.len > 4) args[4] else null,
+                .resource_id = if (args.len > 5) args[5] else null,
+                .worker_id = if (args.len > 6) args[6] else null,
+            },
+            .keys => .{},
+            .resources => .{ .type_filter = if (args.len > 4) args[4] else null },
+            .values => .{ .tag_key = args[4] },
+        };
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectResourceTaggingAccountEndpoint(appContext(ctx), args[3], endpoint, read_args));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "zone")) {
+        if (args.len < 4) {
+            std.debug.print("zone id required for resource-tags zone tags\n", .{});
+            return;
+        }
+        if (!std.mem.eql(u8, args[2], "tags") and !std.mem.eql(u8, args[2], "get")) {
+            std.debug.print("unknown resource-tags zone command: {s}\n", .{args[2]});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectResourceTaggingZoneTags(appContext(ctx), args[3], .{
+            .resource_type = if (args.len > 4) args[4] else null,
+            .resource_id = if (args.len > 5) args[5] else null,
+            .access_application_id = if (args.len > 6) args[6] else null,
+        }));
+        return;
+    }
+    std.debug.print("unknown resource-tags scope: {s}\n", .{args[1]});
 }
 
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {

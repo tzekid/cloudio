@@ -194,6 +194,18 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getResourceTaggingAccountEndpoint(self: Client, io: Io, gpa: Allocator, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) !net_http.Response {
+        const url = try resourceTaggingAccountReadUrl(gpa, self.base_url_override, account_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getResourceTaggingZoneTags(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, args: ResourceTaggingZoneReadArgs) !net_http.Response {
+        const url = try resourceTaggingZoneReadUrl(gpa, self.base_url_override, zone_id, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -2066,6 +2078,177 @@ pub const HealthCheckMutationArgs = struct {
     account_id: ?[]const u8 = null,
     zone_id: ?[]const u8 = null,
     healthcheck_id: ?[]const u8 = null,
+};
+
+pub const ResourceTaggingAccountReadEndpoint = enum {
+    tags,
+    keys,
+    resources,
+    values,
+
+    pub fn parse(value: []const u8) ?ResourceTaggingAccountReadEndpoint {
+        if (std.mem.eql(u8, value, "tags") or std.mem.eql(u8, value, "get")) return .tags;
+        if (std.mem.eql(u8, value, "keys") or std.mem.eql(u8, value, "tag-keys")) return .keys;
+        if (std.mem.eql(u8, value, "resources") or std.mem.eql(u8, value, "tagged-resources")) return .resources;
+        if (std.mem.eql(u8, value, "values") or std.mem.eql(u8, value, "tag-values")) return .values;
+        return null;
+    }
+
+    pub fn commandName(self: ResourceTaggingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .tags => "tags",
+            .keys => "keys",
+            .resources => "resources",
+            .values => "values",
+        };
+    }
+
+    pub fn label(self: ResourceTaggingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .tags => "resource-tags-account",
+            .keys => "resource-tags-keys",
+            .resources => "resource-tags-resources",
+            .values => "resource-tags-values",
+        };
+    }
+
+    pub fn group(self: ResourceTaggingAccountReadEndpoint) []const u8 {
+        _ = self;
+        return "Resource Tagging";
+    }
+
+    pub fn operationId(self: ResourceTaggingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .tags => "tags-get",
+            .keys => "tags-list-keys",
+            .resources => "tags-list",
+            .values => "tags-list-values",
+        };
+    }
+
+    pub fn summary(self: ResourceTaggingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .tags => "Get tags for an account-level resource",
+            .keys => "List tag keys",
+            .resources => "List tagged resources",
+            .values => "List tag values",
+        };
+    }
+
+    pub fn requiresTagKey(self: ResourceTaggingAccountReadEndpoint) bool {
+        return self == .values;
+    }
+};
+
+pub const ResourceTaggingAccountReadArgs = struct {
+    tag_key: ?[]const u8 = null,
+    resource_id: ?[]const u8 = null,
+    resource_type: ?[]const u8 = null,
+    worker_id: ?[]const u8 = null,
+    type_filter: ?[]const u8 = null,
+};
+
+pub const ResourceTaggingZoneReadArgs = struct {
+    resource_id: ?[]const u8 = null,
+    resource_type: ?[]const u8 = null,
+    access_application_id: ?[]const u8 = null,
+};
+
+pub const ResourceTaggingMutationResource = enum {
+    account,
+    zone,
+
+    pub fn parse(value: []const u8) ?ResourceTaggingMutationResource {
+        if (std.mem.eql(u8, value, "account")) return .account;
+        if (std.mem.eql(u8, value, "zone")) return .zone;
+        return null;
+    }
+
+    pub fn commandName(self: ResourceTaggingMutationResource) []const u8 {
+        return switch (self) {
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn group(self: ResourceTaggingMutationResource) []const u8 {
+        _ = self;
+        return "Resource Tagging";
+    }
+
+    pub fn usesAccountId(self: ResourceTaggingMutationResource) bool {
+        return self == .account;
+    }
+};
+
+pub const ResourceTaggingMutationEndpoint = enum {
+    set,
+    delete_resource,
+
+    pub fn parse(value: []const u8) ?ResourceTaggingMutationEndpoint {
+        if (std.mem.eql(u8, value, "set") or std.mem.eql(u8, value, "put")) return .set;
+        if (std.mem.eql(u8, value, "delete") or std.mem.eql(u8, value, "remove")) return .delete_resource;
+        return null;
+    }
+
+    pub fn commandName(self: ResourceTaggingMutationEndpoint) []const u8 {
+        return switch (self) {
+            .set => "set",
+            .delete_resource => "delete",
+        };
+    }
+
+    pub fn method(self: ResourceTaggingMutationEndpoint) []const u8 {
+        return switch (self) {
+            .set => "PUT",
+            .delete_resource => "DELETE",
+        };
+    }
+
+    pub fn operationId(self: ResourceTaggingMutationEndpoint, resource: ResourceTaggingMutationResource) []const u8 {
+        return switch (resource) {
+            .account => switch (self) {
+                .set => "tags-set",
+                .delete_resource => "tags-delete",
+            },
+            .zone => switch (self) {
+                .set => "tags-zone-set",
+                .delete_resource => "tags-zone-delete",
+            },
+        };
+    }
+
+    pub fn summary(self: ResourceTaggingMutationEndpoint, resource: ResourceTaggingMutationResource) []const u8 {
+        return switch (resource) {
+            .account => switch (self) {
+                .set => "Set tags for an account-level resource",
+                .delete_resource => "Delete tags from an account-level resource",
+            },
+            .zone => switch (self) {
+                .set => "Set tags for a zone-level resource",
+                .delete_resource => "Delete tags from a zone-level resource",
+            },
+        };
+    }
+
+    pub fn requestBodySchemaRef(self: ResourceTaggingMutationEndpoint, resource: ResourceTaggingMutationResource) []const u8 {
+        return switch (resource) {
+            .account => switch (self) {
+                .set => "#/components/schemas/resource-tagging_set_tags_request_account_level",
+                .delete_resource => "#/components/schemas/resource-tagging_delete_tags_request_account_level",
+            },
+            .zone => switch (self) {
+                .set => "#/components/schemas/resource-tagging_set_tags_request_zone_level",
+                .delete_resource => "#/components/schemas/resource-tagging_delete_tags_request_zone_level",
+            },
+        };
+    }
+};
+
+pub const ResourceTaggingMutationArgs = struct {
+    resource: ResourceTaggingMutationResource,
+    account_id: ?[]const u8 = null,
+    zone_id: ?[]const u8 = null,
 };
 
 pub const DnsRecordReadEndpoint = enum {
@@ -3946,6 +4129,92 @@ pub fn healthCheckMutationPlanJson(gpa: Allocator, endpoint: HealthCheckMutation
     });
 }
 
+pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
+    const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn resourceTaggingAccountBasePath(gpa: Allocator, account_id: []const u8) ![]u8 {
+    const escaped_account_id = try pathEscape(gpa, account_id);
+    defer gpa.free(escaped_account_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/tags", .{ accounts_path, escaped_account_id });
+}
+
+pub fn resourceTaggingAccountReadPath(gpa: Allocator, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
+    const base_path = try resourceTaggingAccountBasePath(gpa, account_id);
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .tags => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "resource_id", .value = args.resource_id },
+            .{ .name = "resource_type", .value = args.resource_type },
+            .{ .name = "worker_id", .value = args.worker_id },
+        }),
+        .keys => try std.fmt.allocPrint(gpa, "{s}/keys", .{base_path}),
+        .resources => blk: {
+            const resources_path = try std.fmt.allocPrint(gpa, "{s}/resources", .{base_path});
+            defer gpa.free(resources_path);
+            break :blk try appendQuery(gpa, resources_path, &[_]QueryParam{.{ .name = "type", .value = args.type_filter }});
+        },
+        .values => blk: {
+            const tag_key = args.tag_key orelse return error.MissingCloudflareTagKey;
+            const escaped_tag_key = try pathEscape(gpa, tag_key);
+            defer gpa.free(escaped_tag_key);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/values/{s}", .{ base_path, escaped_tag_key });
+        },
+    };
+}
+
+pub fn resourceTaggingZoneReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, args: ResourceTaggingZoneReadArgs) ![]u8 {
+    const path = try resourceTaggingZoneReadPath(gpa, zone_id, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn resourceTaggingZoneBasePath(gpa: Allocator, zone_id: []const u8) ![]u8 {
+    const escaped_zone_id = try pathEscape(gpa, zone_id);
+    defer gpa.free(escaped_zone_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/tags", .{ zones_path, escaped_zone_id });
+}
+
+pub fn resourceTaggingZoneReadPath(gpa: Allocator, zone_id: []const u8, args: ResourceTaggingZoneReadArgs) ![]u8 {
+    const base_path = try resourceTaggingZoneBasePath(gpa, zone_id);
+    defer gpa.free(base_path);
+    return try appendQuery(gpa, base_path, &[_]QueryParam{
+        .{ .name = "resource_id", .value = args.resource_id },
+        .{ .name = "resource_type", .value = args.resource_type },
+        .{ .name = "access_application_id", .value = args.access_application_id },
+    });
+}
+
+pub fn resourceTaggingMutationPath(gpa: Allocator, endpoint: ResourceTaggingMutationEndpoint, args: ResourceTaggingMutationArgs) ![]u8 {
+    _ = endpoint;
+    return switch (args.resource) {
+        .account => blk: {
+            const account_id = args.account_id orelse return error.MissingCloudflareAccountId;
+            break :blk try resourceTaggingAccountBasePath(gpa, account_id);
+        },
+        .zone => blk: {
+            const zone_id = args.zone_id orelse return error.MissingCloudflareZoneId;
+            break :blk try resourceTaggingZoneBasePath(gpa, zone_id);
+        },
+    };
+}
+
+pub fn resourceTaggingMutationPlanJson(gpa: Allocator, endpoint: ResourceTaggingMutationEndpoint, args: ResourceTaggingMutationArgs) ![]u8 {
+    const path = try resourceTaggingMutationPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try dryRunPlanJson(gpa, .{
+        .group = args.resource.group(),
+        .operation = endpoint.commandName(),
+        .operation_id = endpoint.operationId(args.resource),
+        .summary = endpoint.summary(args.resource),
+        .method = endpoint.method(),
+        .path = path,
+        .request_body_schema = endpoint.requestBodySchemaRef(args.resource),
+    });
+}
+
 pub fn accountTokenEndpointUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: AccountTokenEndpoint) ![]u8 {
     const path = try accountTokenEndpointPath(gpa, account_id, endpoint);
     defer gpa.free(path);
@@ -4400,6 +4669,29 @@ fn writeJsonString(writer: anytype, value: []const u8) !void {
         }
     }
     try writer.writeByte('"');
+}
+
+const QueryParam = struct {
+    name: []const u8,
+    value: ?[]const u8,
+};
+
+fn appendQuery(gpa: Allocator, base_path: []const u8, params: []const QueryParam) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    try out.writer.writeAll(base_path);
+    var first = true;
+    for (params) |param| {
+        const value = param.value orelse continue;
+        try out.writer.writeByte(if (first) '?' else '&');
+        first = false;
+        try out.writer.writeAll(param.name);
+        try out.writer.writeByte('=');
+        const escaped = try pathEscape(gpa, value);
+        defer gpa.free(escaped);
+        try out.writer.writeAll(escaped);
+    }
+    return try out.toOwnedSlice();
 }
 
 pub fn pathEscape(gpa: Allocator, value: []const u8) ![]u8 {
@@ -5126,6 +5418,77 @@ test "builds Cloudflare health-check paths and dry-run plans" {
     try std.testing.expectError(error.MissingCloudflareZoneId, healthCheckMutationPlanJson(allocator, .create, .{ .resource = .zone }));
     try std.testing.expectError(error.MissingCloudflareHealthCheckId, healthCheckMutationPlanJson(allocator, .update, .{ .resource = .zone, .zone_id = "zone/1" }));
     try std.testing.expectError(error.UnsupportedCloudflareHealthCheckMutation, healthCheckMutationPlanJson(allocator, .patch, .{ .resource = .endpoint, .account_id = "acct/1", .healthcheck_id = "check/1" }));
+}
+
+test "cloudflare resource tagging endpoints map to official operation metadata" {
+    try std.testing.expectEqual(ResourceTaggingAccountReadEndpoint.tags, ResourceTaggingAccountReadEndpoint.parse("tags").?);
+    try std.testing.expectEqual(ResourceTaggingAccountReadEndpoint.keys, ResourceTaggingAccountReadEndpoint.parse("tag-keys").?);
+    try std.testing.expectEqual(ResourceTaggingAccountReadEndpoint.resources, ResourceTaggingAccountReadEndpoint.parse("tagged-resources").?);
+    try std.testing.expectEqual(ResourceTaggingAccountReadEndpoint.values, ResourceTaggingAccountReadEndpoint.parse("tag-values").?);
+    try std.testing.expectEqualStrings("Resource Tagging", ResourceTaggingAccountReadEndpoint.tags.group());
+    try std.testing.expectEqualStrings("tags-get", ResourceTaggingAccountReadEndpoint.tags.operationId());
+    try std.testing.expectEqualStrings("tags-list-keys", ResourceTaggingAccountReadEndpoint.keys.operationId());
+    try std.testing.expectEqualStrings("tags-list", ResourceTaggingAccountReadEndpoint.resources.operationId());
+    try std.testing.expectEqualStrings("tags-list-values", ResourceTaggingAccountReadEndpoint.values.operationId());
+    try std.testing.expect(ResourceTaggingAccountReadEndpoint.values.requiresTagKey());
+    try std.testing.expect(!ResourceTaggingAccountReadEndpoint.keys.requiresTagKey());
+
+    try std.testing.expectEqual(ResourceTaggingMutationResource.account, ResourceTaggingMutationResource.parse("account").?);
+    try std.testing.expectEqual(ResourceTaggingMutationResource.zone, ResourceTaggingMutationResource.parse("zone").?);
+    try std.testing.expectEqual(ResourceTaggingMutationEndpoint.set, ResourceTaggingMutationEndpoint.parse("put").?);
+    try std.testing.expectEqual(ResourceTaggingMutationEndpoint.delete_resource, ResourceTaggingMutationEndpoint.parse("remove").?);
+    try std.testing.expectEqualStrings("PUT", ResourceTaggingMutationEndpoint.set.method());
+    try std.testing.expectEqualStrings("DELETE", ResourceTaggingMutationEndpoint.delete_resource.method());
+    try std.testing.expectEqualStrings("tags-set", ResourceTaggingMutationEndpoint.set.operationId(.account));
+    try std.testing.expectEqualStrings("tags-zone-delete", ResourceTaggingMutationEndpoint.delete_resource.operationId(.zone));
+    try std.testing.expectEqualStrings("#/components/schemas/resource-tagging_set_tags_request_account_level", ResourceTaggingMutationEndpoint.set.requestBodySchemaRef(.account));
+    try std.testing.expectEqualStrings("#/components/schemas/resource-tagging_delete_tags_request_zone_level", ResourceTaggingMutationEndpoint.delete_resource.requestBodySchemaRef(.zone));
+}
+
+test "builds Cloudflare resource tagging paths and dry-run plans" {
+    const allocator = std.testing.allocator;
+
+    const account_tags = try resourceTaggingAccountReadUrl(allocator, base_url, "acct/1", .tags, .{
+        .resource_id = "worker/1",
+        .resource_type = "worker",
+    });
+    defer allocator.free(account_tags);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/tags?resource_id=worker%2F1&resource_type=worker", account_tags);
+
+    const account_resources = try resourceTaggingAccountReadPath(allocator, "acct/1", .resources, .{ .type_filter = "zone" });
+    defer allocator.free(account_resources);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/tags/resources?type=zone", account_resources);
+
+    const account_values = try resourceTaggingAccountReadPath(allocator, "acct/1", .values, .{ .tag_key = "team/name" });
+    defer allocator.free(account_values);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/tags/values/team%2Fname", account_values);
+
+    const zone_tags = try resourceTaggingZoneReadPath(allocator, "zone/1", .{
+        .resource_id = "zone/1",
+        .resource_type = "zone",
+        .access_application_id = "app 1",
+    });
+    defer allocator.free(zone_tags);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/tags?resource_id=zone%2F1&resource_type=zone&access_application_id=app%201", zone_tags);
+
+    const account_set = try resourceTaggingMutationPlanJson(allocator, .set, .{ .resource = .account, .account_id = "acct/1" });
+    defer allocator.free(account_set);
+    try std.testing.expect(std.mem.indexOf(u8, account_set, "\"operation_id\":\"tags-set\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_set, "\"method\":\"PUT\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_set, "\"path\":\"/accounts/acct%2F1/tags\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_set, "\"request_body_schema\":\"#/components/schemas/resource-tagging_set_tags_request_account_level\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_set, "\"will_execute\":false") != null);
+
+    const zone_delete = try resourceTaggingMutationPlanJson(allocator, .delete_resource, .{ .resource = .zone, .zone_id = "zone/1" });
+    defer allocator.free(zone_delete);
+    try std.testing.expect(std.mem.indexOf(u8, zone_delete, "\"operation_id\":\"tags-zone-delete\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, zone_delete, "\"method\":\"DELETE\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, zone_delete, "\"path\":\"/zones/zone%2F1/tags\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, zone_delete, "\"request_body_schema\":\"#/components/schemas/resource-tagging_delete_tags_request_zone_level\"") != null);
+
+    try std.testing.expectError(error.MissingCloudflareTagKey, resourceTaggingAccountReadPath(allocator, "acct/1", .values, .{}));
+    try std.testing.expectError(error.MissingCloudflareAccountId, resourceTaggingMutationPlanJson(allocator, .set, .{ .resource = .account }));
+    try std.testing.expectError(error.MissingCloudflareZoneId, resourceTaggingMutationPlanJson(allocator, .delete_resource, .{ .resource = .zone }));
 }
 
 test "cloudflare dns record endpoints map to official operation metadata" {

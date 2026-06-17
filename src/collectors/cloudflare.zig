@@ -49,6 +49,12 @@ pub const SecondaryDnsAccountResource = provider_cloudflare.SecondaryDnsAccountR
 pub const SecondaryDnsZoneMutationArgs = provider_cloudflare.SecondaryDnsZoneMutationArgs;
 pub const SecondaryDnsZoneMutationEndpoint = provider_cloudflare.SecondaryDnsZoneMutationEndpoint;
 pub const SecondaryDnsZoneReadEndpoint = provider_cloudflare.SecondaryDnsZoneReadEndpoint;
+pub const ResourceTaggingAccountReadArgs = provider_cloudflare.ResourceTaggingAccountReadArgs;
+pub const ResourceTaggingAccountReadEndpoint = provider_cloudflare.ResourceTaggingAccountReadEndpoint;
+pub const ResourceTaggingMutationArgs = provider_cloudflare.ResourceTaggingMutationArgs;
+pub const ResourceTaggingMutationEndpoint = provider_cloudflare.ResourceTaggingMutationEndpoint;
+pub const ResourceTaggingMutationResource = provider_cloudflare.ResourceTaggingMutationResource;
+pub const ResourceTaggingZoneReadArgs = provider_cloudflare.ResourceTaggingZoneReadArgs;
 pub const DnsRecordMutationArgs = provider_cloudflare.DnsRecordMutationArgs;
 pub const DnsRecordMutationEndpoint = provider_cloudflare.DnsRecordMutationEndpoint;
 pub const DnsRecordReadEndpoint = provider_cloudflare.DnsRecordReadEndpoint;
@@ -124,6 +130,7 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     try collectDnsFirewallForAccounts(gpa, io, client, db, redacted);
     try collectLoadBalancingAccountForAccounts(gpa, io, client, db, redacted);
     try collectEndpointHealthChecksForAccounts(gpa, io, client, db, redacted);
+    try collectResourceTaggingForAccounts(gpa, io, client, db, redacted);
     try collectAccountTokenEndpointsForAccounts(gpa, io, auth, client, db, redacted);
     try collectAccountDnsSettings(gpa, io, client, db, redacted);
     try collectAccountDnsRecordUsageForAccounts(gpa, io, client, db, redacted);
@@ -623,6 +630,53 @@ pub fn collectSmartShieldHealthCheck(io: Io, gpa: Allocator, auth: Auth, db: *Db
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectResourceTaggingAccountEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = try resourceTaggingAccountTarget(gpa, account_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getResourceTaggingAccountEndpoint(io, gpa, account_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectResourceTaggingZoneTags(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, args: ResourceTaggingZoneReadArgs, capture_output: bool) !Output {
+    const target = try resourceTaggingZoneTarget(gpa, zone_id, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "resource-tags-zone", target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getResourceTaggingZoneTags(io, gpa, zone_id, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.resourceTaggingZoneReadPath(gpa, zone_id, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "resource-tags-zone",
+        .target = target,
+        .summary_label = "Get tags for a zone-level resource",
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: IdentityEndpoint, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const client = clientFromAuth(auth) catch {
@@ -925,6 +979,34 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             });
             defer gpa.free(smart_redacted);
             try collectSmartShieldHealthCheckDetailsForList(gpa, io, client, db, zone_id, domain, smart_redacted);
+        }
+
+        zone_tags_refresh: {
+            const tag_body = client.getResourceTaggingZoneTags(io, gpa, zone_id, .{
+                .resource_id = zone_id,
+                .resource_type = "zone",
+            }) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "resource-tags-zone: {s}", .{@errorName(err)});
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", "resource-tags-zone", domain, "error", error_summary, null, null);
+                break :zone_tags_refresh;
+            };
+            defer tag_body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.resourceTaggingZoneReadPath(gpa, zone_id, .{
+                .resource_id = zone_id,
+                .resource_type = "zone",
+            });
+            defer gpa.free(endpoint_path);
+            const tag_redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = "resource-tags-zone",
+                .target = domain,
+                .summary_label = "Get tags for a zone-level resource",
+                .endpoint = endpoint_path,
+                .status = tag_body.status,
+                .body = tag_body.body,
+            });
+            defer gpa.free(tag_redacted);
         }
     }
 
@@ -1627,6 +1709,41 @@ fn collectEndpointHealthCheckSnapshot(gpa: Allocator, io: Io, client: provider_c
     });
 }
 
+fn collectResourceTaggingForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const endpoints = [_]ResourceTaggingAccountReadEndpoint{ .keys, .resources };
+    for (rows.items) |row| {
+        for (endpoints) |endpoint| {
+            const redacted = collectResourceTaggingAccountSnapshot(gpa, io, client, db, row.id, endpoint, .{}) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint.label(), row.id, "error", error_summary, null, null);
+                continue;
+            };
+            defer gpa.free(redacted);
+        }
+    }
+}
+
+fn collectResourceTaggingAccountSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
+    const body = try client.getResourceTaggingAccountEndpoint(io, gpa, account_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try resourceTaggingAccountTarget(gpa, account_id, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
 fn collectZoneHealthCheckDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, list_body: []const u8) !void {
     var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
     defer rows.deinit(gpa);
@@ -1847,6 +1964,28 @@ fn firstLine(value: []const u8) []const u8 {
 
 fn settingTarget(gpa: Allocator, domain: []const u8, setting_id: []const u8) ![]u8 {
     return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ domain, setting_id });
+}
+
+fn resourceTaggingAccountTarget(gpa: Allocator, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
+    return switch (endpoint) {
+        .tags => if (args.resource_type) |resource_type|
+            if (args.resource_id) |resource_id|
+                try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ account_id, resource_type, resource_id })
+            else
+                try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, resource_type })
+        else
+            try gpa.dupe(u8, account_id),
+        .keys, .resources => try gpa.dupe(u8, account_id),
+        .values => if (args.tag_key) |tag_key| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, tag_key }) else try gpa.dupe(u8, account_id),
+    };
+}
+
+fn resourceTaggingZoneTarget(gpa: Allocator, zone_id: []const u8, args: ResourceTaggingZoneReadArgs) ![]u8 {
+    if (args.resource_type) |resource_type| {
+        if (args.resource_id) |resource_id| return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ zone_id, resource_type, resource_id });
+        return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zone_id, resource_type });
+    }
+    return try gpa.dupe(u8, zone_id);
 }
 
 test "persists Cloudflare account, zone, and DNS rows" {
