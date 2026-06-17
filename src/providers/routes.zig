@@ -262,6 +262,23 @@ pub const Route = struct {
         }
         return null;
     }
+
+    pub fn findResponseForStatus(self: Route, status: std.http.Status) ?*const Response {
+        return self.findResponseForStatusCode(@intFromEnum(status));
+    }
+
+    pub fn findResponseForStatusCode(self: Route, status_code: u16) ?*const Response {
+        for (self.responses) |*response| {
+            if (responseStatusExact(response.status, status_code)) return response;
+        }
+        for (self.responses) |*response| {
+            if (responseStatusFamily(response.status, status_code)) return response;
+        }
+        for (self.responses) |*response| {
+            if (responseStatusDefault(response.status)) return response;
+        }
+        return null;
+    }
 };
 
 pub const RouteSet = struct {
@@ -658,6 +675,23 @@ fn containsResponseStatus(responses: []const Response, candidate: []const u8) bo
     return false;
 }
 
+fn responseStatusExact(status: []const u8, status_code: u16) bool {
+    if (status.len != 3) return false;
+    const parsed = std.fmt.parseInt(u16, status, 10) catch return false;
+    return parsed == status_code;
+}
+
+fn responseStatusFamily(status: []const u8, status_code: u16) bool {
+    if (status.len != 3) return false;
+    if (!std.ascii.isDigit(status[0])) return false;
+    if (std.ascii.toUpper(status[1]) != 'X' or std.ascii.toUpper(status[2]) != 'X') return false;
+    return status_code / 100 == status[0] - '0';
+}
+
+fn responseStatusDefault(status: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(status, "default");
+}
+
 fn findParam(params: []const PathParam, name: []const u8) ?[]const u8 {
     for (params) |param| {
         if (std.mem.eql(u8, param.name, name)) return param.value;
@@ -848,6 +882,41 @@ test "loads response metadata from generated manifests" {
     try expectString(hostinger_success.schema_refs, "#/components/schemas/VPS.V1.VirtualMachine.VirtualMachineCollection");
     const hostinger_auth_error = hostinger_route.findResponse("401") orelse return error.TestExpectedResponse;
     try std.testing.expectEqual(@as(usize, 0), hostinger_auth_error.schema_refs.len);
+}
+
+test "matches generated response metadata by HTTP status code" {
+    const allocator = std.testing.allocator;
+
+    const cloudflare_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "accounts-list-accounts")) orelse return error.TestExpectedRoute;
+    defer cloudflare_route.deinit(allocator);
+    const exact_success = cloudflare_route.findResponseForStatus(.ok) orelse return error.TestExpectedResponse;
+    try std.testing.expectEqualStrings("200", exact_success.status);
+    const family_error = cloudflare_route.findResponseForStatus(.forbidden) orelse return error.TestExpectedResponse;
+    try std.testing.expectEqualStrings("4XX", family_error.status);
+    try std.testing.expect(cloudflare_route.findResponseForStatus(.internal_server_error) == null);
+
+    const lower_family_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "spectrum-analytics-(-summary)-get-analytics-summary")) orelse return error.TestExpectedRoute;
+    defer lower_family_route.deinit(allocator);
+    const lower_family_error = lower_family_route.findResponseForStatus(.unprocessable_entity) orelse return error.TestExpectedResponse;
+    try std.testing.expectEqualStrings("4xx", lower_family_error.status);
+
+    const five_family_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "origin-cloud-regions-batch-delete")) orelse return error.TestExpectedRoute;
+    defer five_family_route.deinit(allocator);
+    const five_family_error = five_family_route.findResponseForStatus(.bad_gateway) orelse return error.TestExpectedResponse;
+    try std.testing.expectEqualStrings("5XX", five_family_error.status);
+
+    const default_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "magic-pcap-collection-download-simple-pcap")) orelse return error.TestExpectedRoute;
+    defer default_route.deinit(allocator);
+    const default_success = default_route.findResponseForStatus(.ok) orelse return error.TestExpectedResponse;
+    try std.testing.expectEqualStrings("200", default_success.status);
+    const default_error = default_route.findResponseForStatus(.bad_gateway) orelse return error.TestExpectedResponse;
+    try std.testing.expectEqualStrings("default", default_error.status);
+
+    const hostinger_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getVirtualMachinesV1")) orelse return error.TestExpectedRoute;
+    defer hostinger_route.deinit(allocator);
+    const hostinger_exact = hostinger_route.findResponseForStatus(.unauthorized) orelse return error.TestExpectedResponse;
+    try std.testing.expectEqualStrings("401", hostinger_exact.status);
+    try std.testing.expect(hostinger_route.findResponseForStatus(.not_found) == null);
 }
 
 test "renders validated query parameters for route paths and urls" {
