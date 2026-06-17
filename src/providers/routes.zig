@@ -104,9 +104,15 @@ pub const QueryParam = struct {
     value: []const u8,
 };
 
+pub const BodyInput = struct {
+    present: bool = false,
+    content_type: ?[]const u8 = null,
+};
+
 pub const Request = struct {
     path_params: []const PathParam = &.{},
     query_params: []const QueryParam = &.{},
+    body: BodyInput = .{},
 };
 
 pub const RouteParam = struct {
@@ -122,6 +128,14 @@ pub const RequestBody = struct {
     pub fn primarySchemaRef(self: RequestBody) ?[]const u8 {
         if (self.schema_refs.len == 0) return null;
         return self.schema_refs[0];
+    }
+
+    pub fn acceptsContentType(self: RequestBody, content_type: []const u8) bool {
+        const candidate = contentTypeBase(content_type);
+        for (self.content_types) |allowed| {
+            if (std.ascii.eqlIgnoreCase(contentTypeBase(allowed), candidate)) return true;
+        }
+        return false;
     }
 };
 
@@ -278,6 +292,15 @@ pub const Route = struct {
             if (responseStatusDefault(response.status)) return response;
         }
         return null;
+    }
+
+    pub fn validateProvidedBodyInput(self: Route, request: Request) !void {
+        if (!request.body.present and request.body.content_type == null) return;
+        if (!request.body.present and request.body.content_type != null) return error.UnexpectedRouteRequestBodyContentType;
+        if (self.request_body.content_types.len == 0) return error.UnexpectedRouteRequestBody;
+
+        const content_type = request.body.content_type orelse return error.MissingRouteRequestBodyContentType;
+        if (!self.request_body.acceptsContentType(content_type)) return error.UnsupportedRouteRequestBodyContentType;
     }
 };
 
@@ -692,6 +715,11 @@ fn responseStatusDefault(status: []const u8) bool {
     return std.ascii.eqlIgnoreCase(status, "default");
 }
 
+fn contentTypeBase(content_type: []const u8) []const u8 {
+    const semicolon = std.mem.indexOfScalar(u8, content_type, ';') orelse content_type.len;
+    return std.mem.trim(u8, content_type[0..semicolon], " \t\r\n");
+}
+
 fn findParam(params: []const PathParam, name: []const u8) ?[]const u8 {
     for (params) |param| {
         if (std.mem.eql(u8, param.name, name)) return param.value;
@@ -861,6 +889,24 @@ test "loads request body metadata from generated manifests" {
     try std.testing.expect(multipart_route.request_body.required);
     try expectString(multipart_route.request_body.content_types, "multipart/form-data");
     try std.testing.expectEqual(@as(usize, 0), multipart_route.request_body.schema_refs.len);
+    try std.testing.expect(multipart_route.request_body.acceptsContentType("multipart/form-data; boundary=abc"));
+    try std.testing.expect(!multipart_route.request_body.acceptsContentType("application/json"));
+}
+
+test "validates dry-run-safe request body input metadata" {
+    const allocator = std.testing.allocator;
+
+    const body_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
+    defer body_route.deinit(allocator);
+    try body_route.validateProvidedBodyInput(.{ .body = .{ .present = true, .content_type = "multipart/form-data; boundary=test" } });
+    try std.testing.expectError(error.MissingRouteRequestBodyContentType, body_route.validateProvidedBodyInput(.{ .body = .{ .present = true } }));
+    try std.testing.expectError(error.UnsupportedRouteRequestBodyContentType, body_route.validateProvidedBodyInput(.{ .body = .{ .present = true, .content_type = "application/json" } }));
+    try std.testing.expectError(error.UnexpectedRouteRequestBodyContentType, body_route.validateProvidedBodyInput(.{ .body = .{ .content_type = "multipart/form-data" } }));
+
+    const read_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getVirtualMachinesV1")) orelse return error.TestExpectedRoute;
+    defer read_route.deinit(allocator);
+    try read_route.validateProvidedBodyInput(.{});
+    try std.testing.expectError(error.UnexpectedRouteRequestBody, read_route.validateProvidedBodyInput(.{ .body = .{ .present = true, .content_type = "application/json" } }));
 }
 
 test "loads response metadata from generated manifests" {

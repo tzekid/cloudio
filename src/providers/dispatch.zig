@@ -45,6 +45,7 @@ pub const Client = struct {
         if (route.provider != self.provider()) return error.ProviderRouteAuthMismatch;
         if (!route.isRoutable()) return error.UnsupportedProviderRoute;
         if (route.method != .GET or route.mode != .read) return error.ProviderRouteRequiresDryRun;
+        if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
 
         const url = try route.renderRequestUrl(gpa, self.baseUrl(route.provider), request);
         defer gpa.free(url);
@@ -92,6 +93,7 @@ pub fn dryRunPlanJsonWithQuery(gpa: Allocator, route: provider_routes.Route, pat
 pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
     if (!route.isRoutable()) return error.UnsupportedProviderRoute;
     if (route.mode != .dry_run or route.method == .GET or route.method == .HEAD) return error.ProviderRouteIsNotMutation;
+    try route.validateProvidedBodyInput(request);
 
     const path = try route.renderRequestPath(gpa, request);
     defer gpa.free(path);
@@ -112,6 +114,7 @@ pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, reque
     try writeJsonField(writer, "path", path, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
     try writeRequestBodyField(writer, "request_body", route.request_body, true);
+    try writeRequestBodyInputField(writer, "request_body_input", route.request_body, request.body, true);
     try writeResponsesField(writer, "responses", route.responses, true);
     try writer.writeAll("\"mode\":\"dry_run\",");
     try writer.writeAll("\"will_execute\":false,");
@@ -135,6 +138,23 @@ fn writeRequestBodyField(writer: anytype, name: []const u8, body: provider_route
     try writer.writeByte(',');
     try writeStringArrayField(writer, "content_types", body.content_types, true);
     try writeStringArrayField(writer, "schema_refs", body.schema_refs, false);
+    try writer.writeByte('}');
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeRequestBodyInputField(writer: anytype, name: []const u8, body: provider_routes.RequestBody, input: provider_routes.BodyInput, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeAll(":{");
+    try writer.writeAll("\"present\":");
+    try writer.writeAll(if (input.present) "true" else "false");
+    try writer.writeByte(',');
+    if (input.content_type) |content_type| {
+        try writeJsonField(writer, "content_type", content_type, true);
+    } else {
+        try writer.writeAll("\"content_type\":null,");
+    }
+    try writer.writeAll("\"required_missing\":");
+    try writer.writeAll(if (body.required and !input.present) "true" else "false");
     try writer.writeByte('}');
     if (trailing_comma) try writer.writeByte(',');
 }
@@ -180,6 +200,7 @@ test "generic dispatch renders dry-run plans without executing mutations" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"method\":\"POST\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct%2F1/access/idp_federation_grants\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body_input\":{\"present\":false,\"content_type\":null,\"required_missing\":true}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"responses\":[{\"status\":\"201\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/access_idp_federation_grant_response\"]},{\"status\":\"4XX\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/access_api-response-common-failure\"]}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
@@ -217,12 +238,32 @@ test "generic dispatch accepts route request objects" {
         .{
             .path_params = &.{.{ .name = "account_id", .value = "acct/1" }},
             .query_params = &.{.{ .name = "base64", .value = "true" }},
+            .body = .{ .present = true, .content_type = "multipart/form-data; boundary=test" },
         },
     );
     defer allocator.free(plan);
 
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct%2F1/workers/assets/upload?base64=true\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body_input\":{\"present\":true,\"content_type\":\"multipart/form-data; boundary=test\",\"required_missing\":false}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+}
+
+test "generic dispatch validates request body input metadata" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    try std.testing.expectError(
+        error.UnsupportedRouteRequestBodyContentType,
+        dryRunPlanJsonRequest(
+            allocator,
+            route,
+            .{
+                .path_params = &.{.{ .name = "account_id", .value = "acct/1" }},
+                .body = .{ .present = true, .content_type = "application/json" },
+            },
+        ),
+    );
 }
 
 test "generic dispatch reports request body schema refs in dry-run plans" {
@@ -236,6 +277,7 @@ test "generic dispatch reports request body schema refs in dry-run plans" {
 
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"VPS_purchaseNewVirtualMachineV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true,\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/VPS.V1.VirtualMachine.PurchaseRequest\"]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body_input\":{\"present\":false,\"content_type\":null,\"required_missing\":true}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"responses\":[{\"status\":\"200\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/Billing.V1.Order.VirtualMachineOrderResource\"]},{\"status\":\"401\",\"content_types\":[\"application/json\"],\"schema_refs\":[]},{\"status\":\"422\",\"content_types\":[\"application/json\"],\"schema_refs\":[]},{\"status\":\"500\",\"content_types\":[\"application/json\"],\"schema_refs\":[]}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
@@ -276,6 +318,23 @@ test "generic dispatch validates required read query parameters before HTTP" {
                 .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
                 .query_params = &.{.{ .name = "date_from", .value = "2026-06-16T00:00:00Z" }},
             },
+        ),
+    );
+}
+
+test "generic dispatch rejects body input for bodyless read calls" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getVirtualMachinesV1")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const client = Client.init(.{ .hostinger = "test-token" });
+    try std.testing.expectError(
+        error.ProviderReadRouteIsBodyless,
+        client.callReadRouteRequest(
+            std.testing.io,
+            allocator,
+            route,
+            .{ .body = .{ .present = true, .content_type = "application/json" } },
         ),
     );
 }
