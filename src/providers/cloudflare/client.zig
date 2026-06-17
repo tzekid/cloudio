@@ -238,6 +238,18 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getCustomPageEndpoint(self: Client, io: Io, gpa: Allocator, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) !net_http.Response {
+        const url = try customPageReadUrl(gpa, self.base_url_override, scope, scope_id, resource, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getAccessCustomPageEndpoint(self: Client, io: Io, gpa: Allocator, account_id: []const u8, endpoint: AccessCustomPageReadEndpoint, page_id: ?[]const u8) !net_http.Response {
+        const url = try accessCustomPageReadUrl(gpa, self.base_url_override, account_id, endpoint, page_id);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -3250,6 +3262,344 @@ pub const PageShieldMutationArgs = struct {
     policy_id: ?[]const u8 = null,
 };
 
+pub const CustomPageScope = enum {
+    account,
+    zone,
+
+    pub fn parse(value: []const u8) ?CustomPageScope {
+        if (std.mem.eql(u8, value, "account") or std.mem.eql(u8, value, "accounts")) return .account;
+        if (std.mem.eql(u8, value, "zone") or std.mem.eql(u8, value, "zones")) return .zone;
+        return null;
+    }
+
+    pub fn commandName(self: CustomPageScope) []const u8 {
+        return switch (self) {
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn idLabel(self: CustomPageScope) []const u8 {
+        return switch (self) {
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn basePath(self: CustomPageScope) []const u8 {
+        return switch (self) {
+            .account => accounts_path,
+            .zone => zones_path,
+        };
+    }
+};
+
+pub const CustomPageResource = enum {
+    pages,
+    assets,
+
+    pub fn parse(value: []const u8) ?CustomPageResource {
+        if (std.mem.eql(u8, value, "pages") or std.mem.eql(u8, value, "page") or std.mem.eql(u8, value, "custom-pages")) return .pages;
+        if (std.mem.eql(u8, value, "assets") or std.mem.eql(u8, value, "asset") or std.mem.eql(u8, value, "custom-assets")) return .assets;
+        return null;
+    }
+
+    pub fn commandName(self: CustomPageResource) []const u8 {
+        return switch (self) {
+            .pages => "pages",
+            .assets => "assets",
+        };
+    }
+
+    pub fn idLabel(self: CustomPageResource) []const u8 {
+        return switch (self) {
+            .pages => "custom page",
+            .assets => "asset",
+        };
+    }
+
+    pub fn pathSuffix(self: CustomPageResource) []const u8 {
+        return switch (self) {
+            .pages => "custom_pages",
+            .assets => "custom_pages/assets",
+        };
+    }
+};
+
+pub const CustomPageReadEndpoint = enum {
+    list,
+    details,
+
+    pub fn parse(value: []const u8) ?CustomPageReadEndpoint {
+        if (std.mem.eql(u8, value, "list") or std.mem.eql(u8, value, "all")) return .list;
+        if (std.mem.eql(u8, value, "show") or std.mem.eql(u8, value, "detail") or std.mem.eql(u8, value, "details")) return .details;
+        return null;
+    }
+
+    pub fn commandName(self: CustomPageReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "list",
+            .details => "show",
+        };
+    }
+
+    pub fn label(self: CustomPageReadEndpoint, scope: CustomPageScope, resource: CustomPageResource) []const u8 {
+        return switch (scope) {
+            .account => switch (resource) {
+                .pages => if (self == .list) "account-custom-pages" else "account-custom-page",
+                .assets => if (self == .list) "account-custom-assets" else "account-custom-asset",
+            },
+            .zone => switch (resource) {
+                .pages => if (self == .list) "zone-custom-pages" else "zone-custom-page",
+                .assets => if (self == .list) "zone-custom-assets" else "zone-custom-asset",
+            },
+        };
+    }
+
+    pub fn operationId(self: CustomPageReadEndpoint, scope: CustomPageScope, resource: CustomPageResource) []const u8 {
+        return switch (scope) {
+            .account => switch (resource) {
+                .pages => switch (self) {
+                    .list => "custom-pages-for-an-account-list-custom-pages",
+                    .details => "custom-pages-for-an-account-get-a-custom-page",
+                },
+                .assets => switch (self) {
+                    .list => "custom-assets-for-an-account-list-custom-assets",
+                    .details => "custom-assets-for-an-account-get-a-custom-asset",
+                },
+            },
+            .zone => switch (resource) {
+                .pages => switch (self) {
+                    .list => "custom-pages-for-a-zone-list-custom-pages",
+                    .details => "custom-pages-for-a-zone-get-a-custom-page",
+                },
+                .assets => switch (self) {
+                    .list => "custom-assets-for-a-zone-list-custom-assets",
+                    .details => "custom-assets-for-a-zone-get-a-custom-asset",
+                },
+            },
+        };
+    }
+
+    pub fn summary(self: CustomPageReadEndpoint, scope: CustomPageScope, resource: CustomPageResource) []const u8 {
+        return switch (resource) {
+            .pages => switch (self) {
+                .list => if (scope == .account) "List account custom pages" else "List zone custom pages",
+                .details => if (scope == .account) "Get an account custom page" else "Get a zone custom page",
+            },
+            .assets => switch (self) {
+                .list => if (scope == .account) "List account custom assets" else "List zone custom assets",
+                .details => if (scope == .account) "Get an account custom asset" else "Get a zone custom asset",
+            },
+        };
+    }
+
+    pub fn requiresResourceId(self: CustomPageReadEndpoint) bool {
+        return self == .details;
+    }
+};
+
+pub const CustomPageReadArgs = struct {
+    resource_id: ?[]const u8 = null,
+};
+
+pub const CustomPageMutationEndpoint = enum {
+    update_page,
+    create_preview_token,
+    create_asset,
+    update_asset,
+    delete_asset,
+
+    pub fn parse(value: []const u8) ?CustomPageMutationEndpoint {
+        if (std.mem.eql(u8, value, "update-page") or std.mem.eql(u8, value, "page-update")) return .update_page;
+        if (std.mem.eql(u8, value, "create-preview-token") or std.mem.eql(u8, value, "preview-token")) return .create_preview_token;
+        if (std.mem.eql(u8, value, "create-asset") or std.mem.eql(u8, value, "asset-create") or std.mem.eql(u8, value, "create")) return .create_asset;
+        if (std.mem.eql(u8, value, "update-asset") or std.mem.eql(u8, value, "asset-update") or std.mem.eql(u8, value, "update")) return .update_asset;
+        if (std.mem.eql(u8, value, "delete-asset") or std.mem.eql(u8, value, "asset-delete") or std.mem.eql(u8, value, "delete") or std.mem.eql(u8, value, "remove")) return .delete_asset;
+        return null;
+    }
+
+    pub fn commandName(self: CustomPageMutationEndpoint) []const u8 {
+        return switch (self) {
+            .update_page => "update-page",
+            .create_preview_token => "create-preview-token",
+            .create_asset => "create-asset",
+            .update_asset => "update-asset",
+            .delete_asset => "delete-asset",
+        };
+    }
+
+    pub fn resource(self: CustomPageMutationEndpoint) CustomPageResource {
+        return switch (self) {
+            .update_page, .create_preview_token => .pages,
+            .create_asset, .update_asset, .delete_asset => .assets,
+        };
+    }
+
+    pub fn method(self: CustomPageMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create_preview_token, .create_asset => "POST",
+            .update_page, .update_asset => "PUT",
+            .delete_asset => "DELETE",
+        };
+    }
+
+    pub fn operationId(self: CustomPageMutationEndpoint, scope: CustomPageScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .update_page => "custom-pages-for-an-account-update-a-custom-page",
+                .create_preview_token => "custom-pages-for-an-account-create-preview-token",
+                .create_asset => "custom-assets-for-an-account-create-a-custom-asset",
+                .update_asset => "custom-assets-for-an-account-update-a-custom-asset",
+                .delete_asset => "custom-assets-for-an-account-delete-a-custom-asset",
+            },
+            .zone => switch (self) {
+                .update_page => "custom-pages-for-a-zone-update-a-custom-page",
+                .create_preview_token => "custom-pages-for-a-zone-create-preview-token",
+                .create_asset => "custom-assets-for-a-zone-create-a-custom-asset",
+                .update_asset => "custom-assets-for-a-zone-update-a-custom-asset",
+                .delete_asset => "custom-assets-for-a-zone-delete-a-custom-asset",
+            },
+        };
+    }
+
+    pub fn summary(self: CustomPageMutationEndpoint, scope: CustomPageScope) []const u8 {
+        return switch (self) {
+            .update_page => if (scope == .account) "Update an account custom page" else "Update a zone custom page",
+            .create_preview_token => if (scope == .account) "Create an account custom page preview token" else "Create a zone custom page preview token",
+            .create_asset => if (scope == .account) "Create an account custom asset" else "Create a zone custom asset",
+            .update_asset => if (scope == .account) "Update an account custom asset" else "Update a zone custom asset",
+            .delete_asset => if (scope == .account) "Delete an account custom asset" else "Delete a zone custom asset",
+        };
+    }
+
+    pub fn requestBodySchemaRef(self: CustomPageMutationEndpoint) ?[]const u8 {
+        return switch (self) {
+            .update_page => "object",
+            .create_preview_token => "#/components/schemas/custom-pages_preview_request",
+            .create_asset, .update_asset => "multipart/form-data",
+            .delete_asset => null,
+        };
+    }
+
+    pub fn requiresResourceId(self: CustomPageMutationEndpoint) bool {
+        return switch (self) {
+            .update_page, .update_asset, .delete_asset => true,
+            .create_preview_token, .create_asset => false,
+        };
+    }
+};
+
+pub const CustomPageMutationArgs = struct {
+    scope: CustomPageScope,
+    scope_id: []const u8,
+    resource_id: ?[]const u8 = null,
+};
+
+pub const AccessCustomPageReadEndpoint = enum {
+    list,
+    details,
+
+    pub fn parse(value: []const u8) ?AccessCustomPageReadEndpoint {
+        if (std.mem.eql(u8, value, "list") or std.mem.eql(u8, value, "pages")) return .list;
+        if (std.mem.eql(u8, value, "show") or std.mem.eql(u8, value, "page") or std.mem.eql(u8, value, "details")) return .details;
+        return null;
+    }
+
+    pub fn commandName(self: AccessCustomPageReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "list",
+            .details => "show",
+        };
+    }
+
+    pub fn label(self: AccessCustomPageReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "access-custom-pages",
+            .details => "access-custom-page",
+        };
+    }
+
+    pub fn operationId(self: AccessCustomPageReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "access-custom-pages-list-custom-pages",
+            .details => "access-custom-pages-get-a-custom-page",
+        };
+    }
+
+    pub fn summary(self: AccessCustomPageReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "List Access custom pages",
+            .details => "Get an Access custom page",
+        };
+    }
+
+    pub fn requiresPageId(self: AccessCustomPageReadEndpoint) bool {
+        return self == .details;
+    }
+};
+
+pub const AccessCustomPageMutationEndpoint = enum {
+    create,
+    update,
+    delete_page,
+
+    pub fn parse(value: []const u8) ?AccessCustomPageMutationEndpoint {
+        if (std.mem.eql(u8, value, "create") or std.mem.eql(u8, value, "add")) return .create;
+        if (std.mem.eql(u8, value, "update") or std.mem.eql(u8, value, "put")) return .update;
+        if (std.mem.eql(u8, value, "delete") or std.mem.eql(u8, value, "remove")) return .delete_page;
+        return null;
+    }
+
+    pub fn commandName(self: AccessCustomPageMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "create",
+            .update => "update",
+            .delete_page => "delete",
+        };
+    }
+
+    pub fn method(self: AccessCustomPageMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "POST",
+            .update => "PUT",
+            .delete_page => "DELETE",
+        };
+    }
+
+    pub fn operationId(self: AccessCustomPageMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "access-custom-pages-create-a-custom-page",
+            .update => "access-custom-pages-update-a-custom-page",
+            .delete_page => "access-custom-pages-delete-a-custom-page",
+        };
+    }
+
+    pub fn summary(self: AccessCustomPageMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "Create an Access custom page",
+            .update => "Update an Access custom page",
+            .delete_page => "Delete an Access custom page",
+        };
+    }
+
+    pub fn requestBodySchemaRef(self: AccessCustomPageMutationEndpoint) ?[]const u8 {
+        return switch (self) {
+            .create, .update => "#/components/schemas/access_custom_page",
+            .delete_page => null,
+        };
+    }
+
+    pub fn requiresPageId(self: AccessCustomPageMutationEndpoint) bool {
+        return self == .update or self == .delete_page;
+    }
+};
+
+pub const AccessCustomPageMutationArgs = struct {
+    account_id: []const u8,
+    page_id: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -5650,6 +6000,108 @@ pub fn pageShieldMutationPlanJson(gpa: Allocator, endpoint: PageShieldMutationEn
     });
 }
 
+pub fn customPageReadUrl(gpa: Allocator, host: []const u8, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) ![]u8 {
+    const path = try customPageReadPath(gpa, scope, scope_id, resource, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn customPageCollectionPath(gpa: Allocator, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource) ![]u8 {
+    const escaped_scope_id = try pathEscape(gpa, scope_id);
+    defer gpa.free(escaped_scope_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ scope.basePath(), escaped_scope_id, resource.pathSuffix() });
+}
+
+pub fn customPageReadPath(gpa: Allocator, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) ![]u8 {
+    const collection_path = try customPageCollectionPath(gpa, scope, scope_id, resource);
+    defer gpa.free(collection_path);
+    if (!endpoint.requiresResourceId()) return try gpa.dupe(u8, collection_path);
+    const resource_id = args.resource_id orelse return error.MissingCloudflareCustomPageResourceId;
+    const escaped_resource_id = try pathEscape(gpa, resource_id);
+    defer gpa.free(escaped_resource_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_resource_id });
+}
+
+pub fn customPageMutationPath(gpa: Allocator, endpoint: CustomPageMutationEndpoint, args: CustomPageMutationArgs) ![]u8 {
+    const resource = endpoint.resource();
+    const collection_path = try customPageCollectionPath(gpa, args.scope, args.scope_id, resource);
+    defer gpa.free(collection_path);
+    return switch (endpoint) {
+        .create_preview_token => blk: {
+            const pages_path = try customPageCollectionPath(gpa, args.scope, args.scope_id, .pages);
+            defer gpa.free(pages_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/preview_tokens", .{pages_path});
+        },
+        .create_asset => try gpa.dupe(u8, collection_path),
+        .update_page, .update_asset, .delete_asset => blk: {
+            const resource_id = args.resource_id orelse return error.MissingCloudflareCustomPageResourceId;
+            const escaped_resource_id = try pathEscape(gpa, resource_id);
+            defer gpa.free(escaped_resource_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_resource_id });
+        },
+    };
+}
+
+pub fn customPageMutationPlanJson(gpa: Allocator, endpoint: CustomPageMutationEndpoint, args: CustomPageMutationArgs) ![]u8 {
+    const path = try customPageMutationPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try dryRunPlanJson(gpa, .{
+        .group = "Custom Pages",
+        .operation = endpoint.commandName(),
+        .operation_id = endpoint.operationId(args.scope),
+        .summary = endpoint.summary(args.scope),
+        .method = endpoint.method(),
+        .path = path,
+        .request_body_schema = endpoint.requestBodySchemaRef(),
+    });
+}
+
+pub fn accessCustomPageReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: AccessCustomPageReadEndpoint, page_id: ?[]const u8) ![]u8 {
+    const path = try accessCustomPageReadPath(gpa, account_id, endpoint, page_id);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn accessCustomPageCollectionPath(gpa: Allocator, account_id: []const u8) ![]u8 {
+    const escaped_account_id = try pathEscape(gpa, account_id);
+    defer gpa.free(escaped_account_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/access/custom_pages", .{ accounts_path, escaped_account_id });
+}
+
+pub fn accessCustomPageReadPath(gpa: Allocator, account_id: []const u8, endpoint: AccessCustomPageReadEndpoint, page_id: ?[]const u8) ![]u8 {
+    const collection_path = try accessCustomPageCollectionPath(gpa, account_id);
+    defer gpa.free(collection_path);
+    if (!endpoint.requiresPageId()) return try gpa.dupe(u8, collection_path);
+    const id = page_id orelse return error.MissingCloudflareAccessCustomPageId;
+    const escaped_id = try pathEscape(gpa, id);
+    defer gpa.free(escaped_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_id });
+}
+
+pub fn accessCustomPageMutationPath(gpa: Allocator, endpoint: AccessCustomPageMutationEndpoint, args: AccessCustomPageMutationArgs) ![]u8 {
+    const collection_path = try accessCustomPageCollectionPath(gpa, args.account_id);
+    defer gpa.free(collection_path);
+    if (!endpoint.requiresPageId()) return try gpa.dupe(u8, collection_path);
+    const page_id = args.page_id orelse return error.MissingCloudflareAccessCustomPageId;
+    const escaped_page_id = try pathEscape(gpa, page_id);
+    defer gpa.free(escaped_page_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_page_id });
+}
+
+pub fn accessCustomPageMutationPlanJson(gpa: Allocator, endpoint: AccessCustomPageMutationEndpoint, args: AccessCustomPageMutationArgs) ![]u8 {
+    const path = try accessCustomPageMutationPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try dryRunPlanJson(gpa, .{
+        .group = "Access custom pages",
+        .operation = endpoint.commandName(),
+        .operation_id = endpoint.operationId(),
+        .summary = endpoint.summary(),
+        .method = endpoint.method(),
+        .path = path,
+        .request_body_schema = endpoint.requestBodySchemaRef(),
+    });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -7401,6 +7853,67 @@ test "builds Page Shield paths and dry-run plans" {
 
     try std.testing.expectError(error.MissingCloudflarePageShieldResourceId, pageShieldReadPath(allocator, "zone/1", .policy, .{}));
     try std.testing.expectError(error.MissingCloudflarePageShieldPolicyId, pageShieldMutationPlanJson(allocator, .update_policy, .{ .zone_id = "zone/1" }));
+}
+
+test "custom page endpoints map to official operation metadata" {
+    try std.testing.expectEqual(CustomPageScope.account, CustomPageScope.parse("accounts").?);
+    try std.testing.expectEqual(CustomPageScope.zone, CustomPageScope.parse("zone").?);
+    try std.testing.expectEqual(CustomPageResource.pages, CustomPageResource.parse("custom-pages").?);
+    try std.testing.expectEqual(CustomPageResource.assets, CustomPageResource.parse("asset").?);
+    try std.testing.expectEqual(CustomPageReadEndpoint.details, CustomPageReadEndpoint.parse("show").?);
+    try std.testing.expectEqualStrings("custom-pages-for-an-account-list-custom-pages", CustomPageReadEndpoint.list.operationId(.account, .pages));
+    try std.testing.expectEqualStrings("custom-assets-for-a-zone-get-a-custom-asset", CustomPageReadEndpoint.details.operationId(.zone, .assets));
+    try std.testing.expectEqualStrings("zone-custom-assets", CustomPageReadEndpoint.list.label(.zone, .assets));
+
+    try std.testing.expectEqual(CustomPageMutationEndpoint.create_preview_token, CustomPageMutationEndpoint.parse("preview-token").?);
+    try std.testing.expectEqual(CustomPageMutationEndpoint.delete_asset, CustomPageMutationEndpoint.parse("remove").?);
+    try std.testing.expectEqualStrings("custom-pages-for-a-zone-create-preview-token", CustomPageMutationEndpoint.create_preview_token.operationId(.zone));
+    try std.testing.expectEqualStrings("custom-assets-for-an-account-update-a-custom-asset", CustomPageMutationEndpoint.update_asset.operationId(.account));
+    try std.testing.expectEqualStrings("#/components/schemas/custom-pages_preview_request", CustomPageMutationEndpoint.create_preview_token.requestBodySchemaRef().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), CustomPageMutationEndpoint.delete_asset.requestBodySchemaRef());
+
+    try std.testing.expectEqual(AccessCustomPageReadEndpoint.details, AccessCustomPageReadEndpoint.parse("page").?);
+    try std.testing.expectEqualStrings("access-custom-pages-get-a-custom-page", AccessCustomPageReadEndpoint.details.operationId());
+    try std.testing.expectEqual(AccessCustomPageMutationEndpoint.delete_page, AccessCustomPageMutationEndpoint.parse("delete").?);
+    try std.testing.expectEqualStrings("#/components/schemas/access_custom_page", AccessCustomPageMutationEndpoint.update.requestBodySchemaRef().?);
+}
+
+test "builds custom page and Access custom page paths and dry-run plans" {
+    const allocator = std.testing.allocator;
+
+    const account_pages = try customPageReadUrl(allocator, base_url, .account, "acct/1", .pages, .list, .{});
+    defer allocator.free(account_pages);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/custom_pages", account_pages);
+
+    const zone_asset = try customPageReadPath(allocator, .zone, "zone/1", .assets, .details, .{ .resource_id = "logo.svg" });
+    defer allocator.free(zone_asset);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/custom_pages/assets/logo.svg", zone_asset);
+
+    const preview = try customPageMutationPlanJson(allocator, .create_preview_token, .{ .scope = .zone, .scope_id = "zone/1" });
+    defer allocator.free(preview);
+    try std.testing.expect(std.mem.indexOf(u8, preview, "\"operation_id\":\"custom-pages-for-a-zone-create-preview-token\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, preview, "\"path\":\"/zones/zone%2F1/custom_pages/preview_tokens\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, preview, "\"will_execute\":false") != null);
+
+    const update_asset = try customPageMutationPlanJson(allocator, .update_asset, .{ .scope = .account, .scope_id = "acct/1", .resource_id = "asset/1" });
+    defer allocator.free(update_asset);
+    try std.testing.expect(std.mem.indexOf(u8, update_asset, "\"operation_id\":\"custom-assets-for-an-account-update-a-custom-asset\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_asset, "\"path\":\"/accounts/acct%2F1/custom_pages/assets/asset%2F1\"") != null);
+
+    const access_list = try accessCustomPageReadUrl(allocator, base_url, "acct/1", .list, null);
+    defer allocator.free(access_list);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/access/custom_pages", access_list);
+
+    const access_delete = try accessCustomPageMutationPlanJson(allocator, .delete_page, .{ .account_id = "acct/1", .page_id = "page/1" });
+    defer allocator.free(access_delete);
+    try std.testing.expect(std.mem.indexOf(u8, access_delete, "\"operation_id\":\"access-custom-pages-delete-a-custom-page\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, access_delete, "\"path\":\"/accounts/acct%2F1/access/custom_pages/page%2F1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, access_delete, "\"request_body_schema\":null") != null);
+
+    try std.testing.expectError(error.MissingCloudflareCustomPageResourceId, customPageReadPath(allocator, .zone, "zone/1", .pages, .details, .{}));
+    try std.testing.expectError(error.MissingCloudflareCustomPageResourceId, customPageMutationPlanJson(allocator, .update_page, .{ .scope = .account, .scope_id = "acct/1" }));
+    try std.testing.expectError(error.MissingCloudflareAccessCustomPageId, accessCustomPageReadPath(allocator, "acct/1", .details, null));
+    try std.testing.expectError(error.MissingCloudflareAccessCustomPageId, accessCustomPageMutationPlanJson(allocator, .update, .{ .account_id = "acct/1" }));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

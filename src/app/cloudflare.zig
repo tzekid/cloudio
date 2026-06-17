@@ -49,6 +49,15 @@ pub const PageShieldMutationArgs = collector_cloudflare.PageShieldMutationArgs;
 pub const PageShieldMutationEndpoint = collector_cloudflare.PageShieldMutationEndpoint;
 pub const PageShieldReadArgs = collector_cloudflare.PageShieldReadArgs;
 pub const PageShieldReadEndpoint = collector_cloudflare.PageShieldReadEndpoint;
+pub const CustomPageMutationArgs = collector_cloudflare.CustomPageMutationArgs;
+pub const CustomPageMutationEndpoint = collector_cloudflare.CustomPageMutationEndpoint;
+pub const CustomPageReadArgs = collector_cloudflare.CustomPageReadArgs;
+pub const CustomPageReadEndpoint = collector_cloudflare.CustomPageReadEndpoint;
+pub const CustomPageResource = collector_cloudflare.CustomPageResource;
+pub const CustomPageScope = collector_cloudflare.CustomPageScope;
+pub const AccessCustomPageMutationArgs = collector_cloudflare.AccessCustomPageMutationArgs;
+pub const AccessCustomPageMutationEndpoint = collector_cloudflare.AccessCustomPageMutationEndpoint;
+pub const AccessCustomPageReadEndpoint = collector_cloudflare.AccessCustomPageReadEndpoint;
 pub const LoadBalancingAccountReadEndpoint = collector_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = collector_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = collector_cloudflare.LoadBalancingMutationEndpoint;
@@ -225,6 +234,14 @@ pub fn collectPageShieldEndpoint(ctx: Context, zone_id: []const u8, endpoint: Pa
     return try collector_cloudflare.collectPageShieldEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, args, true);
 }
 
+pub fn collectCustomPageEndpoint(ctx: Context, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) !Output {
+    return try collector_cloudflare.collectCustomPageEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, scope, scope_id, resource, endpoint, args, true);
+}
+
+pub fn collectAccessCustomPageEndpoint(ctx: Context, account_id: []const u8, endpoint: AccessCustomPageReadEndpoint, page_id: ?[]const u8) !Output {
+    return try collector_cloudflare.collectAccessCustomPageEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, page_id, true);
+}
+
 pub fn collectIdentityEndpoint(ctx: Context, endpoint: IdentityEndpoint) !Output {
     return try collector_cloudflare.collectIdentityEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, endpoint, true);
 }
@@ -363,6 +380,14 @@ pub fn planZoneLegacyRuleMutation(ctx: Context, endpoint: ZoneLegacyRuleMutation
 
 pub fn planPageShieldMutation(ctx: Context, endpoint: PageShieldMutationEndpoint, args: PageShieldMutationArgs) !Output {
     return .{ .text = try provider_cloudflare.pageShieldMutationPlanJson(ctx.gpa, endpoint, args) };
+}
+
+pub fn planCustomPageMutation(ctx: Context, endpoint: CustomPageMutationEndpoint, args: CustomPageMutationArgs) !Output {
+    return .{ .text = try provider_cloudflare.customPageMutationPlanJson(ctx.gpa, endpoint, args) };
+}
+
+pub fn planAccessCustomPageMutation(ctx: Context, endpoint: AccessCustomPageMutationEndpoint, args: AccessCustomPageMutationArgs) !Output {
+    return .{ .text = try provider_cloudflare.accessCustomPageMutationPlanJson(ctx.gpa, endpoint, args) };
 }
 
 pub fn collectZoneSetting(ctx: Context, domain: []const u8, setting_id: []const u8) !Output {

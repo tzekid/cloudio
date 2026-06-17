@@ -193,6 +193,25 @@ pub fn parseIdRows(gpa: Allocator, body: []const u8) !IdRows {
     return .{ .items = try rows.toOwnedSlice(gpa) };
 }
 
+pub fn parseResourceIdRows(gpa: Allocator, body: []const u8) !IdRows {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(IdRow);
+    defer parsed.deinit();
+    const items = core_json.resultArray(parsed.value) orelse return emptyRows(IdRow);
+    var rows = std.ArrayList(IdRow).empty;
+    errdefer deinitPartial(IdRow, &rows, gpa);
+
+    for (items.items) |item| {
+        const id_value = core_json.fieldString(item, "id") orelse
+            core_json.fieldString(item, "uid") orelse
+            core_json.fieldString(item, "name") orelse
+            continue;
+        const id = try dupeRequired(gpa, id_value);
+        errdefer gpa.free(id);
+        try rows.append(gpa, .{ .id = id });
+    }
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
 pub fn zoneIdFromResponse(gpa: Allocator, body: []const u8) !?[]u8 {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return null;
     defer parsed.deinit();
@@ -279,4 +298,17 @@ test "parses generic Cloudflare result ids" {
     try std.testing.expectEqual(@as(usize, 2), rows.items.len);
     try std.testing.expectEqualStrings("first", rows.items[0].id);
     try std.testing.expectEqualStrings("second", rows.items[1].id);
+}
+
+test "parses generic Cloudflare resource ids from id uid or name" {
+    const allocator = std.testing.allocator;
+    var rows = try parseResourceIdRows(allocator,
+        \\{"result":[{"id":"page-id"},{"uid":"access-uid"},{"name":"asset-name"},{"description":"missing"}]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), rows.items.len);
+    try std.testing.expectEqualStrings("page-id", rows.items[0].id);
+    try std.testing.expectEqualStrings("access-uid", rows.items[1].id);
+    try std.testing.expectEqualStrings("asset-name", rows.items[2].id);
 }

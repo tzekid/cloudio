@@ -97,6 +97,12 @@ zig build run -- cloudflare page-shield connections <zone-id> hosts=cdn.example.
 zig build run -- cloudflare page-shield scripts <zone-id> status=active exclude-cdn-cgi=true
 zig build run -- cloudflare page-shield cookies <zone-id> name=session secure=true
 zig build run -- cloudflare page-shield policy <zone-id> <policy-id>
+zig build run -- cloudflare custom-pages account pages list <account-id>
+zig build run -- cloudflare custom-pages account assets show <account-id> <asset-name>
+zig build run -- cloudflare custom-pages zone pages list <zone-id>
+zig build run -- cloudflare custom-pages zone assets show <zone-id> <asset-name>
+zig build run -- cloudflare access-custom-pages list <account-id>
+zig build run -- cloudflare access-custom-pages show <account-id> <custom-page-id>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru
@@ -151,6 +157,10 @@ zig build run -- cloudflare dry-run zone-lockdown delete <zone-id> <lockdown-id>
 zig build run -- cloudflare dry-run page-shield update-settings <zone-id>
 zig build run -- cloudflare dry-run page-shield create-policy <zone-id>
 zig build run -- cloudflare dry-run page-shield update-policy <zone-id> <policy-id>
+zig build run -- cloudflare dry-run custom-pages account update-page <account-id> <page-id>
+zig build run -- cloudflare dry-run custom-pages zone create-preview-token <zone-id>
+zig build run -- cloudflare dry-run custom-pages zone update-asset <zone-id> <asset-name>
+zig build run -- cloudflare dry-run access-custom-pages update <account-id> <custom-page-id>
 zig build run -- cloudflare dry-run token create
 zig build run -- cloudflare dry-run token roll <token-id>
 zig build run -- cloudflare dry-run account create

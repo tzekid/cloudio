@@ -150,6 +150,9 @@ fn usage() void {
         \\  cloudio cloudflare page-rules|ua-rules|zone-lockdown show <zone-id> <rule-id>
         \\  cloudio cloudflare page-shield settings|policies|connections|scripts|cookies <zone-id> [key=value...]
         \\  cloudio cloudflare page-shield policy|connection|script|cookie <zone-id> <resource-id>
+        \\  cloudio cloudflare custom-pages account|zone pages|assets list <scope-id>
+        \\  cloudio cloudflare custom-pages account|zone pages|assets show <scope-id> <resource-id>
+        \\  cloudio cloudflare access-custom-pages list <account-id>|show <account-id> <custom-page-id>
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>
@@ -191,6 +194,10 @@ fn usage() void {
         \\  cloudio cloudflare dry-run ua-rules|zone-lockdown create <zone-id>|update|delete <zone-id> <rule-id>
         \\  cloudio cloudflare dry-run page-shield update-settings|create-policy <zone-id>
         \\  cloudio cloudflare dry-run page-shield update-policy|delete-policy <zone-id> <policy-id>
+        \\  cloudio cloudflare dry-run custom-pages account|zone update-page <scope-id> <page-id>
+        \\  cloudio cloudflare dry-run custom-pages account|zone create-preview-token|create-asset <scope-id>
+        \\  cloudio cloudflare dry-run custom-pages account|zone update-asset|delete-asset <scope-id> <asset-name>
+        \\  cloudio cloudflare dry-run access-custom-pages create <account-id>|update|delete <account-id> <custom-page-id>
         \\  cloudio cloudflare dry-run token create
         \\  cloudio cloudflare dry-run token delete|update|roll <token-id>
         \\  cloudio cloudflare dry-run account create|batch-move

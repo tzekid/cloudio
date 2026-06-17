@@ -58,6 +58,10 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandZoneLegacyRules(ctx, args, resource);
     } else if (std.mem.eql(u8, sub, "page-shield")) {
         try commandPageShield(ctx, args);
+    } else if (std.mem.eql(u8, sub, "custom-pages")) {
+        try commandCustomPages(ctx, args);
+    } else if (std.mem.eql(u8, sub, "access-custom-pages")) {
+        try commandAccessCustomPages(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -101,6 +105,8 @@ fn commandDryRun(ctx: Context, args: []const []const u8) !void {
     if (std.mem.eql(u8, args[1], "ip-access") or std.mem.eql(u8, args[1], "access-rules")) return try commandDryRunIpAccessRules(ctx, args);
     if (app_cloudflare.ZoneLegacyRuleResource.parse(args[1])) |resource| return try commandDryRunZoneLegacyRules(ctx, args, resource);
     if (std.mem.eql(u8, args[1], "page-shield")) return try commandDryRunPageShield(ctx, args);
+    if (std.mem.eql(u8, args[1], "custom-pages")) return try commandDryRunCustomPages(ctx, args);
+    if (std.mem.eql(u8, args[1], "access-custom-pages")) return try commandDryRunAccessCustomPages(ctx, args);
     std.debug.print("unknown cloudflare dry-run target: {s}\n", .{args[1]});
 }
 
@@ -635,6 +641,53 @@ fn commandDryRunPageShield(ctx: Context, args: []const []const u8) !void {
     cli_render.printOutput(ctx.gpa, try app_cloudflare.planPageShieldMutation(appContext(ctx), endpoint, mutation_args));
 }
 
+fn commandDryRunCustomPages(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 5) {
+        std.debug.print("scope, operation, and scope id required for dry-run custom-pages\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.CustomPageScope.parse(args[2]) orelse {
+        std.debug.print("unknown custom-pages dry-run scope: {s}\n", .{args[2]});
+        return;
+    };
+    const endpoint = app_cloudflare.CustomPageMutationEndpoint.parse(args[3]) orelse {
+        std.debug.print("unknown custom-pages dry-run operation: {s}\n", .{args[3]});
+        return;
+    };
+    var mutation_args: app_cloudflare.CustomPageMutationArgs = .{
+        .scope = scope,
+        .scope_id = args[4],
+    };
+    if (endpoint.requiresResourceId()) {
+        if (args.len < 6) {
+            std.debug.print("resource id required for dry-run custom-pages {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        mutation_args.resource_id = args[5];
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planCustomPageMutation(appContext(ctx), endpoint, mutation_args));
+}
+
+fn commandDryRunAccessCustomPages(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("operation and account id required for dry-run access-custom-pages\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.AccessCustomPageMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown access-custom-pages dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    var mutation_args: app_cloudflare.AccessCustomPageMutationArgs = .{ .account_id = args[3] };
+    if (endpoint.requiresPageId()) {
+        if (args.len < 5) {
+            std.debug.print("custom page id required for dry-run access-custom-pages {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        mutation_args.page_id = args[4];
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccessCustomPageMutation(appContext(ctx), endpoint, mutation_args));
+}
+
 fn commandDns(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1) {
         cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
@@ -1050,6 +1103,56 @@ fn commandPageShield(ctx: Context, args: []const []const u8) !void {
         }
     }
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectPageShieldEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+}
+
+fn commandCustomPages(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 5) {
+        std.debug.print("custom-pages account|zone pages|assets list|show <scope-id> [resource-id] required\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.CustomPageScope.parse(args[1]) orelse {
+        std.debug.print("unknown custom-pages scope: {s}\n", .{args[1]});
+        return;
+    };
+    const resource = app_cloudflare.CustomPageResource.parse(args[2]) orelse {
+        std.debug.print("unknown custom-pages resource: {s}\n", .{args[2]});
+        return;
+    };
+    const endpoint = app_cloudflare.CustomPageReadEndpoint.parse(args[3]) orelse {
+        std.debug.print("unknown custom-pages command: {s}\n", .{args[3]});
+        return;
+    };
+    var read_args: app_cloudflare.CustomPageReadArgs = .{};
+    const scope_id = args[4];
+    if (endpoint.requiresResourceId()) {
+        if (args.len < 6) {
+            std.debug.print("{s} id required for custom-pages {s} {s} {s}\n", .{ resource.idLabel(), scope.commandName(), resource.commandName(), endpoint.commandName() });
+            return;
+        }
+        read_args.resource_id = args[5];
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectCustomPageEndpoint(appContext(ctx), scope, scope_id, resource, endpoint, read_args));
+}
+
+fn commandAccessCustomPages(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("access-custom-pages list|show <account-id> [custom-page-id] required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.AccessCustomPageReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown access-custom-pages command: {s}\n", .{args[1]});
+        return;
+    };
+    const account_id = args[2];
+    var page_id: ?[]const u8 = null;
+    if (endpoint.requiresPageId()) {
+        if (args.len < 4) {
+            std.debug.print("custom page id required for access-custom-pages {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        page_id = args[3];
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccessCustomPageEndpoint(appContext(ctx), account_id, endpoint, page_id));
 }
 
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
