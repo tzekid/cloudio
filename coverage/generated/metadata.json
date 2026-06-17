@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "sources": {
     "cloudflare": "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json",
     "hostinger": "https://raw.githubusercontent.com/hostinger/api/main/openapi.json"

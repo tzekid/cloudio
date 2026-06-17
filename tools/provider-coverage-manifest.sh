@@ -139,6 +139,18 @@ generate_manifest() {
             }
         );
 
+    def operation_security($root; $operation):
+      ($operation.security // $root.security // []) as $requirements
+      | {
+          required: (($requirements | length) > 0 and all($requirements[]; (keys | length) > 0)),
+          alternatives: (
+            $requirements
+            | map(keys | sort)
+            | unique
+            | sort_by(join("+"))
+          )
+        };
+
     def default_coverage($method; $deprecated; $body):
       if $deprecated then
         {
@@ -198,6 +210,7 @@ generate_manifest() {
         header_params: operation_params($root; $path_item; $operation; "header"),
         request_body: $body,
         responses: operation_responses($root; $operation),
+        security: operation_security($root; $operation),
         support: $coverage.support,
         mode: $coverage.mode,
         tests: $coverage.tests,
@@ -245,6 +258,13 @@ validate_manifest() {
         (.schema_refs | type == "array") and
         (all(.schema_refs[]; type == "string"))
       ))) and
+      ($row.security | type == "object") and
+      ($row.security.required | type == "boolean") and
+      ($row.security.alternatives | type == "array") and
+      (all($row.security.alternatives[]; (
+        (type == "array") and
+        (all(.[]; type == "string"))
+      ))) and
       (["implemented", "partial", "planned", "blocked_permission", "unsafe_mutation", "deprecated", "not_applicable"] | index($row.support)) and
       (["read", "dry_run", "write", "none"] | index($row.mode)) and
       ($row.tests | type == "string") and
@@ -284,7 +304,7 @@ generate_all() {
     --argjson cloudflare_operations "$cloudflare_count" \
     --argjson hostinger_operations "$hostinger_count" \
     '{
-      schema_version: 4,
+      schema_version: 5,
       sources: {
         cloudflare: $cloudflare_url,
         hostinger: $hostinger_url

@@ -171,6 +171,34 @@ pub const Response = struct {
     }
 };
 
+pub const SecurityAlternative = struct {
+    schemes: [][]u8,
+
+    pub fn isAnonymous(self: SecurityAlternative) bool {
+        return self.schemes.len == 0;
+    }
+};
+
+pub const Security = struct {
+    required: bool,
+    alternatives: []SecurityAlternative,
+
+    pub fn acceptsSchemeSet(self: Security, schemes: []const []const u8) bool {
+        if (!self.required) return true;
+        for (self.alternatives) |alternative| {
+            if (alternativeAcceptsSchemeSet(alternative, schemes)) return true;
+        }
+        return false;
+    }
+
+    pub fn hasAnonymousAlternative(self: Security) bool {
+        for (self.alternatives) |alternative| {
+            if (alternative.isAnonymous()) return true;
+        }
+        return false;
+    }
+};
+
 pub const Route = struct {
     provider: Provider,
     tag: []u8,
@@ -182,6 +210,7 @@ pub const Route = struct {
     header_params: []RouteParam,
     request_body: RequestBody,
     responses: []Response,
+    security: Security,
     support: Support,
     mode: Mode,
     deprecated: bool,
@@ -218,6 +247,8 @@ pub const Route = struct {
         errdefer freeRequestBody(gpa, request_body);
         const responses = try parseResponses(gpa, value);
         errdefer freeResponses(gpa, responses);
+        const security = try parseSecurity(gpa, value);
+        errdefer freeSecurity(gpa, security);
 
         return .{
             .provider = provider,
@@ -230,6 +261,7 @@ pub const Route = struct {
             .header_params = header_params,
             .request_body = request_body,
             .responses = responses,
+            .security = security,
             .support = support,
             .mode = mode,
             .deprecated = deprecated,
@@ -245,6 +277,7 @@ pub const Route = struct {
         freeRouteParams(gpa, self.header_params);
         freeRequestBody(gpa, self.request_body);
         freeResponses(gpa, self.responses);
+        freeSecurity(gpa, self.security);
     }
 
     pub fn isRoutable(self: Route) bool {
@@ -640,13 +673,36 @@ fn parseResponses(gpa: Allocator, value: std.json.Value) ![]Response {
     return try rows.toOwnedSlice(gpa);
 }
 
+fn parseSecurity(gpa: Allocator, value: std.json.Value) !Security {
+    const field_value = core_json.field(value, "security") orelse {
+        const alternatives = try gpa.alloc(SecurityAlternative, 0);
+        return .{ .required = false, .alternatives = alternatives };
+    };
+    if (field_value != .object) return error.InvalidProviderRoute;
+    const required = core_json.fieldBool(field_value, "required") orelse return error.InvalidProviderRoute;
+    const alternatives_value = core_json.field(field_value, "alternatives") orelse return error.InvalidProviderRoute;
+    if (alternatives_value != .array) return error.InvalidProviderRoute;
+
+    var alternatives = std.ArrayList(SecurityAlternative).empty;
+    errdefer deinitSecurityAlternativeList(&alternatives, gpa);
+    for (alternatives_value.array.items) |item| {
+        const schemes = try parseStringArrayValue(gpa, item);
+        errdefer freeStringArray(gpa, schemes);
+        try alternatives.append(gpa, .{ .schemes = schemes });
+    }
+    return .{ .required = required, .alternatives = try alternatives.toOwnedSlice(gpa) };
+}
+
 fn parseStringArray(gpa: Allocator, value: std.json.Value, field_name: []const u8) ![][]u8 {
     const field_value = core_json.field(value, field_name) orelse return error.InvalidProviderRoute;
-    if (field_value != .array) return error.InvalidProviderRoute;
+    return try parseStringArrayValue(gpa, field_value);
+}
 
+fn parseStringArrayValue(gpa: Allocator, value: std.json.Value) ![][]u8 {
+    if (value != .array) return error.InvalidProviderRoute;
     var rows = std.ArrayList([]u8).empty;
     errdefer deinitStringList(&rows, gpa);
-    for (field_value.array.items) |item| {
+    for (value.array.items) |item| {
         if (item != .string) return error.InvalidProviderRoute;
         if (containsParamName(rows.items, item.string)) continue;
         const owned = try gpa.dupe(u8, item.string);
@@ -675,6 +731,13 @@ fn freeResponses(gpa: Allocator, responses: []Response) void {
     gpa.free(responses);
 }
 
+fn freeSecurity(gpa: Allocator, security: Security) void {
+    for (security.alternatives) |alternative| {
+        freeStringArray(gpa, alternative.schemes);
+    }
+    gpa.free(security.alternatives);
+}
+
 fn freeStringArray(gpa: Allocator, items: [][]u8) void {
     for (items) |item| gpa.free(item);
     gpa.free(items);
@@ -700,6 +763,13 @@ fn deinitResponseList(rows: *std.ArrayList(Response), gpa: Allocator) void {
         gpa.free(response.status);
         freeStringArray(gpa, response.content_types);
         freeStringArray(gpa, response.schema_refs);
+    }
+    rows.deinit(gpa);
+}
+
+fn deinitSecurityAlternativeList(rows: *std.ArrayList(SecurityAlternative), gpa: Allocator) void {
+    for (rows.items) |alternative| {
+        freeStringArray(gpa, alternative.schemes);
     }
     rows.deinit(gpa);
 }
@@ -747,6 +817,20 @@ fn containsHeaderParam(params: []const HeaderParam, candidate: []const u8) bool 
 fn containsResponseStatus(responses: []const Response, candidate: []const u8) bool {
     for (responses) |response| {
         if (std.mem.eql(u8, response.status, candidate)) return true;
+    }
+    return false;
+}
+
+fn alternativeAcceptsSchemeSet(alternative: SecurityAlternative, schemes: []const []const u8) bool {
+    for (alternative.schemes) |required_scheme| {
+        if (!containsScheme(schemes, required_scheme)) return false;
+    }
+    return true;
+}
+
+fn containsScheme(schemes: []const []const u8, candidate: []const u8) bool {
+    for (schemes) |scheme| {
+        if (std.mem.eql(u8, scheme, candidate)) return true;
     }
     return false;
 }
@@ -879,6 +963,44 @@ test "loads generated header parameter metadata" {
     const hostinger_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getVirtualMachinesV1")) orelse return error.TestExpectedRoute;
     defer hostinger_route.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), hostinger_route.header_params.len);
+}
+
+test "loads generated security metadata" {
+    const allocator = std.testing.allocator;
+
+    const token_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "account-api-tokens-verify-token")) orelse return error.TestExpectedRoute;
+    defer token_route.deinit(allocator);
+    try std.testing.expect(token_route.security.required);
+    try std.testing.expectEqual(@as(usize, 1), token_route.security.alternatives.len);
+    try expectString(token_route.security.alternatives[0].schemes, "api_token");
+    try std.testing.expect(token_route.security.acceptsSchemeSet(&.{"api_token"}));
+    try std.testing.expect(!token_route.security.acceptsSchemeSet(&.{ "api_email", "api_key" }));
+
+    const legacy_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "accounts-list-accounts")) orelse return error.TestExpectedRoute;
+    defer legacy_route.deinit(allocator);
+    try std.testing.expect(legacy_route.security.required);
+    try expectString(legacy_route.security.alternatives[0].schemes, "api_email");
+    try expectString(legacy_route.security.alternatives[0].schemes, "api_key");
+    try std.testing.expect(legacy_route.security.acceptsSchemeSet(&.{ "api_email", "api_key" }));
+    try std.testing.expect(!legacy_route.security.acceptsSchemeSet(&.{"api_token"}));
+
+    const public_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "cloudflare-ips-cloudflare-ip-details")) orelse return error.TestExpectedRoute;
+    defer public_route.deinit(allocator);
+    try std.testing.expect(!public_route.security.required);
+    try std.testing.expect(public_route.security.hasAnonymousAlternative());
+    try std.testing.expect(public_route.security.acceptsSchemeSet(&.{}));
+
+    const unsupported_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
+    defer unsupported_route.deinit(allocator);
+    try std.testing.expect(unsupported_route.security.required);
+    try expectString(unsupported_route.security.alternatives[0].schemes, "assets_jwt");
+    try std.testing.expect(!unsupported_route.security.acceptsSchemeSet(&.{"api_token"}));
+
+    const hostinger_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getVirtualMachinesV1")) orelse return error.TestExpectedRoute;
+    defer hostinger_route.deinit(allocator);
+    try std.testing.expect(hostinger_route.security.required);
+    try expectString(hostinger_route.security.alternatives[0].schemes, "apiToken");
+    try std.testing.expect(hostinger_route.security.acceptsSchemeSet(&.{"apiToken"}));
 }
 
 test "generated path parameter metadata matches route templates" {

@@ -364,9 +364,15 @@ pub const Client = struct {
     }
 
     pub fn getPublic(self: Client, io: Io, gpa: Allocator, url: []const u8) !net_http.Response {
+        return try self.getPublicWithHeaders(io, gpa, url, &.{});
+    }
+
+    pub fn getPublicWithHeaders(self: Client, io: Io, gpa: Allocator, url: []const u8, route_headers: []const std.http.Header) !net_http.Response {
         _ = self;
         const common = jsonHeaders();
-        return try net_http.get(gpa, io, url, &common, &.{});
+        const headers = try mergeHeaders(gpa, &common, route_headers);
+        defer gpa.free(headers);
+        return try net_http.get(gpa, io, url, headers, &.{});
     }
 };
 

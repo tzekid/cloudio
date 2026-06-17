@@ -47,16 +47,23 @@ pub const Client = struct {
         if (route.method != .GET or route.mode != .read) return error.ProviderRouteRequiresDryRun;
         if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
         try route.validateRequestHeaders(request);
+        try validateRouteAuth(route, self.auth);
 
         const url = try route.renderRequestUrl(gpa, self.baseUrl(route.provider), request);
         defer gpa.free(url);
         const headers = try requestHeaders(gpa, request.header_params);
         defer gpa.free(headers);
         return switch (self.auth) {
-            .cloudflare => |auth| try (provider_cloudflare.Client{
-                .auth = auth,
-                .base_url_override = self.cloudflare_base_url_override,
-            }).getWithHeaders(io, gpa, url, headers),
+            .cloudflare => |auth| {
+                const cloudflare = provider_cloudflare.Client{
+                    .auth = auth,
+                    .base_url_override = self.cloudflare_base_url_override,
+                };
+                if (!route.security.required) {
+                    return try cloudflare.getPublicWithHeaders(io, gpa, url, headers);
+                }
+                return try cloudflare.getWithHeaders(io, gpa, url, headers);
+            },
             .hostinger => |token| try (provider_hostinger.Client{
                 .token = token,
                 .base_url_override = self.hostinger_base_url_override,
@@ -190,6 +197,7 @@ pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, reques
     try writeJsonField(writer, "path", path, true);
     try writeJsonField(writer, "url", url, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
+    try writeSecurityField(writer, "security", route, true);
     try writeRouteParamField(writer, "header_params", route.header_params, true);
     try writeHeaderInputField(writer, "header_params_input", request.header_params, true);
     try writeRequestBodyField(writer, "request_body", route.request_body, true);
@@ -226,6 +234,7 @@ pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, reque
     try writeJsonField(writer, "method", route.method.name(), true);
     try writeJsonField(writer, "path", path, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
+    try writeSecurityField(writer, "security", route, true);
     try writeRouteParamField(writer, "header_params", route.header_params, true);
     try writeHeaderInputField(writer, "header_params_input", request.header_params, true);
     try writeRequestBodyField(writer, "request_body", route.request_body, true);
@@ -272,6 +281,29 @@ fn writeRouteParamField(writer: anytype, name: []const u8, params: []const provi
     if (trailing_comma) try writer.writeByte(',');
 }
 
+fn writeSecurityField(writer: anytype, name: []const u8, route: provider_routes.Route, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeAll(":{");
+    try writer.writeAll("\"required\":");
+    try writer.writeAll(if (route.security.required) "true" else "false");
+    try writer.writeByte(',');
+    try writer.writeAll("\"cloudio_supported\":");
+    try writer.writeAll(if (cloudioSupportsRouteAuth(route)) "true" else "false");
+    try writer.writeByte(',');
+    try writer.writeAll("\"alternatives\":[");
+    for (route.security.alternatives, 0..) |alternative, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.writeByte('[');
+        for (alternative.schemes, 0..) |scheme, scheme_index| {
+            if (scheme_index != 0) try writer.writeByte(',');
+            try core_json.writeString(writer, scheme);
+        }
+        try writer.writeByte(']');
+    }
+    try writer.writeAll("]}");
+    if (trailing_comma) try writer.writeByte(',');
+}
+
 fn writeHeaderInputField(writer: anytype, name: []const u8, params: []const provider_routes.HeaderParam, trailing_comma: bool) !void {
     try core_json.writeString(writer, name);
     try writer.writeAll(":[");
@@ -308,6 +340,41 @@ fn requestHeaders(gpa: Allocator, params: []const provider_routes.HeaderParam) !
         headers[index] = .{ .name = param.name, .value = param.value };
     }
     return headers;
+}
+
+fn validateRouteAuth(route: provider_routes.Route, auth: Auth) !void {
+    if (!route.security.required) return;
+    return switch (auth) {
+        .cloudflare => |cloudflare_auth| validateCloudflareRouteAuth(route.security, cloudflare_auth),
+        .hostinger => |token| validateHostingerRouteAuth(route.security, token),
+    };
+}
+
+fn validateCloudflareRouteAuth(security: provider_routes.Security, auth: provider_cloudflare.Auth) !void {
+    if (auth.hasApiToken() and security.acceptsSchemeSet(&.{"api_token"})) return;
+    if (hasCloudflareLegacyAuth(auth) and security.acceptsSchemeSet(&.{ "api_email", "api_key" })) return;
+    if (!auth.hasApiToken() and !hasCloudflareLegacyAuth(auth)) return error.MissingCloudflareAuth;
+    return error.UnsupportedRouteAuthScheme;
+}
+
+fn validateHostingerRouteAuth(security: provider_routes.Security, token: []const u8) !void {
+    if (token.len == 0) return error.MissingHostingerToken;
+    if (security.acceptsSchemeSet(&.{"apiToken"})) return;
+    return error.UnsupportedRouteAuthScheme;
+}
+
+fn cloudioSupportsRouteAuth(route: provider_routes.Route) bool {
+    if (!route.security.required) return true;
+    return switch (route.provider) {
+        .cloudflare => route.security.acceptsSchemeSet(&.{"api_token"}) or route.security.acceptsSchemeSet(&.{ "api_email", "api_key" }),
+        .hostinger => route.security.acceptsSchemeSet(&.{"apiToken"}),
+    };
+}
+
+fn hasCloudflareLegacyAuth(auth: provider_cloudflare.Auth) bool {
+    const email = auth.email orelse return false;
+    const key = auth.key orelse return false;
+    return email.len != 0 and key.len != 0;
 }
 
 fn writeResponsesField(writer: anytype, name: []const u8, responses: []const provider_routes.Response, trailing_comma: bool) !void {
@@ -411,6 +478,7 @@ test "generic dispatch plans bodyless read routes without executing HTTP" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"method\":\"GET\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"apiToken\"]]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"read\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
@@ -433,6 +501,20 @@ test "generic dispatch route planner keeps mutation plans dry-run only" {
 
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"worker-assets-upload\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"dry_run\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":true,\"cloudio_supported\":false,\"alternatives\":[[\"assets_jwt\"]]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+}
+
+test "generic dispatch route planner reports anonymous security metadata" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "cloudflare-ips-cloudflare-ip-details")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const plan = try planRouteJsonRequest(allocator, route, .{});
+    defer allocator.free(plan);
+
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"cloudflare-ips-cloudflare-ip-details\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":false,\"cloudio_supported\":true,\"alternatives\":[[]]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 
@@ -627,6 +709,19 @@ test "generic dispatch validates auth provider and read safety before HTTP" {
 
     const cloudflare_client = Client.init(.{ .cloudflare = .{} });
     try std.testing.expectError(error.MissingCloudflareAuth, cloudflare_client.callReadRoute(std.testing.io, allocator, route, &.{.{ .name = "account_id", .value = "acct/1" }}));
+}
+
+test "generic dispatch rejects unsupported official auth schemes before HTTP" {
+    const allocator = std.testing.allocator;
+
+    const legacy_only_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "accounts-list-accounts")) orelse return error.TestExpectedRoute;
+    defer legacy_only_route.deinit(allocator);
+    const token_client = Client.init(.{ .cloudflare = .{ .token = "test-token" } });
+    try std.testing.expectError(error.UnsupportedRouteAuthScheme, token_client.callReadRoute(std.testing.io, allocator, legacy_only_route, &.{}));
+
+    const bearer_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "get_publicListSuppressionRouting")) orelse return error.TestExpectedRoute;
+    defer bearer_route.deinit(allocator);
+    try std.testing.expectError(error.UnsupportedRouteAuthScheme, token_client.callReadRoute(std.testing.io, allocator, bearer_route, &.{.{ .name = "account_id", .value = "acct/1" }}));
 }
 
 test "generic dispatch validates required read query parameters before HTTP" {

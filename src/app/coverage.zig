@@ -576,6 +576,9 @@ fn writeRouteDetail(writer: anytype, route: provider_routes.Route) !void {
     try writer.writeAll("      header_params: ");
     try writeRouteParamList(writer, route.header_params);
     try writer.writeByte('\n');
+    try writer.print("      security: required={} alternatives=", .{route.security.required});
+    try writeSecurityAlternatives(writer, route.security.alternatives);
+    try writer.writeByte('\n');
     try writer.print("      request_body: required={}", .{route.request_body.required});
     try writer.writeAll(" content_types=");
     try writeStringList(writer, route.request_body.content_types);
@@ -594,6 +597,24 @@ fn writeRouteDetail(writer: anytype, route: provider_routes.Route) !void {
         try writer.writeAll(" schema_refs=");
         try writeStringList(writer, response.schema_refs);
         try writer.writeByte('\n');
+    }
+}
+
+fn writeSecurityAlternatives(writer: anytype, alternatives: []const provider_routes.SecurityAlternative) !void {
+    if (alternatives.len == 0) {
+        try writer.writeAll("none");
+        return;
+    }
+    for (alternatives, 0..) |alternative, index| {
+        if (index != 0) try writer.writeAll(" or ");
+        if (alternative.schemes.len == 0) {
+            try writer.writeAll("anonymous");
+            continue;
+        }
+        for (alternative.schemes, 0..) |scheme, scheme_index| {
+            if (scheme_index != 0) try writer.writeByte('+');
+            try writer.writeAll(scheme);
+        }
     }
 }
 

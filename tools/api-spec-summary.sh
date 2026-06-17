@@ -22,6 +22,34 @@ tag_counts() {
     sort -nr
 }
 
+security_counts() {
+  jq -r '
+    . as $root
+    | [
+        .paths
+        | to_entries[]
+        | .value
+        | to_entries[]
+        | select(.value | type == "object")
+        | (.value.security // $root.security // []) as $security
+        | if ($security | length) == 0 then
+            "<anonymous>"
+          else
+            ($security
+              | map(
+                  (keys | sort) as $schemes
+                  | if ($schemes | length) == 0 then "<anonymous>" else ($schemes | join("+")) end
+                )
+              | join(" OR "))
+          end
+      ]
+    | group_by(.)
+    | map({security: .[0], count: length})
+    | sort_by(-.count, .security)[]
+    | "\(.count)\t\(.security)"
+  '
+}
+
 need curl
 need jq
 
@@ -46,6 +74,12 @@ printf 'cloudflare='
 operation_count < "$cloudflare_spec"
 printf 'hostinger='
 operation_count < "$hostinger_spec"
+
+printf '\nprovider_security\n'
+printf 'cloudflare\n'
+security_counts < "$cloudflare_spec"
+printf 'hostinger\n'
+security_counts < "$hostinger_spec"
 
 printf '\nhostinger_tags\n'
 tag_counts < "$hostinger_spec"
