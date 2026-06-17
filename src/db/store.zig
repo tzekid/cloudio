@@ -285,6 +285,25 @@ pub const Db = struct {
         try stepDone(stmt);
     }
 
+    pub fn upsertCloudflareResource(self: *Db, key: []const u8, kind: []const u8, resource_id: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, name: ?[]const u8, status: ?[]const u8, resource_type: ?[]const u8, raw: []const u8) !void {
+        const stmt = try self.prepare(
+            \\INSERT INTO cloudflare_resources(key, kind, resource_id, scope, scope_id, name, status, resource_type, raw_json, updated_at)
+            \\VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            \\ON CONFLICT(key) DO UPDATE SET kind=excluded.kind, resource_id=excluded.resource_id, scope=excluded.scope, scope_id=excluded.scope_id, name=excluded.name, status=excluded.status, resource_type=excluded.resource_type, raw_json=excluded.raw_json, updated_at=CURRENT_TIMESTAMP
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, key);
+        try bindText(stmt, 2, kind);
+        try bindText(stmt, 3, resource_id);
+        try bindTextOpt(stmt, 4, scope);
+        try bindTextOpt(stmt, 5, scope_id);
+        try bindTextOpt(stmt, 6, name);
+        try bindTextOpt(stmt, 7, status);
+        try bindTextOpt(stmt, 8, resource_type);
+        try bindText(stmt, 9, raw);
+        try stepDone(stmt);
+    }
+
     pub fn upsertHostingerVps(self: *Db, id: []const u8, name: ?[]const u8, status: ?[]const u8, ipv4: ?[]const u8, plan: ?[]const u8, raw: []const u8) !void {
         const stmt = try self.prepare(
             \\INSERT INTO hostinger_vps(id, name, status, ipv4, plan, raw_json, updated_at)
@@ -425,6 +444,7 @@ pub const Db = struct {
         try writer.print("cloudflare_accounts={d}\n", .{try self.countTable("cloudflare_accounts")});
         try writer.print("cloudflare_zones={d}\n", .{try self.countTable("cloudflare_zones")});
         try writer.print("cloudflare_dns_records={d}\n", .{try self.countTable("cloudflare_dns_records")});
+        try writer.print("cloudflare_resources={d}\n", .{try self.countTable("cloudflare_resources")});
         try writer.print("hostinger_vps={d}\n", .{try self.countTable("hostinger_vps")});
         try writer.print("hostinger_resources={d}\n", .{try self.countTable("hostinger_resources")});
         try writer.print("caddy_sites={d}\n", .{try self.countTable("caddy_sites")});
@@ -479,6 +499,16 @@ pub const Db = struct {
 
     pub fn containerList(self: *Db, gpa: Allocator) !NameValueRows {
         return try self.nameValueRows(gpa, "SELECT COALESCE(name,''), COALESCE(status,'') FROM containers ORDER BY 1 LIMIT 200");
+    }
+
+    pub fn cloudflareResourceList(self: *Db, gpa: Allocator) !NameValueRows {
+        return try self.nameValueRows(gpa,
+            \\SELECT kind || '/' || resource_id,
+            \\       trim(COALESCE(scope,'') || ' ' || COALESCE(scope_id,'') || ' ' || COALESCE(status,'') || ' ' || COALESCE(resource_type,'') || ' ' || COALESCE(name,''))
+            \\FROM cloudflare_resources
+            \\ORDER BY updated_at DESC, kind, resource_id
+            \\LIMIT 200
+        );
     }
 
     pub fn hostingerResourceList(self: *Db, gpa: Allocator) !NameValueRows {
@@ -750,10 +780,10 @@ pub fn columnText(stmt: *sqlite.sqlite3_stmt, idx: c_int) ?[]const u8 {
 
 fn isKnownTable(table: []const u8) bool {
     const known = [_][]const u8{
-        "snapshots",     "provider_raw",      "cloudflare_accounts", "cloudflare_zones", "cloudflare_dns_records",
-        "hostinger_vps", "hostinger_metrics", "hostinger_resources", "caddy_sites",      "caddy_upstreams",
-        "projects",      "system_metrics",    "services",            "sockets",          "containers",
-        "audit_events",  "settings",
+        "snapshots",            "provider_raw",  "cloudflare_accounts", "cloudflare_zones",    "cloudflare_dns_records",
+        "cloudflare_resources", "hostinger_vps", "hostinger_metrics",   "hostinger_resources", "caddy_sites",
+        "caddy_upstreams",      "projects",      "system_metrics",      "services",            "sockets",
+        "containers",           "audit_events",  "settings",
     };
     for (known) |name| if (std.mem.eql(u8, table, name)) return true;
     return false;

@@ -11,6 +11,7 @@ pub const Counts = struct {
     cloudflare_accounts: i64,
     cloudflare_zones: i64,
     cloudflare_dns_records: i64,
+    cloudflare_resources: i64,
     hostinger_vps: i64,
     hostinger_resources: i64,
     caddy_sites: i64,
@@ -26,6 +27,7 @@ pub const Counts = struct {
             .cloudflare_accounts = try db.countTable("cloudflare_accounts"),
             .cloudflare_zones = try db.countTable("cloudflare_zones"),
             .cloudflare_dns_records = try db.countTable("cloudflare_dns_records"),
+            .cloudflare_resources = try db.countTable("cloudflare_resources"),
             .hostinger_vps = try db.countTable("hostinger_vps"),
             .hostinger_resources = try db.countTable("hostinger_resources"),
             .caddy_sites = try db.countTable("caddy_sites"),
@@ -81,6 +83,7 @@ fn writeCounts(writer: anytype, counts: Counts) !void {
     try writer.print("cloudflare accounts: {d}\n", .{counts.cloudflare_accounts});
     try writer.print("cloudflare zones: {d}\n", .{counts.cloudflare_zones});
     try writer.print("cloudflare dns records: {d}\n", .{counts.cloudflare_dns_records});
+    try writer.print("cloudflare resources: {d}\n", .{counts.cloudflare_resources});
     try writer.print("hostinger vps: {d}\n", .{counts.hostinger_vps});
     try writer.print("hostinger resources: {d}\n", .{counts.hostinger_resources});
     try writer.print("caddy sites: {d}\n", .{counts.caddy_sites});

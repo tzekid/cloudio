@@ -25,6 +25,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandAccount(ctx, args);
     } else if (std.mem.eql(u8, sub, "dry-run")) {
         try commandDryRun(ctx, args);
+    } else if (std.mem.eql(u8, sub, "resources")) {
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.listResources(appContext(ctx)));
     } else if (std.mem.eql(u8, sub, "ips")) {
         const networks: ?[]const u8 = if (args.len > 1) args[1] else null;
         cli_render.printOutput(ctx.gpa, try app_cloudflare.collectIps(appContext(ctx), networks));

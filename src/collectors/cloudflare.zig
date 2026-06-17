@@ -5,6 +5,7 @@ const core_process = @import("core_process");
 const core_redact = @import("core_redact");
 const collector_capture = @import("collector_capture");
 const db_store = @import("db_store");
+const net_http = @import("net_http");
 const provider_cloudflare = @import("provider_cloudflare");
 const provider_cloudflare_models = @import("provider_cloudflare_models");
 
@@ -170,7 +171,7 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     };
     const body = try client.getAccounts(io, gpa);
     defer body.deinit(gpa);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "accounts",
         .summary_label = "account list",
@@ -213,7 +214,7 @@ pub fn collectIps(io: Io, gpa: Allocator, db: *Db, networks: ?[]const u8, captur
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.ipsPath(gpa, networks);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "ips",
         .target = networks,
@@ -235,7 +236,7 @@ pub fn collectAccountEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, accou
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accountEndpointPath(gpa, account_id, endpoint);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = account_id,
@@ -256,7 +257,7 @@ pub fn collectAccountDnsRecordUsage(io: Io, gpa: Allocator, auth: Auth, db: *Db,
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accountDnsRecordUsagePath(gpa, account_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "account-dns-record-usage",
         .target = account_id,
@@ -278,7 +279,7 @@ pub fn collectAccountCollection(io: Io, gpa: Allocator, auth: Auth, db: *Db, acc
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accountCollectionPath(gpa, account_id, collection);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = list_kind,
         .target = account_id,
@@ -302,7 +303,7 @@ pub fn collectAccountResource(io: Io, gpa: Allocator, auth: Auth, db: *Db, accou
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accountResourcePath(gpa, account_id, collection, resource_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = detail_kind,
         .target = target,
@@ -335,7 +336,7 @@ pub fn collectAccountTokenEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, 
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accountTokenEndpointPath(gpa, account_id, endpoint);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = account_id,
@@ -358,7 +359,7 @@ pub fn collectAccountToken(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accountTokenPath(gpa, account_id, token_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "account-token",
         .target = target,
@@ -380,7 +381,7 @@ pub fn collectAccountIamCollection(io: Io, gpa: Allocator, auth: Auth, db: *Db, 
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accountIamCollectionPath(gpa, account_id, collection);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = list_kind,
         .target = account_id,
@@ -404,7 +405,7 @@ pub fn collectAccountIamResource(io: Io, gpa: Allocator, auth: Auth, db: *Db, ac
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accountIamResourcePath(gpa, account_id, collection, resource_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = detail_kind,
         .target = target,
@@ -427,7 +428,7 @@ pub fn collectAccountUserGroupMembers(io: Io, gpa: Allocator, auth: Auth, db: *D
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accountUserGroupMembersPath(gpa, account_id, user_group_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "account-user-group-members",
         .target = target,
@@ -450,7 +451,7 @@ pub fn collectAccountUserGroupMember(io: Io, gpa: Allocator, auth: Auth, db: *Db
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accountUserGroupMemberPath(gpa, account_id, user_group_id, member_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "account-user-group-member",
         .target = target,
@@ -472,7 +473,7 @@ pub fn collectSecondaryDnsAccountCollection(io: Io, gpa: Allocator, auth: Auth, 
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.secondaryDnsAccountCollectionPath(gpa, account_id, resource);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = list_kind,
         .target = account_id,
@@ -496,7 +497,7 @@ pub fn collectSecondaryDnsAccountResource(io: Io, gpa: Allocator, auth: Auth, db
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.secondaryDnsAccountResourcePath(gpa, account_id, resource, resource_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = detail_kind,
         .target = target,
@@ -520,7 +521,7 @@ pub fn collectDnsFirewallReadEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *D
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.dnsFirewallReadPath(gpa, account_id, endpoint, dns_firewall_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -544,7 +545,7 @@ pub fn collectDnsFirewallAnalyticsEndpoint(io: Io, gpa: Allocator, auth: Auth, d
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.dnsFirewallAnalyticsPath(gpa, account_id, dns_firewall_id, endpoint);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -568,7 +569,7 @@ pub fn collectLoadBalancingAccountEndpoint(io: Io, gpa: Allocator, auth: Auth, d
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.loadBalancingAccountReadPath(gpa, account_id, endpoint, resource_id, search_query);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -591,7 +592,7 @@ pub fn collectLoadBalancingUserEndpoint(io: Io, gpa: Allocator, auth: Auth, db: 
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.loadBalancingUserReadPath(gpa, endpoint, resource_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -615,7 +616,7 @@ pub fn collectLoadBalancingZoneEndpoint(io: Io, gpa: Allocator, auth: Auth, db: 
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.loadBalancingZoneReadPath(gpa, zone_id, endpoint, load_balancer_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -639,7 +640,7 @@ pub fn collectEndpointHealthCheck(io: Io, gpa: Allocator, auth: Auth, db: *Db, a
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.endpointHealthCheckReadPath(gpa, account_id, endpoint, healthcheck_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -663,7 +664,7 @@ pub fn collectZoneHealthCheck(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.zoneHealthCheckReadPath(gpa, zone_id, endpoint, healthcheck_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -687,7 +688,7 @@ pub fn collectSmartShieldHealthCheck(io: Io, gpa: Allocator, auth: Auth, db: *Db
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.smartShieldHealthCheckReadPath(gpa, zone_id, endpoint, healthcheck_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -711,7 +712,7 @@ pub fn collectResourceTaggingAccountEndpoint(io: Io, gpa: Allocator, auth: Auth,
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -734,7 +735,7 @@ pub fn collectResourceTaggingZoneTags(io: Io, gpa: Allocator, auth: Auth, db: *D
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.resourceTaggingZoneReadPath(gpa, zone_id, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "resource-tags-zone",
         .target = target,
@@ -758,7 +759,7 @@ pub fn collectRulesetEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.rulesetReadPath(gpa, scope, scope_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -782,7 +783,7 @@ pub fn collectCloudforceOneRuleEndpoint(io: Io, gpa: Allocator, auth: Auth, db: 
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.cloudforceOneRuleReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -806,7 +807,7 @@ pub fn collectIpAccessRuleEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, 
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.ipAccessRuleReadPath(gpa, scope, scope_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -830,7 +831,7 @@ pub fn collectZoneLegacyRuleEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.zoneLegacyRuleReadPath(gpa, zone_id, resource, endpoint, rule_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -854,7 +855,7 @@ pub fn collectPageShieldEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zo
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.pageShieldReadPath(gpa, zone_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -878,7 +879,7 @@ pub fn collectCustomPageEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, sc
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.customPageReadPath(gpa, scope, scope_id, resource, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -902,7 +903,7 @@ pub fn collectAccessCustomPageEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accessCustomPageReadPath(gpa, account_id, endpoint, page_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -926,7 +927,7 @@ pub fn collectAccessEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope:
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.accessReadPath(gpa, scope, scope_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -950,7 +951,7 @@ pub fn collectTunnelEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, accoun
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.tunnelReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -974,7 +975,7 @@ pub fn collectZeroTrustEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, acc
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.zeroTrustReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -998,7 +999,7 @@ pub fn collectSecurityCenterEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.securityCenterReadPath(gpa, scope, scope_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -1022,7 +1023,7 @@ pub fn collectAuditLogEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endp
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.auditLogReadPath(gpa, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -1046,7 +1047,7 @@ pub fn collectLogpushEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.logpushReadPath(gpa, scope, scope_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -1070,7 +1071,7 @@ pub fn collectLogExplorerEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, s
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.logExplorerReadPath(gpa, scope, scope_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -1094,7 +1095,7 @@ pub fn collectLogsReceivedEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, 
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.logsReceivedReadPath(gpa, zone_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -1118,7 +1119,7 @@ pub fn collectTlsEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope: Tl
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.tlsReadPath(gpa, scope, scope_id, endpoint, args);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -1138,7 +1139,7 @@ pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endp
     };
     const body = try client.getIdentityEndpoint(io, gpa, endpoint);
     defer body.deinit(gpa);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .summary_label = endpoint_label,
@@ -1161,7 +1162,7 @@ pub fn collectMembership(io: Io, gpa: Allocator, auth: Auth, db: *Db, membership
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.membershipPath(gpa, membership_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "membership",
         .target = membership_id,
@@ -1187,7 +1188,7 @@ pub fn collectUserTokenEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, end
     };
     const body = try client.getUserTokenEndpoint(io, gpa, endpoint);
     defer body.deinit(gpa);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .summary_label = endpoint_label,
@@ -1207,7 +1208,7 @@ pub fn collectUserToken(io: Io, gpa: Allocator, auth: Auth, db: *Db, token_id: [
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.userTokenReadPath(gpa, .details, token_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "user-token",
         .target = token_id,
@@ -1226,7 +1227,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
     };
     const body = try client.getZones(io, gpa, domain);
     defer body.deinit(gpa);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "zone",
         .target = domain,
@@ -1263,7 +1264,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             const endpoint_label = endpoint.label();
             const endpoint_path = try provider_cloudflare.zoneEndpointPath(gpa, zone_id, endpoint);
             defer gpa.free(endpoint_path);
-            const extra_redacted = try collector_capture.storeResponse(gpa, db, .{
+            const extra_redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint_label,
                 .target = domain,
@@ -1307,7 +1308,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             const endpoint_label = endpoint.label();
             const endpoint_path = try provider_cloudflare.zoneLifecycleReadPath(gpa, zone_id, endpoint, null);
             defer gpa.free(endpoint_path);
-            const extra_redacted = try collector_capture.storeResponse(gpa, db, .{
+            const extra_redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint_label,
                 .target = domain,
@@ -1336,7 +1337,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             const endpoint_label = endpoint.label();
             const endpoint_path = try provider_cloudflare.secondaryDnsZoneReadPath(gpa, zone_id, endpoint);
             defer gpa.free(endpoint_path);
-            const extra_redacted = try collector_capture.storeResponse(gpa, db, .{
+            const extra_redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint_label,
                 .target = domain,
@@ -1360,7 +1361,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             defer extra_body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.dnsAnalyticsPath(gpa, zone_id, endpoint);
             defer gpa.free(endpoint_path);
-            const extra_redacted = try collector_capture.storeResponse(gpa, db, .{
+            const extra_redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint.label(),
                 .target = domain,
@@ -1383,7 +1384,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             defer lb_body.deinit(gpa);
             const lb_endpoint_path = try provider_cloudflare.loadBalancingZoneReadPath(gpa, zone_id, lb_endpoint, null);
             defer gpa.free(lb_endpoint_path);
-            const lb_redacted = try collector_capture.storeResponse(gpa, db, .{
+            const lb_redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = lb_endpoint.label(),
                 .target = domain,
@@ -1407,7 +1408,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             defer health_body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.zoneHealthCheckReadPath(gpa, zone_id, endpoint, null);
             defer gpa.free(endpoint_path);
-            const health_redacted = try collector_capture.storeResponse(gpa, db, .{
+            const health_redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint.label(),
                 .target = domain,
@@ -1431,7 +1432,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             defer smart_body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.smartShieldHealthCheckReadPath(gpa, zone_id, endpoint, null);
             defer gpa.free(endpoint_path);
-            const smart_redacted = try collector_capture.storeResponse(gpa, db, .{
+            const smart_redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint.label(),
                 .target = domain,
@@ -1497,7 +1498,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
                 .resource_type = "zone",
             });
             defer gpa.free(endpoint_path);
-            const tag_redacted = try collector_capture.storeResponse(gpa, db, .{
+            const tag_redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = "resource-tags-zone",
                 .target = domain,
@@ -1521,7 +1522,7 @@ pub fn collectZoneById(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []c
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.zonePath(gpa, zone_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = "zone-detail",
         .target = zone_id,
@@ -1545,7 +1546,7 @@ pub fn collectZoneLifecycleReadEndpoint(io: Io, gpa: Allocator, auth: Auth, db: 
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.zoneLifecycleReadPath(gpa, zone_id, endpoint, plan_id);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = target,
@@ -1567,7 +1568,7 @@ pub fn collectSecondaryDnsZoneEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.secondaryDnsZoneReadPath(gpa, zone_id, endpoint);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = zone_id,
@@ -1589,7 +1590,7 @@ pub fn collectDnsAnalyticsEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, 
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.dnsAnalyticsPath(gpa, zone_id, endpoint);
     defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
+    const redacted = try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint_label,
         .target = zone_id,
@@ -1615,7 +1616,7 @@ pub fn collectZoneEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: 
         defer body.deinit(gpa);
         const endpoint_path = try provider_cloudflare.zoneEndpointPath(gpa, zone_id, endpoint);
         defer gpa.free(endpoint_path);
-        const redacted = try collector_capture.storeResponse(gpa, db, .{
+        const redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = endpoint_label,
             .target = domain,
@@ -1652,7 +1653,7 @@ pub fn collectDnsRecordEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, dom
         defer gpa.free(endpoint_path);
         const target = if (dns_record_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ domain, id }) else try gpa.dupe(u8, domain);
         defer gpa.free(target);
-        const redacted = try collector_capture.storeResponse(gpa, db, .{
+        const redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = endpoint.label(),
             .target = target,
@@ -1690,7 +1691,7 @@ pub fn collectZoneSetting(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: [
         defer gpa.free(target);
         const summary_label = try std.fmt.allocPrint(gpa, "setting {s}", .{setting_id});
         defer gpa.free(summary_label);
-        const redacted = try collector_capture.storeResponse(gpa, db, .{
+        const redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = "setting",
             .target = target,
@@ -1722,7 +1723,7 @@ fn collectAccountDnsSettings(gpa: Allocator, io: Io, client: provider_cloudflare
         defer body.deinit(gpa);
         const endpoint_path = try provider_cloudflare.accountDnsSettingsPath(gpa, row.id);
         defer gpa.free(endpoint_path);
-        const extra_redacted = try collector_capture.storeResponse(gpa, db, .{
+        const extra_redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = "account-dns-settings",
             .target = row.id,
@@ -1748,7 +1749,7 @@ fn collectAccountDnsRecordUsageForAccounts(gpa: Allocator, io: Io, client: provi
         defer body.deinit(gpa);
         const endpoint_path = try provider_cloudflare.accountDnsRecordUsagePath(gpa, row.id);
         defer gpa.free(endpoint_path);
-        const redacted = try collector_capture.storeResponse(gpa, db, .{
+        const redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = "account-dns-record-usage",
             .target = row.id,
@@ -1774,7 +1775,7 @@ fn collectMembershipDetailsForResponse(gpa: Allocator, io: Io, client: provider_
         defer body.deinit(gpa);
         const endpoint_path = try provider_cloudflare.membershipPath(gpa, row.id);
         defer gpa.free(endpoint_path);
-        const redacted = try collector_capture.storeResponse(gpa, db, .{
+        const redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = "membership",
             .target = row.id,
@@ -1807,7 +1808,7 @@ fn collectAccountEndpoints(gpa: Allocator, io: Io, client: provider_cloudflare.C
             defer body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.accountEndpointPath(gpa, row.id, endpoint);
             defer gpa.free(endpoint_path);
-            const redacted = try collector_capture.storeResponse(gpa, db, .{
+            const redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint_label,
                 .target = row.id,
@@ -1840,7 +1841,7 @@ fn collectAccountCollectionsForAccounts(gpa: Allocator, io: Io, client: provider
             defer body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.accountCollectionPath(gpa, row.id, collection);
             defer gpa.free(endpoint_path);
-            const redacted = try collector_capture.storeResponse(gpa, db, .{
+            const redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = list_kind,
                 .target = row.id,
@@ -1874,7 +1875,7 @@ fn collectAccountIamCollectionsForAccounts(gpa: Allocator, io: Io, client: provi
             defer body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.accountIamCollectionPath(gpa, row.id, collection);
             defer gpa.free(endpoint_path);
-            const redacted = try collector_capture.storeResponse(gpa, db, .{
+            const redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = list_kind,
                 .target = row.id,
@@ -1909,7 +1910,7 @@ fn collectSecondaryDnsAccountCollectionsForAccounts(gpa: Allocator, io: Io, clie
             defer body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.secondaryDnsAccountCollectionPath(gpa, row.id, resource);
             defer gpa.free(endpoint_path);
-            const redacted = try collector_capture.storeResponse(gpa, db, .{
+            const redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = list_kind,
                 .target = row.id,
@@ -1936,7 +1937,7 @@ fn collectDnsFirewallForAccounts(gpa: Allocator, io: Io, client: provider_cloudf
         defer body.deinit(gpa);
         const endpoint_path = try provider_cloudflare.dnsFirewallReadPath(gpa, row.id, .list, null);
         defer gpa.free(endpoint_path);
-        const redacted = try collector_capture.storeResponse(gpa, db, .{
+        const redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = "dns-firewall",
             .target = row.id,
@@ -1968,7 +1969,7 @@ fn collectDnsFirewallDetailsForList(gpa: Allocator, io: Io, client: provider_clo
             defer body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.dnsFirewallReadPath(gpa, account_id, endpoint, row.id);
             defer gpa.free(endpoint_path);
-            const redacted = try collector_capture.storeResponse(gpa, db, .{
+            const redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint.label(),
                 .target = target,
@@ -1990,7 +1991,7 @@ fn collectDnsFirewallDetailsForList(gpa: Allocator, io: Io, client: provider_clo
             defer body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.dnsFirewallAnalyticsPath(gpa, account_id, row.id, endpoint);
             defer gpa.free(endpoint_path);
-            const redacted = try collector_capture.storeResponse(gpa, db, .{
+            const redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint.firewallLabel(),
                 .target = target,
@@ -2059,7 +2060,7 @@ fn collectLoadBalancingAccountSnapshot(gpa: Allocator, io: Io, client: provider_
     defer gpa.free(endpoint_path);
     const target = if (resource_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, id }) else try gpa.dupe(u8, account_id);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = target,
@@ -2118,7 +2119,7 @@ fn collectLoadBalancingUserSnapshot(gpa: Allocator, io: Io, client: provider_clo
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.loadBalancingUserReadPath(gpa, endpoint, resource_id);
     defer gpa.free(endpoint_path);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = resource_id orelse "user",
@@ -2145,7 +2146,7 @@ fn collectLoadBalancingZoneDetailsForList(gpa: Allocator, io: Io, client: provid
         defer body.deinit(gpa);
         const endpoint_path = try provider_cloudflare.loadBalancingZoneReadPath(gpa, zone_id, endpoint, row.id);
         defer gpa.free(endpoint_path);
-        const redacted = try collector_capture.storeResponse(gpa, db, .{
+        const redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = endpoint.label(),
             .target = target,
@@ -2198,7 +2199,7 @@ fn collectEndpointHealthCheckSnapshot(gpa: Allocator, io: Io, client: provider_c
     defer gpa.free(endpoint_path);
     const target = if (healthcheck_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, id }) else try gpa.dupe(u8, account_id);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = target,
@@ -2296,7 +2297,7 @@ fn collectCloudforceOneRuleSnapshot(gpa: Allocator, io: Io, client: provider_clo
     defer gpa.free(endpoint_path);
     const target = try cloudforceOneRuleTarget(gpa, account_id, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = target,
@@ -2364,7 +2365,7 @@ fn collectIpAccessRuleSnapshot(gpa: Allocator, io: Io, client: provider_cloudfla
     defer gpa.free(endpoint_path);
     const target = try ipAccessRuleTarget(gpa, scope, scope_id, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(scope),
         .target = target,
@@ -2411,7 +2412,7 @@ fn collectZoneLegacyRuleSnapshot(gpa: Allocator, io: Io, client: provider_cloudf
     defer gpa.free(endpoint_path);
     const target = try zoneLegacyRuleTarget(gpa, target_label, endpoint, rule_id);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(resource),
         .target = target,
@@ -2473,7 +2474,7 @@ fn collectPageShieldSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare
     defer gpa.free(endpoint_path);
     const target = try pageShieldTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = target,
@@ -2538,7 +2539,7 @@ fn collectCustomPageSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare
     defer gpa.free(endpoint_path);
     const target = try customPageTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(scope, resource),
         .target = target,
@@ -2589,7 +2590,7 @@ fn collectAccessCustomPageSnapshot(gpa: Allocator, io: Io, client: provider_clou
     defer gpa.free(endpoint_path);
     const target = try accessCustomPageTarget(gpa, target_label, endpoint, page_id);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = target,
@@ -2739,7 +2740,7 @@ fn collectAccessSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Cli
     defer gpa.free(endpoint_path);
     const target = try accessTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(scope),
         .target = target,
@@ -2821,7 +2822,7 @@ fn collectTunnelSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Cli
     defer gpa.free(endpoint_path);
     const target = try tunnelTarget(gpa, account_id, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = target,
@@ -2919,7 +2920,7 @@ fn collectZeroTrustSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.
     defer gpa.free(endpoint_path);
     const target = try zeroTrustTarget(gpa, account_id, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = target,
@@ -2993,7 +2994,7 @@ fn collectSecurityCenterSnapshot(gpa: Allocator, io: Io, client: provider_cloudf
     defer gpa.free(endpoint_path);
     const target = try securityCenterTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(scope),
         .target = target,
@@ -3048,7 +3049,7 @@ fn collectAuditLogSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.C
     defer gpa.free(endpoint_path);
     const target = try auditLogTarget(gpa, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = target,
@@ -3100,7 +3101,7 @@ fn collectLogpushSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Cl
     defer gpa.free(endpoint_path);
     const target = try logpushTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(scope),
         .target = target,
@@ -3154,7 +3155,7 @@ fn collectLogExplorerSnapshot(gpa: Allocator, io: Io, client: provider_cloudflar
     defer gpa.free(endpoint_path);
     const target = try logExplorerTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(scope),
         .target = target,
@@ -3202,7 +3203,7 @@ fn collectLogsReceivedSnapshot(gpa: Allocator, io: Io, client: provider_cloudfla
     defer gpa.free(endpoint_path);
     const target = try logsReceivedTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = target,
@@ -3296,7 +3297,7 @@ fn collectTlsSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client
     defer gpa.free(endpoint_path);
     const target = try tlsTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(scope),
         .target = target,
@@ -3314,7 +3315,7 @@ fn collectRulesetSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Cl
     defer gpa.free(endpoint_path);
     const target = try rulesetTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(scope),
         .target = target,
@@ -3349,7 +3350,7 @@ fn collectResourceTaggingAccountSnapshot(gpa: Allocator, io: Io, client: provide
     defer gpa.free(endpoint_path);
     const target = try resourceTaggingAccountTarget(gpa, account_id, endpoint, args);
     defer gpa.free(target);
-    return try collector_capture.storeResponse(gpa, db, .{
+    return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
         .kind = endpoint.label(),
         .target = target,
@@ -3376,7 +3377,7 @@ fn collectZoneHealthCheckDetailsForList(gpa: Allocator, io: Io, client: provider
         defer body.deinit(gpa);
         const endpoint_path = try provider_cloudflare.zoneHealthCheckReadPath(gpa, zone_id, endpoint, row.id);
         defer gpa.free(endpoint_path);
-        const redacted = try collector_capture.storeResponse(gpa, db, .{
+        const redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = endpoint.label(),
             .target = target,
@@ -3405,7 +3406,7 @@ fn collectSmartShieldHealthCheckDetailsForList(gpa: Allocator, io: Io, client: p
         defer body.deinit(gpa);
         const endpoint_path = try provider_cloudflare.smartShieldHealthCheckReadPath(gpa, zone_id, endpoint, row.id);
         defer gpa.free(endpoint_path);
-        const redacted = try collector_capture.storeResponse(gpa, db, .{
+        const redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = endpoint.label(),
             .target = target,
@@ -3435,7 +3436,7 @@ fn collectAccountUserGroupMembersForGroups(gpa: Allocator, io: Io, client: provi
         defer gpa.free(endpoint_path);
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, row.id });
         defer gpa.free(target);
-        const redacted = try collector_capture.storeResponse(gpa, db, .{
+        const redacted = try storeCloudflareResponse(gpa, db, .{
             .provider = "cloudflare",
             .kind = "account-user-group-members",
             .target = target,
@@ -3467,7 +3468,7 @@ fn collectAccountTokenEndpointsForAccounts(gpa: Allocator, io: Io, auth: Auth, c
             defer body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.accountTokenEndpointPath(gpa, row.id, endpoint);
             defer gpa.free(endpoint_path);
-            const redacted = try collector_capture.storeResponse(gpa, db, .{
+            const redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint_label,
                 .target = row.id,
@@ -3490,7 +3491,7 @@ fn collectAccountTokenEndpointsForAccounts(gpa: Allocator, io: Io, auth: Auth, c
             defer body.deinit(gpa);
             const endpoint_path = try provider_cloudflare.accountTokenEndpointPath(gpa, row.id, endpoint);
             defer gpa.free(endpoint_path);
-            const redacted = try collector_capture.storeResponse(gpa, db, .{
+            const redacted = try storeCloudflareResponse(gpa, db, .{
                 .provider = "cloudflare",
                 .kind = endpoint_label,
                 .target = row.id,
@@ -3561,6 +3562,65 @@ pub fn persistDnsRecordRows(gpa: Allocator, db: *Db, zone_id: []const u8, body: 
     for (rows.items) |row| {
         try db.upsertDnsRecord(row.id, row.zone_id, row.name, row.typ, row.content, row.ttl, row.proxied, row.raw_json);
     }
+}
+
+fn storeCloudflareResponse(gpa: Allocator, db: *Db, input: collector_capture.ResponseCapture) ![]u8 {
+    const stored = try collector_capture.storeResponseWithSnapshotId(gpa, db, input);
+    errdefer stored.deinit(gpa);
+    if (net_http.isOk(input.status)) {
+        try persistResourceRows(gpa, db, input.kind, resourceScope(input.kind), input.target, stored.redacted);
+    }
+    return stored.redacted;
+}
+
+fn persistResourceRows(gpa: Allocator, db: *Db, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseResourceRows(gpa, kind, scope, scope_id, body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertCloudflareResource(row.key, row.kind, row.resource_id, row.scope, row.scope_id, row.name, row.status, row.resource_type, row.raw_json);
+    }
+}
+
+fn resourceScope(kind: []const u8) ?[]const u8 {
+    if (std.mem.indexOf(u8, kind, "account") != null) return "account";
+    if (std.mem.indexOf(u8, kind, "zone") != null) return "zone";
+    if (std.mem.indexOf(u8, kind, "dns-record") != null) return "zone";
+    if (std.mem.indexOf(u8, kind, "dnssec") != null) return "zone";
+    if (std.mem.indexOf(u8, kind, "user") != null) return "user";
+    if (std.mem.indexOf(u8, kind, "membership") != null) return "user";
+    if (std.mem.eql(u8, kind, "ips")) return "global";
+    return null;
+}
+
+test "stores Cloudflare response resources through capture wrapper" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudflare-resources.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    const redacted = try storeCloudflareResponse(allocator, &db, .{
+        .provider = "cloudflare",
+        .kind = "account-members",
+        .target = "acct-1",
+        .summary_label = "account members",
+        .endpoint = "/accounts/acct-1/members",
+        .status = .ok,
+        .body = "{\"success\":true,\"result\":[{\"id\":\"member-1\",\"status\":\"accepted\",\"roles\":[\"admin\"]}]}",
+    });
+    defer allocator.free(redacted);
+
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("provider_raw"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_resources"));
+    var rows = try db.cloudflareResourceList(allocator);
+    defer rows.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), rows.items.len);
+    try std.testing.expectEqualStrings("account-members/member-1", rows.items[0].name);
+    try std.testing.expect(std.mem.indexOf(u8, rows.items[0].value, "account acct-1 accepted") != null);
 }
 
 fn clientFromAuth(auth: Auth) !provider_cloudflare.Client {

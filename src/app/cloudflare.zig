@@ -462,6 +462,17 @@ pub fn diagnose(ctx: Context, domain: []const u8) !void {
     try collector_cloudflare.diagnoseDomain(ctx.io, ctx.gpa, ctx.db, domain);
 }
 
+pub fn listResources(ctx: Context) !Output {
+    var rows = try ctx.db.cloudflareResourceList(ctx.gpa);
+    defer rows.deinit(ctx.gpa);
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    for (rows.items) |row| {
+        try out.writer.print("{s}\t{s}\n", .{ row.name, row.value });
+    }
+    return .{ .text = try out.toOwnedSlice() };
+}
+
 pub fn selectedDomain(domains: []const []const u8, args: []const []const u8) []const u8 {
     if (args.len > 1) return args[1];
     return domains[0];
@@ -474,4 +485,29 @@ test "cloudflare app domain selection uses explicit or default domain" {
 
     const zone_explicit = [_][]const u8{ "zone", "example.net" };
     try std.testing.expectEqualStrings("example.net", selectedDomain(configured[0..], zone_explicit[0..]));
+}
+
+test "cloudflare app lists normalized resources" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudflare-app-resources.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertCloudflareResource("dns-records|zone|zone-1|record-1", "dns-records", "record-1", "zone", "zone-1", "plosca.ru", "active", "A", "{\"id\":\"record-1\"}");
+
+    const domains = [_][]const u8{"plosca.ru"};
+    const ctx = Context{
+        .io = std.testing.io,
+        .gpa = allocator,
+        .auth = .{},
+        .domains = domains[0..],
+        .db = &db,
+    };
+    var output = try listResources(ctx);
+    defer output.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "dns-records/record-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "zone zone-1 active A plosca.ru") != null);
 }

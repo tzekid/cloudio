@@ -56,6 +56,7 @@ zig build run -- route dry-run cloudflare --operation argo-smart-routing-patch-a
 Useful read-only Cloudflare checks:
 
 ```sh
+zig build run -- cloudflare resources
 zig build run -- cloudflare ips
 zig build run -- cloudflare ips jdcloud
 zig build run -- cloudflare account dns-record-usage <account-id>

@@ -68,6 +68,30 @@ pub const IdRow = struct {
     }
 };
 
+pub const ResourceRow = struct {
+    key: []u8,
+    kind: []u8,
+    resource_id: []u8,
+    scope: ?[]u8,
+    scope_id: ?[]u8,
+    name: ?[]u8,
+    status: ?[]u8,
+    resource_type: ?[]u8,
+    raw_json: []u8,
+
+    pub fn deinit(self: ResourceRow, allocator: Allocator) void {
+        allocator.free(self.key);
+        allocator.free(self.kind);
+        allocator.free(self.resource_id);
+        if (self.scope) |value| allocator.free(value);
+        if (self.scope_id) |value| allocator.free(value);
+        if (self.name) |value| allocator.free(value);
+        if (self.status) |value| allocator.free(value);
+        if (self.resource_type) |value| allocator.free(value);
+        allocator.free(self.raw_json);
+    }
+};
+
 pub fn Rows(comptime T: type) type {
     return struct {
         items: []T,
@@ -84,6 +108,7 @@ pub const AccountRows = Rows(AccountRow);
 pub const ZoneRows = Rows(ZoneRow);
 pub const DnsRecordRows = Rows(DnsRecordRow);
 pub const IdRows = Rows(IdRow);
+pub const ResourceRows = Rows(ResourceRow);
 
 pub fn parseAccountRows(gpa: Allocator, body: []const u8) !AccountRows {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(AccountRow);
@@ -225,6 +250,120 @@ pub fn parseResourceIdRowsMatchingString(gpa: Allocator, body: []const u8, field
     return .{ .items = try rows.toOwnedSlice(gpa) };
 }
 
+pub fn parseResourceRows(gpa: Allocator, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, body: []const u8) !ResourceRows {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(ResourceRow);
+    defer parsed.deinit();
+
+    var rows = std.ArrayList(ResourceRow).empty;
+    errdefer deinitPartial(ResourceRow, &rows, gpa);
+    try appendResourceRowsFromValue(gpa, &rows, kind, scope, scope_id, parsed.value);
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
+fn appendResourceRowsFromValue(gpa: Allocator, rows: *std.ArrayList(ResourceRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, value: std.json.Value) !void {
+    switch (value) {
+        .array => |array| {
+            for (array.items) |item| try appendResourceRow(gpa, rows, kind, scope, scope_id, item);
+        },
+        .object => |object| {
+            if (object.get("result")) |result| {
+                try appendResourceRowsFromValue(gpa, rows, kind, scope, scope_id, result);
+            } else if (object.get("data")) |data| {
+                try appendResourceRowsFromValue(gpa, rows, kind, scope, scope_id, data);
+            } else {
+                try appendResourceRow(gpa, rows, kind, scope, scope_id, value);
+            }
+        },
+        else => {},
+    }
+}
+
+fn appendResourceRow(gpa: Allocator, rows: *std.ArrayList(ResourceRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, item: std.json.Value) !void {
+    if (item != .object) return;
+    const resource_id = try resourceIdValue(gpa, item) orelse return;
+    errdefer gpa.free(resource_id);
+    const key = try resourceKey(gpa, kind, scope, scope_id, resource_id);
+    errdefer gpa.free(key);
+    const kind_owned = try gpa.dupe(u8, kind);
+    errdefer gpa.free(kind_owned);
+    const scope_owned = try dupeOptional(gpa, scope);
+    errdefer if (scope_owned) |value| gpa.free(value);
+    const scope_id_owned = try dupeOptional(gpa, scope_id);
+    errdefer if (scope_id_owned) |value| gpa.free(value);
+    const name = try resourceName(gpa, item);
+    errdefer if (name) |value| gpa.free(value);
+    const status = try resourceStatus(gpa, item);
+    errdefer if (status) |value| gpa.free(value);
+    const resource_type = try resourceType(gpa, item);
+    errdefer if (resource_type) |value| gpa.free(value);
+    const raw = try core_json.stringifyValue(gpa, item);
+    errdefer gpa.free(raw);
+    try rows.append(gpa, .{
+        .key = key,
+        .kind = kind_owned,
+        .resource_id = resource_id,
+        .scope = scope_owned,
+        .scope_id = scope_id_owned,
+        .name = name,
+        .status = status,
+        .resource_type = resource_type,
+        .raw_json = raw,
+    });
+}
+
+fn resourceKey(gpa: Allocator, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, resource_id: []const u8) ![]u8 {
+    return try std.fmt.allocPrint(gpa, "{s}|{s}|{s}|{s}", .{ kind, scope orelse "", scope_id orelse "", resource_id });
+}
+
+fn resourceName(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    const fields = [_][]const u8{
+        "name",
+        "hostname",
+        "domain",
+        "title",
+        "zone_name",
+        "account_name",
+        "dataset",
+        "key",
+    };
+    for (fields) |field_name| {
+        if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
+    }
+    return null;
+}
+
+fn resourceStatus(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    const fields = [_][]const u8{
+        "status",
+        "state",
+        "phase",
+        "mode",
+    };
+    for (fields) |field_name| {
+        if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
+    }
+    if (core_json.fieldBool(item, "enabled")) |enabled| return try gpa.dupe(u8, if (enabled) "enabled" else "disabled");
+    if (core_json.fieldBool(item, "is_enabled")) |enabled| return try gpa.dupe(u8, if (enabled) "enabled" else "disabled");
+    if (core_json.fieldBool(item, "active")) |active| return try gpa.dupe(u8, if (active) "active" else "inactive");
+    if (core_json.fieldBool(item, "paused")) |paused| return try gpa.dupe(u8, if (paused) "paused" else "active");
+    return null;
+}
+
+fn resourceType(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    const fields = [_][]const u8{
+        "type",
+        "kind",
+        "resource_type",
+        "target_type",
+        "product",
+        "dataset",
+    };
+    for (fields) |field_name| {
+        if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
+    }
+    return null;
+}
+
 fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
     const fields = [_][]const u8{
         "id",
@@ -364,4 +503,35 @@ test "parses generic Cloudflare resource ids matching a string field" {
     try std.testing.expectEqual(@as(usize, 2), rows.items.len);
     try std.testing.expectEqualStrings("warp-a", rows.items[0].id);
     try std.testing.expectEqualStrings("warp-b", rows.items[1].id);
+}
+
+test "parses normalized Cloudflare resource rows from result arrays" {
+    const allocator = std.testing.allocator;
+    var rows = try parseResourceRows(allocator, "dns-records", "zone", "zone-1",
+        \\{"result":[{"id":"record-1","name":"plosca.ru","type":"A","status":"active"},{"id":"record-2","hostname":"www.plosca.ru","type":"CNAME","proxied":false}]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), rows.items.len);
+    try std.testing.expectEqualStrings("dns-records|zone|zone-1|record-1", rows.items[0].key);
+    try std.testing.expectEqualStrings("record-1", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("zone", rows.items[0].scope orelse "");
+    try std.testing.expectEqualStrings("zone-1", rows.items[0].scope_id orelse "");
+    try std.testing.expectEqualStrings("plosca.ru", rows.items[0].name orelse "");
+    try std.testing.expectEqualStrings("active", rows.items[0].status orelse "");
+    try std.testing.expectEqualStrings("A", rows.items[0].resource_type orelse "");
+}
+
+test "parses normalized Cloudflare resource rows from result objects" {
+    const allocator = std.testing.allocator;
+    var rows = try parseResourceRows(allocator, "zone-detail", "zone", "zone-1",
+        \\{"success":true,"result":{"id":"zone-1","name":"plosca.ru","paused":false,"type":"full"}}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), rows.items.len);
+    try std.testing.expectEqualStrings("zone-1", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("plosca.ru", rows.items[0].name orelse "");
+    try std.testing.expectEqualStrings("active", rows.items[0].status orelse "");
+    try std.testing.expectEqualStrings("full", rows.items[0].resource_type orelse "");
 }

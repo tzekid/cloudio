@@ -184,6 +184,26 @@ pub const migrations = [_]Migration{
         \\CREATE INDEX IF NOT EXISTS idx_hostinger_resources_kind ON hostinger_resources(kind, updated_at DESC);
         ,
     },
+    .{
+        .version = 4,
+        .name = "cloudflare_resource_inventory",
+        .sql =
+        \\CREATE TABLE IF NOT EXISTS cloudflare_resources (
+        \\  key TEXT PRIMARY KEY,
+        \\  kind TEXT NOT NULL,
+        \\  resource_id TEXT NOT NULL,
+        \\  scope TEXT,
+        \\  scope_id TEXT,
+        \\  name TEXT,
+        \\  status TEXT,
+        \\  resource_type TEXT,
+        \\  raw_json TEXT,
+        \\  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        \\);
+        \\CREATE INDEX IF NOT EXISTS idx_cloudflare_resources_kind ON cloudflare_resources(kind, updated_at DESC);
+        \\CREATE INDEX IF NOT EXISTS idx_cloudflare_resources_scope ON cloudflare_resources(scope, scope_id, updated_at DESC);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;

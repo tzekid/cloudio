@@ -71,6 +71,8 @@ Current POC status is intentionally narrow and read-only:
 | User API Tokens and token permission model | partial | Reads user token lists, token details by explicit token ID, and token permission groups as token-context-redacted raw provider data. Verifies the configured user token when API-token auth is configured; legacy email/global-key auth skips token verification with an explicit diagnostic. Renders typed dry-run plans for user token create/delete/update/roll routes without sending live Cloudflare requests. |
 | Remaining Cloudflare API groups | planned | Must be classified and implemented from the generated manifest before claiming full coverage; some rows may later become `not_applicable`. |
 
+Successful Cloudflare read collectors now also populate the generic `cloudflare_resources` L3 table when the redacted response item has stable identity such as `id`, `uid`, `issue_id`, `uuid`, `dataset_id`, `dataset`, `hostname`, or `name`. The table records `kind`, provider resource ID, optional scope/scope ID, display name, status/state/mode or selected boolean state, resource type, and redacted raw JSON. `cloudio cloudflare resources` lists the latest 200 normalized rows for CLI inspection. This keeps high-value tables such as `cloudflare_accounts`, `cloudflare_zones`, and `cloudflare_dns_records` available for stronger typed workflows while giving future UI/API work one normalized inventory surface across account, zone, DNS, security, access, logs, rules, load balancing, health, and Zero Trust read groups.
+
 Cloudflare implementation must prefer API tokens. Legacy email/global-key auth remains compatibility-only and should be isolated in the provider auth layer.
 
 ## Hostinger Current Coverage

@@ -130,6 +130,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "collector_capture", .module = collector_capture_mod },
             .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "net_http", .module = net_http_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
             .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
         },
