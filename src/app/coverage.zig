@@ -99,6 +99,10 @@ pub const ProviderFilter = enum {
             .hostinger => std.mem.eql(u8, provider, "hostinger"),
         };
     }
+
+    pub fn name(self: ProviderFilter) []const u8 {
+        return @tagName(self);
+    }
 };
 
 pub const SupportFilter = enum {
@@ -224,6 +228,99 @@ pub const TagSummaries = struct {
             }
             if (row.deprecated != 0) try writer.print(" deprecated_flags={d}", .{row.deprecated});
             try writer.writeByte('\n');
+        }
+    }
+};
+
+pub const GapOptions = struct {
+    provider: ProviderFilter = .all,
+    limit: usize = 25,
+};
+
+pub const GapSummary = struct {
+    provider: []const u8,
+    tag: []u8,
+    total: usize = 0,
+    non_deprecated: usize = 0,
+    read_routes: usize = 0,
+    dry_run_routes: usize = 0,
+    partial_read: usize = 0,
+    partial_dry_run: usize = 0,
+    planned_read: usize = 0,
+    blocked_read: usize = 0,
+    unsafe_dry_run: usize = 0,
+    routable: usize = 0,
+    not_applicable: usize = 0,
+    deprecated: usize = 0,
+
+    pub fn init(gpa: Allocator, provider: []const u8, tag: []const u8) !GapSummary {
+        return .{
+            .provider = provider,
+            .tag = try gpa.dupe(u8, tag),
+        };
+    }
+
+    pub fn deinit(self: GapSummary, gpa: Allocator) void {
+        gpa.free(self.tag);
+    }
+
+    pub fn priority(self: GapSummary) usize {
+        return self.planned_read + self.blocked_read + self.unsafe_dry_run;
+    }
+};
+
+pub const GapReport = struct {
+    items: []GapSummary,
+
+    pub fn deinit(self: *GapReport, gpa: Allocator) void {
+        for (self.items) |row| row.deinit(gpa);
+        gpa.free(self.items);
+    }
+
+    pub fn writeText(self: GapReport, writer: anytype, options: GapOptions) !void {
+        try writer.writeAll("Cloudio provider coverage gaps\n");
+        try writer.writeAll("rank: planned_read + blocked_read + unsafe_dry_run\n");
+        try writer.print("filter={s} limit=", .{options.provider.name()});
+        if (options.limit == 0) {
+            try writer.writeAll("all\n");
+        } else {
+            try writer.print("{d}\n", .{options.limit});
+        }
+
+        var visible: usize = 0;
+        var omitted: usize = 0;
+        for (self.items) |row| {
+            const priority = row.priority();
+            if (priority == 0) continue;
+            if (options.limit != 0 and visible >= options.limit) {
+                omitted += 1;
+                continue;
+            }
+            visible += 1;
+            try writer.print("{s} | {s}: priority={d} total={d} non_deprecated={d} routable={d} read={d} dry_run={d}", .{
+                row.provider,
+                row.tag,
+                priority,
+                row.total,
+                row.non_deprecated,
+                row.routable,
+                row.read_routes,
+                row.dry_run_routes,
+            });
+            try writeGapField(writer, "planned_read", row.planned_read);
+            try writeGapField(writer, "blocked_read", row.blocked_read);
+            try writeGapField(writer, "partial_read", row.partial_read);
+            try writeGapField(writer, "partial_dry_run", row.partial_dry_run);
+            try writeGapField(writer, "unsafe_dry_run", row.unsafe_dry_run);
+            try writeGapField(writer, "not_applicable", row.not_applicable);
+            try writeGapField(writer, "deprecated", row.deprecated);
+            try writer.writeByte('\n');
+        }
+
+        if (visible == 0) {
+            try writer.writeAll("no ranked gaps for filter\n");
+        } else if (omitted != 0) {
+            try writer.print("omitted={d}\n", .{omitted});
         }
     }
 };
@@ -488,6 +585,40 @@ pub fn writeTagsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: Prov
     var rows = try loadTags(io, gpa, paths, filter);
     defer rows.deinit(gpa);
     try rows.writeText(writer);
+}
+
+pub fn loadGaps(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !GapReport {
+    var rows = std.ArrayList(GapSummary).empty;
+    errdefer deinitGapList(&rows, gpa);
+
+    if (filter.includes("cloudflare")) {
+        const text = try Io.Dir.cwd().readFileAlloc(io, paths.cloudflare_manifest, gpa, .limited(max_manifest_bytes));
+        defer gpa.free(text);
+        try summarizeProviderGaps(gpa, "cloudflare", text, &rows);
+    }
+    if (filter.includes("hostinger")) {
+        const text = try Io.Dir.cwd().readFileAlloc(io, paths.hostinger_manifest, gpa, .limited(max_manifest_bytes));
+        defer gpa.free(text);
+        try summarizeProviderGaps(gpa, "hostinger", text, &rows);
+    }
+
+    std.mem.sort(GapSummary, rows.items, {}, gapLessThan);
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
+pub fn loadGapsFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, filter: ProviderFilter) !GapReport {
+    var rows = std.ArrayList(GapSummary).empty;
+    errdefer deinitGapList(&rows, gpa);
+    if (filter.includes("cloudflare")) try summarizeProviderGaps(gpa, "cloudflare", cloudflare_text, &rows);
+    if (filter.includes("hostinger")) try summarizeProviderGaps(gpa, "hostinger", hostinger_text, &rows);
+    std.mem.sort(GapSummary, rows.items, {}, gapLessThan);
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
+pub fn writeGapsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: GapOptions, writer: anytype) !void {
+    var gaps = try loadGaps(io, gpa, paths, options.provider);
+    defer gaps.deinit(gpa);
+    try gaps.writeText(writer, options);
 }
 
 pub fn auditL1(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !L1Audit {
@@ -1052,6 +1183,55 @@ fn summarizeProviderTags(gpa: Allocator, provider: []const u8, text: []const u8,
     }
 }
 
+fn summarizeProviderGaps(gpa: Allocator, provider: []const u8, text: []const u8, rows: *std.ArrayList(GapSummary)) !void {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line_raw| {
+        const line = std.mem.trim(u8, line_raw, " \t\r\n");
+        if (line.len == 0) continue;
+
+        var parsed = try std.json.parseFromSlice(std.json.Value, gpa, line, .{});
+        defer parsed.deinit();
+
+        const row_provider = core_json.fieldString(parsed.value, "provider") orelse return error.InvalidCoverageRow;
+        if (!std.mem.eql(u8, row_provider, provider)) return error.InvalidCoverageProvider;
+        var route = try CoverageRoute.init(gpa, provider, parsed.value);
+        defer route.deinit(gpa);
+
+        const row = try gapRow(gpa, rows, provider, route.route.tag);
+        row.total += 1;
+        if (route.route.deprecated) {
+            row.deprecated += 1;
+            continue;
+        }
+
+        row.non_deprecated += 1;
+        if (route.route.isRoutable()) row.routable += 1;
+        switch (route.route.mode) {
+            .read => row.read_routes += 1,
+            .dry_run => row.dry_run_routes += 1,
+            .write, .none => {},
+        }
+        switch (route.route.support) {
+            .partial => switch (route.route.mode) {
+                .read => row.partial_read += 1,
+                .dry_run => row.partial_dry_run += 1,
+                .write, .none => {},
+            },
+            .planned => {
+                if (route.route.mode == .read) row.planned_read += 1;
+            },
+            .blocked_permission => {
+                if (route.route.mode == .read) row.blocked_read += 1;
+            },
+            .unsafe_mutation => {
+                if (route.route.mode == .dry_run) row.unsafe_dry_run += 1;
+            },
+            .not_applicable => row.not_applicable += 1,
+            .implemented, .deprecated => {},
+        }
+    }
+}
+
 fn appendProviderRoutes(gpa: Allocator, provider: []const u8, text: []const u8, filter: RouteFilter, rows: *std.ArrayList(CoverageRoute)) !void {
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |line_raw| {
@@ -1188,7 +1368,22 @@ fn tagRow(gpa: Allocator, rows: *std.ArrayList(TagSummary), provider: []const u8
     return &rows.items[rows.items.len - 1];
 }
 
+fn gapRow(gpa: Allocator, rows: *std.ArrayList(GapSummary), provider: []const u8, tag: []const u8) !*GapSummary {
+    for (rows.items) |*row| {
+        if (std.mem.eql(u8, row.provider, provider) and std.mem.eql(u8, row.tag, tag)) return row;
+    }
+    const row = try GapSummary.init(gpa, provider, tag);
+    errdefer row.deinit(gpa);
+    try rows.append(gpa, row);
+    return &rows.items[rows.items.len - 1];
+}
+
 fn deinitTagList(rows: *std.ArrayList(TagSummary), gpa: Allocator) void {
+    for (rows.items) |row| row.deinit(gpa);
+    rows.deinit(gpa);
+}
+
+fn deinitGapList(rows: *std.ArrayList(GapSummary), gpa: Allocator) void {
     for (rows.items) |row| row.deinit(gpa);
     rows.deinit(gpa);
 }
@@ -1272,6 +1467,24 @@ fn writeL1ProviderAudit(audit: L1ProviderAudit, writer: anytype) !void {
 fn writeFailureField(writer: anytype, name: []const u8, count: usize) !void {
     if (count == 0) return;
     try writer.print(" {s}={d}", .{ name, count });
+}
+
+fn writeGapField(writer: anytype, name: []const u8, count: usize) !void {
+    if (count == 0) return;
+    try writer.print(" {s}={d}", .{ name, count });
+}
+
+fn gapLessThan(_: void, lhs: GapSummary, rhs: GapSummary) bool {
+    const lhs_priority = lhs.priority();
+    const rhs_priority = rhs.priority();
+    if (lhs_priority != rhs_priority) return lhs_priority > rhs_priority;
+    if (lhs.planned_read != rhs.planned_read) return lhs.planned_read > rhs.planned_read;
+    if (lhs.unsafe_dry_run != rhs.unsafe_dry_run) return lhs.unsafe_dry_run > rhs.unsafe_dry_run;
+    if (lhs.blocked_read != rhs.blocked_read) return lhs.blocked_read > rhs.blocked_read;
+    if (lhs.non_deprecated != rhs.non_deprecated) return lhs.non_deprecated > rhs.non_deprecated;
+    const provider_order = std.mem.order(u8, lhs.provider, rhs.provider);
+    if (provider_order != .eq) return provider_order == .lt;
+    return std.mem.order(u8, lhs.tag, rhs.tag) == .lt;
 }
 
 fn indexOfName(names: []const []const u8, value: []const u8) ?usize {
@@ -1483,6 +1696,47 @@ test "summarizes provider coverage by tag with provider filters" {
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage by tag\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Accounts: total=2 support: partial=1 unsafe_mutation=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger") == null);
+}
+
+test "ranks provider coverage gaps by broad unresolved tag groups" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"AI Gateway","method":"GET","path":"/accounts/{account_id}/ai-gateway","operation_id":"ai-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"planned"}
+        \\{"provider":"cloudflare","tag":"AI Gateway","method":"GET","path":"/accounts/{account_id}/ai-gateway/{id}","operation_id":"ai-get","path_params":[{"name":"account_id","required":true},{"name":"id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"planned"}
+        \\{"provider":"cloudflare","tag":"AI Gateway","method":"POST","path":"/accounts/{account_id}/ai-gateway","operation_id":"ai-create","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"dry-run"}
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ok"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"Domains","method":"GET","path":"/api/domains/v1/portfolio","operation_id":"domains-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture","deprecated":false,"notes":"token lacks permission"}
+        \\{"provider":"hostinger","tag":"Domains","method":"POST","path":"/api/domains/v1/portfolio","operation_id":"domains-create","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"dry_run","tests":"fixture","deprecated":false,"notes":"dry-run reviewed"}
+        \\
+    ;
+
+    var gaps = try loadGapsFromText(allocator, cloudflare, hostinger, .all);
+    defer gaps.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), gaps.items.len);
+    try std.testing.expectEqualStrings("cloudflare", gaps.items[0].provider);
+    try std.testing.expectEqualStrings("AI Gateway", gaps.items[0].tag);
+    try std.testing.expectEqual(@as(usize, 3), gaps.items[0].priority());
+    try std.testing.expectEqual(@as(usize, 2), gaps.items[0].planned_read);
+    try std.testing.expectEqual(@as(usize, 1), gaps.items[0].unsafe_dry_run);
+    try std.testing.expectEqualStrings("hostinger", gaps.items[1].provider);
+    try std.testing.expectEqual(@as(usize, 1), gaps.items[1].blocked_read);
+    try std.testing.expectEqual(@as(usize, 1), gaps.items[1].partial_dry_run);
+
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+    try gaps.writeText(&out.writer, .{ .provider = .all, .limit = 1 });
+    const text = try out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage gaps\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "rank: planned_read + blocked_read + unsafe_dry_run\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | AI Gateway: priority=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "planned_read=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "unsafe_dry_run=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
 }
 
 test "audits L1 routability invariants across provider manifests" {

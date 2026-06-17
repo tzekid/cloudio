@@ -15,6 +15,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .summary => try commandSummary(ctx),
         .tags => |filter| try commandTags(ctx, filter),
         .l1 => |filter| try commandL1(ctx, filter),
+        .gaps => |options| try commandGaps(ctx, options),
         .routes => |filter| try commandRoutes(ctx, filter),
         .plan => |plan_args| try commandPlan(ctx, plan_args),
         .unknown => |name| std.debug.print("unknown coverage command: {s}\n", .{name}),
@@ -25,6 +26,7 @@ const Command = union(enum) {
     summary,
     tags: app_coverage.ProviderFilter,
     l1: app_coverage.ProviderFilter,
+    gaps: app_coverage.GapOptions,
     routes: app_coverage.RouteFilter,
     plan: []const []const u8,
     unknown: []const u8,
@@ -42,6 +44,9 @@ fn parseCommand(args: []const []const u8) Command {
         const filter = app_coverage.ProviderFilter.parse(args[1]) orelse return .{ .unknown = args[1] };
         return .{ .l1 = filter };
     }
+    if (std.mem.eql(u8, args[0], "gaps") or std.mem.eql(u8, args[0], "priorities")) {
+        return parseGaps(args[1..]);
+    }
     if (std.mem.eql(u8, args[0], "routes")) {
         return parseRoutes(args[1..]);
     }
@@ -49,6 +54,29 @@ fn parseCommand(args: []const []const u8) Command {
         return .{ .plan = args[1..] };
     }
     return .{ .unknown = args[0] };
+}
+
+fn parseGaps(args: []const []const u8) Command {
+    var options = app_coverage.GapOptions{};
+    var provider_set = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--limit")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--limit" };
+            options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
+            const value = arg["--limit=".len..];
+            options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
+        } else if (!provider_set) {
+            options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
+            provider_set = true;
+        } else {
+            return .{ .unknown = arg };
+        }
+    }
+    return .{ .gaps = options };
 }
 
 fn parseRoutes(args: []const []const u8) Command {
@@ -136,6 +164,15 @@ fn commandL1(ctx: Context, filter: app_coverage.ProviderFilter) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_coverage.writeL1AuditTextFromFiles(ctx.io, ctx.gpa, ctx.paths, filter, &out.writer);
+    const text = try out.toOwnedSlice();
+    defer ctx.gpa.free(text);
+    std.debug.print("{s}", .{text});
+}
+
+fn commandGaps(ctx: Context, options: app_coverage.GapOptions) !void {
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    try app_coverage.writeGapsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, options, &out.writer);
     const text = try out.toOwnedSlice();
     defer ctx.gpa.free(text);
     std.debug.print("{s}", .{text});
@@ -325,6 +362,24 @@ test "coverage command parser defaults to summary" {
     const l1_default_args = [_][]const u8{"audit-l1"};
     try std.testing.expectEqual(Command{ .l1 = .all }, parseCommand(l1_default_args[0..]));
 
+    const gaps_args = [_][]const u8{ "gaps", "hostinger", "--limit", "7" };
+    switch (parseCommand(gaps_args[0..])) {
+        .gaps => |options| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, options.provider);
+            try std.testing.expectEqual(@as(usize, 7), options.limit);
+        },
+        else => return error.ExpectedCoverageGaps,
+    }
+
+    const priorities_args = [_][]const u8{ "priorities", "--limit=0" };
+    switch (parseCommand(priorities_args[0..])) {
+        .gaps => |options| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.all, options.provider);
+            try std.testing.expectEqual(@as(usize, 0), options.limit);
+        },
+        else => return error.ExpectedCoverageGaps,
+    }
+
     const routes_args = [_][]const u8{"routes"};
     switch (parseCommand(routes_args[0..])) {
         .routes => |filter| {
@@ -410,6 +465,12 @@ test "coverage command parser defaults to summary" {
     const unknown_filter_args = [_][]const u8{ "tags", "bad-provider" };
     switch (parseCommand(unknown_filter_args[0..])) {
         .unknown => |name| try std.testing.expectEqualStrings("bad-provider", name),
+        else => return error.ExpectedUnknownCoverageCommand,
+    }
+
+    const unknown_gap_limit_args = [_][]const u8{ "gaps", "--limit", "many" };
+    switch (parseCommand(unknown_gap_limit_args[0..])) {
+        .unknown => |name| try std.testing.expectEqualStrings("many", name),
         else => return error.ExpectedUnknownCoverageCommand,
     }
 
