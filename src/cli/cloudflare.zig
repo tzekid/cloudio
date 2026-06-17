@@ -56,6 +56,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandIpAccessRules(ctx, args);
     } else if (app_cloudflare.ZoneLegacyRuleResource.parse(sub)) |resource| {
         try commandZoneLegacyRules(ctx, args, resource);
+    } else if (std.mem.eql(u8, sub, "page-shield")) {
+        try commandPageShield(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -98,6 +100,7 @@ fn commandDryRun(ctx: Context, args: []const []const u8) !void {
     if (std.mem.eql(u8, args[1], "cloudforce-one-rules") or std.mem.eql(u8, args[1], "cf1-rules")) return try commandDryRunCloudforceOneRules(ctx, args);
     if (std.mem.eql(u8, args[1], "ip-access") or std.mem.eql(u8, args[1], "access-rules")) return try commandDryRunIpAccessRules(ctx, args);
     if (app_cloudflare.ZoneLegacyRuleResource.parse(args[1])) |resource| return try commandDryRunZoneLegacyRules(ctx, args, resource);
+    if (std.mem.eql(u8, args[1], "page-shield")) return try commandDryRunPageShield(ctx, args);
     std.debug.print("unknown cloudflare dry-run target: {s}\n", .{args[1]});
 }
 
@@ -612,6 +615,26 @@ fn commandDryRunZoneLegacyRules(ctx: Context, args: []const []const u8, resource
     cli_render.printOutput(ctx.gpa, try app_cloudflare.planZoneLegacyRuleMutation(appContext(ctx), endpoint, mutation_args));
 }
 
+fn commandDryRunPageShield(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("operation and zone id required for dry-run page-shield\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.PageShieldMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown page-shield dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    var mutation_args: app_cloudflare.PageShieldMutationArgs = .{ .zone_id = args[3] };
+    if (endpoint.requiresPolicyId()) {
+        if (args.len < 5) {
+            std.debug.print("policy id required for dry-run page-shield {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        mutation_args.policy_id = args[4];
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planPageShieldMutation(appContext(ctx), endpoint, mutation_args));
+}
+
 fn commandDns(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1) {
         cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
@@ -996,6 +1019,39 @@ fn commandZoneLegacyRules(ctx: Context, args: []const []const u8, resource: app_
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneLegacyRuleEndpoint(appContext(ctx), zone_id, resource, endpoint, rule_id));
 }
 
+fn commandPageShield(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("page-shield settings|policies|policy|connections|connection|scripts|script|cookies|cookie command and zone id required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.PageShieldReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown page-shield command: {s}\n", .{args[1]});
+        return;
+    };
+    var read_args: app_cloudflare.PageShieldReadArgs = .{};
+    const zone_id = args[2];
+    var index: usize = 3;
+    if (endpoint.requiresResourceId()) {
+        if (args.len <= index) {
+            std.debug.print("{s} id required for page-shield {s}\n", .{ endpoint.idLabel(), endpoint.commandName() });
+            return;
+        }
+        read_args.resource_id = args[index];
+        index += 1;
+    }
+    while (index < args.len) : (index += 1) {
+        if (!endpoint.acceptsFilters()) {
+            std.debug.print("page-shield {s} does not accept filters: {s}\n", .{ endpoint.commandName(), args[index] });
+            return;
+        }
+        if (!applyPageShieldFilter(&read_args, args[index])) {
+            std.debug.print("unknown page-shield filter: {s}\n", .{args[index]});
+            return;
+        }
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectPageShieldEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+}
+
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
     if (args.len > 1 and std.mem.eql(u8, args[1], "zsk")) {
         const domain = if (args.len > 2) args[2] else ctx.domains[0];
@@ -1250,6 +1306,56 @@ fn applyIpAccessRuleFilter(args: *app_cloudflare.IpAccessRuleListArgs, raw: []co
     return true;
 }
 
+fn applyPageShieldFilter(args: *app_cloudflare.PageShieldReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "exclude_urls") or std.mem.eql(u8, key, "exclude-urls")) {
+        args.exclude_urls = value;
+    } else if (std.mem.eql(u8, key, "urls")) {
+        args.urls = value;
+    } else if (std.mem.eql(u8, key, "hosts")) {
+        args.hosts = value;
+    } else if (std.mem.eql(u8, key, "page")) {
+        args.page = value;
+    } else if (std.mem.eql(u8, key, "per_page") or std.mem.eql(u8, key, "per-page")) {
+        args.per_page = value;
+    } else if (std.mem.eql(u8, key, "order_by") or std.mem.eql(u8, key, "order-by")) {
+        args.order_by = value;
+    } else if (std.mem.eql(u8, key, "direction")) {
+        args.direction = value;
+    } else if (std.mem.eql(u8, key, "prioritize_malicious") or std.mem.eql(u8, key, "prioritize-malicious")) {
+        args.prioritize_malicious = value;
+    } else if (std.mem.eql(u8, key, "exclude_cdn_cgi") or std.mem.eql(u8, key, "exclude-cdn-cgi")) {
+        args.exclude_cdn_cgi = value;
+    } else if (std.mem.eql(u8, key, "exclude_duplicates") or std.mem.eql(u8, key, "exclude-duplicates")) {
+        args.exclude_duplicates = value;
+    } else if (std.mem.eql(u8, key, "status")) {
+        args.status = value;
+    } else if (std.mem.eql(u8, key, "page_url") or std.mem.eql(u8, key, "page-url")) {
+        args.page_url = value;
+    } else if (std.mem.eql(u8, key, "export")) {
+        args.export_format = value;
+    } else if (std.mem.eql(u8, key, "name")) {
+        args.name = value;
+    } else if (std.mem.eql(u8, key, "secure")) {
+        args.secure = value;
+    } else if (std.mem.eql(u8, key, "http_only") or std.mem.eql(u8, key, "http-only")) {
+        args.http_only = value;
+    } else if (std.mem.eql(u8, key, "same_site") or std.mem.eql(u8, key, "same-site")) {
+        args.same_site = value;
+    } else if (std.mem.eql(u8, key, "type")) {
+        args.type_filter = value;
+    } else if (std.mem.eql(u8, key, "path")) {
+        args.path_filter = value;
+    } else if (std.mem.eql(u8, key, "domain")) {
+        args.domain = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 fn appContext(ctx: Context) app_cloudflare.Context {
     return .{
         .io = ctx.io,
@@ -1304,4 +1410,36 @@ test "ip access rule filters parse key value arguments" {
     try std.testing.expectEqualStrings("ip", args.configuration_target.?);
     try std.testing.expectEqualStrings("198.51.100.4", args.configuration_value.?);
     try std.testing.expectEqualStrings("50", args.per_page.?);
+}
+
+test "page shield filters parse key value arguments" {
+    var args: app_cloudflare.PageShieldReadArgs = .{};
+    try std.testing.expect(applyPageShieldFilter(&args, "exclude-urls=https://example.com/a.js"));
+    try std.testing.expect(applyPageShieldFilter(&args, "urls=https://cdn.example.com/app.js"));
+    try std.testing.expect(applyPageShieldFilter(&args, "hosts=cdn.example.com"));
+    try std.testing.expect(applyPageShieldFilter(&args, "page=all"));
+    try std.testing.expect(applyPageShieldFilter(&args, "per-page=50"));
+    try std.testing.expect(applyPageShieldFilter(&args, "order-by=last_seen_at"));
+    try std.testing.expect(applyPageShieldFilter(&args, "direction=desc"));
+    try std.testing.expect(applyPageShieldFilter(&args, "prioritize-malicious=true"));
+    try std.testing.expect(applyPageShieldFilter(&args, "exclude-cdn-cgi=true"));
+    try std.testing.expect(applyPageShieldFilter(&args, "exclude-duplicates=false"));
+    try std.testing.expect(applyPageShieldFilter(&args, "status=active"));
+    try std.testing.expect(applyPageShieldFilter(&args, "page-url=https://example.com/checkout"));
+    try std.testing.expect(applyPageShieldFilter(&args, "export=csv"));
+    try std.testing.expect(applyPageShieldFilter(&args, "name=session"));
+    try std.testing.expect(applyPageShieldFilter(&args, "secure=true"));
+    try std.testing.expect(applyPageShieldFilter(&args, "http-only=true"));
+    try std.testing.expect(applyPageShieldFilter(&args, "same-site=lax"));
+    try std.testing.expect(applyPageShieldFilter(&args, "type=first_party"));
+    try std.testing.expect(applyPageShieldFilter(&args, "path=/"));
+    try std.testing.expect(applyPageShieldFilter(&args, "domain=example.com"));
+    try std.testing.expect(!applyPageShieldFilter(&args, "unknown=value"));
+    try std.testing.expect(!applyPageShieldFilter(&args, "hosts"));
+    try std.testing.expectEqualStrings("cdn.example.com", args.hosts.?);
+    try std.testing.expectEqualStrings("50", args.per_page.?);
+    try std.testing.expectEqualStrings("last_seen_at", args.order_by.?);
+    try std.testing.expectEqualStrings("true", args.exclude_cdn_cgi.?);
+    try std.testing.expectEqualStrings("session", args.name.?);
+    try std.testing.expectEqualStrings("first_party", args.type_filter.?);
 }

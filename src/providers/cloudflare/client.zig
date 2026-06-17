@@ -232,6 +232,12 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getPageShieldEndpoint(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, endpoint: PageShieldReadEndpoint, args: PageShieldReadArgs) !net_http.Response {
+        const url = try pageShieldReadUrl(gpa, self.base_url_override, zone_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -3037,6 +3043,213 @@ pub const ZoneLegacyRuleMutationArgs = struct {
     rule_id: ?[]const u8 = null,
 };
 
+pub const PageShieldReadEndpoint = enum {
+    settings,
+    policies,
+    policy,
+    connections,
+    connection,
+    scripts,
+    script,
+    cookies,
+    cookie,
+
+    pub fn parse(value: []const u8) ?PageShieldReadEndpoint {
+        if (std.mem.eql(u8, value, "settings") or std.mem.eql(u8, value, "setting")) return .settings;
+        if (std.mem.eql(u8, value, "policies") or std.mem.eql(u8, value, "policy-list")) return .policies;
+        if (std.mem.eql(u8, value, "policy") or std.mem.eql(u8, value, "policy-show")) return .policy;
+        if (std.mem.eql(u8, value, "connections") or std.mem.eql(u8, value, "connection-list")) return .connections;
+        if (std.mem.eql(u8, value, "connection") or std.mem.eql(u8, value, "connection-show")) return .connection;
+        if (std.mem.eql(u8, value, "scripts") or std.mem.eql(u8, value, "script-list")) return .scripts;
+        if (std.mem.eql(u8, value, "script") or std.mem.eql(u8, value, "script-show")) return .script;
+        if (std.mem.eql(u8, value, "cookies") or std.mem.eql(u8, value, "cookie-list")) return .cookies;
+        if (std.mem.eql(u8, value, "cookie") or std.mem.eql(u8, value, "cookie-show")) return .cookie;
+        return null;
+    }
+
+    pub fn commandName(self: PageShieldReadEndpoint) []const u8 {
+        return switch (self) {
+            .settings => "settings",
+            .policies => "policies",
+            .policy => "policy",
+            .connections => "connections",
+            .connection => "connection",
+            .scripts => "scripts",
+            .script => "script",
+            .cookies => "cookies",
+            .cookie => "cookie",
+        };
+    }
+
+    pub fn label(self: PageShieldReadEndpoint) []const u8 {
+        return switch (self) {
+            .settings => "page-shield-settings",
+            .policies => "page-shield-policies",
+            .policy => "page-shield-policy",
+            .connections => "page-shield-connections",
+            .connection => "page-shield-connection",
+            .scripts => "page-shield-scripts",
+            .script => "page-shield-script",
+            .cookies => "page-shield-cookies",
+            .cookie => "page-shield-cookie",
+        };
+    }
+
+    pub fn collectionName(self: PageShieldReadEndpoint) ?[]const u8 {
+        return switch (self) {
+            .settings => null,
+            .policies, .policy => "policies",
+            .connections, .connection => "connections",
+            .scripts, .script => "scripts",
+            .cookies, .cookie => "cookies",
+        };
+    }
+
+    pub fn operationId(self: PageShieldReadEndpoint) []const u8 {
+        return switch (self) {
+            .settings => "page-shield-get-settings",
+            .policies => "page-shield-list-policies",
+            .policy => "page-shield-get-policy",
+            .connections => "page-shield-list-connections",
+            .connection => "page-shield-get-connection",
+            .scripts => "page-shield-list-scripts",
+            .script => "page-shield-get-script",
+            .cookies => "page-shield-list-cookies",
+            .cookie => "page-shield-get-cookie",
+        };
+    }
+
+    pub fn summary(self: PageShieldReadEndpoint) []const u8 {
+        return switch (self) {
+            .settings => "Get Page Shield settings",
+            .policies => "List Page Shield policies",
+            .policy => "Get a Page Shield policy",
+            .connections => "List Page Shield connections",
+            .connection => "Get a Page Shield connection",
+            .scripts => "List Page Shield scripts",
+            .script => "Get a Page Shield script",
+            .cookies => "List Page Shield Cookies",
+            .cookie => "Get a Page Shield cookie",
+        };
+    }
+
+    pub fn requiresResourceId(self: PageShieldReadEndpoint) bool {
+        return switch (self) {
+            .policy, .connection, .script, .cookie => true,
+            .settings, .policies, .connections, .scripts, .cookies => false,
+        };
+    }
+
+    pub fn acceptsFilters(self: PageShieldReadEndpoint) bool {
+        return switch (self) {
+            .connections, .scripts, .cookies => true,
+            .settings, .policies, .policy, .connection, .script, .cookie => false,
+        };
+    }
+
+    pub fn idLabel(self: PageShieldReadEndpoint) []const u8 {
+        return switch (self) {
+            .policy => "policy",
+            .connection => "connection",
+            .script => "script",
+            .cookie => "cookie",
+            else => "resource",
+        };
+    }
+};
+
+pub const PageShieldReadArgs = struct {
+    resource_id: ?[]const u8 = null,
+    exclude_urls: ?[]const u8 = null,
+    urls: ?[]const u8 = null,
+    hosts: ?[]const u8 = null,
+    page: ?[]const u8 = null,
+    per_page: ?[]const u8 = null,
+    order_by: ?[]const u8 = null,
+    direction: ?[]const u8 = null,
+    prioritize_malicious: ?[]const u8 = null,
+    exclude_cdn_cgi: ?[]const u8 = null,
+    exclude_duplicates: ?[]const u8 = null,
+    status: ?[]const u8 = null,
+    page_url: ?[]const u8 = null,
+    export_format: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+    secure: ?[]const u8 = null,
+    http_only: ?[]const u8 = null,
+    same_site: ?[]const u8 = null,
+    type_filter: ?[]const u8 = null,
+    path_filter: ?[]const u8 = null,
+    domain: ?[]const u8 = null,
+};
+
+pub const PageShieldMutationEndpoint = enum {
+    update_settings,
+    create_policy,
+    update_policy,
+    delete_policy,
+
+    pub fn parse(value: []const u8) ?PageShieldMutationEndpoint {
+        if (std.mem.eql(u8, value, "update-settings") or std.mem.eql(u8, value, "settings-update") or std.mem.eql(u8, value, "settings")) return .update_settings;
+        if (std.mem.eql(u8, value, "create-policy") or std.mem.eql(u8, value, "policy-create") or std.mem.eql(u8, value, "create")) return .create_policy;
+        if (std.mem.eql(u8, value, "update-policy") or std.mem.eql(u8, value, "policy-update") or std.mem.eql(u8, value, "update")) return .update_policy;
+        if (std.mem.eql(u8, value, "delete-policy") or std.mem.eql(u8, value, "policy-delete") or std.mem.eql(u8, value, "delete") or std.mem.eql(u8, value, "remove")) return .delete_policy;
+        return null;
+    }
+
+    pub fn commandName(self: PageShieldMutationEndpoint) []const u8 {
+        return switch (self) {
+            .update_settings => "update-settings",
+            .create_policy => "create-policy",
+            .update_policy => "update-policy",
+            .delete_policy => "delete-policy",
+        };
+    }
+
+    pub fn method(self: PageShieldMutationEndpoint) []const u8 {
+        return switch (self) {
+            .update_settings, .update_policy => "PUT",
+            .create_policy => "POST",
+            .delete_policy => "DELETE",
+        };
+    }
+
+    pub fn operationId(self: PageShieldMutationEndpoint) []const u8 {
+        return switch (self) {
+            .update_settings => "page-shield-update-settings",
+            .create_policy => "page-shield-create-policy",
+            .update_policy => "page-shield-update-policy",
+            .delete_policy => "page-shield-delete-policy",
+        };
+    }
+
+    pub fn summary(self: PageShieldMutationEndpoint) []const u8 {
+        return switch (self) {
+            .update_settings => "Update Page Shield settings",
+            .create_policy => "Create a Page Shield policy",
+            .update_policy => "Update a Page Shield policy",
+            .delete_policy => "Delete a Page Shield policy",
+        };
+    }
+
+    pub fn requestBodySchemaRef(self: PageShieldMutationEndpoint) ?[]const u8 {
+        return switch (self) {
+            .update_settings => "inline:{enabled?:bool,use_cloudflare_reporting_endpoint?:bool,use_connection_url_path?:bool}",
+            .create_policy => "#/components/schemas/page-shield_policy",
+            .update_policy => "inline:{action?:string,description?:string,enabled?:bool,expression?:string,value?:string}",
+            .delete_policy => null,
+        };
+    }
+
+    pub fn requiresPolicyId(self: PageShieldMutationEndpoint) bool {
+        return self == .update_policy or self == .delete_policy;
+    }
+};
+
+pub const PageShieldMutationArgs = struct {
+    zone_id: []const u8,
+    policy_id: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -5381,6 +5594,62 @@ pub fn zoneLegacyRuleMutationPlanJson(gpa: Allocator, endpoint: ZoneLegacyRuleMu
     });
 }
 
+pub fn pageShieldReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, endpoint: PageShieldReadEndpoint, args: PageShieldReadArgs) ![]u8 {
+    const path = try pageShieldReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn pageShieldBasePath(gpa: Allocator, zone_id: []const u8) ![]u8 {
+    const escaped_zone_id = try pathEscape(gpa, zone_id);
+    defer gpa.free(escaped_zone_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/page_shield", .{ zones_path, escaped_zone_id });
+}
+
+pub fn pageShieldReadPath(gpa: Allocator, zone_id: []const u8, endpoint: PageShieldReadEndpoint, args: PageShieldReadArgs) ![]u8 {
+    const base_path = try pageShieldBasePath(gpa, zone_id);
+    defer gpa.free(base_path);
+    const collection = endpoint.collectionName() orelse return try gpa.dupe(u8, base_path);
+    const collection_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, collection });
+    defer gpa.free(collection_path);
+    if (endpoint.requiresResourceId()) {
+        const resource_id = args.resource_id orelse return error.MissingCloudflarePageShieldResourceId;
+        const escaped_resource_id = try pathEscape(gpa, resource_id);
+        defer gpa.free(escaped_resource_id);
+        return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_resource_id });
+    }
+    return try appendPageShieldFilters(gpa, collection_path, endpoint, args);
+}
+
+pub fn pageShieldMutationPath(gpa: Allocator, endpoint: PageShieldMutationEndpoint, args: PageShieldMutationArgs) ![]u8 {
+    const base_path = try pageShieldBasePath(gpa, args.zone_id);
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .update_settings => try gpa.dupe(u8, base_path),
+        .create_policy => try std.fmt.allocPrint(gpa, "{s}/policies", .{base_path}),
+        .update_policy, .delete_policy => blk: {
+            const policy_id = args.policy_id orelse return error.MissingCloudflarePageShieldPolicyId;
+            const escaped_policy_id = try pathEscape(gpa, policy_id);
+            defer gpa.free(escaped_policy_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/policies/{s}", .{ base_path, escaped_policy_id });
+        },
+    };
+}
+
+pub fn pageShieldMutationPlanJson(gpa: Allocator, endpoint: PageShieldMutationEndpoint, args: PageShieldMutationArgs) ![]u8 {
+    const path = try pageShieldMutationPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try dryRunPlanJson(gpa, .{
+        .group = "Page Shield",
+        .operation = endpoint.commandName(),
+        .operation_id = endpoint.operationId(),
+        .summary = endpoint.summary(),
+        .method = endpoint.method(),
+        .path = path,
+        .request_body_schema = endpoint.requestBodySchemaRef(),
+    });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -5972,6 +6241,57 @@ fn appendIpAccessRuleFilters(gpa: Allocator, base_path: []const u8, args: IpAcce
         .{ .name = "order", .value = args.order },
         .{ .name = "direction", .value = args.direction },
     });
+}
+
+fn appendPageShieldFilters(gpa: Allocator, base_path: []const u8, endpoint: PageShieldReadEndpoint, args: PageShieldReadArgs) ![]u8 {
+    return switch (endpoint) {
+        .connections => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "exclude_urls", .value = args.exclude_urls },
+            .{ .name = "urls", .value = args.urls },
+            .{ .name = "hosts", .value = args.hosts },
+            .{ .name = "page", .value = args.page },
+            .{ .name = "per_page", .value = args.per_page },
+            .{ .name = "order_by", .value = args.order_by },
+            .{ .name = "direction", .value = args.direction },
+            .{ .name = "prioritize_malicious", .value = args.prioritize_malicious },
+            .{ .name = "exclude_cdn_cgi", .value = args.exclude_cdn_cgi },
+            .{ .name = "status", .value = args.status },
+            .{ .name = "page_url", .value = args.page_url },
+            .{ .name = "export", .value = args.export_format },
+        }),
+        .scripts => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "exclude_urls", .value = args.exclude_urls },
+            .{ .name = "urls", .value = args.urls },
+            .{ .name = "hosts", .value = args.hosts },
+            .{ .name = "page", .value = args.page },
+            .{ .name = "per_page", .value = args.per_page },
+            .{ .name = "order_by", .value = args.order_by },
+            .{ .name = "direction", .value = args.direction },
+            .{ .name = "prioritize_malicious", .value = args.prioritize_malicious },
+            .{ .name = "exclude_cdn_cgi", .value = args.exclude_cdn_cgi },
+            .{ .name = "exclude_duplicates", .value = args.exclude_duplicates },
+            .{ .name = "status", .value = args.status },
+            .{ .name = "page_url", .value = args.page_url },
+            .{ .name = "export", .value = args.export_format },
+        }),
+        .cookies => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "hosts", .value = args.hosts },
+            .{ .name = "page", .value = args.page },
+            .{ .name = "per_page", .value = args.per_page },
+            .{ .name = "order_by", .value = args.order_by },
+            .{ .name = "direction", .value = args.direction },
+            .{ .name = "page_url", .value = args.page_url },
+            .{ .name = "export", .value = args.export_format },
+            .{ .name = "name", .value = args.name },
+            .{ .name = "secure", .value = args.secure },
+            .{ .name = "http_only", .value = args.http_only },
+            .{ .name = "same_site", .value = args.same_site },
+            .{ .name = "type", .value = args.type_filter },
+            .{ .name = "path", .value = args.path_filter },
+            .{ .name = "domain", .value = args.domain },
+        }),
+        else => try gpa.dupe(u8, base_path),
+    };
 }
 
 pub fn pathEscape(gpa: Allocator, value: []const u8) ![]u8 {
@@ -7002,6 +7322,85 @@ test "builds zone legacy rule paths and dry-run plans" {
     try std.testing.expectError(error.MissingCloudflareZoneLegacyRuleId, zoneLegacyRuleReadPath(allocator, "zone/1", .page_rules, .rule, null));
     try std.testing.expectError(error.MissingCloudflareZoneLegacyRuleId, zoneLegacyRuleMutationPlanJson(allocator, .update, .{ .resource = .ua_rules, .zone_id = "zone/1" }));
     try std.testing.expectError(error.UnsupportedCloudflareZoneLegacyRuleMutation, zoneLegacyRuleMutationPlanJson(allocator, .edit, .{ .resource = .zone_lockdown, .zone_id = "zone/1", .rule_id = "lock/1" }));
+}
+
+test "page shield endpoints map to official operation metadata" {
+    try std.testing.expectEqual(PageShieldReadEndpoint.settings, PageShieldReadEndpoint.parse("settings").?);
+    try std.testing.expectEqual(PageShieldReadEndpoint.policies, PageShieldReadEndpoint.parse("policy-list").?);
+    try std.testing.expectEqual(PageShieldReadEndpoint.policy, PageShieldReadEndpoint.parse("policy").?);
+    try std.testing.expectEqual(PageShieldReadEndpoint.connection, PageShieldReadEndpoint.parse("connection-show").?);
+    try std.testing.expectEqualStrings("page-shield-list-scripts", PageShieldReadEndpoint.scripts.operationId());
+    try std.testing.expectEqualStrings("page-shield-get-cookie", PageShieldReadEndpoint.cookie.operationId());
+    try std.testing.expect(PageShieldReadEndpoint.script.requiresResourceId());
+    try std.testing.expect(PageShieldReadEndpoint.connections.acceptsFilters());
+    try std.testing.expect(!PageShieldReadEndpoint.policy.acceptsFilters());
+
+    try std.testing.expectEqual(PageShieldMutationEndpoint.update_settings, PageShieldMutationEndpoint.parse("settings").?);
+    try std.testing.expectEqual(PageShieldMutationEndpoint.create_policy, PageShieldMutationEndpoint.parse("create").?);
+    try std.testing.expectEqual(PageShieldMutationEndpoint.delete_policy, PageShieldMutationEndpoint.parse("remove").?);
+    try std.testing.expectEqualStrings("PUT", PageShieldMutationEndpoint.update_settings.method());
+    try std.testing.expectEqualStrings("POST", PageShieldMutationEndpoint.create_policy.method());
+    try std.testing.expectEqualStrings("page-shield-update-policy", PageShieldMutationEndpoint.update_policy.operationId());
+    try std.testing.expectEqualStrings("#/components/schemas/page-shield_policy", PageShieldMutationEndpoint.create_policy.requestBodySchemaRef().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), PageShieldMutationEndpoint.delete_policy.requestBodySchemaRef());
+}
+
+test "builds Page Shield paths and dry-run plans" {
+    const allocator = std.testing.allocator;
+
+    const settings = try pageShieldReadUrl(allocator, base_url, "zone/1", .settings, .{});
+    defer allocator.free(settings);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone%2F1/page_shield", settings);
+
+    const connections = try pageShieldReadPath(allocator, "zone/1", .connections, .{
+        .hosts = "cdn.example.com,*.example.net",
+        .page = "all",
+        .per_page = "50",
+        .order_by = "last_seen_at",
+        .direction = "desc",
+        .exclude_cdn_cgi = "true",
+        .status = "active",
+        .page_url = "https://example.com/checkout",
+    });
+    defer allocator.free(connections);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/page_shield/connections?hosts=cdn.example.com%2C%2A.example.net&page=all&per_page=50&order_by=last_seen_at&direction=desc&exclude_cdn_cgi=true&status=active&page_url=https%3A%2F%2Fexample.com%2Fcheckout", connections);
+
+    const script = try pageShieldReadPath(allocator, "zone/1", .script, .{ .resource_id = "script/1" });
+    defer allocator.free(script);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/page_shield/scripts/script%2F1", script);
+
+    const cookies = try pageShieldReadPath(allocator, "zone/1", .cookies, .{
+        .name = "session",
+        .secure = "true",
+        .http_only = "true",
+        .same_site = "lax",
+        .type_filter = "first_party",
+        .path_filter = "/",
+        .domain = "example.com",
+    });
+    defer allocator.free(cookies);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/page_shield/cookies?name=session&secure=true&http_only=true&same_site=lax&type=first_party&path=%2F&domain=example.com", cookies);
+
+    const settings_plan = try pageShieldMutationPlanJson(allocator, .update_settings, .{ .zone_id = "zone/1" });
+    defer allocator.free(settings_plan);
+    try std.testing.expect(std.mem.indexOf(u8, settings_plan, "\"group\":\"Page Shield\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, settings_plan, "\"operation_id\":\"page-shield-update-settings\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, settings_plan, "\"path\":\"/zones/zone%2F1/page_shield\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, settings_plan, "\"will_execute\":false") != null);
+
+    const create_plan = try pageShieldMutationPlanJson(allocator, .create_policy, .{ .zone_id = "zone/1" });
+    defer allocator.free(create_plan);
+    try std.testing.expect(std.mem.indexOf(u8, create_plan, "\"operation_id\":\"page-shield-create-policy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, create_plan, "\"request_body_schema\":\"#/components/schemas/page-shield_policy\"") != null);
+
+    const delete_plan = try pageShieldMutationPlanJson(allocator, .delete_policy, .{ .zone_id = "zone/1", .policy_id = "policy/1" });
+    defer allocator.free(delete_plan);
+    try std.testing.expect(std.mem.indexOf(u8, delete_plan, "\"method\":\"DELETE\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, delete_plan, "\"path\":\"/zones/zone%2F1/page_shield/policies/policy%2F1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, delete_plan, "\"request_body_schema\":null") != null);
+
+    try std.testing.expectError(error.MissingCloudflarePageShieldResourceId, pageShieldReadPath(allocator, "zone/1", .policy, .{}));
+    try std.testing.expectError(error.MissingCloudflarePageShieldPolicyId, pageShieldMutationPlanJson(allocator, .update_policy, .{ .zone_id = "zone/1" }));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

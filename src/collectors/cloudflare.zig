@@ -50,6 +50,10 @@ pub const ZoneLegacyRuleMutationArgs = provider_cloudflare.ZoneLegacyRuleMutatio
 pub const ZoneLegacyRuleMutationEndpoint = provider_cloudflare.ZoneLegacyRuleMutationEndpoint;
 pub const ZoneLegacyRuleReadEndpoint = provider_cloudflare.ZoneLegacyRuleReadEndpoint;
 pub const ZoneLegacyRuleResource = provider_cloudflare.ZoneLegacyRuleResource;
+pub const PageShieldMutationArgs = provider_cloudflare.PageShieldMutationArgs;
+pub const PageShieldMutationEndpoint = provider_cloudflare.PageShieldMutationEndpoint;
+pub const PageShieldReadArgs = provider_cloudflare.PageShieldReadArgs;
+pub const PageShieldReadEndpoint = provider_cloudflare.PageShieldReadEndpoint;
 pub const LoadBalancingAccountReadEndpoint = provider_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = provider_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = provider_cloudflare.LoadBalancingMutationEndpoint;
@@ -795,6 +799,30 @@ pub fn collectZoneLegacyRuleEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectPageShieldEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: PageShieldReadEndpoint, args: PageShieldReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = try pageShieldTarget(gpa, zone_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getPageShieldEndpoint(io, gpa, zone_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.pageShieldReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: IdentityEndpoint, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const client = clientFromAuth(auth) catch {
@@ -1126,6 +1154,8 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
         for (legacy_rule_resources) |resource| {
             try collectZoneLegacyRulesForZone(gpa, io, client, db, zone_id, domain, resource);
         }
+
+        try collectPageShieldForZone(gpa, io, client, db, zone_id, domain);
 
         zone_tags_refresh: {
             const tag_body = client.getResourceTaggingZoneTags(io, gpa, zone_id, .{
@@ -2068,6 +2098,68 @@ fn collectZoneLegacyRuleSnapshot(gpa: Allocator, io: Io, client: provider_cloudf
     });
 }
 
+fn collectPageShieldForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8) !void {
+    const endpoints = [_]PageShieldReadEndpoint{
+        .settings,
+        .policies,
+        .connections,
+        .scripts,
+        .cookies,
+    };
+    for (endpoints) |endpoint| {
+        const redacted = collectPageShieldSnapshot(gpa, io, client, db, zone_id, target_label, endpoint, .{}) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(), target_label, "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(redacted);
+        try collectPageShieldDetailsForList(gpa, io, client, db, zone_id, target_label, endpoint, redacted);
+    }
+}
+
+fn collectPageShieldDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, list_endpoint: PageShieldReadEndpoint, list_body: []const u8) !void {
+    const detail_endpoint: ?PageShieldReadEndpoint = switch (list_endpoint) {
+        .policies => .policy,
+        .connections => .connection,
+        .scripts => .script,
+        .cookies => .cookie,
+        else => null,
+    };
+    const endpoint = detail_endpoint orelse return;
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const redacted = collectPageShieldSnapshot(gpa, io, client, db, zone_id, target_label, endpoint, .{ .resource_id = row.id }) catch |err| {
+            const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ target_label, row.id });
+            defer gpa.free(target);
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(redacted);
+    }
+}
+
+fn collectPageShieldSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, endpoint: PageShieldReadEndpoint, args: PageShieldReadArgs) ![]u8 {
+    const body = try client.getPageShieldEndpoint(io, gpa, zone_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.pageShieldReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try pageShieldTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
 fn collectRulesetSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: RulesetScope, scope_id: []const u8, target_label: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
     const body = try client.getRulesetEndpoint(io, gpa, scope, scope_id, endpoint, args);
     defer body.deinit(gpa);
@@ -2392,6 +2484,14 @@ fn zoneLegacyRuleTarget(gpa: Allocator, zone_label: []const u8, endpoint: ZoneLe
     if (endpoint.requiresRuleId()) {
         const id = rule_id orelse return try gpa.dupe(u8, zone_label);
         return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zone_label, id });
+    }
+    return try gpa.dupe(u8, zone_label);
+}
+
+fn pageShieldTarget(gpa: Allocator, zone_label: []const u8, endpoint: PageShieldReadEndpoint, args: PageShieldReadArgs) ![]u8 {
+    if (endpoint.requiresResourceId()) {
+        const resource_id = args.resource_id orelse return try gpa.dupe(u8, zone_label);
+        return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zone_label, resource_id });
     }
     return try gpa.dupe(u8, zone_label);
 }
