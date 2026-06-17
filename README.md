@@ -154,6 +154,15 @@ zig build run -- cloudflare tls zone ssl-verification <zone-id> retry=false
 zig build run -- cloudflare tls zone total-tls <zone-id>
 zig build run -- cloudflare tls zone custom-ssl <zone-id> status=active
 zig build run -- cloudflare tls origin-ca certificates <zone-id>
+zig build run -- cloudflare zone argo-analytics <zone-id>
+zig build run -- cloudflare zone argo-analytics-colos <zone-id>
+zig build run -- cloudflare zone argo-smart-routing <zone-id>
+zig build run -- cloudflare zone argo-tiered-caching <zone-id>
+zig build run -- cloudflare zone smart-tiered-cache <zone-id>
+zig build run -- cloudflare zone origin-post-quantum <zone-id>
+zig build run -- cloudflare zone smart-shield <zone-id>
+zig build run -- cloudflare zone smart-shield-cache-reserve-clear <zone-id>
+zig build run -- cloudflare zone cloud-connector-rules <zone-id>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru
@@ -171,6 +180,9 @@ zig build run -- cloudflare dry-run zone edit <zone-id>
 zig build run -- cloudflare dry-run zone purge-cache <zone-id>
 zig build run -- cloudflare dry-run zone purge-environment-cache <zone-id> <environment-id>
 zig build run -- cloudflare dry-run zone-lifecycle cache-reserve-change <zone-id>
+zig build run -- cloudflare dry-run zone-lifecycle argo-smart-routing-change <zone-id>
+zig build run -- cloudflare dry-run zone-lifecycle smart-tiered-cache-create <zone-id>
+zig build run -- cloudflare dry-run zone-lifecycle cloud-connector-rules-update <zone-id>
 zig build run -- cloudflare dry-run zone-lifecycle environments-update <zone-id>
 zig build run -- cloudflare dry-run zone-lifecycle environment-rollback <zone-id> <environment-id>
 zig build run -- cloudflare dry-run zone-lifecycle subscription-update <zone-id>

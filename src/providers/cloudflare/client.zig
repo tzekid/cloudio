@@ -6645,6 +6645,15 @@ pub const ZoneLifecycleReadEndpoint = enum {
     cache_reserve_clear,
     regional_tiered_cache,
     variants,
+    argo_analytics,
+    argo_analytics_colos,
+    argo_smart_routing,
+    argo_tiered_caching,
+    smart_tiered_cache,
+    origin_post_quantum,
+    smart_shield,
+    smart_shield_cache_reserve_clear,
+    cloud_connector_rules,
     environments,
     hold,
     subscription,
@@ -6657,6 +6666,15 @@ pub const ZoneLifecycleReadEndpoint = enum {
         if (std.mem.eql(u8, value, "cache-reserve-clear")) return .cache_reserve_clear;
         if (std.mem.eql(u8, value, "regional-tiered-cache")) return .regional_tiered_cache;
         if (std.mem.eql(u8, value, "variants") or std.mem.eql(u8, value, "cache-variants")) return .variants;
+        if (std.mem.eql(u8, value, "argo-analytics") or std.mem.eql(u8, value, "argo-latency")) return .argo_analytics;
+        if (std.mem.eql(u8, value, "argo-analytics-colos") or std.mem.eql(u8, value, "argo-latency-colos")) return .argo_analytics_colos;
+        if (std.mem.eql(u8, value, "argo-smart-routing") or std.mem.eql(u8, value, "smart-routing")) return .argo_smart_routing;
+        if (std.mem.eql(u8, value, "argo-tiered-caching") or std.mem.eql(u8, value, "tiered-caching")) return .argo_tiered_caching;
+        if (std.mem.eql(u8, value, "smart-tiered-cache")) return .smart_tiered_cache;
+        if (std.mem.eql(u8, value, "origin-post-quantum") or std.mem.eql(u8, value, "origin-pq")) return .origin_post_quantum;
+        if (std.mem.eql(u8, value, "smart-shield")) return .smart_shield;
+        if (std.mem.eql(u8, value, "smart-shield-cache-reserve-clear")) return .smart_shield_cache_reserve_clear;
+        if (std.mem.eql(u8, value, "cloud-connector-rules") or std.mem.eql(u8, value, "cloud-connector")) return .cloud_connector_rules;
         if (std.mem.eql(u8, value, "environments") or std.mem.eql(u8, value, "envs")) return .environments;
         if (std.mem.eql(u8, value, "hold") or std.mem.eql(u8, value, "zone-hold")) return .hold;
         if (std.mem.eql(u8, value, "subscription")) return .subscription;
@@ -6672,6 +6690,15 @@ pub const ZoneLifecycleReadEndpoint = enum {
             .cache_reserve_clear => "cache-reserve-clear",
             .regional_tiered_cache => "regional-tiered-cache",
             .variants => "variants",
+            .argo_analytics => "argo-analytics",
+            .argo_analytics_colos => "argo-analytics-colos",
+            .argo_smart_routing => "argo-smart-routing",
+            .argo_tiered_caching => "argo-tiered-caching",
+            .smart_tiered_cache => "smart-tiered-cache",
+            .origin_post_quantum => "origin-post-quantum",
+            .smart_shield => "smart-shield",
+            .smart_shield_cache_reserve_clear => "smart-shield-cache-reserve-clear",
+            .cloud_connector_rules => "cloud-connector-rules",
             .environments => "environments",
             .hold => "hold",
             .subscription => "subscription",
@@ -6687,6 +6714,15 @@ pub const ZoneLifecycleReadEndpoint = enum {
             .cache_reserve_clear => "zone-cache-reserve-clear",
             .regional_tiered_cache => "zone-regional-tiered-cache",
             .variants => "zone-cache-variants",
+            .argo_analytics => "zone-argo-analytics",
+            .argo_analytics_colos => "zone-argo-analytics-colos",
+            .argo_smart_routing => "zone-argo-smart-routing",
+            .argo_tiered_caching => "zone-argo-tiered-caching",
+            .smart_tiered_cache => "zone-smart-tiered-cache",
+            .origin_post_quantum => "zone-origin-post-quantum",
+            .smart_shield => "zone-smart-shield",
+            .smart_shield_cache_reserve_clear => "zone-smart-shield-cache-reserve-clear",
+            .cloud_connector_rules => "zone-cloud-connector-rules",
             .environments => "zone-environments",
             .hold => "zone-hold",
             .subscription => "zone-subscription",
@@ -6697,6 +6733,15 @@ pub const ZoneLifecycleReadEndpoint = enum {
         return switch (self) {
             .available_plans, .available_plan, .available_rate_plans => "Zone Rate Plan",
             .cache_reserve, .cache_reserve_clear, .regional_tiered_cache, .variants => "Zone Cache Settings",
+            .argo_analytics => "Argo Analytics for Zone",
+            .argo_analytics_colos => "Argo Analytics for Geolocation",
+            .argo_smart_routing => "Argo Smart Routing",
+            .argo_tiered_caching => "Tiered Caching",
+            .smart_tiered_cache => "Smart Tiered Cache",
+            .origin_post_quantum => "Origin Post-Quantum",
+            .smart_shield => "Smart Shield Settings",
+            .smart_shield_cache_reserve_clear => "Cache Reserve Clear",
+            .cloud_connector_rules => "Zone Cloud Connector Rules GET",
             .environments => "Zone Environments",
             .hold => "Zone Holds",
             .subscription => "Zone Subscription",
@@ -6712,6 +6757,15 @@ pub const ZoneLifecycleReadEndpoint = enum {
             .cache_reserve_clear => "zone-cache-settings-get-cache-reserve-clear",
             .regional_tiered_cache => "zone-cache-settings-get-regional-tiered-cache-setting",
             .variants => "zone-cache-settings-get-variants-setting",
+            .argo_analytics => "argo-analytics-for-zone-argo-analytics-for-a-zone",
+            .argo_analytics_colos => "argo-analytics-for-geolocation-argo-analytics-for-a-zone-at-different-po-ps",
+            .argo_smart_routing => "argo-smart-routing-get-argo-smart-routing-setting",
+            .argo_tiered_caching => "tiered-caching-get-tiered-caching-setting",
+            .smart_tiered_cache => "smart-tiered-cache-get-smart-tiered-cache-setting",
+            .origin_post_quantum => "zone-cache-settings-get-origin-post-quantum-encryption-setting",
+            .smart_shield => "smart-shield-get-settings",
+            .smart_shield_cache_reserve_clear => "smart-shield-settings-get-cache-reserve-clear",
+            .cloud_connector_rules => "zone-cloud-connector-rules",
             .environments => "zonesEnvironmentsList",
             .hold => "zones-0-hold-get",
             .subscription => "zone-subscription-zone-subscription-details",
@@ -6727,6 +6781,15 @@ pub const ZoneLifecycleReadEndpoint = enum {
             .cache_reserve_clear => "Get Cache Reserve Clear",
             .regional_tiered_cache => "Get Regional Tiered Cache setting",
             .variants => "Get variants setting",
+            .argo_analytics => "Argo analytics for a zone",
+            .argo_analytics_colos => "Argo analytics for a zone at different PoPs",
+            .argo_smart_routing => "Get Argo Smart Routing setting",
+            .argo_tiered_caching => "Get Tiered Caching setting",
+            .smart_tiered_cache => "Get Smart Tiered Cache setting",
+            .origin_post_quantum => "Get Origin Post-Quantum Encryption setting",
+            .smart_shield => "Get Smart Shield Settings",
+            .smart_shield_cache_reserve_clear => "Get Smart Shield Cache Reserve Clear",
+            .cloud_connector_rules => "List Cloud Connector rules",
             .environments => "List zone environments",
             .hold => "Get Zone Hold",
             .subscription => "Zone Subscription Details",
@@ -6741,6 +6804,15 @@ pub const ZoneLifecycleReadEndpoint = enum {
             .cache_reserve_clear => "cache/cache_reserve_clear",
             .regional_tiered_cache => "cache/regional_tiered_cache",
             .variants => "cache/variants",
+            .argo_analytics => "analytics/latency",
+            .argo_analytics_colos => "analytics/latency/colos",
+            .argo_smart_routing => "argo/smart_routing",
+            .argo_tiered_caching => "argo/tiered_caching",
+            .smart_tiered_cache => "cache/tiered_cache_smart_topology_enable",
+            .origin_post_quantum => "cache/origin_post_quantum_encryption",
+            .smart_shield => "smart_shield",
+            .smart_shield_cache_reserve_clear => "smart_shield/cache_reserve_clear",
+            .cloud_connector_rules => "cloud_connector/rules",
             .environments => "environments",
             .hold => "hold",
             .subscription => "subscription",
@@ -6758,6 +6830,15 @@ pub const ZoneLifecycleMutationEndpoint = enum {
     change_regional_tiered_cache,
     delete_variants,
     change_variants,
+    change_argo_smart_routing,
+    change_argo_tiered_caching,
+    create_smart_tiered_cache,
+    change_smart_tiered_cache,
+    delete_smart_tiered_cache,
+    change_origin_post_quantum,
+    change_smart_shield,
+    start_smart_shield_cache_reserve_clear,
+    update_cloud_connector_rules,
     create_environments,
     edit_environments,
     update_environments,
@@ -6775,6 +6856,15 @@ pub const ZoneLifecycleMutationEndpoint = enum {
         if (std.mem.eql(u8, value, "regional-tiered-cache-change") or std.mem.eql(u8, value, "change-regional-tiered-cache")) return .change_regional_tiered_cache;
         if (std.mem.eql(u8, value, "variants-delete") or std.mem.eql(u8, value, "delete-variants")) return .delete_variants;
         if (std.mem.eql(u8, value, "variants-change") or std.mem.eql(u8, value, "change-variants")) return .change_variants;
+        if (std.mem.eql(u8, value, "argo-smart-routing-change") or std.mem.eql(u8, value, "change-argo-smart-routing")) return .change_argo_smart_routing;
+        if (std.mem.eql(u8, value, "argo-tiered-caching-change") or std.mem.eql(u8, value, "change-argo-tiered-caching")) return .change_argo_tiered_caching;
+        if (std.mem.eql(u8, value, "smart-tiered-cache-create") or std.mem.eql(u8, value, "create-smart-tiered-cache")) return .create_smart_tiered_cache;
+        if (std.mem.eql(u8, value, "smart-tiered-cache-change") or std.mem.eql(u8, value, "change-smart-tiered-cache")) return .change_smart_tiered_cache;
+        if (std.mem.eql(u8, value, "smart-tiered-cache-delete") or std.mem.eql(u8, value, "delete-smart-tiered-cache")) return .delete_smart_tiered_cache;
+        if (std.mem.eql(u8, value, "origin-post-quantum-change") or std.mem.eql(u8, value, "change-origin-post-quantum")) return .change_origin_post_quantum;
+        if (std.mem.eql(u8, value, "smart-shield-change") or std.mem.eql(u8, value, "change-smart-shield")) return .change_smart_shield;
+        if (std.mem.eql(u8, value, "smart-shield-cache-reserve-clear-start") or std.mem.eql(u8, value, "start-smart-shield-cache-reserve-clear")) return .start_smart_shield_cache_reserve_clear;
+        if (std.mem.eql(u8, value, "cloud-connector-rules-update") or std.mem.eql(u8, value, "update-cloud-connector-rules")) return .update_cloud_connector_rules;
         if (std.mem.eql(u8, value, "environments-create") or std.mem.eql(u8, value, "create-environments")) return .create_environments;
         if (std.mem.eql(u8, value, "environments-edit") or std.mem.eql(u8, value, "edit-environments")) return .edit_environments;
         if (std.mem.eql(u8, value, "environments-update") or std.mem.eql(u8, value, "update-environments")) return .update_environments;
@@ -6795,6 +6885,15 @@ pub const ZoneLifecycleMutationEndpoint = enum {
             .change_regional_tiered_cache => "regional-tiered-cache-change",
             .delete_variants => "variants-delete",
             .change_variants => "variants-change",
+            .change_argo_smart_routing => "argo-smart-routing-change",
+            .change_argo_tiered_caching => "argo-tiered-caching-change",
+            .create_smart_tiered_cache => "smart-tiered-cache-create",
+            .change_smart_tiered_cache => "smart-tiered-cache-change",
+            .delete_smart_tiered_cache => "smart-tiered-cache-delete",
+            .change_origin_post_quantum => "origin-post-quantum-change",
+            .change_smart_shield => "smart-shield-change",
+            .start_smart_shield_cache_reserve_clear => "smart-shield-cache-reserve-clear-start",
+            .update_cloud_connector_rules => "cloud-connector-rules-update",
             .create_environments => "environments-create",
             .edit_environments => "environments-edit",
             .update_environments => "environments-update",
@@ -6816,6 +6915,16 @@ pub const ZoneLifecycleMutationEndpoint = enum {
             .delete_variants,
             .change_variants,
             => "Zone Cache Settings",
+            .change_argo_smart_routing => "Argo Smart Routing",
+            .change_argo_tiered_caching => "Tiered Caching",
+            .create_smart_tiered_cache,
+            .change_smart_tiered_cache,
+            .delete_smart_tiered_cache,
+            => "Smart Tiered Cache",
+            .change_origin_post_quantum => "Origin Post-Quantum",
+            .change_smart_shield => "Smart Shield Settings",
+            .start_smart_shield_cache_reserve_clear => "Cache Reserve Clear",
+            .update_cloud_connector_rules => "Zone Cloud Connector Rules PUT",
             .create_environments,
             .edit_environments,
             .update_environments,
@@ -6829,20 +6938,30 @@ pub const ZoneLifecycleMutationEndpoint = enum {
 
     pub fn method(self: ZoneLifecycleMutationEndpoint) []const u8 {
         return switch (self) {
-            .delete_variants, .delete_environment, .delete_hold => "DELETE",
+            .delete_variants, .delete_smart_tiered_cache, .delete_environment, .delete_hold => "DELETE",
             .change_cache_reserve,
             .change_regional_tiered_cache,
             .change_variants,
+            .change_argo_smart_routing,
+            .change_argo_tiered_caching,
+            .change_smart_tiered_cache,
+            .change_smart_shield,
             .edit_environments,
             .update_hold,
             => "PATCH",
             .start_cache_reserve_clear,
+            .create_smart_tiered_cache,
+            .start_smart_shield_cache_reserve_clear,
             .create_environments,
             .rollback_environment,
             .create_hold,
             .create_subscription,
             => "POST",
-            .update_environments, .update_subscription => "PUT",
+            .change_origin_post_quantum,
+            .update_cloud_connector_rules,
+            .update_environments,
+            .update_subscription,
+            => "PUT",
         };
     }
 
@@ -6853,6 +6972,15 @@ pub const ZoneLifecycleMutationEndpoint = enum {
             .change_regional_tiered_cache => "zone-cache-settings-change-regional-tiered-cache-setting",
             .delete_variants => "zone-cache-settings-delete-variants-setting",
             .change_variants => "zone-cache-settings-change-variants-setting",
+            .change_argo_smart_routing => "argo-smart-routing-patch-argo-smart-routing-setting",
+            .change_argo_tiered_caching => "tiered-caching-patch-tiered-caching-setting",
+            .create_smart_tiered_cache => "smart-tiered-cache-create-smart-tiered-cache-setting",
+            .change_smart_tiered_cache => "smart-tiered-cache-patch-smart-tiered-cache-setting",
+            .delete_smart_tiered_cache => "smart-tiered-cache-delete-smart-tiered-cache-setting",
+            .change_origin_post_quantum => "zone-cache-settings-change-origin-post-quantum-encryption-setting",
+            .change_smart_shield => "smart-shield-patch-settings",
+            .start_smart_shield_cache_reserve_clear => "smart-shield-settings-start-cache-reserve-clear",
+            .update_cloud_connector_rules => "zone-cloud-conenctor-rules-put",
             .create_environments => "zonesEnvironmentsCreate",
             .edit_environments => "zonesEnvironmentsEdit",
             .update_environments => "zonesEnvironmentsUpdate",
@@ -6873,6 +7001,15 @@ pub const ZoneLifecycleMutationEndpoint = enum {
             .change_regional_tiered_cache => "Change Regional Tiered Cache setting",
             .delete_variants => "Delete variants setting",
             .change_variants => "Change variants setting",
+            .change_argo_smart_routing => "Patch Argo Smart Routing setting",
+            .change_argo_tiered_caching => "Patch Tiered Caching setting",
+            .create_smart_tiered_cache => "Create Smart Tiered Cache setting",
+            .change_smart_tiered_cache => "Patch Smart Tiered Cache setting",
+            .delete_smart_tiered_cache => "Delete Smart Tiered Cache setting",
+            .change_origin_post_quantum => "Change Origin Post-Quantum Encryption setting",
+            .change_smart_shield => "Patch Smart Shield Settings",
+            .start_smart_shield_cache_reserve_clear => "Start Smart Shield Cache Reserve Clear",
+            .update_cloud_connector_rules => "Create, update, or delete Cloud Connector rules",
             .create_environments => "Create zone environments",
             .edit_environments => "Partially update zone environments",
             .update_environments => "Upsert zone environments",
@@ -6891,11 +7028,19 @@ pub const ZoneLifecycleMutationEndpoint = enum {
             .change_cache_reserve => "inline:{value:#/components/schemas/cache-rules_cache_reserve_value}",
             .change_regional_tiered_cache => "inline:{value:#/components/schemas/cache-rules_regional_tiered_cache_value}",
             .change_variants => "inline:{value:#/components/schemas/cache-rules_variants_value}",
+            .change_argo_smart_routing => "#/components/schemas/argo-config_patch",
+            .change_argo_tiered_caching => "#/components/schemas/cache-rules_patch",
+            .create_smart_tiered_cache, .change_smart_tiered_cache => "#/components/schemas/cache-rules_smart_tiered_cache_patch",
+            .change_origin_post_quantum => "#/components/schemas/cache-rules_origin_post_quantum_encryption_value",
+            .change_smart_shield => "#/components/schemas/smartshield_smart_shield_settings_patch_body",
+            .update_cloud_connector_rules => "#/components/schemas/cloud-connector_rule",
             .create_environments, .edit_environments, .update_environments => "#/components/schemas/kamino_environments_request",
             .update_hold => "inline:{hold_after?:string|null,include_subdomains?:bool}",
             .create_subscription, .update_subscription => "#/components/schemas/bill-subs-api_subscription-v2",
             .start_cache_reserve_clear,
             .delete_variants,
+            .delete_smart_tiered_cache,
+            .start_smart_shield_cache_reserve_clear,
             .delete_environment,
             .rollback_environment,
             .create_hold,
@@ -6914,6 +7059,13 @@ pub const ZoneLifecycleMutationEndpoint = enum {
             .start_cache_reserve_clear => "cache/cache_reserve_clear",
             .change_regional_tiered_cache => "cache/regional_tiered_cache",
             .delete_variants, .change_variants => "cache/variants",
+            .change_argo_smart_routing => "argo/smart_routing",
+            .change_argo_tiered_caching => "argo/tiered_caching",
+            .create_smart_tiered_cache, .change_smart_tiered_cache, .delete_smart_tiered_cache => "cache/tiered_cache_smart_topology_enable",
+            .change_origin_post_quantum => "cache/origin_post_quantum_encryption",
+            .change_smart_shield => "smart_shield",
+            .start_smart_shield_cache_reserve_clear => "smart_shield/cache_reserve_clear",
+            .update_cloud_connector_rules => "cloud_connector/rules",
             .create_environments, .edit_environments, .update_environments, .delete_environment, .rollback_environment => "environments",
             .create_hold, .update_hold, .delete_hold => "hold",
             .create_subscription, .update_subscription => "subscription",
@@ -11695,14 +11847,36 @@ test "cloudflare zone lifecycle endpoints map to official operation metadata" {
     try std.testing.expectEqual(ZoneLifecycleReadEndpoint.cache_reserve, ZoneLifecycleReadEndpoint.parse("cache-reserve").?);
     try std.testing.expectEqual(ZoneLifecycleReadEndpoint.regional_tiered_cache, ZoneLifecycleReadEndpoint.parse("regional-tiered-cache").?);
     try std.testing.expectEqual(ZoneLifecycleReadEndpoint.variants, ZoneLifecycleReadEndpoint.parse("cache-variants").?);
+    try std.testing.expectEqual(ZoneLifecycleReadEndpoint.argo_analytics, ZoneLifecycleReadEndpoint.parse("argo-latency").?);
+    try std.testing.expectEqual(ZoneLifecycleReadEndpoint.argo_analytics_colos, ZoneLifecycleReadEndpoint.parse("argo-latency-colos").?);
+    try std.testing.expectEqual(ZoneLifecycleReadEndpoint.argo_smart_routing, ZoneLifecycleReadEndpoint.parse("smart-routing").?);
+    try std.testing.expectEqual(ZoneLifecycleReadEndpoint.argo_tiered_caching, ZoneLifecycleReadEndpoint.parse("tiered-caching").?);
+    try std.testing.expectEqual(ZoneLifecycleReadEndpoint.smart_tiered_cache, ZoneLifecycleReadEndpoint.parse("smart-tiered-cache").?);
+    try std.testing.expectEqual(ZoneLifecycleReadEndpoint.origin_post_quantum, ZoneLifecycleReadEndpoint.parse("origin-pq").?);
+    try std.testing.expectEqual(ZoneLifecycleReadEndpoint.smart_shield, ZoneLifecycleReadEndpoint.parse("smart-shield").?);
+    try std.testing.expectEqual(ZoneLifecycleReadEndpoint.smart_shield_cache_reserve_clear, ZoneLifecycleReadEndpoint.parse("smart-shield-cache-reserve-clear").?);
+    try std.testing.expectEqual(ZoneLifecycleReadEndpoint.cloud_connector_rules, ZoneLifecycleReadEndpoint.parse("cloud-connector").?);
     try std.testing.expectEqual(ZoneLifecycleReadEndpoint.environments, ZoneLifecycleReadEndpoint.parse("envs").?);
     try std.testing.expectEqual(ZoneLifecycleReadEndpoint.hold, ZoneLifecycleReadEndpoint.parse("zone-hold").?);
     try std.testing.expectEqual(ZoneLifecycleReadEndpoint.subscription, ZoneLifecycleReadEndpoint.parse("subscription").?);
     try std.testing.expectEqualStrings("Zone Rate Plan", ZoneLifecycleReadEndpoint.available_plans.group());
     try std.testing.expectEqualStrings("Zone Cache Settings", ZoneLifecycleReadEndpoint.cache_reserve.group());
+    try std.testing.expectEqualStrings("Argo Smart Routing", ZoneLifecycleReadEndpoint.argo_smart_routing.group());
+    try std.testing.expectEqualStrings("Smart Tiered Cache", ZoneLifecycleReadEndpoint.smart_tiered_cache.group());
+    try std.testing.expectEqualStrings("Origin Post-Quantum", ZoneLifecycleReadEndpoint.origin_post_quantum.group());
+    try std.testing.expectEqualStrings("Zone Cloud Connector Rules GET", ZoneLifecycleReadEndpoint.cloud_connector_rules.group());
     try std.testing.expectEqualStrings("zone-rate-plan-list-available-plans", ZoneLifecycleReadEndpoint.available_plans.operationId());
     try std.testing.expectEqualStrings("zone-rate-plan-available-plan-details", ZoneLifecycleReadEndpoint.available_plan.operationId());
     try std.testing.expectEqualStrings("zone-cache-settings-get-cache-reserve-setting", ZoneLifecycleReadEndpoint.cache_reserve.operationId());
+    try std.testing.expectEqualStrings("argo-analytics-for-zone-argo-analytics-for-a-zone", ZoneLifecycleReadEndpoint.argo_analytics.operationId());
+    try std.testing.expectEqualStrings("argo-analytics-for-geolocation-argo-analytics-for-a-zone-at-different-po-ps", ZoneLifecycleReadEndpoint.argo_analytics_colos.operationId());
+    try std.testing.expectEqualStrings("argo-smart-routing-get-argo-smart-routing-setting", ZoneLifecycleReadEndpoint.argo_smart_routing.operationId());
+    try std.testing.expectEqualStrings("tiered-caching-get-tiered-caching-setting", ZoneLifecycleReadEndpoint.argo_tiered_caching.operationId());
+    try std.testing.expectEqualStrings("smart-tiered-cache-get-smart-tiered-cache-setting", ZoneLifecycleReadEndpoint.smart_tiered_cache.operationId());
+    try std.testing.expectEqualStrings("zone-cache-settings-get-origin-post-quantum-encryption-setting", ZoneLifecycleReadEndpoint.origin_post_quantum.operationId());
+    try std.testing.expectEqualStrings("smart-shield-get-settings", ZoneLifecycleReadEndpoint.smart_shield.operationId());
+    try std.testing.expectEqualStrings("smart-shield-settings-get-cache-reserve-clear", ZoneLifecycleReadEndpoint.smart_shield_cache_reserve_clear.operationId());
+    try std.testing.expectEqualStrings("zone-cloud-connector-rules", ZoneLifecycleReadEndpoint.cloud_connector_rules.operationId());
     try std.testing.expectEqualStrings("zonesEnvironmentsList", ZoneLifecycleReadEndpoint.environments.operationId());
     try std.testing.expectEqualStrings("zones-0-hold-get", ZoneLifecycleReadEndpoint.hold.operationId());
     try std.testing.expectEqualStrings("zone-subscription-zone-subscription-details", ZoneLifecycleReadEndpoint.subscription.operationId());
@@ -11713,6 +11887,15 @@ test "cloudflare zone lifecycle endpoints map to official operation metadata" {
     try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.start_cache_reserve_clear, ZoneLifecycleMutationEndpoint.parse("start-cache-reserve-clear").?);
     try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.change_regional_tiered_cache, ZoneLifecycleMutationEndpoint.parse("change-regional-tiered-cache").?);
     try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.delete_variants, ZoneLifecycleMutationEndpoint.parse("delete-variants").?);
+    try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.change_argo_smart_routing, ZoneLifecycleMutationEndpoint.parse("change-argo-smart-routing").?);
+    try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.change_argo_tiered_caching, ZoneLifecycleMutationEndpoint.parse("change-argo-tiered-caching").?);
+    try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.create_smart_tiered_cache, ZoneLifecycleMutationEndpoint.parse("create-smart-tiered-cache").?);
+    try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.change_smart_tiered_cache, ZoneLifecycleMutationEndpoint.parse("change-smart-tiered-cache").?);
+    try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.delete_smart_tiered_cache, ZoneLifecycleMutationEndpoint.parse("delete-smart-tiered-cache").?);
+    try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.change_origin_post_quantum, ZoneLifecycleMutationEndpoint.parse("change-origin-post-quantum").?);
+    try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.change_smart_shield, ZoneLifecycleMutationEndpoint.parse("change-smart-shield").?);
+    try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.start_smart_shield_cache_reserve_clear, ZoneLifecycleMutationEndpoint.parse("start-smart-shield-cache-reserve-clear").?);
+    try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.update_cloud_connector_rules, ZoneLifecycleMutationEndpoint.parse("update-cloud-connector-rules").?);
     try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.create_environments, ZoneLifecycleMutationEndpoint.parse("create-environments").?);
     try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.rollback_environment, ZoneLifecycleMutationEndpoint.parse("rollback-environment").?);
     try std.testing.expectEqual(ZoneLifecycleMutationEndpoint.create_hold, ZoneLifecycleMutationEndpoint.parse("create-hold").?);
@@ -11720,12 +11903,29 @@ test "cloudflare zone lifecycle endpoints map to official operation metadata" {
     try std.testing.expectEqualStrings("PATCH", ZoneLifecycleMutationEndpoint.change_cache_reserve.method());
     try std.testing.expectEqualStrings("POST", ZoneLifecycleMutationEndpoint.start_cache_reserve_clear.method());
     try std.testing.expectEqualStrings("DELETE", ZoneLifecycleMutationEndpoint.delete_variants.method());
+    try std.testing.expectEqualStrings("PATCH", ZoneLifecycleMutationEndpoint.change_argo_smart_routing.method());
+    try std.testing.expectEqualStrings("POST", ZoneLifecycleMutationEndpoint.create_smart_tiered_cache.method());
+    try std.testing.expectEqualStrings("DELETE", ZoneLifecycleMutationEndpoint.delete_smart_tiered_cache.method());
+    try std.testing.expectEqualStrings("PUT", ZoneLifecycleMutationEndpoint.change_origin_post_quantum.method());
+    try std.testing.expectEqualStrings("PUT", ZoneLifecycleMutationEndpoint.update_cloud_connector_rules.method());
     try std.testing.expectEqualStrings("PUT", ZoneLifecycleMutationEndpoint.update_subscription.method());
     try std.testing.expectEqualStrings("zone-cache-settings-change-cache-reserve-setting", ZoneLifecycleMutationEndpoint.change_cache_reserve.operationId());
+    try std.testing.expectEqualStrings("argo-smart-routing-patch-argo-smart-routing-setting", ZoneLifecycleMutationEndpoint.change_argo_smart_routing.operationId());
+    try std.testing.expectEqualStrings("tiered-caching-patch-tiered-caching-setting", ZoneLifecycleMutationEndpoint.change_argo_tiered_caching.operationId());
+    try std.testing.expectEqualStrings("smart-tiered-cache-create-smart-tiered-cache-setting", ZoneLifecycleMutationEndpoint.create_smart_tiered_cache.operationId());
+    try std.testing.expectEqualStrings("smart-tiered-cache-delete-smart-tiered-cache-setting", ZoneLifecycleMutationEndpoint.delete_smart_tiered_cache.operationId());
+    try std.testing.expectEqualStrings("zone-cache-settings-change-origin-post-quantum-encryption-setting", ZoneLifecycleMutationEndpoint.change_origin_post_quantum.operationId());
+    try std.testing.expectEqualStrings("smart-shield-patch-settings", ZoneLifecycleMutationEndpoint.change_smart_shield.operationId());
+    try std.testing.expectEqualStrings("smart-shield-settings-start-cache-reserve-clear", ZoneLifecycleMutationEndpoint.start_smart_shield_cache_reserve_clear.operationId());
+    try std.testing.expectEqualStrings("zone-cloud-conenctor-rules-put", ZoneLifecycleMutationEndpoint.update_cloud_connector_rules.operationId());
     try std.testing.expectEqualStrings("zonesEnvironmentsRollback", ZoneLifecycleMutationEndpoint.rollback_environment.operationId());
     try std.testing.expectEqualStrings("zones-0-hold-patch", ZoneLifecycleMutationEndpoint.update_hold.operationId());
     try std.testing.expectEqualStrings("zone-subscription-update-zone-subscription", ZoneLifecycleMutationEndpoint.update_subscription.operationId());
     try std.testing.expectEqualStrings("inline:{value:#/components/schemas/cache-rules_cache_reserve_value}", ZoneLifecycleMutationEndpoint.change_cache_reserve.requestBodySchemaRef().?);
+    try std.testing.expectEqualStrings("#/components/schemas/argo-config_patch", ZoneLifecycleMutationEndpoint.change_argo_smart_routing.requestBodySchemaRef().?);
+    try std.testing.expectEqualStrings("#/components/schemas/cache-rules_smart_tiered_cache_patch", ZoneLifecycleMutationEndpoint.change_smart_tiered_cache.requestBodySchemaRef().?);
+    try std.testing.expectEqualStrings("#/components/schemas/cloud-connector_rule", ZoneLifecycleMutationEndpoint.update_cloud_connector_rules.requestBodySchemaRef().?);
+    try std.testing.expect(ZoneLifecycleMutationEndpoint.delete_smart_tiered_cache.requestBodySchemaRef() == null);
     try std.testing.expectEqualStrings("#/components/schemas/kamino_environments_request", ZoneLifecycleMutationEndpoint.create_environments.requestBodySchemaRef().?);
     try std.testing.expect(ZoneLifecycleMutationEndpoint.delete_hold.requestBodySchemaRef() == null);
     try std.testing.expect(ZoneLifecycleMutationEndpoint.rollback_environment.requiresEnvironmentId());
@@ -11801,6 +12001,18 @@ test "builds Cloudflare zone lifecycle paths and dry-run plans" {
     try std.testing.expectEqualStrings("/zones/zone%2F1/available_plans/plan%2F1", read_path);
     try std.testing.expectError(error.MissingCloudflareZonePlanId, zoneLifecycleReadPath(allocator, "zone/1", .available_plan, null));
 
+    const argo_latency = try zoneLifecycleReadPath(allocator, "zone/1", .argo_analytics, null);
+    defer allocator.free(argo_latency);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/analytics/latency", argo_latency);
+
+    const smart_shield = try zoneLifecycleReadPath(allocator, "zone/1", .smart_shield, null);
+    defer allocator.free(smart_shield);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/smart_shield", smart_shield);
+
+    const cloud_connector = try zoneLifecycleReadPath(allocator, "zone/1", .cloud_connector_rules, null);
+    defer allocator.free(cloud_connector);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/cloud_connector/rules", cloud_connector);
+
     const cache = try zoneLifecycleMutationPlanJson(allocator, .change_cache_reserve, .{ .zone_id = "zone/1" });
     defer allocator.free(cache);
     try std.testing.expect(std.mem.indexOf(u8, cache, "\"provider\":\"cloudflare\"") != null);
@@ -11810,6 +12022,26 @@ test "builds Cloudflare zone lifecycle paths and dry-run plans" {
     try std.testing.expect(std.mem.indexOf(u8, cache, "\"path\":\"/zones/zone%2F1/cache/cache_reserve\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, cache, "\"request_body_schema\":\"inline:{value:#/components/schemas/cache-rules_cache_reserve_value}\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, cache, "\"will_execute\":false") != null);
+
+    const smart_tiered_cache = try zoneLifecycleMutationPlanJson(allocator, .create_smart_tiered_cache, .{ .zone_id = "zone/1" });
+    defer allocator.free(smart_tiered_cache);
+    try std.testing.expect(std.mem.indexOf(u8, smart_tiered_cache, "\"group\":\"Smart Tiered Cache\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, smart_tiered_cache, "\"operation_id\":\"smart-tiered-cache-create-smart-tiered-cache-setting\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, smart_tiered_cache, "\"method\":\"POST\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, smart_tiered_cache, "\"path\":\"/zones/zone%2F1/cache/tiered_cache_smart_topology_enable\"") != null);
+
+    const origin_pq = try zoneLifecycleMutationPlanJson(allocator, .change_origin_post_quantum, .{ .zone_id = "zone/1" });
+    defer allocator.free(origin_pq);
+    try std.testing.expect(std.mem.indexOf(u8, origin_pq, "\"operation_id\":\"zone-cache-settings-change-origin-post-quantum-encryption-setting\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, origin_pq, "\"method\":\"PUT\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, origin_pq, "\"path\":\"/zones/zone%2F1/cache/origin_post_quantum_encryption\"") != null);
+
+    const connector_rules = try zoneLifecycleMutationPlanJson(allocator, .update_cloud_connector_rules, .{ .zone_id = "zone/1" });
+    defer allocator.free(connector_rules);
+    try std.testing.expect(std.mem.indexOf(u8, connector_rules, "\"group\":\"Zone Cloud Connector Rules PUT\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, connector_rules, "\"operation_id\":\"zone-cloud-conenctor-rules-put\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, connector_rules, "\"method\":\"PUT\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, connector_rules, "\"path\":\"/zones/zone%2F1/cloud_connector/rules\"") != null);
 
     const rollback = try zoneLifecycleMutationPlanJson(allocator, .rollback_environment, .{ .zone_id = "zone/1", .environment_id = "env/1" });
     defer allocator.free(rollback);

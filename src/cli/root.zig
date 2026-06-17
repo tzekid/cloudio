@@ -122,6 +122,7 @@ fn usage() void {
         \\  cloudio cloudflare account user-group-member <account-id> <user-group-id> <member-id>
         \\  cloudio cloudflare ips [jdcloud]|user|tenants|memberships|membership <membership-id>|token [list]|token show <token-id>|token verify|token permission-groups|zone [domain]|zone show <zone-id>|setting <setting-id> [domain]|diagnose [domain]
         \\  cloudio cloudflare zone available-plans|available-rate-plans|cache-reserve|cache-reserve-clear|regional-tiered-cache|variants|environments|hold|subscription <zone-id>
+        \\  cloudio cloudflare zone argo-analytics|argo-analytics-colos|argo-smart-routing|argo-tiered-caching|smart-tiered-cache|origin-post-quantum|smart-shield|smart-shield-cache-reserve-clear|cloud-connector-rules <zone-id>
         \\  cloudio cloudflare zone available-plan <zone-id> <plan-id>
         \\  cloudio cloudflare secondary-dns acls|peers|tsigs <account-id>
         \\  cloudio cloudflare secondary-dns acl|peer|tsig <account-id> <resource-id>
@@ -185,6 +186,7 @@ fn usage() void {
         \\  cloudio cloudflare dry-run zone delete|edit|purge-cache|activation-check <zone-id>
         \\  cloudio cloudflare dry-run zone purge-environment-cache <zone-id> <environment-id>
         \\  cloudio cloudflare dry-run zone-lifecycle cache-reserve-change|cache-reserve-clear-start|regional-tiered-cache-change|variants-delete|variants-change <zone-id>
+        \\  cloudio cloudflare dry-run zone-lifecycle argo-smart-routing-change|argo-tiered-caching-change|smart-tiered-cache-create|smart-tiered-cache-change|smart-tiered-cache-delete|origin-post-quantum-change|smart-shield-change|smart-shield-cache-reserve-clear-start|cloud-connector-rules-update <zone-id>
         \\  cloudio cloudflare dry-run zone-lifecycle environments-create|environments-edit|environments-update|hold-create|hold-update|hold-delete|subscription-create|subscription-update <zone-id>
         \\  cloudio cloudflare dry-run zone-lifecycle environment-delete|environment-rollback <zone-id> <environment-id>
         \\  cloudio cloudflare dry-run secondary-dns-account acl|peer|tsig create <account-id>
