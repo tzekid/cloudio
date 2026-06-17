@@ -250,6 +250,12 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getAccessEndpoint(self: Client, io: Io, gpa: Allocator, scope: AccessScope, scope_id: []const u8, endpoint: AccessReadEndpoint, args: AccessReadArgs) !net_http.Response {
+        const url = try accessReadUrl(gpa, self.base_url_override, scope, scope_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -3600,6 +3606,737 @@ pub const AccessCustomPageMutationArgs = struct {
     page_id: ?[]const u8 = null,
 };
 
+pub const AccessScope = enum {
+    account,
+    zone,
+
+    pub fn parse(value: []const u8) ?AccessScope {
+        if (std.mem.eql(u8, value, "account") or std.mem.eql(u8, value, "accounts")) return .account;
+        if (std.mem.eql(u8, value, "zone") or std.mem.eql(u8, value, "zones")) return .zone;
+        return null;
+    }
+
+    pub fn commandName(self: AccessScope) []const u8 {
+        return switch (self) {
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn idLabel(self: AccessScope) []const u8 {
+        return switch (self) {
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn basePath(self: AccessScope) []const u8 {
+        return switch (self) {
+            .account => accounts_path,
+            .zone => zones_path,
+        };
+    }
+};
+
+pub const AccessReadEndpoint = enum {
+    applications_list,
+    application_details,
+    application_policy_checks,
+    application_policies_list,
+    application_policy_details,
+    groups_list,
+    group_details,
+    identity_providers_list,
+    identity_provider_details,
+    identity_provider_scim_groups,
+    identity_provider_scim_users,
+    service_tokens_list,
+    service_token_details,
+    reusable_policies_list,
+    reusable_policy_details,
+    tags_list,
+    tag_details,
+    keys,
+    authentication_logs,
+    policy_test,
+    policy_test_users,
+    mtls_certificates_list,
+    mtls_certificate_details,
+    mtls_settings,
+    ca_list,
+    ca_details,
+
+    pub fn parse(value: []const u8) ?AccessReadEndpoint {
+        if (std.mem.eql(u8, value, "applications") or std.mem.eql(u8, value, "apps")) return .applications_list;
+        if (std.mem.eql(u8, value, "application") or std.mem.eql(u8, value, "app")) return .application_details;
+        if (std.mem.eql(u8, value, "application-policy-checks") or std.mem.eql(u8, value, "app-policy-checks") or std.mem.eql(u8, value, "user-policy-checks")) return .application_policy_checks;
+        if (std.mem.eql(u8, value, "application-policies") or std.mem.eql(u8, value, "app-policies") or std.mem.eql(u8, value, "policies")) return .application_policies_list;
+        if (std.mem.eql(u8, value, "application-policy") or std.mem.eql(u8, value, "app-policy") or std.mem.eql(u8, value, "policy")) return .application_policy_details;
+        if (std.mem.eql(u8, value, "groups")) return .groups_list;
+        if (std.mem.eql(u8, value, "group")) return .group_details;
+        if (std.mem.eql(u8, value, "identity-providers") or std.mem.eql(u8, value, "idps")) return .identity_providers_list;
+        if (std.mem.eql(u8, value, "identity-provider") or std.mem.eql(u8, value, "idp")) return .identity_provider_details;
+        if (std.mem.eql(u8, value, "idp-scim-groups") or std.mem.eql(u8, value, "scim-groups")) return .identity_provider_scim_groups;
+        if (std.mem.eql(u8, value, "idp-scim-users") or std.mem.eql(u8, value, "scim-users")) return .identity_provider_scim_users;
+        if (std.mem.eql(u8, value, "service-tokens")) return .service_tokens_list;
+        if (std.mem.eql(u8, value, "service-token")) return .service_token_details;
+        if (std.mem.eql(u8, value, "reusable-policies")) return .reusable_policies_list;
+        if (std.mem.eql(u8, value, "reusable-policy")) return .reusable_policy_details;
+        if (std.mem.eql(u8, value, "tags")) return .tags_list;
+        if (std.mem.eql(u8, value, "tag")) return .tag_details;
+        if (std.mem.eql(u8, value, "keys") or std.mem.eql(u8, value, "key-config")) return .keys;
+        if (std.mem.eql(u8, value, "authentication-logs") or std.mem.eql(u8, value, "auth-logs") or std.mem.eql(u8, value, "logs")) return .authentication_logs;
+        if (std.mem.eql(u8, value, "policy-test")) return .policy_test;
+        if (std.mem.eql(u8, value, "policy-test-users")) return .policy_test_users;
+        if (std.mem.eql(u8, value, "mtls-certificates") or std.mem.eql(u8, value, "certificates")) return .mtls_certificates_list;
+        if (std.mem.eql(u8, value, "mtls-certificate") or std.mem.eql(u8, value, "certificate")) return .mtls_certificate_details;
+        if (std.mem.eql(u8, value, "mtls-settings") or std.mem.eql(u8, value, "certificate-settings")) return .mtls_settings;
+        if (std.mem.eql(u8, value, "cas") or std.mem.eql(u8, value, "short-lived-cas")) return .ca_list;
+        if (std.mem.eql(u8, value, "ca") or std.mem.eql(u8, value, "short-lived-ca")) return .ca_details;
+        return null;
+    }
+
+    pub fn commandName(self: AccessReadEndpoint) []const u8 {
+        return switch (self) {
+            .applications_list => "applications",
+            .application_details => "application",
+            .application_policy_checks => "application-policy-checks",
+            .application_policies_list => "application-policies",
+            .application_policy_details => "application-policy",
+            .groups_list => "groups",
+            .group_details => "group",
+            .identity_providers_list => "identity-providers",
+            .identity_provider_details => "identity-provider",
+            .identity_provider_scim_groups => "idp-scim-groups",
+            .identity_provider_scim_users => "idp-scim-users",
+            .service_tokens_list => "service-tokens",
+            .service_token_details => "service-token",
+            .reusable_policies_list => "reusable-policies",
+            .reusable_policy_details => "reusable-policy",
+            .tags_list => "tags",
+            .tag_details => "tag",
+            .keys => "keys",
+            .authentication_logs => "authentication-logs",
+            .policy_test => "policy-test",
+            .policy_test_users => "policy-test-users",
+            .mtls_certificates_list => "mtls-certificates",
+            .mtls_certificate_details => "mtls-certificate",
+            .mtls_settings => "mtls-settings",
+            .ca_list => "cas",
+            .ca_details => "ca",
+        };
+    }
+
+    pub fn supports(self: AccessReadEndpoint, scope: AccessScope) bool {
+        return switch (self) {
+            .identity_provider_scim_groups,
+            .identity_provider_scim_users,
+            .reusable_policies_list,
+            .reusable_policy_details,
+            .tags_list,
+            .tag_details,
+            .keys,
+            .authentication_logs,
+            .policy_test,
+            .policy_test_users,
+            => scope == .account,
+            .mtls_certificates_list,
+            .mtls_certificate_details,
+            .mtls_settings,
+            .ca_list,
+            .ca_details,
+            => scope == .zone,
+            else => true,
+        };
+    }
+
+    pub fn group(self: AccessReadEndpoint, scope: AccessScope) []const u8 {
+        return switch (self) {
+            .applications_list, .application_details, .application_policy_checks => if (scope == .account) "Access applications" else "Zone-Level Access applications",
+            .application_policies_list, .application_policy_details => if (scope == .account) "Access application-scoped policies" else "Zone-Level Access policies",
+            .groups_list, .group_details => if (scope == .account) "Access groups" else "Zone-Level Access groups",
+            .identity_providers_list, .identity_provider_details, .identity_provider_scim_groups, .identity_provider_scim_users => if (scope == .account) "Access identity providers" else "Zone-Level Access identity providers",
+            .service_tokens_list, .service_token_details => if (scope == .account) "Access service tokens" else "Zone-Level Access service tokens",
+            .reusable_policies_list, .reusable_policy_details => "Access reusable policies",
+            .tags_list, .tag_details => "Access tags",
+            .keys => "Access key configuration",
+            .authentication_logs => "Access authentication logs",
+            .policy_test, .policy_test_users => "Access policy tester",
+            .mtls_certificates_list, .mtls_certificate_details, .mtls_settings => "Zone-Level Access mTLS authentication",
+            .ca_list, .ca_details => "Zone-Level Access short-lived certificate CAs",
+        };
+    }
+
+    pub fn label(self: AccessReadEndpoint, scope: AccessScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .applications_list => "access-account-applications",
+                .application_details => "access-account-application",
+                .application_policy_checks => "access-account-application-policy-checks",
+                .application_policies_list => "access-account-application-policies",
+                .application_policy_details => "access-account-application-policy",
+                .groups_list => "access-account-groups",
+                .group_details => "access-account-group",
+                .identity_providers_list => "access-account-identity-providers",
+                .identity_provider_details => "access-account-identity-provider",
+                .identity_provider_scim_groups => "access-account-idp-scim-groups",
+                .identity_provider_scim_users => "access-account-idp-scim-users",
+                .service_tokens_list => "access-account-service-tokens",
+                .service_token_details => "access-account-service-token",
+                .reusable_policies_list => "access-account-reusable-policies",
+                .reusable_policy_details => "access-account-reusable-policy",
+                .tags_list => "access-account-tags",
+                .tag_details => "access-account-tag",
+                .keys => "access-account-keys",
+                .authentication_logs => "access-account-authentication-logs",
+                .policy_test => "access-account-policy-test",
+                .policy_test_users => "access-account-policy-test-users",
+                else => "access-account-unsupported",
+            },
+            .zone => switch (self) {
+                .applications_list => "access-zone-applications",
+                .application_details => "access-zone-application",
+                .application_policy_checks => "access-zone-application-policy-checks",
+                .application_policies_list => "access-zone-application-policies",
+                .application_policy_details => "access-zone-application-policy",
+                .groups_list => "access-zone-groups",
+                .group_details => "access-zone-group",
+                .identity_providers_list => "access-zone-identity-providers",
+                .identity_provider_details => "access-zone-identity-provider",
+                .service_tokens_list => "access-zone-service-tokens",
+                .service_token_details => "access-zone-service-token",
+                .mtls_certificates_list => "access-zone-mtls-certificates",
+                .mtls_certificate_details => "access-zone-mtls-certificate",
+                .mtls_settings => "access-zone-mtls-settings",
+                .ca_list => "access-zone-cas",
+                .ca_details => "access-zone-ca",
+                else => "access-zone-unsupported",
+            },
+        };
+    }
+
+    pub fn operationId(self: AccessReadEndpoint, scope: AccessScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .applications_list => "access-applications-list-access-applications",
+                .application_details => "access-applications-get-an-access-application",
+                .application_policy_checks => "access-applications-test-access-policies",
+                .application_policies_list => "access-policies-list-access-app-policies",
+                .application_policy_details => "access-policies-get-an-access-policy",
+                .groups_list => "access-groups-list-access-groups",
+                .group_details => "access-groups-get-an-access-group",
+                .identity_providers_list => "access-identity-providers-list-access-identity-providers",
+                .identity_provider_details => "access-identity-providers-get-an-access-identity-provider",
+                .identity_provider_scim_groups => "access-identity-providers-list-scim-group-resources",
+                .identity_provider_scim_users => "access-identity-providers-list-scim-user-resources",
+                .service_tokens_list => "access-service-tokens-list-service-tokens",
+                .service_token_details => "access-service-tokens-get-a-service-token",
+                .reusable_policies_list => "access-policies-list-access-reusable-policies",
+                .reusable_policy_details => "access-policies-get-an-access-reusable-policy",
+                .tags_list => "access-tags-list-tags",
+                .tag_details => "access-tags-get-a-tag",
+                .keys => "access-key-configuration-get-the-access-key-configuration",
+                .authentication_logs => "access-authentication-logs-get-access-authentication-logs",
+                .policy_test => "access-policy-tests-get-an-update",
+                .policy_test_users => "access-policy-tests-get-a-user-page",
+                else => "unsupported",
+            },
+            .zone => switch (self) {
+                .applications_list => "zone-level-access-applications-list-access-applications",
+                .application_details => "zone-level-access-applications-get-an-access-application",
+                .application_policy_checks => "zone-level-access-applications-test-access-policies",
+                .application_policies_list => "zone-level-access-policies-list-access-policies",
+                .application_policy_details => "zone-level-access-policies-get-an-access-policy",
+                .groups_list => "zone-level-access-groups-list-access-groups",
+                .group_details => "zone-level-access-groups-get-an-access-group",
+                .identity_providers_list => "zone-level-access-identity-providers-list-access-identity-providers",
+                .identity_provider_details => "zone-level-access-identity-providers-get-an-access-identity-provider",
+                .service_tokens_list => "zone-level-access-service-tokens-list-service-tokens",
+                .service_token_details => "zone-level-access-service-tokens-get-a-service-token",
+                .mtls_certificates_list => "zone-level-access-mtls-authentication-list-mtls-certificates",
+                .mtls_certificate_details => "zone-level-access-mtls-authentication-get-an-mtls-certificate",
+                .mtls_settings => "zone-level-access-mtls-authentication-list-mtls-certificates-hostname-settings",
+                .ca_list => "zone-level-access-short-lived-certificate-c-as-list-short-lived-certificate-c-as",
+                .ca_details => "zone-level-access-short-lived-certificate-c-as-get-a-short-lived-certificate-ca",
+                else => "unsupported",
+            },
+        };
+    }
+
+    pub fn summary(self: AccessReadEndpoint, scope: AccessScope) []const u8 {
+        return switch (self) {
+            .applications_list => if (scope == .account) "List account Access applications" else "List zone Access applications",
+            .application_details => if (scope == .account) "Get an account Access application" else "Get a zone Access application",
+            .application_policy_checks => "Test Access policies",
+            .application_policies_list => if (scope == .account) "List account Access application policies" else "List zone Access policies",
+            .application_policy_details => if (scope == .account) "Get an account Access application policy" else "Get a zone Access policy",
+            .groups_list => if (scope == .account) "List account Access groups" else "List zone Access groups",
+            .group_details => if (scope == .account) "Get an account Access group" else "Get a zone Access group",
+            .identity_providers_list => if (scope == .account) "List account Access identity providers" else "List zone Access identity providers",
+            .identity_provider_details => if (scope == .account) "Get an account Access identity provider" else "Get a zone Access identity provider",
+            .identity_provider_scim_groups => "List Access identity provider SCIM group resources",
+            .identity_provider_scim_users => "List Access identity provider SCIM user resources",
+            .service_tokens_list => if (scope == .account) "List account Access service tokens" else "List zone Access service tokens",
+            .service_token_details => if (scope == .account) "Get an account Access service token" else "Get a zone Access service token",
+            .reusable_policies_list => "List account Access reusable policies",
+            .reusable_policy_details => "Get an account Access reusable policy",
+            .tags_list => "List account Access tags",
+            .tag_details => "Get an account Access tag",
+            .keys => "Get account Access key configuration",
+            .authentication_logs => "Get account Access authentication logs",
+            .policy_test => "Get account Access policy test status",
+            .policy_test_users => "Get account Access policy test users",
+            .mtls_certificates_list => "List zone Access mTLS certificates",
+            .mtls_certificate_details => "Get a zone Access mTLS certificate",
+            .mtls_settings => "List zone Access mTLS hostname settings",
+            .ca_list => "List zone Access short-lived certificate CAs",
+            .ca_details => "Get a zone Access short-lived certificate CA",
+        };
+    }
+
+    pub fn requiresAppId(self: AccessReadEndpoint) bool {
+        return switch (self) {
+            .application_details,
+            .application_policy_checks,
+            .application_policies_list,
+            .application_policy_details,
+            .ca_details,
+            => true,
+            else => false,
+        };
+    }
+
+    pub fn requiresPolicyId(self: AccessReadEndpoint) bool {
+        return self == .application_policy_details;
+    }
+
+    pub fn requiresResourceId(self: AccessReadEndpoint) bool {
+        return self == .group_details;
+    }
+
+    pub fn requiresIdentityProviderId(self: AccessReadEndpoint) bool {
+        return switch (self) {
+            .identity_provider_details,
+            .identity_provider_scim_groups,
+            .identity_provider_scim_users,
+            => true,
+            else => false,
+        };
+    }
+
+    pub fn requiresServiceTokenId(self: AccessReadEndpoint) bool {
+        return self == .service_token_details;
+    }
+
+    pub fn requiresTagName(self: AccessReadEndpoint) bool {
+        return self == .tag_details;
+    }
+
+    pub fn requiresPolicyTestId(self: AccessReadEndpoint) bool {
+        return self == .policy_test or self == .policy_test_users;
+    }
+
+    pub fn requiresCertificateId(self: AccessReadEndpoint) bool {
+        return self == .mtls_certificate_details;
+    }
+};
+
+pub const AccessReadArgs = struct {
+    app_id: ?[]const u8 = null,
+    policy_id: ?[]const u8 = null,
+    resource_id: ?[]const u8 = null,
+    identity_provider_id: ?[]const u8 = null,
+    service_token_id: ?[]const u8 = null,
+    tag_name: ?[]const u8 = null,
+    policy_test_id: ?[]const u8 = null,
+    certificate_id: ?[]const u8 = null,
+};
+
+pub const AccessMutationEndpoint = enum {
+    create_application,
+    update_application,
+    delete_application,
+    patch_application_settings,
+    put_application_settings,
+    revoke_application_tokens,
+    create_application_policy,
+    update_application_policy,
+    delete_application_policy,
+    make_policy_reusable,
+    create_group,
+    update_group,
+    delete_group,
+    create_identity_provider,
+    update_identity_provider,
+    delete_identity_provider,
+    create_idp_saml_certificate,
+    create_service_token,
+    update_service_token,
+    delete_service_token,
+    refresh_service_token,
+    rotate_service_token,
+    create_reusable_policy,
+    update_reusable_policy,
+    delete_reusable_policy,
+    create_tag,
+    update_tag,
+    delete_tag,
+    update_keys,
+    rotate_keys,
+    start_policy_test,
+    create_mtls_certificate,
+    update_mtls_certificate,
+    delete_mtls_certificate,
+    update_mtls_settings,
+    create_ca,
+    delete_ca,
+
+    pub fn parse(value: []const u8) ?AccessMutationEndpoint {
+        if (std.mem.eql(u8, value, "create-application") or std.mem.eql(u8, value, "create-app")) return .create_application;
+        if (std.mem.eql(u8, value, "update-application") or std.mem.eql(u8, value, "update-app")) return .update_application;
+        if (std.mem.eql(u8, value, "delete-application") or std.mem.eql(u8, value, "delete-app")) return .delete_application;
+        if (std.mem.eql(u8, value, "patch-application-settings") or std.mem.eql(u8, value, "patch-app-settings")) return .patch_application_settings;
+        if (std.mem.eql(u8, value, "put-application-settings") or std.mem.eql(u8, value, "put-app-settings") or std.mem.eql(u8, value, "update-app-settings")) return .put_application_settings;
+        if (std.mem.eql(u8, value, "revoke-application-tokens") or std.mem.eql(u8, value, "revoke-app-tokens")) return .revoke_application_tokens;
+        if (std.mem.eql(u8, value, "create-application-policy") or std.mem.eql(u8, value, "create-app-policy")) return .create_application_policy;
+        if (std.mem.eql(u8, value, "update-application-policy") or std.mem.eql(u8, value, "update-app-policy")) return .update_application_policy;
+        if (std.mem.eql(u8, value, "delete-application-policy") or std.mem.eql(u8, value, "delete-app-policy")) return .delete_application_policy;
+        if (std.mem.eql(u8, value, "make-policy-reusable") or std.mem.eql(u8, value, "convert-reusable")) return .make_policy_reusable;
+        if (std.mem.eql(u8, value, "create-group")) return .create_group;
+        if (std.mem.eql(u8, value, "update-group")) return .update_group;
+        if (std.mem.eql(u8, value, "delete-group")) return .delete_group;
+        if (std.mem.eql(u8, value, "create-identity-provider") or std.mem.eql(u8, value, "create-idp")) return .create_identity_provider;
+        if (std.mem.eql(u8, value, "update-identity-provider") or std.mem.eql(u8, value, "update-idp")) return .update_identity_provider;
+        if (std.mem.eql(u8, value, "delete-identity-provider") or std.mem.eql(u8, value, "delete-idp")) return .delete_identity_provider;
+        if (std.mem.eql(u8, value, "create-idp-saml-certificate") or std.mem.eql(u8, value, "idp-saml-certificate")) return .create_idp_saml_certificate;
+        if (std.mem.eql(u8, value, "create-service-token")) return .create_service_token;
+        if (std.mem.eql(u8, value, "update-service-token")) return .update_service_token;
+        if (std.mem.eql(u8, value, "delete-service-token")) return .delete_service_token;
+        if (std.mem.eql(u8, value, "refresh-service-token")) return .refresh_service_token;
+        if (std.mem.eql(u8, value, "rotate-service-token")) return .rotate_service_token;
+        if (std.mem.eql(u8, value, "create-reusable-policy")) return .create_reusable_policy;
+        if (std.mem.eql(u8, value, "update-reusable-policy")) return .update_reusable_policy;
+        if (std.mem.eql(u8, value, "delete-reusable-policy")) return .delete_reusable_policy;
+        if (std.mem.eql(u8, value, "create-tag")) return .create_tag;
+        if (std.mem.eql(u8, value, "update-tag")) return .update_tag;
+        if (std.mem.eql(u8, value, "delete-tag")) return .delete_tag;
+        if (std.mem.eql(u8, value, "update-keys")) return .update_keys;
+        if (std.mem.eql(u8, value, "rotate-keys")) return .rotate_keys;
+        if (std.mem.eql(u8, value, "start-policy-test")) return .start_policy_test;
+        if (std.mem.eql(u8, value, "create-mtls-certificate") or std.mem.eql(u8, value, "create-certificate")) return .create_mtls_certificate;
+        if (std.mem.eql(u8, value, "update-mtls-certificate") or std.mem.eql(u8, value, "update-certificate")) return .update_mtls_certificate;
+        if (std.mem.eql(u8, value, "delete-mtls-certificate") or std.mem.eql(u8, value, "delete-certificate")) return .delete_mtls_certificate;
+        if (std.mem.eql(u8, value, "update-mtls-settings") or std.mem.eql(u8, value, "update-certificate-settings")) return .update_mtls_settings;
+        if (std.mem.eql(u8, value, "create-ca") or std.mem.eql(u8, value, "create-short-lived-ca")) return .create_ca;
+        if (std.mem.eql(u8, value, "delete-ca") or std.mem.eql(u8, value, "delete-short-lived-ca")) return .delete_ca;
+        return null;
+    }
+
+    pub fn commandName(self: AccessMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create_application => "create-application",
+            .update_application => "update-application",
+            .delete_application => "delete-application",
+            .patch_application_settings => "patch-application-settings",
+            .put_application_settings => "put-application-settings",
+            .revoke_application_tokens => "revoke-application-tokens",
+            .create_application_policy => "create-application-policy",
+            .update_application_policy => "update-application-policy",
+            .delete_application_policy => "delete-application-policy",
+            .make_policy_reusable => "make-policy-reusable",
+            .create_group => "create-group",
+            .update_group => "update-group",
+            .delete_group => "delete-group",
+            .create_identity_provider => "create-identity-provider",
+            .update_identity_provider => "update-identity-provider",
+            .delete_identity_provider => "delete-identity-provider",
+            .create_idp_saml_certificate => "create-idp-saml-certificate",
+            .create_service_token => "create-service-token",
+            .update_service_token => "update-service-token",
+            .delete_service_token => "delete-service-token",
+            .refresh_service_token => "refresh-service-token",
+            .rotate_service_token => "rotate-service-token",
+            .create_reusable_policy => "create-reusable-policy",
+            .update_reusable_policy => "update-reusable-policy",
+            .delete_reusable_policy => "delete-reusable-policy",
+            .create_tag => "create-tag",
+            .update_tag => "update-tag",
+            .delete_tag => "delete-tag",
+            .update_keys => "update-keys",
+            .rotate_keys => "rotate-keys",
+            .start_policy_test => "start-policy-test",
+            .create_mtls_certificate => "create-mtls-certificate",
+            .update_mtls_certificate => "update-mtls-certificate",
+            .delete_mtls_certificate => "delete-mtls-certificate",
+            .update_mtls_settings => "update-mtls-settings",
+            .create_ca => "create-ca",
+            .delete_ca => "delete-ca",
+        };
+    }
+
+    pub fn supports(self: AccessMutationEndpoint, scope: AccessScope) bool {
+        return switch (self) {
+            .make_policy_reusable,
+            .create_idp_saml_certificate,
+            .refresh_service_token,
+            .rotate_service_token,
+            .create_reusable_policy,
+            .update_reusable_policy,
+            .delete_reusable_policy,
+            .create_tag,
+            .update_tag,
+            .delete_tag,
+            .update_keys,
+            .rotate_keys,
+            .start_policy_test,
+            => scope == .account,
+            .create_mtls_certificate,
+            .update_mtls_certificate,
+            .delete_mtls_certificate,
+            .update_mtls_settings,
+            .create_ca,
+            .delete_ca,
+            => scope == .zone,
+            else => true,
+        };
+    }
+
+    pub fn method(self: AccessMutationEndpoint) []const u8 {
+        return switch (self) {
+            .delete_application,
+            .delete_application_policy,
+            .delete_group,
+            .delete_identity_provider,
+            .delete_service_token,
+            .delete_reusable_policy,
+            .delete_tag,
+            .delete_mtls_certificate,
+            .delete_ca,
+            => "DELETE",
+            .patch_application_settings => "PATCH",
+            .update_application,
+            .put_application_settings,
+            .update_application_policy,
+            .make_policy_reusable,
+            .update_group,
+            .update_identity_provider,
+            .update_service_token,
+            .update_reusable_policy,
+            .update_tag,
+            .update_keys,
+            .update_mtls_certificate,
+            .update_mtls_settings,
+            => "PUT",
+            else => "POST",
+        };
+    }
+
+    pub fn group(self: AccessMutationEndpoint, scope: AccessScope) []const u8 {
+        return switch (self) {
+            .create_application, .update_application, .delete_application, .patch_application_settings, .put_application_settings, .revoke_application_tokens => if (scope == .account) "Access applications" else "Zone-Level Access applications",
+            .create_application_policy, .update_application_policy, .delete_application_policy, .make_policy_reusable => if (scope == .account) "Access application-scoped policies" else "Zone-Level Access policies",
+            .create_group, .update_group, .delete_group => if (scope == .account) "Access groups" else "Zone-Level Access groups",
+            .create_identity_provider, .update_identity_provider, .delete_identity_provider, .create_idp_saml_certificate => if (scope == .account) "Access identity providers" else "Zone-Level Access identity providers",
+            .create_service_token, .update_service_token, .delete_service_token, .refresh_service_token, .rotate_service_token => if (scope == .account) "Access service tokens" else "Zone-Level Access service tokens",
+            .create_reusable_policy, .update_reusable_policy, .delete_reusable_policy => "Access reusable policies",
+            .create_tag, .update_tag, .delete_tag => "Access tags",
+            .update_keys, .rotate_keys => "Access key configuration",
+            .start_policy_test => "Access policy tester",
+            .create_mtls_certificate, .update_mtls_certificate, .delete_mtls_certificate, .update_mtls_settings => "Zone-Level Access mTLS authentication",
+            .create_ca, .delete_ca => "Zone-Level Access short-lived certificate CAs",
+        };
+    }
+
+    pub fn operationId(self: AccessMutationEndpoint, scope: AccessScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .create_application => "access-applications-add-an-application",
+                .update_application => "access-applications-update-an-access-application",
+                .delete_application => "access-applications-delete-an-access-application",
+                .patch_application_settings => "access-applications-patch-update-access-application-settings",
+                .put_application_settings => "access-applications-put-update-access-application-settings",
+                .revoke_application_tokens => "access-applications-revoke-service-tokens",
+                .create_application_policy => "access-policies-create-an-access-policy",
+                .update_application_policy => "access-policies-update-an-access-policy",
+                .delete_application_policy => "access-policies-delete-an-access-policy",
+                .make_policy_reusable => "access-policies-convert-reusable",
+                .create_group => "access-groups-create-an-access-group",
+                .update_group => "access-groups-update-an-access-group",
+                .delete_group => "access-groups-delete-an-access-group",
+                .create_identity_provider => "access-identity-providers-add-an-access-identity-provider",
+                .update_identity_provider => "access-identity-providers-update-an-access-identity-provider",
+                .delete_identity_provider => "access-identity-providers-delete-an-access-identity-provider",
+                .create_idp_saml_certificate => "access-identity-providers-create-saml-certificate-for-identity-provider",
+                .create_service_token => "access-service-tokens-create-a-service-token",
+                .update_service_token => "access-service-tokens-update-a-service-token",
+                .delete_service_token => "access-service-tokens-delete-a-service-token",
+                .refresh_service_token => "access-service-tokens-refresh-a-service-token",
+                .rotate_service_token => "access-service-tokens-rotate-a-service-token",
+                .create_reusable_policy => "access-policies-create-an-access-reusable-policy",
+                .update_reusable_policy => "access-policies-update-an-access-reusable-policy",
+                .delete_reusable_policy => "access-policies-delete-an-access-reusable-policy",
+                .create_tag => "access-tags-create-tag",
+                .update_tag => "access-tags-update-a-tag",
+                .delete_tag => "access-tags-delete-a-tag",
+                .update_keys => "access-key-configuration-update-the-access-key-configuration",
+                .rotate_keys => "access-key-configuration-rotate-access-keys",
+                .start_policy_test => "access-policy-tests",
+                else => "unsupported",
+            },
+            .zone => switch (self) {
+                .create_application => "zone-level-access-applications-add-a-bookmark-application",
+                .update_application => "zone-level-access-applications-update-a-bookmark-application",
+                .delete_application => "zone-level-access-applications-delete-an-access-application",
+                .patch_application_settings => "zone-level-access-applications-patch-update-access-application-settings",
+                .put_application_settings => "zone-level-access-applications-put-update-access-application-settings",
+                .revoke_application_tokens => "zone-level-access-applications-revoke-service-tokens",
+                .create_application_policy => "zone-level-access-policies-create-an-access-policy",
+                .update_application_policy => "zone-level-access-policies-update-an-access-policy",
+                .delete_application_policy => "zone-level-access-policies-delete-an-access-policy",
+                .create_group => "zone-level-access-groups-create-an-access-group",
+                .update_group => "zone-level-access-groups-update-an-access-group",
+                .delete_group => "zone-level-access-groups-delete-an-access-group",
+                .create_identity_provider => "zone-level-access-identity-providers-add-an-access-identity-provider",
+                .update_identity_provider => "zone-level-access-identity-providers-update-an-access-identity-provider",
+                .delete_identity_provider => "zone-level-access-identity-providers-delete-an-access-identity-provider",
+                .create_service_token => "zone-level-access-service-tokens-create-a-service-token",
+                .update_service_token => "zone-level-access-service-tokens-update-a-service-token",
+                .delete_service_token => "zone-level-access-service-tokens-delete-a-service-token",
+                .create_mtls_certificate => "zone-level-access-mtls-authentication-add-an-mtls-certificate",
+                .update_mtls_certificate => "zone-level-access-mtls-authentication-update-an-mtls-certificate",
+                .delete_mtls_certificate => "zone-level-access-mtls-authentication-delete-an-mtls-certificate",
+                .update_mtls_settings => "zone-level-access-mtls-authentication-update-an-mtls-certificate-settings",
+                .create_ca => "zone-level-access-short-lived-certificate-c-as-create-a-short-lived-certificate-ca",
+                .delete_ca => "zone-level-access-short-lived-certificate-c-as-delete-a-short-lived-certificate-ca",
+                else => "unsupported",
+            },
+        };
+    }
+
+    pub fn summary(self: AccessMutationEndpoint, scope: AccessScope) []const u8 {
+        return switch (self) {
+            .create_application => if (scope == .account) "Add an account Access application" else "Add a zone Access application",
+            .update_application => if (scope == .account) "Update an account Access application" else "Update a zone Access application",
+            .delete_application => if (scope == .account) "Delete an account Access application" else "Delete a zone Access application",
+            .patch_application_settings => "Patch Access application settings",
+            .put_application_settings => "Update Access application settings",
+            .revoke_application_tokens => "Revoke Access application tokens",
+            .create_application_policy => "Create an Access application policy",
+            .update_application_policy => "Update an Access application policy",
+            .delete_application_policy => "Delete an Access application policy",
+            .make_policy_reusable => "Convert an Access application policy to a reusable policy",
+            .create_group => if (scope == .account) "Create an account Access group" else "Create a zone Access group",
+            .update_group => if (scope == .account) "Update an account Access group" else "Update a zone Access group",
+            .delete_group => if (scope == .account) "Delete an account Access group" else "Delete a zone Access group",
+            .create_identity_provider => if (scope == .account) "Add an account Access identity provider" else "Add a zone Access identity provider",
+            .update_identity_provider => if (scope == .account) "Update an account Access identity provider" else "Update a zone Access identity provider",
+            .delete_identity_provider => if (scope == .account) "Delete an account Access identity provider" else "Delete a zone Access identity provider",
+            .create_idp_saml_certificate => "Create a SAML certificate for an Access identity provider",
+            .create_service_token => if (scope == .account) "Create an account Access service token" else "Create a zone Access service token",
+            .update_service_token => if (scope == .account) "Update an account Access service token" else "Update a zone Access service token",
+            .delete_service_token => if (scope == .account) "Delete an account Access service token" else "Delete a zone Access service token",
+            .refresh_service_token => "Refresh an account Access service token",
+            .rotate_service_token => "Rotate an account Access service token",
+            .create_reusable_policy => "Create an account Access reusable policy",
+            .update_reusable_policy => "Update an account Access reusable policy",
+            .delete_reusable_policy => "Delete an account Access reusable policy",
+            .create_tag => "Create an account Access tag",
+            .update_tag => "Update an account Access tag",
+            .delete_tag => "Delete an account Access tag",
+            .update_keys => "Update account Access key configuration",
+            .rotate_keys => "Rotate account Access keys",
+            .start_policy_test => "Start an account Access policy test",
+            .create_mtls_certificate => "Add a zone Access mTLS certificate",
+            .update_mtls_certificate => "Update a zone Access mTLS certificate",
+            .delete_mtls_certificate => "Delete a zone Access mTLS certificate",
+            .update_mtls_settings => "Update zone Access mTLS certificate hostname settings",
+            .create_ca => "Create a zone Access short-lived certificate CA",
+            .delete_ca => "Delete a zone Access short-lived certificate CA",
+        };
+    }
+
+    pub fn requestBodySchemaRef(self: AccessMutationEndpoint) ?[]const u8 {
+        return switch (self) {
+            .delete_application,
+            .delete_application_policy,
+            .delete_group,
+            .delete_identity_provider,
+            .delete_service_token,
+            .refresh_service_token,
+            .rotate_service_token,
+            .delete_reusable_policy,
+            .delete_tag,
+            .rotate_keys,
+            .delete_mtls_certificate,
+            .delete_ca,
+            => null,
+            else => "object",
+        };
+    }
+
+    pub fn requiresAppId(self: AccessMutationEndpoint) bool {
+        return switch (self) {
+            .update_application,
+            .delete_application,
+            .patch_application_settings,
+            .put_application_settings,
+            .revoke_application_tokens,
+            .create_application_policy,
+            .update_application_policy,
+            .delete_application_policy,
+            .make_policy_reusable,
+            .create_ca,
+            .delete_ca,
+            => true,
+            else => false,
+        };
+    }
+
+    pub fn requiresPolicyId(self: AccessMutationEndpoint) bool {
+        return switch (self) {
+            .update_application_policy,
+            .delete_application_policy,
+            .make_policy_reusable,
+            .update_reusable_policy,
+            .delete_reusable_policy,
+            => true,
+            else => false,
+        };
+    }
+
+    pub fn requiresResourceId(self: AccessMutationEndpoint) bool {
+        return self == .update_group or self == .delete_group;
+    }
+
+    pub fn requiresIdentityProviderId(self: AccessMutationEndpoint) bool {
+        return self == .update_identity_provider or self == .delete_identity_provider or self == .create_idp_saml_certificate;
+    }
+
+    pub fn requiresServiceTokenId(self: AccessMutationEndpoint) bool {
+        return self == .update_service_token or self == .delete_service_token or self == .refresh_service_token or self == .rotate_service_token;
+    }
+
+    pub fn requiresTagName(self: AccessMutationEndpoint) bool {
+        return self == .update_tag or self == .delete_tag;
+    }
+
+    pub fn requiresCertificateId(self: AccessMutationEndpoint) bool {
+        return self == .update_mtls_certificate or self == .delete_mtls_certificate;
+    }
+};
+
+pub const AccessMutationArgs = struct {
+    scope: AccessScope,
+    scope_id: []const u8,
+    app_id: ?[]const u8 = null,
+    policy_id: ?[]const u8 = null,
+    resource_id: ?[]const u8 = null,
+    identity_provider_id: ?[]const u8 = null,
+    service_token_id: ?[]const u8 = null,
+    tag_name: ?[]const u8 = null,
+    certificate_id: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -6102,6 +6839,249 @@ pub fn accessCustomPageMutationPlanJson(gpa: Allocator, endpoint: AccessCustomPa
     });
 }
 
+pub fn accessReadUrl(gpa: Allocator, host: []const u8, scope: AccessScope, scope_id: []const u8, endpoint: AccessReadEndpoint, args: AccessReadArgs) ![]u8 {
+    const path = try accessReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn accessBasePath(gpa: Allocator, scope: AccessScope, scope_id: []const u8) ![]u8 {
+    const escaped_scope_id = try pathEscape(gpa, scope_id);
+    defer gpa.free(escaped_scope_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/access", .{ scope.basePath(), escaped_scope_id });
+}
+
+fn accessAppendEscaped(gpa: Allocator, base_path: []const u8, value: []const u8) ![]u8 {
+    const escaped = try pathEscape(gpa, value);
+    defer gpa.free(escaped);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, escaped });
+}
+
+fn accessAppPath(gpa: Allocator, base_path: []const u8, app_id: []const u8) ![]u8 {
+    const apps_path = try std.fmt.allocPrint(gpa, "{s}/apps", .{base_path});
+    defer gpa.free(apps_path);
+    return try accessAppendEscaped(gpa, apps_path, app_id);
+}
+
+fn accessAppPoliciesPath(gpa: Allocator, base_path: []const u8, app_id: []const u8) ![]u8 {
+    const app_path = try accessAppPath(gpa, base_path, app_id);
+    defer gpa.free(app_path);
+    return try std.fmt.allocPrint(gpa, "{s}/policies", .{app_path});
+}
+
+pub fn accessReadPath(gpa: Allocator, scope: AccessScope, scope_id: []const u8, endpoint: AccessReadEndpoint, args: AccessReadArgs) ![]u8 {
+    if (!endpoint.supports(scope)) return error.UnsupportedCloudflareAccessEndpoint;
+    const base_path = try accessBasePath(gpa, scope, scope_id);
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .applications_list => try std.fmt.allocPrint(gpa, "{s}/apps", .{base_path}),
+        .application_details => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            break :blk try accessAppPath(gpa, base_path, app_id);
+        },
+        .application_policy_checks => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            const app_path = try accessAppPath(gpa, base_path, app_id);
+            defer gpa.free(app_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/user_policy_checks", .{app_path});
+        },
+        .application_policies_list => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            break :blk try accessAppPoliciesPath(gpa, base_path, app_id);
+        },
+        .application_policy_details => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            const policy_id = args.policy_id orelse return error.MissingCloudflareAccessPolicyId;
+            const policies_path = try accessAppPoliciesPath(gpa, base_path, app_id);
+            defer gpa.free(policies_path);
+            break :blk try accessAppendEscaped(gpa, policies_path, policy_id);
+        },
+        .groups_list => try std.fmt.allocPrint(gpa, "{s}/groups", .{base_path}),
+        .group_details => blk: {
+            const group_id = args.resource_id orelse return error.MissingCloudflareAccessGroupId;
+            const groups_path = try std.fmt.allocPrint(gpa, "{s}/groups", .{base_path});
+            defer gpa.free(groups_path);
+            break :blk try accessAppendEscaped(gpa, groups_path, group_id);
+        },
+        .identity_providers_list => try std.fmt.allocPrint(gpa, "{s}/identity_providers", .{base_path}),
+        .identity_provider_details => blk: {
+            const identity_provider_id = args.identity_provider_id orelse return error.MissingCloudflareAccessIdentityProviderId;
+            const idps_path = try std.fmt.allocPrint(gpa, "{s}/identity_providers", .{base_path});
+            defer gpa.free(idps_path);
+            break :blk try accessAppendEscaped(gpa, idps_path, identity_provider_id);
+        },
+        .identity_provider_scim_groups, .identity_provider_scim_users => blk: {
+            const identity_provider_id = args.identity_provider_id orelse return error.MissingCloudflareAccessIdentityProviderId;
+            const idp_path = try accessReadPath(gpa, scope, scope_id, .identity_provider_details, .{ .identity_provider_id = identity_provider_id });
+            defer gpa.free(idp_path);
+            const suffix = if (endpoint == .identity_provider_scim_groups) "groups" else "users";
+            break :blk try std.fmt.allocPrint(gpa, "{s}/scim/{s}", .{ idp_path, suffix });
+        },
+        .service_tokens_list => try std.fmt.allocPrint(gpa, "{s}/service_tokens", .{base_path}),
+        .service_token_details => blk: {
+            const service_token_id = args.service_token_id orelse return error.MissingCloudflareAccessServiceTokenId;
+            const tokens_path = try std.fmt.allocPrint(gpa, "{s}/service_tokens", .{base_path});
+            defer gpa.free(tokens_path);
+            break :blk try accessAppendEscaped(gpa, tokens_path, service_token_id);
+        },
+        .reusable_policies_list => try std.fmt.allocPrint(gpa, "{s}/policies", .{base_path}),
+        .reusable_policy_details => blk: {
+            const policy_id = args.policy_id orelse return error.MissingCloudflareAccessPolicyId;
+            const policies_path = try std.fmt.allocPrint(gpa, "{s}/policies", .{base_path});
+            defer gpa.free(policies_path);
+            break :blk try accessAppendEscaped(gpa, policies_path, policy_id);
+        },
+        .tags_list => try std.fmt.allocPrint(gpa, "{s}/tags", .{base_path}),
+        .tag_details => blk: {
+            const tag_name = args.tag_name orelse return error.MissingCloudflareAccessTagName;
+            const tags_path = try std.fmt.allocPrint(gpa, "{s}/tags", .{base_path});
+            defer gpa.free(tags_path);
+            break :blk try accessAppendEscaped(gpa, tags_path, tag_name);
+        },
+        .keys => try std.fmt.allocPrint(gpa, "{s}/keys", .{base_path}),
+        .authentication_logs => try std.fmt.allocPrint(gpa, "{s}/logs/access_requests", .{base_path}),
+        .policy_test => blk: {
+            const policy_test_id = args.policy_test_id orelse return error.MissingCloudflareAccessPolicyTestId;
+            const tests_path = try std.fmt.allocPrint(gpa, "{s}/policy-tests", .{base_path});
+            defer gpa.free(tests_path);
+            break :blk try accessAppendEscaped(gpa, tests_path, policy_test_id);
+        },
+        .policy_test_users => blk: {
+            const policy_test_id = args.policy_test_id orelse return error.MissingCloudflareAccessPolicyTestId;
+            const test_path = try accessReadPath(gpa, scope, scope_id, .policy_test, .{ .policy_test_id = policy_test_id });
+            defer gpa.free(test_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/users", .{test_path});
+        },
+        .mtls_certificates_list => try std.fmt.allocPrint(gpa, "{s}/certificates", .{base_path}),
+        .mtls_certificate_details => blk: {
+            const certificate_id = args.certificate_id orelse return error.MissingCloudflareAccessCertificateId;
+            const certificates_path = try std.fmt.allocPrint(gpa, "{s}/certificates", .{base_path});
+            defer gpa.free(certificates_path);
+            break :blk try accessAppendEscaped(gpa, certificates_path, certificate_id);
+        },
+        .mtls_settings => try std.fmt.allocPrint(gpa, "{s}/certificates/settings", .{base_path}),
+        .ca_list => try std.fmt.allocPrint(gpa, "{s}/apps/ca", .{base_path}),
+        .ca_details => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            const app_path = try accessAppPath(gpa, base_path, app_id);
+            defer gpa.free(app_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/ca", .{app_path});
+        },
+    };
+}
+
+pub fn accessMutationPath(gpa: Allocator, endpoint: AccessMutationEndpoint, args: AccessMutationArgs) ![]u8 {
+    if (!endpoint.supports(args.scope)) return error.UnsupportedCloudflareAccessMutation;
+    const base_path = try accessBasePath(gpa, args.scope, args.scope_id);
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .create_application => try std.fmt.allocPrint(gpa, "{s}/apps", .{base_path}),
+        .update_application, .delete_application => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            break :blk try accessAppPath(gpa, base_path, app_id);
+        },
+        .patch_application_settings, .put_application_settings => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            const app_path = try accessAppPath(gpa, base_path, app_id);
+            defer gpa.free(app_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/settings", .{app_path});
+        },
+        .revoke_application_tokens => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            const app_path = try accessAppPath(gpa, base_path, app_id);
+            defer gpa.free(app_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/revoke_tokens", .{app_path});
+        },
+        .create_application_policy => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            break :blk try accessAppPoliciesPath(gpa, base_path, app_id);
+        },
+        .update_application_policy, .delete_application_policy, .make_policy_reusable => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            const policy_id = args.policy_id orelse return error.MissingCloudflareAccessPolicyId;
+            const policies_path = try accessAppPoliciesPath(gpa, base_path, app_id);
+            defer gpa.free(policies_path);
+            const policy_path = try accessAppendEscaped(gpa, policies_path, policy_id);
+            defer gpa.free(policy_path);
+            if (endpoint == .make_policy_reusable) break :blk try std.fmt.allocPrint(gpa, "{s}/make_reusable", .{policy_path});
+            break :blk try gpa.dupe(u8, policy_path);
+        },
+        .create_group => try std.fmt.allocPrint(gpa, "{s}/groups", .{base_path}),
+        .update_group, .delete_group => blk: {
+            const group_id = args.resource_id orelse return error.MissingCloudflareAccessGroupId;
+            const groups_path = try std.fmt.allocPrint(gpa, "{s}/groups", .{base_path});
+            defer gpa.free(groups_path);
+            break :blk try accessAppendEscaped(gpa, groups_path, group_id);
+        },
+        .create_identity_provider => try std.fmt.allocPrint(gpa, "{s}/identity_providers", .{base_path}),
+        .update_identity_provider, .delete_identity_provider, .create_idp_saml_certificate => blk: {
+            const identity_provider_id = args.identity_provider_id orelse return error.MissingCloudflareAccessIdentityProviderId;
+            const idps_path = try std.fmt.allocPrint(gpa, "{s}/identity_providers", .{base_path});
+            defer gpa.free(idps_path);
+            const idp_path = try accessAppendEscaped(gpa, idps_path, identity_provider_id);
+            defer gpa.free(idp_path);
+            if (endpoint == .create_idp_saml_certificate) break :blk try std.fmt.allocPrint(gpa, "{s}/saml_certificate", .{idp_path});
+            break :blk try gpa.dupe(u8, idp_path);
+        },
+        .create_service_token => try std.fmt.allocPrint(gpa, "{s}/service_tokens", .{base_path}),
+        .update_service_token, .delete_service_token, .refresh_service_token, .rotate_service_token => blk: {
+            const service_token_id = args.service_token_id orelse return error.MissingCloudflareAccessServiceTokenId;
+            const tokens_path = try std.fmt.allocPrint(gpa, "{s}/service_tokens", .{base_path});
+            defer gpa.free(tokens_path);
+            const token_path = try accessAppendEscaped(gpa, tokens_path, service_token_id);
+            defer gpa.free(token_path);
+            if (endpoint == .refresh_service_token) break :blk try std.fmt.allocPrint(gpa, "{s}/refresh", .{token_path});
+            if (endpoint == .rotate_service_token) break :blk try std.fmt.allocPrint(gpa, "{s}/rotate", .{token_path});
+            break :blk try gpa.dupe(u8, token_path);
+        },
+        .create_reusable_policy => try std.fmt.allocPrint(gpa, "{s}/policies", .{base_path}),
+        .update_reusable_policy, .delete_reusable_policy => blk: {
+            const policy_id = args.policy_id orelse return error.MissingCloudflareAccessPolicyId;
+            const policies_path = try std.fmt.allocPrint(gpa, "{s}/policies", .{base_path});
+            defer gpa.free(policies_path);
+            break :blk try accessAppendEscaped(gpa, policies_path, policy_id);
+        },
+        .create_tag => try std.fmt.allocPrint(gpa, "{s}/tags", .{base_path}),
+        .update_tag, .delete_tag => blk: {
+            const tag_name = args.tag_name orelse return error.MissingCloudflareAccessTagName;
+            const tags_path = try std.fmt.allocPrint(gpa, "{s}/tags", .{base_path});
+            defer gpa.free(tags_path);
+            break :blk try accessAppendEscaped(gpa, tags_path, tag_name);
+        },
+        .update_keys => try std.fmt.allocPrint(gpa, "{s}/keys", .{base_path}),
+        .rotate_keys => try std.fmt.allocPrint(gpa, "{s}/keys/rotate", .{base_path}),
+        .start_policy_test => try std.fmt.allocPrint(gpa, "{s}/policy-tests", .{base_path}),
+        .create_mtls_certificate => try std.fmt.allocPrint(gpa, "{s}/certificates", .{base_path}),
+        .update_mtls_certificate, .delete_mtls_certificate => blk: {
+            const certificate_id = args.certificate_id orelse return error.MissingCloudflareAccessCertificateId;
+            const certificates_path = try std.fmt.allocPrint(gpa, "{s}/certificates", .{base_path});
+            defer gpa.free(certificates_path);
+            break :blk try accessAppendEscaped(gpa, certificates_path, certificate_id);
+        },
+        .update_mtls_settings => try std.fmt.allocPrint(gpa, "{s}/certificates/settings", .{base_path}),
+        .create_ca, .delete_ca => blk: {
+            const app_id = args.app_id orelse return error.MissingCloudflareAccessApplicationId;
+            const app_path = try accessAppPath(gpa, base_path, app_id);
+            defer gpa.free(app_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/ca", .{app_path});
+        },
+    };
+}
+
+pub fn accessMutationPlanJson(gpa: Allocator, endpoint: AccessMutationEndpoint, args: AccessMutationArgs) ![]u8 {
+    const path = try accessMutationPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try dryRunPlanJson(gpa, .{
+        .group = endpoint.group(args.scope),
+        .operation = endpoint.commandName(),
+        .operation_id = endpoint.operationId(args.scope),
+        .summary = endpoint.summary(args.scope),
+        .method = endpoint.method(),
+        .path = path,
+        .request_body_schema = endpoint.requestBodySchemaRef(),
+    });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -7914,6 +8894,74 @@ test "builds custom page and Access custom page paths and dry-run plans" {
     try std.testing.expectError(error.MissingCloudflareCustomPageResourceId, customPageMutationPlanJson(allocator, .update_page, .{ .scope = .account, .scope_id = "acct/1" }));
     try std.testing.expectError(error.MissingCloudflareAccessCustomPageId, accessCustomPageReadPath(allocator, "acct/1", .details, null));
     try std.testing.expectError(error.MissingCloudflareAccessCustomPageId, accessCustomPageMutationPlanJson(allocator, .update, .{ .account_id = "acct/1" }));
+}
+
+test "access endpoints map to official operation metadata" {
+    try std.testing.expectEqual(AccessScope.account, AccessScope.parse("accounts").?);
+    try std.testing.expectEqual(AccessScope.zone, AccessScope.parse("zone").?);
+    try std.testing.expectEqual(AccessReadEndpoint.applications_list, AccessReadEndpoint.parse("apps").?);
+    try std.testing.expectEqual(AccessReadEndpoint.application_policy_details, AccessReadEndpoint.parse("app-policy").?);
+    try std.testing.expectEqual(AccessReadEndpoint.identity_provider_scim_users, AccessReadEndpoint.parse("scim-users").?);
+    try std.testing.expectEqual(AccessReadEndpoint.mtls_settings, AccessReadEndpoint.parse("certificate-settings").?);
+    try std.testing.expectEqualStrings("access-applications-list-access-applications", AccessReadEndpoint.applications_list.operationId(.account));
+    try std.testing.expectEqualStrings("zone-level-access-service-tokens-get-a-service-token", AccessReadEndpoint.service_token_details.operationId(.zone));
+    try std.testing.expectEqualStrings("Zone-Level Access mTLS authentication", AccessReadEndpoint.mtls_settings.group(.zone));
+    try std.testing.expect(AccessReadEndpoint.identity_provider_scim_users.supports(.account));
+    try std.testing.expect(!AccessReadEndpoint.identity_provider_scim_users.supports(.zone));
+    try std.testing.expect(AccessReadEndpoint.ca_details.requiresAppId());
+
+    try std.testing.expectEqual(AccessMutationEndpoint.create_application, AccessMutationEndpoint.parse("create-app").?);
+    try std.testing.expectEqual(AccessMutationEndpoint.make_policy_reusable, AccessMutationEndpoint.parse("convert-reusable").?);
+    try std.testing.expectEqual(AccessMutationEndpoint.create_mtls_certificate, AccessMutationEndpoint.parse("create-certificate").?);
+    try std.testing.expectEqualStrings("zone-level-access-applications-add-a-bookmark-application", AccessMutationEndpoint.create_application.operationId(.zone));
+    try std.testing.expectEqualStrings("access-service-tokens-rotate-a-service-token", AccessMutationEndpoint.rotate_service_token.operationId(.account));
+    try std.testing.expectEqualStrings("DELETE", AccessMutationEndpoint.delete_tag.method());
+    try std.testing.expectEqual(@as(?[]const u8, null), AccessMutationEndpoint.rotate_keys.requestBodySchemaRef());
+    try std.testing.expect(AccessMutationEndpoint.rotate_service_token.supports(.account));
+    try std.testing.expect(!AccessMutationEndpoint.rotate_service_token.supports(.zone));
+    try std.testing.expect(AccessMutationEndpoint.update_group.requiresResourceId());
+}
+
+test "builds Access account and zone paths and dry-run plans" {
+    const allocator = std.testing.allocator;
+
+    const apps = try accessReadUrl(allocator, base_url, .account, "acct/1", .applications_list, .{});
+    defer allocator.free(apps);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/access/apps", apps);
+
+    const policy = try accessReadPath(allocator, .account, "acct/1", .application_policy_details, .{ .app_id = "app/1", .policy_id = "policy/1" });
+    defer allocator.free(policy);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/access/apps/app%2F1/policies/policy%2F1", policy);
+
+    const scim = try accessReadPath(allocator, .account, "acct 1", .identity_provider_scim_groups, .{ .identity_provider_id = "idp 1" });
+    defer allocator.free(scim);
+    try std.testing.expectEqualStrings("/accounts/acct%201/access/identity_providers/idp%201/scim/groups", scim);
+
+    const ca = try accessReadPath(allocator, .zone, "zone/1", .ca_details, .{ .app_id = "app/1" });
+    defer allocator.free(ca);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/access/apps/app%2F1/ca", ca);
+
+    const update_policy = try accessMutationPlanJson(allocator, .update_application_policy, .{ .scope = .account, .scope_id = "acct/1", .app_id = "app/1", .policy_id = "policy/1" });
+    defer allocator.free(update_policy);
+    try std.testing.expect(std.mem.indexOf(u8, update_policy, "\"operation_id\":\"access-policies-update-an-access-policy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_policy, "\"path\":\"/accounts/acct%2F1/access/apps/app%2F1/policies/policy%2F1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_policy, "\"will_execute\":false") != null);
+
+    const zone_mtls = try accessMutationPlanJson(allocator, .create_mtls_certificate, .{ .scope = .zone, .scope_id = "zone/1" });
+    defer allocator.free(zone_mtls);
+    try std.testing.expect(std.mem.indexOf(u8, zone_mtls, "\"operation_id\":\"zone-level-access-mtls-authentication-add-an-mtls-certificate\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, zone_mtls, "\"path\":\"/zones/zone%2F1/access/certificates\"") != null);
+
+    const delete_tag = try accessMutationPlanJson(allocator, .delete_tag, .{ .scope = .account, .scope_id = "acct/1", .tag_name = "prod tag" });
+    defer allocator.free(delete_tag);
+    try std.testing.expect(std.mem.indexOf(u8, delete_tag, "\"method\":\"DELETE\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, delete_tag, "\"path\":\"/accounts/acct%2F1/access/tags/prod%20tag\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, delete_tag, "\"request_body_schema\":null") != null);
+
+    try std.testing.expectError(error.UnsupportedCloudflareAccessEndpoint, accessReadPath(allocator, .zone, "zone/1", .keys, .{}));
+    try std.testing.expectError(error.MissingCloudflareAccessApplicationId, accessReadPath(allocator, .account, "acct/1", .application_details, .{}));
+    try std.testing.expectError(error.MissingCloudflareAccessPolicyId, accessMutationPlanJson(allocator, .update_application_policy, .{ .scope = .account, .scope_id = "acct/1", .app_id = "app/1" }));
+    try std.testing.expectError(error.UnsupportedCloudflareAccessMutation, accessMutationPlanJson(allocator, .rotate_service_token, .{ .scope = .zone, .scope_id = "zone/1", .service_token_id = "token/1" }));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

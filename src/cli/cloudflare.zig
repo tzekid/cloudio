@@ -62,6 +62,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandCustomPages(ctx, args);
     } else if (std.mem.eql(u8, sub, "access-custom-pages")) {
         try commandAccessCustomPages(ctx, args);
+    } else if (std.mem.eql(u8, sub, "access")) {
+        try commandAccess(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -107,6 +109,7 @@ fn commandDryRun(ctx: Context, args: []const []const u8) !void {
     if (std.mem.eql(u8, args[1], "page-shield")) return try commandDryRunPageShield(ctx, args);
     if (std.mem.eql(u8, args[1], "custom-pages")) return try commandDryRunCustomPages(ctx, args);
     if (std.mem.eql(u8, args[1], "access-custom-pages")) return try commandDryRunAccessCustomPages(ctx, args);
+    if (std.mem.eql(u8, args[1], "access")) return try commandDryRunAccess(ctx, args);
     std.debug.print("unknown cloudflare dry-run target: {s}\n", .{args[1]});
 }
 
@@ -688,6 +691,70 @@ fn commandDryRunAccessCustomPages(ctx: Context, args: []const []const u8) !void 
     cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccessCustomPageMutation(appContext(ctx), endpoint, mutation_args));
 }
 
+fn commandDryRunAccess(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 5) {
+        std.debug.print("scope, operation, and scope id required for dry-run access\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.AccessScope.parse(args[2]) orelse {
+        std.debug.print("unknown access dry-run scope: {s}\n", .{args[2]});
+        return;
+    };
+    const endpoint = app_cloudflare.AccessMutationEndpoint.parse(args[3]) orelse {
+        std.debug.print("unknown access dry-run operation: {s}\n", .{args[3]});
+        return;
+    };
+    if (!endpoint.supports(scope)) {
+        std.debug.print("access dry-run operation {s} is not supported for {s} scope\n", .{ endpoint.commandName(), scope.commandName() });
+        return;
+    }
+    var mutation_args: app_cloudflare.AccessMutationArgs = .{
+        .scope = scope,
+        .scope_id = args[4],
+    };
+    var index: usize = 5;
+    if (endpoint.requiresAppId()) {
+        if (index >= args.len) return printMissingAccessMutationArg(scope, endpoint, "application id");
+        mutation_args.app_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresPolicyId()) {
+        if (index >= args.len) return printMissingAccessMutationArg(scope, endpoint, "policy id");
+        mutation_args.policy_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresResourceId()) {
+        if (index >= args.len) return printMissingAccessMutationArg(scope, endpoint, "resource id");
+        mutation_args.resource_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresIdentityProviderId()) {
+        if (index >= args.len) return printMissingAccessMutationArg(scope, endpoint, "identity provider id");
+        mutation_args.identity_provider_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresServiceTokenId()) {
+        if (index >= args.len) return printMissingAccessMutationArg(scope, endpoint, "service token id");
+        mutation_args.service_token_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresTagName()) {
+        if (index >= args.len) return printMissingAccessMutationArg(scope, endpoint, "tag name");
+        mutation_args.tag_name = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresCertificateId()) {
+        if (index >= args.len) return printMissingAccessMutationArg(scope, endpoint, "certificate id");
+        mutation_args.certificate_id = args[index];
+        index += 1;
+    }
+    if (index < args.len) {
+        std.debug.print("unused access dry-run argument: {s}\n", .{args[index]});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccessMutation(appContext(ctx), endpoint, mutation_args));
+}
+
 fn commandDns(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1) {
         cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
@@ -1153,6 +1220,81 @@ fn commandAccessCustomPages(ctx: Context, args: []const []const u8) !void {
         page_id = args[3];
     }
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccessCustomPageEndpoint(appContext(ctx), account_id, endpoint, page_id));
+}
+
+fn commandAccess(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("access account|zone <route> <scope-id> [ids...] required\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.AccessScope.parse(args[1]) orelse {
+        std.debug.print("unknown access scope: {s}\n", .{args[1]});
+        return;
+    };
+    const endpoint = app_cloudflare.AccessReadEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown access route: {s}\n", .{args[2]});
+        return;
+    };
+    if (!endpoint.supports(scope)) {
+        std.debug.print("access route {s} is not supported for {s} scope\n", .{ endpoint.commandName(), scope.commandName() });
+        return;
+    }
+    var read_args: app_cloudflare.AccessReadArgs = .{};
+    const scope_id = args[3];
+    var index: usize = 4;
+    if (endpoint.requiresAppId()) {
+        if (index >= args.len) return printMissingAccessReadArg(scope, endpoint, "application id");
+        read_args.app_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresPolicyId()) {
+        if (index >= args.len) return printMissingAccessReadArg(scope, endpoint, "policy id");
+        read_args.policy_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresResourceId()) {
+        if (index >= args.len) return printMissingAccessReadArg(scope, endpoint, "resource id");
+        read_args.resource_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresIdentityProviderId()) {
+        if (index >= args.len) return printMissingAccessReadArg(scope, endpoint, "identity provider id");
+        read_args.identity_provider_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresServiceTokenId()) {
+        if (index >= args.len) return printMissingAccessReadArg(scope, endpoint, "service token id");
+        read_args.service_token_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresTagName()) {
+        if (index >= args.len) return printMissingAccessReadArg(scope, endpoint, "tag name");
+        read_args.tag_name = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresPolicyTestId()) {
+        if (index >= args.len) return printMissingAccessReadArg(scope, endpoint, "policy test id");
+        read_args.policy_test_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresCertificateId()) {
+        if (index >= args.len) return printMissingAccessReadArg(scope, endpoint, "certificate id");
+        read_args.certificate_id = args[index];
+        index += 1;
+    }
+    if (index < args.len) {
+        std.debug.print("unused access argument: {s}\n", .{args[index]});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccessEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+}
+
+fn printMissingAccessReadArg(scope: app_cloudflare.AccessScope, endpoint: app_cloudflare.AccessReadEndpoint, label: []const u8) void {
+    std.debug.print("{s} required for access {s} {s}\n", .{ label, scope.commandName(), endpoint.commandName() });
+}
+
+fn printMissingAccessMutationArg(scope: app_cloudflare.AccessScope, endpoint: app_cloudflare.AccessMutationEndpoint, label: []const u8) void {
+    std.debug.print("{s} required for dry-run access {s} {s}\n", .{ label, scope.commandName(), endpoint.commandName() });
 }
 
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {

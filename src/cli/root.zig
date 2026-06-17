@@ -153,6 +153,10 @@ fn usage() void {
         \\  cloudio cloudflare custom-pages account|zone pages|assets list <scope-id>
         \\  cloudio cloudflare custom-pages account|zone pages|assets show <scope-id> <resource-id>
         \\  cloudio cloudflare access-custom-pages list <account-id>|show <account-id> <custom-page-id>
+        \\  cloudio cloudflare access account|zone applications|groups|identity-providers|service-tokens <scope-id>
+        \\  cloudio cloudflare access account|zone application|group|identity-provider|service-token <scope-id> <resource-id>
+        \\  cloudio cloudflare access account reusable-policies|tags|keys|authentication-logs <account-id>
+        \\  cloudio cloudflare access zone mtls-certificates|mtls-settings|cas <zone-id>
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>
@@ -198,6 +202,10 @@ fn usage() void {
         \\  cloudio cloudflare dry-run custom-pages account|zone create-preview-token|create-asset <scope-id>
         \\  cloudio cloudflare dry-run custom-pages account|zone update-asset|delete-asset <scope-id> <asset-name>
         \\  cloudio cloudflare dry-run access-custom-pages create <account-id>|update|delete <account-id> <custom-page-id>
+        \\  cloudio cloudflare dry-run access account|zone create-application|update-application|delete-application <scope-id> [application-id]
+        \\  cloudio cloudflare dry-run access account|zone create-application-policy|update-application-policy|delete-application-policy <scope-id> <application-id> [policy-id]
+        \\  cloudio cloudflare dry-run access account create-reusable-policy|create-tag|update-keys|rotate-keys|start-policy-test <account-id>
+        \\  cloudio cloudflare dry-run access zone create-mtls-certificate|update-mtls-settings <zone-id>
         \\  cloudio cloudflare dry-run token create
         \\  cloudio cloudflare dry-run token delete|update|roll <token-id>
         \\  cloudio cloudflare dry-run account create|batch-move

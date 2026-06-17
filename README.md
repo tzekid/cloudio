@@ -103,6 +103,14 @@ zig build run -- cloudflare custom-pages zone pages list <zone-id>
 zig build run -- cloudflare custom-pages zone assets show <zone-id> <asset-name>
 zig build run -- cloudflare access-custom-pages list <account-id>
 zig build run -- cloudflare access-custom-pages show <account-id> <custom-page-id>
+zig build run -- cloudflare access account applications <account-id>
+zig build run -- cloudflare access account application <account-id> <app-id>
+zig build run -- cloudflare access account application-policies <account-id> <app-id>
+zig build run -- cloudflare access account service-tokens <account-id>
+zig build run -- cloudflare access account keys <account-id>
+zig build run -- cloudflare access zone applications <zone-id>
+zig build run -- cloudflare access zone mtls-certificates <zone-id>
+zig build run -- cloudflare access zone cas <zone-id>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru
@@ -161,6 +169,11 @@ zig build run -- cloudflare dry-run custom-pages account update-page <account-id
 zig build run -- cloudflare dry-run custom-pages zone create-preview-token <zone-id>
 zig build run -- cloudflare dry-run custom-pages zone update-asset <zone-id> <asset-name>
 zig build run -- cloudflare dry-run access-custom-pages update <account-id> <custom-page-id>
+zig build run -- cloudflare dry-run access account create-application <account-id>
+zig build run -- cloudflare dry-run access account update-application-policy <account-id> <app-id> <policy-id>
+zig build run -- cloudflare dry-run access account rotate-keys <account-id>
+zig build run -- cloudflare dry-run access zone create-mtls-certificate <zone-id>
+zig build run -- cloudflare dry-run access zone delete-ca <zone-id> <app-id>
 zig build run -- cloudflare dry-run token create
 zig build run -- cloudflare dry-run token roll <token-id>
 zig build run -- cloudflare dry-run account create

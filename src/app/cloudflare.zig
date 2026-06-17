@@ -58,6 +58,11 @@ pub const CustomPageScope = collector_cloudflare.CustomPageScope;
 pub const AccessCustomPageMutationArgs = collector_cloudflare.AccessCustomPageMutationArgs;
 pub const AccessCustomPageMutationEndpoint = collector_cloudflare.AccessCustomPageMutationEndpoint;
 pub const AccessCustomPageReadEndpoint = collector_cloudflare.AccessCustomPageReadEndpoint;
+pub const AccessMutationArgs = collector_cloudflare.AccessMutationArgs;
+pub const AccessMutationEndpoint = collector_cloudflare.AccessMutationEndpoint;
+pub const AccessReadArgs = collector_cloudflare.AccessReadArgs;
+pub const AccessReadEndpoint = collector_cloudflare.AccessReadEndpoint;
+pub const AccessScope = collector_cloudflare.AccessScope;
 pub const LoadBalancingAccountReadEndpoint = collector_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = collector_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = collector_cloudflare.LoadBalancingMutationEndpoint;
@@ -242,6 +247,10 @@ pub fn collectAccessCustomPageEndpoint(ctx: Context, account_id: []const u8, end
     return try collector_cloudflare.collectAccessCustomPageEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, page_id, true);
 }
 
+pub fn collectAccessEndpoint(ctx: Context, scope: AccessScope, scope_id: []const u8, endpoint: AccessReadEndpoint, args: AccessReadArgs) !Output {
+    return try collector_cloudflare.collectAccessEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, scope, scope_id, endpoint, args, true);
+}
+
 pub fn collectIdentityEndpoint(ctx: Context, endpoint: IdentityEndpoint) !Output {
     return try collector_cloudflare.collectIdentityEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, endpoint, true);
 }
@@ -388,6 +397,10 @@ pub fn planCustomPageMutation(ctx: Context, endpoint: CustomPageMutationEndpoint
 
 pub fn planAccessCustomPageMutation(ctx: Context, endpoint: AccessCustomPageMutationEndpoint, args: AccessCustomPageMutationArgs) !Output {
     return .{ .text = try provider_cloudflare.accessCustomPageMutationPlanJson(ctx.gpa, endpoint, args) };
+}
+
+pub fn planAccessMutation(ctx: Context, endpoint: AccessMutationEndpoint, args: AccessMutationArgs) !Output {
+    return .{ .text = try provider_cloudflare.accessMutationPlanJson(ctx.gpa, endpoint, args) };
 }
 
 pub fn collectZoneSetting(ctx: Context, domain: []const u8, setting_id: []const u8) !Output {
