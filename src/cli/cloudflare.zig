@@ -62,6 +62,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandPageShield(ctx, args);
     } else if (std.mem.eql(u8, sub, "api-shield")) {
         try commandApiShield(ctx, args);
+    } else if (std.mem.eql(u8, sub, "security-posture") or std.mem.eql(u8, sub, "zone-security")) {
+        try commandZoneSecurityPosture(ctx, args);
     } else if (std.mem.eql(u8, sub, "custom-pages")) {
         try commandCustomPages(ctx, args);
     } else if (std.mem.eql(u8, sub, "access-custom-pages")) {
@@ -1241,6 +1243,33 @@ fn commandApiShield(ctx: Context, args: []const []const u8) !void {
         return;
     }
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectApiShieldEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+}
+
+fn commandZoneSecurityPosture(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("security-posture ai-custom-topics|ai-settings|bot-management|content-scanning-payloads|content-scanning-settings|leaked-credential-status|leaked-credential-detections|leaked-credential-detection|fraud-detection-settings|csam-scanner|ct-alerting command and zone id required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.ZoneSecurityPostureReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown security-posture command: {s}\n", .{args[1]});
+        return;
+    };
+    const zone_id = args[2];
+    var read_args: app_cloudflare.ZoneSecurityPostureReadArgs = .{};
+    var index: usize = 3;
+    if (endpoint.requiresDetectionId()) {
+        if (args.len <= index) {
+            std.debug.print("detection id required for security-posture {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.detection_id = args[index];
+        index += 1;
+    }
+    if (index != args.len) {
+        std.debug.print("unexpected security-posture argument: {s}\n", .{args[index]});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneSecurityPostureEndpoint(appContext(ctx), zone_id, endpoint, read_args));
 }
 
 fn commandCustomPages(ctx: Context, args: []const []const u8) !void {

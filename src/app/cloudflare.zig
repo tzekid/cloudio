@@ -65,6 +65,8 @@ pub const AccessReadEndpoint = collector_cloudflare.AccessReadEndpoint;
 pub const AccessScope = collector_cloudflare.AccessScope;
 pub const ApiShieldReadArgs = collector_cloudflare.ApiShieldReadArgs;
 pub const ApiShieldReadEndpoint = collector_cloudflare.ApiShieldReadEndpoint;
+pub const ZoneSecurityPostureReadArgs = collector_cloudflare.ZoneSecurityPostureReadArgs;
+pub const ZoneSecurityPostureReadEndpoint = collector_cloudflare.ZoneSecurityPostureReadEndpoint;
 pub const TunnelReadArgs = collector_cloudflare.TunnelReadArgs;
 pub const TunnelReadEndpoint = collector_cloudflare.TunnelReadEndpoint;
 pub const ZeroTrustReadArgs = collector_cloudflare.ZeroTrustReadArgs;
@@ -262,6 +264,10 @@ pub fn collectPageShieldEndpoint(ctx: Context, zone_id: []const u8, endpoint: Pa
 
 pub fn collectApiShieldEndpoint(ctx: Context, zone_id: []const u8, endpoint: ApiShieldReadEndpoint, args: ApiShieldReadArgs) !Output {
     return try collector_cloudflare.collectApiShieldEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, args, true);
+}
+
+pub fn collectZoneSecurityPostureEndpoint(ctx: Context, zone_id: []const u8, endpoint: ZoneSecurityPostureReadEndpoint, args: ZoneSecurityPostureReadArgs) !Output {
+    return try collector_cloudflare.collectZoneSecurityPostureEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, args, true);
 }
 
 pub fn collectCustomPageEndpoint(ctx: Context, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) !Output {

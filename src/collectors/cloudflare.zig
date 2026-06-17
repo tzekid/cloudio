@@ -72,6 +72,8 @@ pub const AccessReadEndpoint = provider_cloudflare.AccessReadEndpoint;
 pub const AccessScope = provider_cloudflare.AccessScope;
 pub const ApiShieldReadArgs = provider_cloudflare.ApiShieldReadArgs;
 pub const ApiShieldReadEndpoint = provider_cloudflare.ApiShieldReadEndpoint;
+pub const ZoneSecurityPostureReadArgs = provider_cloudflare.ZoneSecurityPostureReadArgs;
+pub const ZoneSecurityPostureReadEndpoint = provider_cloudflare.ZoneSecurityPostureReadEndpoint;
 pub const TunnelReadArgs = provider_cloudflare.TunnelReadArgs;
 pub const TunnelReadEndpoint = provider_cloudflare.TunnelReadEndpoint;
 pub const ZeroTrustReadArgs = provider_cloudflare.ZeroTrustReadArgs;
@@ -894,6 +896,30 @@ pub fn collectApiShieldEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zon
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectZoneSecurityPostureEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: ZoneSecurityPostureReadEndpoint, args: ZoneSecurityPostureReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = try zoneSecurityPostureTarget(gpa, zone_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getZoneSecurityPostureEndpoint(io, gpa, zone_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.zoneSecurityPostureReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try storeCloudflareResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectCustomPageEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs, capture_output: bool) !Output {
     const endpoint_label = endpoint.label(scope, resource);
     const target = try customPageTarget(gpa, scope_id, endpoint, args);
@@ -1501,6 +1527,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
 
         try collectPageShieldForZone(gpa, io, client, db, zone_id, domain);
         try collectApiShieldForZone(gpa, io, client, db, zone_id, domain);
+        try collectZoneSecurityPostureForZone(gpa, io, client, db, zone_id, domain);
         try collectCustomPagesForZone(gpa, io, client, db, zone_id, domain);
         try collectAccessForZone(gpa, io, client, db, zone_id, domain);
         try collectSecurityCenterForZone(gpa, io, client, db, zone_id, domain);
@@ -2568,6 +2595,72 @@ fn collectApiShieldSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.
     const endpoint_path = try provider_cloudflare.apiShieldReadPath(gpa, zone_id, endpoint, args);
     defer gpa.free(endpoint_path);
     const target = try apiShieldTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try storeCloudflareResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
+fn collectZoneSecurityPostureForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8) !void {
+    const endpoints = [_]ZoneSecurityPostureReadEndpoint{
+        .ai_custom_topics,
+        .ai_settings,
+        .bot_management,
+        .content_scanning_payloads,
+        .content_scanning_settings,
+        .leaked_credential_status,
+        .leaked_credential_detections,
+        .fraud_detection_settings,
+        .csam_scanner_setting,
+        .ct_alerting,
+    };
+    for (endpoints) |endpoint| {
+        try collectZoneSecurityPostureReadForZone(gpa, io, client, db, zone_id, target_label, endpoint, .{});
+    }
+}
+
+fn collectZoneSecurityPostureReadForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, endpoint: ZoneSecurityPostureReadEndpoint, args: ZoneSecurityPostureReadArgs) anyerror!void {
+    const redacted = collectZoneSecurityPostureSnapshot(gpa, io, client, db, zone_id, target_label, endpoint, args) catch |err| {
+        const target = zoneSecurityPostureTarget(gpa, target_label, endpoint, args) catch try gpa.dupe(u8, target_label);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    try collectZoneSecurityPostureDetailsForList(gpa, io, client, db, zone_id, target_label, endpoint, redacted);
+}
+
+fn collectZoneSecurityPostureDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, list_endpoint: ZoneSecurityPostureReadEndpoint, list_body: []const u8) anyerror!void {
+    const detail_endpoint: ?ZoneSecurityPostureReadEndpoint = switch (list_endpoint) {
+        .leaked_credential_detections => .leaked_credential_detection,
+        else => null,
+    };
+    const endpoint = detail_endpoint orelse return;
+    var rows = try provider_cloudflare_models.parseResourceIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const args: ZoneSecurityPostureReadArgs = switch (endpoint) {
+            .leaked_credential_detection => .{ .detection_id = row.id },
+            else => .{},
+        };
+        try collectZoneSecurityPostureReadForZone(gpa, io, client, db, zone_id, target_label, endpoint, args);
+    }
+}
+
+fn collectZoneSecurityPostureSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, endpoint: ZoneSecurityPostureReadEndpoint, args: ZoneSecurityPostureReadArgs) ![]u8 {
+    const body = try client.getZoneSecurityPostureEndpoint(io, gpa, zone_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.zoneSecurityPostureReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try zoneSecurityPostureTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
     return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
@@ -3814,6 +3907,14 @@ fn apiShieldTarget(gpa: Allocator, zone_label: []const u8, endpoint: ApiShieldRe
     if (endpoint.requiresClientCertificateId()) {
         const id = args.client_certificate_id orelse return try gpa.dupe(u8, zone_label);
         return try std.fmt.allocPrint(gpa, "{s}/client-certificate:{s}", .{ zone_label, id });
+    }
+    return try gpa.dupe(u8, zone_label);
+}
+
+fn zoneSecurityPostureTarget(gpa: Allocator, zone_label: []const u8, endpoint: ZoneSecurityPostureReadEndpoint, args: ZoneSecurityPostureReadArgs) ![]u8 {
+    if (endpoint.requiresDetectionId()) {
+        const id = args.detection_id orelse return try gpa.dupe(u8, zone_label);
+        return try std.fmt.allocPrint(gpa, "{s}/leaked-credential-detection:{s}", .{ zone_label, id });
     }
     return try gpa.dupe(u8, zone_label);
 }

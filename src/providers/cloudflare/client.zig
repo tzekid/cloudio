@@ -244,6 +244,12 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getZoneSecurityPostureEndpoint(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, endpoint: ZoneSecurityPostureReadEndpoint, args: ZoneSecurityPostureReadArgs) !net_http.Response {
+        const url = try zoneSecurityPostureReadUrl(gpa, self.base_url_override, zone_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getCustomPageEndpoint(self: Client, io: Io, gpa: Allocator, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) !net_http.Response {
         const url = try customPageReadUrl(gpa, self.base_url_override, scope, scope_id, resource, endpoint, args);
         defer gpa.free(url);
@@ -3401,6 +3407,107 @@ pub const ApiShieldReadArgs = struct {
     operation_id: ?[]const u8 = null,
     label_name: ?[]const u8 = null,
     client_certificate_id: ?[]const u8 = null,
+};
+
+pub const ZoneSecurityPostureReadEndpoint = enum {
+    ai_custom_topics,
+    ai_settings,
+    bot_management,
+    content_scanning_payloads,
+    content_scanning_settings,
+    leaked_credential_status,
+    leaked_credential_detections,
+    leaked_credential_detection,
+    fraud_detection_settings,
+    csam_scanner_setting,
+    ct_alerting,
+
+    pub fn parse(value: []const u8) ?ZoneSecurityPostureReadEndpoint {
+        if (std.mem.eql(u8, value, "ai-custom-topics") or std.mem.eql(u8, value, "ai-topics")) return .ai_custom_topics;
+        if (std.mem.eql(u8, value, "ai-settings") or std.mem.eql(u8, value, "ai-security-settings")) return .ai_settings;
+        if (std.mem.eql(u8, value, "bot-management") or std.mem.eql(u8, value, "bot-settings")) return .bot_management;
+        if (std.mem.eql(u8, value, "content-scanning-payloads") or std.mem.eql(u8, value, "content-payloads") or std.mem.eql(u8, value, "scan-expressions")) return .content_scanning_payloads;
+        if (std.mem.eql(u8, value, "content-scanning-settings") or std.mem.eql(u8, value, "content-settings")) return .content_scanning_settings;
+        if (std.mem.eql(u8, value, "leaked-credential-status") or std.mem.eql(u8, value, "leaked-credentials") or std.mem.eql(u8, value, "leaked-credential-checks")) return .leaked_credential_status;
+        if (std.mem.eql(u8, value, "leaked-credential-detections") or std.mem.eql(u8, value, "credential-detections")) return .leaked_credential_detections;
+        if (std.mem.eql(u8, value, "leaked-credential-detection") or std.mem.eql(u8, value, "credential-detection")) return .leaked_credential_detection;
+        if (std.mem.eql(u8, value, "fraud-detection-settings") or std.mem.eql(u8, value, "fraud-detection")) return .fraud_detection_settings;
+        if (std.mem.eql(u8, value, "csam-scanner") or std.mem.eql(u8, value, "csam-scanner-setting")) return .csam_scanner_setting;
+        if (std.mem.eql(u8, value, "ct-alerting") or std.mem.eql(u8, value, "certificate-transparency-alerting")) return .ct_alerting;
+        return null;
+    }
+
+    pub fn commandName(self: ZoneSecurityPostureReadEndpoint) []const u8 {
+        return switch (self) {
+            .ai_custom_topics => "ai-custom-topics",
+            .ai_settings => "ai-settings",
+            .bot_management => "bot-management",
+            .content_scanning_payloads => "content-scanning-payloads",
+            .content_scanning_settings => "content-scanning-settings",
+            .leaked_credential_status => "leaked-credential-status",
+            .leaked_credential_detections => "leaked-credential-detections",
+            .leaked_credential_detection => "leaked-credential-detection",
+            .fraud_detection_settings => "fraud-detection-settings",
+            .csam_scanner_setting => "csam-scanner",
+            .ct_alerting => "ct-alerting",
+        };
+    }
+
+    pub fn label(self: ZoneSecurityPostureReadEndpoint) []const u8 {
+        return switch (self) {
+            .ai_custom_topics => "zone-ai-security-custom-topics",
+            .ai_settings => "zone-ai-security-settings",
+            .bot_management => "zone-bot-management",
+            .content_scanning_payloads => "zone-content-scanning-payloads",
+            .content_scanning_settings => "zone-content-scanning-settings",
+            .leaked_credential_status => "zone-leaked-credential-status",
+            .leaked_credential_detections => "zone-leaked-credential-detections",
+            .leaked_credential_detection => "zone-leaked-credential-detection",
+            .fraud_detection_settings => "zone-fraud-detection-settings",
+            .csam_scanner_setting => "zone-csam-scanner-setting",
+            .ct_alerting => "zone-ct-alerting",
+        };
+    }
+
+    pub fn operationId(self: ZoneSecurityPostureReadEndpoint) []const u8 {
+        return switch (self) {
+            .ai_custom_topics => "ai-security-custom-topics-get",
+            .ai_settings => "ai-security-settings-get",
+            .bot_management => "bot-management-for-a-zone-get-config",
+            .content_scanning_payloads => "waf-content-scanning-list-custom-scan-expressions",
+            .content_scanning_settings => "waf-content-scanning-get-status",
+            .leaked_credential_status => "waf-product-api-leaked-credentials-get-status",
+            .leaked_credential_detections => "waf-product-api-leaked-credentials-list-detections",
+            .leaked_credential_detection => "waf-product-api-leaked-credentials-get-detection",
+            .fraud_detection_settings => "fraud-detection-zone-get-settings",
+            .csam_scanner_setting => "csam-scanner-get-setting",
+            .ct_alerting => "ct-alerting-get-subscription",
+        };
+    }
+
+    pub fn summary(self: ZoneSecurityPostureReadEndpoint) []const u8 {
+        return switch (self) {
+            .ai_custom_topics => "Get AI Security custom topics",
+            .ai_settings => "Get AI Security settings",
+            .bot_management => "Get Bot Management configuration",
+            .content_scanning_payloads => "List Content Scanning custom scan expressions",
+            .content_scanning_settings => "Get Content Scanning status",
+            .leaked_credential_status => "Get Leaked Credential Checks status",
+            .leaked_credential_detections => "List Leaked Credential Checks detections",
+            .leaked_credential_detection => "Get a Leaked Credential Checks detection",
+            .fraud_detection_settings => "Get Fraud Detection settings",
+            .csam_scanner_setting => "Get CSAM scanner third-party setting",
+            .ct_alerting => "Get Certificate Transparency alerting subscription",
+        };
+    }
+
+    pub fn requiresDetectionId(self: ZoneSecurityPostureReadEndpoint) bool {
+        return self == .leaked_credential_detection;
+    }
+};
+
+pub const ZoneSecurityPostureReadArgs = struct {
+    detection_id: ?[]const u8 = null,
 };
 
 pub const PageShieldMutationEndpoint = enum {
@@ -8562,6 +8669,38 @@ pub fn apiShieldReadPath(gpa: Allocator, zone_id: []const u8, endpoint: ApiShiel
     };
 }
 
+pub fn zoneSecurityPostureReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, endpoint: ZoneSecurityPostureReadEndpoint, args: ZoneSecurityPostureReadArgs) ![]u8 {
+    const path = try zoneSecurityPostureReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn zoneSecurityPostureReadPath(gpa: Allocator, zone_id: []const u8, endpoint: ZoneSecurityPostureReadEndpoint, args: ZoneSecurityPostureReadArgs) ![]u8 {
+    const escaped_zone_id = try pathEscape(gpa, zone_id);
+    defer gpa.free(escaped_zone_id);
+    const zone_base = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zones_path, escaped_zone_id });
+    defer gpa.free(zone_base);
+
+    return switch (endpoint) {
+        .ai_custom_topics => try std.fmt.allocPrint(gpa, "{s}/ai-security/custom-topics", .{zone_base}),
+        .ai_settings => try std.fmt.allocPrint(gpa, "{s}/ai-security/settings", .{zone_base}),
+        .bot_management => try std.fmt.allocPrint(gpa, "{s}/bot_management", .{zone_base}),
+        .content_scanning_payloads => try std.fmt.allocPrint(gpa, "{s}/content-upload-scan/payloads", .{zone_base}),
+        .content_scanning_settings => try std.fmt.allocPrint(gpa, "{s}/content-upload-scan/settings", .{zone_base}),
+        .leaked_credential_status => try std.fmt.allocPrint(gpa, "{s}/leaked-credential-checks", .{zone_base}),
+        .leaked_credential_detections => try std.fmt.allocPrint(gpa, "{s}/leaked-credential-checks/detections", .{zone_base}),
+        .leaked_credential_detection => blk: {
+            const detection_id = args.detection_id orelse return error.MissingCloudflareLeakedCredentialDetectionId;
+            const escaped_id = try pathEscape(gpa, detection_id);
+            defer gpa.free(escaped_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/leaked-credential-checks/detections/{s}", .{ zone_base, escaped_id });
+        },
+        .fraud_detection_settings => try std.fmt.allocPrint(gpa, "{s}/fraud_detection/settings", .{zone_base}),
+        .csam_scanner_setting => try std.fmt.allocPrint(gpa, "{s}/settings/csam_scanner_third_party", .{zone_base}),
+        .ct_alerting => try std.fmt.allocPrint(gpa, "{s}/ct/alerting", .{zone_base}),
+    };
+}
+
 pub fn pageShieldMutationPath(gpa: Allocator, endpoint: PageShieldMutationEndpoint, args: PageShieldMutationArgs) ![]u8 {
     const base_path = try pageShieldBasePath(gpa, args.zone_id);
     defer gpa.free(base_path);
@@ -11441,6 +11580,48 @@ test "builds API Shield read paths" {
     try std.testing.expectError(error.MissingCloudflareApiShieldOperationId, apiShieldReadPath(allocator, "zone/1", .operation, .{}));
     try std.testing.expectError(error.MissingCloudflareApiShieldLabelName, apiShieldReadPath(allocator, "zone/1", .user_label, .{}));
     try std.testing.expectError(error.MissingCloudflareApiShieldClientCertificateId, apiShieldReadPath(allocator, "zone/1", .client_certificate, .{}));
+}
+
+test "zone security posture endpoints map to official operation metadata" {
+    try std.testing.expectEqual(ZoneSecurityPostureReadEndpoint.ai_custom_topics, ZoneSecurityPostureReadEndpoint.parse("ai-topics").?);
+    try std.testing.expectEqual(ZoneSecurityPostureReadEndpoint.ai_settings, ZoneSecurityPostureReadEndpoint.parse("ai-security-settings").?);
+    try std.testing.expectEqual(ZoneSecurityPostureReadEndpoint.bot_management, ZoneSecurityPostureReadEndpoint.parse("bot-settings").?);
+    try std.testing.expectEqual(ZoneSecurityPostureReadEndpoint.content_scanning_payloads, ZoneSecurityPostureReadEndpoint.parse("scan-expressions").?);
+    try std.testing.expectEqual(ZoneSecurityPostureReadEndpoint.leaked_credential_status, ZoneSecurityPostureReadEndpoint.parse("leaked-credentials").?);
+    try std.testing.expectEqual(ZoneSecurityPostureReadEndpoint.leaked_credential_detection, ZoneSecurityPostureReadEndpoint.parse("credential-detection").?);
+    try std.testing.expectEqual(ZoneSecurityPostureReadEndpoint.ct_alerting, ZoneSecurityPostureReadEndpoint.parse("certificate-transparency-alerting").?);
+    try std.testing.expectEqualStrings("ai-security-settings-get", ZoneSecurityPostureReadEndpoint.ai_settings.operationId());
+    try std.testing.expectEqualStrings("bot-management-for-a-zone-get-config", ZoneSecurityPostureReadEndpoint.bot_management.operationId());
+    try std.testing.expectEqualStrings("waf-product-api-leaked-credentials-get-detection", ZoneSecurityPostureReadEndpoint.leaked_credential_detection.operationId());
+    try std.testing.expectEqualStrings("zone-content-scanning-settings", ZoneSecurityPostureReadEndpoint.content_scanning_settings.label());
+    try std.testing.expect(ZoneSecurityPostureReadEndpoint.leaked_credential_detection.requiresDetectionId());
+    try std.testing.expect(!ZoneSecurityPostureReadEndpoint.leaked_credential_detections.requiresDetectionId());
+}
+
+test "builds zone security posture read paths" {
+    const allocator = std.testing.allocator;
+
+    const ai_settings = try zoneSecurityPostureReadUrl(allocator, base_url, "zone/1", .ai_settings, .{});
+    defer allocator.free(ai_settings);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone%2F1/ai-security/settings", ai_settings);
+
+    const content_payloads = try zoneSecurityPostureReadPath(allocator, "zone/1", .content_scanning_payloads, .{});
+    defer allocator.free(content_payloads);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/content-upload-scan/payloads", content_payloads);
+
+    const detection = try zoneSecurityPostureReadPath(allocator, "zone/1", .leaked_credential_detection, .{ .detection_id = "detect/1" });
+    defer allocator.free(detection);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/leaked-credential-checks/detections/detect%2F1", detection);
+
+    const csam = try zoneSecurityPostureReadPath(allocator, "zone/1", .csam_scanner_setting, .{});
+    defer allocator.free(csam);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/settings/csam_scanner_third_party", csam);
+
+    const ct = try zoneSecurityPostureReadPath(allocator, "zone/1", .ct_alerting, .{});
+    defer allocator.free(ct);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/ct/alerting", ct);
+
+    try std.testing.expectError(error.MissingCloudflareLeakedCredentialDetectionId, zoneSecurityPostureReadPath(allocator, "zone/1", .leaked_credential_detection, .{}));
 }
 
 test "custom page endpoints map to official operation metadata" {

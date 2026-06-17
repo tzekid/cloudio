@@ -159,6 +159,10 @@ zig build run -- cloudflare api-shield discovery-operations <zone-id>
 zig build run -- cloudflare api-shield operations <zone-id>
 zig build run -- cloudflare api-shield configuration <zone-id>
 zig build run -- cloudflare api-shield client-certificates <zone-id>
+zig build run -- cloudflare security-posture ai-settings <zone-id>
+zig build run -- cloudflare security-posture bot-management <zone-id>
+zig build run -- cloudflare security-posture content-scanning-settings <zone-id>
+zig build run -- cloudflare security-posture leaked-credential-detections <zone-id>
 zig build run -- cloudflare audit-logs account <account-id> per-page=10
 zig build run -- cloudflare audit-logs account-v2 <account-id> since=2026-06-16T00:00:00Z before=2026-06-17T23:59:00Z limit=10
 zig build run -- cloudflare audit-logs user per-page=10
