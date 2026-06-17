@@ -206,6 +206,12 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getRulesetEndpoint(self: Client, io: Io, gpa: Allocator, scope: RulesetScope, scope_id: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) !net_http.Response {
+        const url = try rulesetReadUrl(gpa, self.base_url_override, scope, scope_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -2078,6 +2084,321 @@ pub const HealthCheckMutationArgs = struct {
     account_id: ?[]const u8 = null,
     zone_id: ?[]const u8 = null,
     healthcheck_id: ?[]const u8 = null,
+};
+
+pub const RulesetScope = enum {
+    account,
+    zone,
+
+    pub fn parse(value: []const u8) ?RulesetScope {
+        if (std.mem.eql(u8, value, "account") or std.mem.eql(u8, value, "accounts")) return .account;
+        if (std.mem.eql(u8, value, "zone") or std.mem.eql(u8, value, "zones")) return .zone;
+        return null;
+    }
+
+    pub fn commandName(self: RulesetScope) []const u8 {
+        return switch (self) {
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn group(self: RulesetScope) []const u8 {
+        return switch (self) {
+            .account => "Account Rulesets",
+            .zone => "Zone Rulesets",
+        };
+    }
+
+    pub fn idLabel(self: RulesetScope) []const u8 {
+        return switch (self) {
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn basePath(self: RulesetScope) []const u8 {
+        return switch (self) {
+            .account => accounts_path,
+            .zone => zones_path,
+        };
+    }
+};
+
+pub const RulesetReadEndpoint = enum {
+    list,
+    ruleset,
+    entrypoint,
+    entrypoint_versions,
+    entrypoint_version,
+    versions,
+    version,
+    rules_by_tag,
+
+    pub fn parse(value: []const u8) ?RulesetReadEndpoint {
+        if (std.mem.eql(u8, value, "list") or std.mem.eql(u8, value, "rulesets")) return .list;
+        if (std.mem.eql(u8, value, "show") or std.mem.eql(u8, value, "ruleset") or std.mem.eql(u8, value, "detail") or std.mem.eql(u8, value, "details")) return .ruleset;
+        if (std.mem.eql(u8, value, "entrypoint") or std.mem.eql(u8, value, "entry-point")) return .entrypoint;
+        if (std.mem.eql(u8, value, "entrypoint-versions") or std.mem.eql(u8, value, "entry-point-versions")) return .entrypoint_versions;
+        if (std.mem.eql(u8, value, "entrypoint-version") or std.mem.eql(u8, value, "entry-point-version")) return .entrypoint_version;
+        if (std.mem.eql(u8, value, "versions")) return .versions;
+        if (std.mem.eql(u8, value, "version")) return .version;
+        if (std.mem.eql(u8, value, "rules-by-tag") or std.mem.eql(u8, value, "by-tag")) return .rules_by_tag;
+        return null;
+    }
+
+    pub fn commandName(self: RulesetReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "list",
+            .ruleset => "show",
+            .entrypoint => "entrypoint",
+            .entrypoint_versions => "entrypoint-versions",
+            .entrypoint_version => "entrypoint-version",
+            .versions => "versions",
+            .version => "version",
+            .rules_by_tag => "rules-by-tag",
+        };
+    }
+
+    pub fn label(self: RulesetReadEndpoint, scope: RulesetScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .list => "account-rulesets",
+                .ruleset => "account-ruleset",
+                .entrypoint => "account-ruleset-entrypoint",
+                .entrypoint_versions => "account-ruleset-entrypoint-versions",
+                .entrypoint_version => "account-ruleset-entrypoint-version",
+                .versions => "account-ruleset-versions",
+                .version => "account-ruleset-version",
+                .rules_by_tag => "account-ruleset-version-rules-by-tag",
+            },
+            .zone => switch (self) {
+                .list => "zone-rulesets",
+                .ruleset => "zone-ruleset",
+                .entrypoint => "zone-ruleset-entrypoint",
+                .entrypoint_versions => "zone-ruleset-entrypoint-versions",
+                .entrypoint_version => "zone-ruleset-entrypoint-version",
+                .versions => "zone-ruleset-versions",
+                .version => "zone-ruleset-version",
+                .rules_by_tag => "zone-ruleset-version-rules-by-tag",
+            },
+        };
+    }
+
+    pub fn operationId(self: RulesetReadEndpoint, scope: RulesetScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .list => "listAccountRulesets",
+                .ruleset => "getAccountRuleset",
+                .entrypoint => "getAccountEntrypointRuleset",
+                .entrypoint_versions => "listAccountEntrypointRulesetVersions",
+                .entrypoint_version => "getAccountEntrypointRulesetVersion",
+                .versions => "listAccountRulesetVersions",
+                .version => "getAccountRulesetVersion",
+                .rules_by_tag => "listAccountRulesetVersionRulesByTag",
+            },
+            .zone => switch (self) {
+                .list => "listZoneRulesets",
+                .ruleset => "getZoneRuleset",
+                .entrypoint => "getZoneEntrypointRuleset",
+                .entrypoint_versions => "listZoneEntrypointRulesetVersions",
+                .entrypoint_version => "getZoneEntrypointRulesetVersion",
+                .versions => "listZoneRulesetVersions",
+                .version => "getZoneRulesetVersion",
+                .rules_by_tag => "listZoneRulesetVersionRulesByTag",
+            },
+        };
+    }
+
+    pub fn summary(self: RulesetReadEndpoint, scope: RulesetScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .list => "List account rulesets",
+                .ruleset => "Get an account ruleset",
+                .entrypoint => "Get an account entry point ruleset",
+                .entrypoint_versions => "List an account entry point ruleset's versions",
+                .entrypoint_version => "Get an account entry point ruleset version",
+                .versions => "List an account ruleset's versions",
+                .version => "Get an account ruleset version",
+                .rules_by_tag => "List an account ruleset version's rules by tag",
+            },
+            .zone => switch (self) {
+                .list => "List zone rulesets",
+                .ruleset => "Get a zone ruleset",
+                .entrypoint => "Get a zone entry point ruleset",
+                .entrypoint_versions => "List a zone entry point ruleset's versions",
+                .entrypoint_version => "Get a zone entry point ruleset version",
+                .versions => "List a zone ruleset's versions",
+                .version => "Get a zone ruleset version",
+                .rules_by_tag => "List a zone ruleset version's rules by tag",
+            },
+        };
+    }
+
+    pub fn requiresRulesetId(self: RulesetReadEndpoint) bool {
+        return switch (self) {
+            .ruleset, .versions, .version, .rules_by_tag => true,
+            .list, .entrypoint, .entrypoint_versions, .entrypoint_version => false,
+        };
+    }
+
+    pub fn requiresPhase(self: RulesetReadEndpoint) bool {
+        return switch (self) {
+            .entrypoint, .entrypoint_versions, .entrypoint_version => true,
+            .list, .ruleset, .versions, .version, .rules_by_tag => false,
+        };
+    }
+
+    pub fn requiresVersion(self: RulesetReadEndpoint) bool {
+        return switch (self) {
+            .entrypoint_version, .version, .rules_by_tag => true,
+            .list, .ruleset, .entrypoint, .entrypoint_versions, .versions => false,
+        };
+    }
+
+    pub fn requiresRuleTag(self: RulesetReadEndpoint) bool {
+        return self == .rules_by_tag;
+    }
+};
+
+pub const RulesetReadArgs = struct {
+    ruleset_id: ?[]const u8 = null,
+    phase: ?[]const u8 = null,
+    version: ?[]const u8 = null,
+    rule_tag: ?[]const u8 = null,
+};
+
+pub const RulesetMutationEndpoint = enum {
+    create_ruleset,
+    update_ruleset,
+    delete_ruleset,
+    update_entrypoint,
+    create_rule,
+    update_rule,
+    delete_rule,
+    delete_version,
+
+    pub fn parse(value: []const u8) ?RulesetMutationEndpoint {
+        if (std.mem.eql(u8, value, "create") or std.mem.eql(u8, value, "create-ruleset")) return .create_ruleset;
+        if (std.mem.eql(u8, value, "update") or std.mem.eql(u8, value, "update-ruleset")) return .update_ruleset;
+        if (std.mem.eql(u8, value, "delete") or std.mem.eql(u8, value, "delete-ruleset") or std.mem.eql(u8, value, "remove")) return .delete_ruleset;
+        if (std.mem.eql(u8, value, "update-entrypoint") or std.mem.eql(u8, value, "update-entry-point")) return .update_entrypoint;
+        if (std.mem.eql(u8, value, "create-rule") or std.mem.eql(u8, value, "add-rule")) return .create_rule;
+        if (std.mem.eql(u8, value, "update-rule") or std.mem.eql(u8, value, "patch-rule")) return .update_rule;
+        if (std.mem.eql(u8, value, "delete-rule") or std.mem.eql(u8, value, "remove-rule")) return .delete_rule;
+        if (std.mem.eql(u8, value, "delete-version") or std.mem.eql(u8, value, "remove-version")) return .delete_version;
+        return null;
+    }
+
+    pub fn commandName(self: RulesetMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create_ruleset => "create",
+            .update_ruleset => "update",
+            .delete_ruleset => "delete",
+            .update_entrypoint => "update-entrypoint",
+            .create_rule => "create-rule",
+            .update_rule => "update-rule",
+            .delete_rule => "delete-rule",
+            .delete_version => "delete-version",
+        };
+    }
+
+    pub fn method(self: RulesetMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create_ruleset, .create_rule => "POST",
+            .update_ruleset, .update_entrypoint => "PUT",
+            .update_rule => "PATCH",
+            .delete_ruleset, .delete_rule, .delete_version => "DELETE",
+        };
+    }
+
+    pub fn operationId(self: RulesetMutationEndpoint, scope: RulesetScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .create_ruleset => "createAccountRuleset",
+                .update_ruleset => "updateAccountRuleset",
+                .delete_ruleset => "deleteAccountRuleset",
+                .update_entrypoint => "updateAccountEntrypointRuleset",
+                .create_rule => "createAccountRulesetRule",
+                .update_rule => "updateAccountRulesetRule",
+                .delete_rule => "deleteAccountRulesetRule",
+                .delete_version => "deleteAccountRulesetVersion",
+            },
+            .zone => switch (self) {
+                .create_ruleset => "createZoneRuleset",
+                .update_ruleset => "updateZoneRuleset",
+                .delete_ruleset => "deleteZoneRuleset",
+                .update_entrypoint => "updateZoneEntrypointRuleset",
+                .create_rule => "createZoneRulesetRule",
+                .update_rule => "updateZoneRulesetRule",
+                .delete_rule => "deleteZoneRulesetRule",
+                .delete_version => "deleteZoneRulesetVersion",
+            },
+        };
+    }
+
+    pub fn summary(self: RulesetMutationEndpoint, scope: RulesetScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .create_ruleset => "Create an account ruleset",
+                .update_ruleset => "Update an account ruleset",
+                .delete_ruleset => "Delete an account ruleset",
+                .update_entrypoint => "Update an account entry point ruleset",
+                .create_rule => "Create an account ruleset rule",
+                .update_rule => "Update an account ruleset rule",
+                .delete_rule => "Delete an account ruleset rule",
+                .delete_version => "Delete an account ruleset version",
+            },
+            .zone => switch (self) {
+                .create_ruleset => "Create a zone ruleset",
+                .update_ruleset => "Update a zone ruleset",
+                .delete_ruleset => "Delete a zone ruleset",
+                .update_entrypoint => "Update a zone entry point ruleset",
+                .create_rule => "Create a zone ruleset rule",
+                .update_rule => "Update a zone ruleset rule",
+                .delete_rule => "Delete a zone ruleset rule",
+                .delete_version => "Delete a zone ruleset version",
+            },
+        };
+    }
+
+    pub fn requestBodySchemaRef(self: RulesetMutationEndpoint) ?[]const u8 {
+        return switch (self) {
+            .create_ruleset => "#/components/requestBodies/rulesets_CreateRuleset",
+            .update_ruleset => "#/components/requestBodies/rulesets_UpdateRuleset",
+            .update_entrypoint => "#/components/requestBodies/rulesets_UpdateEntrypointRuleset",
+            .create_rule, .update_rule => "#/components/requestBodies/rulesets_Rule",
+            .delete_ruleset, .delete_rule, .delete_version => null,
+        };
+    }
+
+    pub fn requiresRulesetId(self: RulesetMutationEndpoint) bool {
+        return switch (self) {
+            .update_ruleset, .delete_ruleset, .create_rule, .update_rule, .delete_rule, .delete_version => true,
+            .create_ruleset, .update_entrypoint => false,
+        };
+    }
+
+    pub fn requiresPhase(self: RulesetMutationEndpoint) bool {
+        return self == .update_entrypoint;
+    }
+
+    pub fn requiresRuleId(self: RulesetMutationEndpoint) bool {
+        return self == .update_rule or self == .delete_rule;
+    }
+
+    pub fn requiresVersion(self: RulesetMutationEndpoint) bool {
+        return self == .delete_version;
+    }
+};
+
+pub const RulesetMutationArgs = struct {
+    scope: RulesetScope,
+    scope_id: []const u8,
+    ruleset_id: ?[]const u8 = null,
+    phase: ?[]const u8 = null,
+    version: ?[]const u8 = null,
+    rule_id: ?[]const u8 = null,
 };
 
 pub const ResourceTaggingAccountReadEndpoint = enum {
@@ -4129,6 +4450,136 @@ pub fn healthCheckMutationPlanJson(gpa: Allocator, endpoint: HealthCheckMutation
     });
 }
 
+pub fn rulesetReadUrl(gpa: Allocator, host: []const u8, scope: RulesetScope, scope_id: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
+    const path = try rulesetReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(path);
+    if (endpoint == .list) {
+        return try std.fmt.allocPrint(gpa, "{s}{s}?per_page=50", .{ host, path });
+    }
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn rulesetCollectionPath(gpa: Allocator, scope: RulesetScope, scope_id: []const u8) ![]u8 {
+    const escaped_scope_id = try pathEscape(gpa, scope_id);
+    defer gpa.free(escaped_scope_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/rulesets", .{ scope.basePath(), escaped_scope_id });
+}
+
+pub fn rulesetResourcePath(gpa: Allocator, scope: RulesetScope, scope_id: []const u8, ruleset_id: []const u8) ![]u8 {
+    const collection_path = try rulesetCollectionPath(gpa, scope, scope_id);
+    defer gpa.free(collection_path);
+    const escaped_ruleset_id = try pathEscape(gpa, ruleset_id);
+    defer gpa.free(escaped_ruleset_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_ruleset_id });
+}
+
+pub fn rulesetEntrypointPath(gpa: Allocator, scope: RulesetScope, scope_id: []const u8, phase: []const u8) ![]u8 {
+    const collection_path = try rulesetCollectionPath(gpa, scope, scope_id);
+    defer gpa.free(collection_path);
+    const escaped_phase = try pathEscape(gpa, phase);
+    defer gpa.free(escaped_phase);
+    return try std.fmt.allocPrint(gpa, "{s}/phases/{s}/entrypoint", .{ collection_path, escaped_phase });
+}
+
+pub fn rulesetReadPath(gpa: Allocator, scope: RulesetScope, scope_id: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
+    return switch (endpoint) {
+        .list => try rulesetCollectionPath(gpa, scope, scope_id),
+        .ruleset => blk: {
+            const ruleset_id = args.ruleset_id orelse return error.MissingCloudflareRulesetId;
+            break :blk try rulesetResourcePath(gpa, scope, scope_id, ruleset_id);
+        },
+        .entrypoint => blk: {
+            const phase = args.phase orelse return error.MissingCloudflareRulesetPhase;
+            break :blk try rulesetEntrypointPath(gpa, scope, scope_id, phase);
+        },
+        .entrypoint_versions => blk: {
+            const phase = args.phase orelse return error.MissingCloudflareRulesetPhase;
+            const entrypoint_path = try rulesetEntrypointPath(gpa, scope, scope_id, phase);
+            defer gpa.free(entrypoint_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/versions", .{entrypoint_path});
+        },
+        .entrypoint_version => blk: {
+            const phase = args.phase orelse return error.MissingCloudflareRulesetPhase;
+            const version = args.version orelse return error.MissingCloudflareRulesetVersion;
+            const entrypoint_path = try rulesetEntrypointPath(gpa, scope, scope_id, phase);
+            defer gpa.free(entrypoint_path);
+            const escaped_version = try pathEscape(gpa, version);
+            defer gpa.free(escaped_version);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/versions/{s}", .{ entrypoint_path, escaped_version });
+        },
+        .versions => blk: {
+            const ruleset_id = args.ruleset_id orelse return error.MissingCloudflareRulesetId;
+            const resource_path = try rulesetResourcePath(gpa, scope, scope_id, ruleset_id);
+            defer gpa.free(resource_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/versions", .{resource_path});
+        },
+        .version, .rules_by_tag => blk: {
+            const ruleset_id = args.ruleset_id orelse return error.MissingCloudflareRulesetId;
+            const version = args.version orelse return error.MissingCloudflareRulesetVersion;
+            const resource_path = try rulesetResourcePath(gpa, scope, scope_id, ruleset_id);
+            defer gpa.free(resource_path);
+            const escaped_version = try pathEscape(gpa, version);
+            defer gpa.free(escaped_version);
+            const version_path = try std.fmt.allocPrint(gpa, "{s}/versions/{s}", .{ resource_path, escaped_version });
+            defer gpa.free(version_path);
+            if (endpoint == .version) break :blk try gpa.dupe(u8, version_path);
+            const rule_tag = args.rule_tag orelse return error.MissingCloudflareRulesetRuleTag;
+            const escaped_rule_tag = try pathEscape(gpa, rule_tag);
+            defer gpa.free(escaped_rule_tag);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/by_tag/{s}", .{ version_path, escaped_rule_tag });
+        },
+    };
+}
+
+pub fn rulesetMutationPath(gpa: Allocator, endpoint: RulesetMutationEndpoint, args: RulesetMutationArgs) ![]u8 {
+    if (endpoint.requiresPhase()) {
+        const phase = args.phase orelse return error.MissingCloudflareRulesetPhase;
+        return try rulesetEntrypointPath(gpa, args.scope, args.scope_id, phase);
+    }
+
+    const collection_path = try rulesetCollectionPath(gpa, args.scope, args.scope_id);
+    defer gpa.free(collection_path);
+
+    if (!endpoint.requiresRulesetId()) return try gpa.dupe(u8, collection_path);
+    const ruleset_id = args.ruleset_id orelse return error.MissingCloudflareRulesetId;
+    const escaped_ruleset_id = try pathEscape(gpa, ruleset_id);
+    defer gpa.free(escaped_ruleset_id);
+    const ruleset_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_ruleset_id });
+    defer gpa.free(ruleset_path);
+
+    if (endpoint == .create_rule) return try std.fmt.allocPrint(gpa, "{s}/rules", .{ruleset_path});
+
+    if (endpoint.requiresRuleId()) {
+        const rule_id = args.rule_id orelse return error.MissingCloudflareRulesetRuleId;
+        const escaped_rule_id = try pathEscape(gpa, rule_id);
+        defer gpa.free(escaped_rule_id);
+        return try std.fmt.allocPrint(gpa, "{s}/rules/{s}", .{ ruleset_path, escaped_rule_id });
+    }
+
+    if (endpoint.requiresVersion()) {
+        const version = args.version orelse return error.MissingCloudflareRulesetVersion;
+        const escaped_version = try pathEscape(gpa, version);
+        defer gpa.free(escaped_version);
+        return try std.fmt.allocPrint(gpa, "{s}/versions/{s}", .{ ruleset_path, escaped_version });
+    }
+
+    return try gpa.dupe(u8, ruleset_path);
+}
+
+pub fn rulesetMutationPlanJson(gpa: Allocator, endpoint: RulesetMutationEndpoint, args: RulesetMutationArgs) ![]u8 {
+    const path = try rulesetMutationPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try dryRunPlanJson(gpa, .{
+        .group = args.scope.group(),
+        .operation = endpoint.commandName(),
+        .operation_id = endpoint.operationId(args.scope),
+        .summary = endpoint.summary(args.scope),
+        .method = endpoint.method(),
+        .path = path,
+        .request_body_schema = endpoint.requestBodySchemaRef(),
+    });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -5418,6 +5869,88 @@ test "builds Cloudflare health-check paths and dry-run plans" {
     try std.testing.expectError(error.MissingCloudflareZoneId, healthCheckMutationPlanJson(allocator, .create, .{ .resource = .zone }));
     try std.testing.expectError(error.MissingCloudflareHealthCheckId, healthCheckMutationPlanJson(allocator, .update, .{ .resource = .zone, .zone_id = "zone/1" }));
     try std.testing.expectError(error.UnsupportedCloudflareHealthCheckMutation, healthCheckMutationPlanJson(allocator, .patch, .{ .resource = .endpoint, .account_id = "acct/1", .healthcheck_id = "check/1" }));
+}
+
+test "cloudflare ruleset endpoints map to official operation metadata" {
+    try std.testing.expectEqual(RulesetScope.account, RulesetScope.parse("accounts").?);
+    try std.testing.expectEqual(RulesetScope.zone, RulesetScope.parse("zone").?);
+    try std.testing.expectEqualStrings("Account Rulesets", RulesetScope.account.group());
+    try std.testing.expectEqualStrings("zone", RulesetScope.zone.idLabel());
+
+    try std.testing.expectEqual(RulesetReadEndpoint.list, RulesetReadEndpoint.parse("rulesets").?);
+    try std.testing.expectEqual(RulesetReadEndpoint.ruleset, RulesetReadEndpoint.parse("show").?);
+    try std.testing.expectEqual(RulesetReadEndpoint.entrypoint_versions, RulesetReadEndpoint.parse("entry-point-versions").?);
+    try std.testing.expectEqual(RulesetReadEndpoint.rules_by_tag, RulesetReadEndpoint.parse("by-tag").?);
+    try std.testing.expectEqualStrings("account-ruleset-entrypoint-version", RulesetReadEndpoint.entrypoint_version.label(.account));
+    try std.testing.expectEqualStrings("zone-ruleset-version-rules-by-tag", RulesetReadEndpoint.rules_by_tag.label(.zone));
+    try std.testing.expectEqualStrings("listAccountRulesets", RulesetReadEndpoint.list.operationId(.account));
+    try std.testing.expectEqualStrings("getZoneEntrypointRulesetVersion", RulesetReadEndpoint.entrypoint_version.operationId(.zone));
+    try std.testing.expectEqualStrings("listAccountRulesetVersionRulesByTag", RulesetReadEndpoint.rules_by_tag.operationId(.account));
+    try std.testing.expect(RulesetReadEndpoint.ruleset.requiresRulesetId());
+    try std.testing.expect(RulesetReadEndpoint.entrypoint.requiresPhase());
+    try std.testing.expect(RulesetReadEndpoint.version.requiresVersion());
+    try std.testing.expect(RulesetReadEndpoint.rules_by_tag.requiresRuleTag());
+
+    try std.testing.expectEqual(RulesetMutationEndpoint.create_ruleset, RulesetMutationEndpoint.parse("create").?);
+    try std.testing.expectEqual(RulesetMutationEndpoint.update_entrypoint, RulesetMutationEndpoint.parse("update-entry-point").?);
+    try std.testing.expectEqual(RulesetMutationEndpoint.update_rule, RulesetMutationEndpoint.parse("patch-rule").?);
+    try std.testing.expectEqualStrings("POST", RulesetMutationEndpoint.create_rule.method());
+    try std.testing.expectEqualStrings("DELETE", RulesetMutationEndpoint.delete_version.method());
+    try std.testing.expectEqualStrings("createAccountRulesetRule", RulesetMutationEndpoint.create_rule.operationId(.account));
+    try std.testing.expectEqualStrings("deleteZoneRulesetVersion", RulesetMutationEndpoint.delete_version.operationId(.zone));
+    try std.testing.expectEqualStrings("#/components/requestBodies/rulesets_UpdateEntrypointRuleset", RulesetMutationEndpoint.update_entrypoint.requestBodySchemaRef().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), RulesetMutationEndpoint.delete_rule.requestBodySchemaRef());
+    try std.testing.expect(RulesetMutationEndpoint.update_rule.requiresRuleId());
+    try std.testing.expect(RulesetMutationEndpoint.delete_version.requiresVersion());
+}
+
+test "builds Cloudflare ruleset paths and dry-run plans" {
+    const allocator = std.testing.allocator;
+
+    const account_list = try rulesetReadUrl(allocator, base_url, .account, "acct/1", .list, .{});
+    defer allocator.free(account_list);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/rulesets?per_page=50", account_list);
+
+    const account_ruleset = try rulesetReadPath(allocator, .account, "acct/1", .ruleset, .{ .ruleset_id = "ruleset/1" });
+    defer allocator.free(account_ruleset);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/rulesets/ruleset%2F1", account_ruleset);
+
+    const account_entrypoint_version = try rulesetReadPath(allocator, .account, "acct/1", .entrypoint_version, .{ .phase = "http/request", .version = "42" });
+    defer allocator.free(account_entrypoint_version);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/rulesets/phases/http%2Frequest/entrypoint/versions/42", account_entrypoint_version);
+
+    const zone_by_tag = try rulesetReadPath(allocator, .zone, "zone/1", .rules_by_tag, .{ .ruleset_id = "ruleset/1", .version = "latest", .rule_tag = "tag/name" });
+    defer allocator.free(zone_by_tag);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/rulesets/ruleset%2F1/versions/latest/by_tag/tag%2Fname", zone_by_tag);
+
+    const account_create = try rulesetMutationPlanJson(allocator, .create_ruleset, .{ .scope = .account, .scope_id = "acct/1" });
+    defer allocator.free(account_create);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"group\":\"Account Rulesets\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"operation_id\":\"createAccountRuleset\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"method\":\"POST\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"path\":\"/accounts/acct%2F1/rulesets\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"request_body_schema\":\"#/components/requestBodies/rulesets_CreateRuleset\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"will_execute\":false") != null);
+
+    const zone_entrypoint = try rulesetMutationPlanJson(allocator, .update_entrypoint, .{ .scope = .zone, .scope_id = "zone/1", .phase = "http_request_firewall_custom" });
+    defer allocator.free(zone_entrypoint);
+    try std.testing.expect(std.mem.indexOf(u8, zone_entrypoint, "\"operation_id\":\"updateZoneEntrypointRuleset\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, zone_entrypoint, "\"path\":\"/zones/zone%2F1/rulesets/phases/http_request_firewall_custom/entrypoint\"") != null);
+
+    const zone_update_rule = try rulesetMutationPlanJson(allocator, .update_rule, .{ .scope = .zone, .scope_id = "zone/1", .ruleset_id = "ruleset/1", .rule_id = "rule/1" });
+    defer allocator.free(zone_update_rule);
+    try std.testing.expect(std.mem.indexOf(u8, zone_update_rule, "\"operation_id\":\"updateZoneRulesetRule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, zone_update_rule, "\"path\":\"/zones/zone%2F1/rulesets/ruleset%2F1/rules/rule%2F1\"") != null);
+
+    const account_delete_version = try rulesetMutationPlanJson(allocator, .delete_version, .{ .scope = .account, .scope_id = "acct/1", .ruleset_id = "ruleset/1", .version = "7" });
+    defer allocator.free(account_delete_version);
+    try std.testing.expect(std.mem.indexOf(u8, account_delete_version, "\"operation_id\":\"deleteAccountRulesetVersion\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_delete_version, "\"request_body_schema\":null") != null);
+
+    try std.testing.expectError(error.MissingCloudflareRulesetId, rulesetReadPath(allocator, .zone, "zone/1", .ruleset, .{}));
+    try std.testing.expectError(error.MissingCloudflareRulesetPhase, rulesetReadPath(allocator, .account, "acct/1", .entrypoint, .{}));
+    try std.testing.expectError(error.MissingCloudflareRulesetVersion, rulesetReadPath(allocator, .account, "acct/1", .version, .{ .ruleset_id = "ruleset/1" }));
+    try std.testing.expectError(error.MissingCloudflareRulesetRuleId, rulesetMutationPlanJson(allocator, .update_rule, .{ .scope = .account, .scope_id = "acct/1", .ruleset_id = "ruleset/1" }));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

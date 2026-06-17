@@ -71,6 +71,12 @@ zig build run -- cloudflare resource-tags account keys <account-id>
 zig build run -- cloudflare resource-tags account resources <account-id> zone
 zig build run -- cloudflare resource-tags account values <account-id> managed-by
 zig build run -- cloudflare resource-tags zone tags <zone-id> zone <zone-id>
+zig build run -- cloudflare rulesets account list <account-id>
+zig build run -- cloudflare rulesets account versions <account-id> <ruleset-id>
+zig build run -- cloudflare rulesets account entrypoint <account-id> http_request_firewall_custom
+zig build run -- cloudflare rulesets zone list <zone-id>
+zig build run -- cloudflare rulesets zone show <zone-id> <ruleset-id>
+zig build run -- cloudflare rulesets zone rules-by-tag <zone-id> <ruleset-id> <version> <tag>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru
@@ -109,6 +115,10 @@ zig build run -- cloudflare dry-run health-checks preview delete <zone-id> <prev
 zig build run -- cloudflare dry-run health-checks smart-shield update <zone-id> <healthcheck-id>
 zig build run -- cloudflare dry-run resource-tags account set <account-id>
 zig build run -- cloudflare dry-run resource-tags zone delete <zone-id>
+zig build run -- cloudflare dry-run rulesets account create <account-id>
+zig build run -- cloudflare dry-run rulesets account update-rule <account-id> <ruleset-id> <rule-id>
+zig build run -- cloudflare dry-run rulesets zone update-entrypoint <zone-id> http_request_firewall_custom
+zig build run -- cloudflare dry-run rulesets zone delete-version <zone-id> <ruleset-id> <version>
 zig build run -- cloudflare dry-run token create
 zig build run -- cloudflare dry-run token roll <token-id>
 zig build run -- cloudflare dry-run account create

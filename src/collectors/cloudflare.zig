@@ -55,6 +55,11 @@ pub const ResourceTaggingMutationArgs = provider_cloudflare.ResourceTaggingMutat
 pub const ResourceTaggingMutationEndpoint = provider_cloudflare.ResourceTaggingMutationEndpoint;
 pub const ResourceTaggingMutationResource = provider_cloudflare.ResourceTaggingMutationResource;
 pub const ResourceTaggingZoneReadArgs = provider_cloudflare.ResourceTaggingZoneReadArgs;
+pub const RulesetMutationArgs = provider_cloudflare.RulesetMutationArgs;
+pub const RulesetMutationEndpoint = provider_cloudflare.RulesetMutationEndpoint;
+pub const RulesetReadArgs = provider_cloudflare.RulesetReadArgs;
+pub const RulesetReadEndpoint = provider_cloudflare.RulesetReadEndpoint;
+pub const RulesetScope = provider_cloudflare.RulesetScope;
 pub const DnsRecordMutationArgs = provider_cloudflare.DnsRecordMutationArgs;
 pub const DnsRecordMutationEndpoint = provider_cloudflare.DnsRecordMutationEndpoint;
 pub const DnsRecordReadEndpoint = provider_cloudflare.DnsRecordReadEndpoint;
@@ -130,6 +135,7 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     try collectDnsFirewallForAccounts(gpa, io, client, db, redacted);
     try collectLoadBalancingAccountForAccounts(gpa, io, client, db, redacted);
     try collectEndpointHealthChecksForAccounts(gpa, io, client, db, redacted);
+    try collectAccountRulesetsForAccounts(gpa, io, client, db, redacted);
     try collectResourceTaggingForAccounts(gpa, io, client, db, redacted);
     try collectAccountTokenEndpointsForAccounts(gpa, io, auth, client, db, redacted);
     try collectAccountDnsSettings(gpa, io, client, db, redacted);
@@ -677,6 +683,30 @@ pub fn collectResourceTaggingZoneTags(io: Io, gpa: Allocator, auth: Auth, db: *D
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectRulesetEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope: RulesetScope, scope_id: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label(scope);
+    const target = try rulesetTarget(gpa, scope_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getRulesetEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.rulesetReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: IdentityEndpoint, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const client = clientFromAuth(auth) catch {
@@ -979,6 +1009,18 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             });
             defer gpa.free(smart_redacted);
             try collectSmartShieldHealthCheckDetailsForList(gpa, io, client, db, zone_id, domain, smart_redacted);
+        }
+
+        zone_rulesets_refresh: {
+            const endpoint: RulesetReadEndpoint = .list;
+            const redacted_rulesets = collectRulesetSnapshot(gpa, io, client, db, .zone, zone_id, domain, endpoint, .{}) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(.zone), @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint.label(.zone), domain, "error", error_summary, null, null);
+                break :zone_rulesets_refresh;
+            };
+            defer gpa.free(redacted_rulesets);
+            try collectRulesetDetailsForList(gpa, io, client, db, .zone, zone_id, domain, redacted_rulesets);
         }
 
         zone_tags_refresh: {
@@ -1709,6 +1751,69 @@ fn collectEndpointHealthCheckSnapshot(gpa: Allocator, io: Io, client: provider_c
     });
 }
 
+fn collectAccountRulesetsForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const endpoint: RulesetReadEndpoint = .list;
+        const redacted = collectRulesetSnapshot(gpa, io, client, db, .account, row.id, row.id, endpoint, .{}) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(.account), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(.account), row.id, "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(redacted);
+        try collectRulesetDetailsForList(gpa, io, client, db, .account, row.id, row.id, redacted);
+    }
+}
+
+fn collectRulesetDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: RulesetScope, scope_id: []const u8, target_label: []const u8, list_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    const details_endpoint: RulesetReadEndpoint = .ruleset;
+    const versions_endpoint: RulesetReadEndpoint = .versions;
+    for (rows.items) |row| {
+        const args: RulesetReadArgs = .{ .ruleset_id = row.id };
+        const detail = collectRulesetSnapshot(gpa, io, client, db, scope, scope_id, target_label, details_endpoint, args) catch |err| {
+            const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ target_label, row.id });
+            defer gpa.free(target);
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ details_endpoint.label(scope), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", details_endpoint.label(scope), target, "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(detail);
+
+        const versions = collectRulesetSnapshot(gpa, io, client, db, scope, scope_id, target_label, versions_endpoint, args) catch |err| {
+            const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ target_label, row.id });
+            defer gpa.free(target);
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ versions_endpoint.label(scope), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", versions_endpoint.label(scope), target, "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(versions);
+    }
+}
+
+fn collectRulesetSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: RulesetScope, scope_id: []const u8, target_label: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
+    const body = try client.getRulesetEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.rulesetReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try rulesetTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(scope),
+        .target = target,
+        .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
 fn collectResourceTaggingForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
     var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
     defer rows.deinit(gpa);
@@ -1964,6 +2069,30 @@ fn firstLine(value: []const u8) []const u8 {
 
 fn settingTarget(gpa: Allocator, domain: []const u8, setting_id: []const u8) ![]u8 {
     return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ domain, setting_id });
+}
+
+fn rulesetTarget(gpa: Allocator, scope_id: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
+    if (endpoint.requiresRulesetId()) {
+        const ruleset_id = args.ruleset_id orelse return try gpa.dupe(u8, scope_id);
+        if (endpoint.requiresVersion()) {
+            const version = args.version orelse return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ scope_id, ruleset_id });
+            if (endpoint.requiresRuleTag()) {
+                const rule_tag = args.rule_tag orelse return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ scope_id, ruleset_id, version });
+                return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}/{s}", .{ scope_id, ruleset_id, version, rule_tag });
+            }
+            return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ scope_id, ruleset_id, version });
+        }
+        return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ scope_id, ruleset_id });
+    }
+    if (endpoint.requiresPhase()) {
+        const phase = args.phase orelse return try gpa.dupe(u8, scope_id);
+        if (endpoint.requiresVersion()) {
+            const version = args.version orelse return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ scope_id, phase });
+            return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ scope_id, phase, version });
+        }
+        return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ scope_id, phase });
+    }
+    return try gpa.dupe(u8, scope_id);
 }
 
 fn resourceTaggingAccountTarget(gpa: Allocator, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {

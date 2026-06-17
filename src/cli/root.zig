@@ -138,6 +138,9 @@ fn usage() void {
         \\  cloudio cloudflare health-checks smart-shield list <zone-id>|smart-shield show <zone-id> <healthcheck-id>
         \\  cloudio cloudflare resource-tags account tags|keys|resources|values <account-id> [resource-type] [resource-id]
         \\  cloudio cloudflare resource-tags zone tags <zone-id> [resource-type] [resource-id]
+        \\  cloudio cloudflare rulesets account|zone list <scope-id>|show <scope-id> <ruleset-id>|versions <scope-id> <ruleset-id>
+        \\  cloudio cloudflare rulesets account|zone entrypoint|entrypoint-versions <scope-id> <phase>|entrypoint-version <scope-id> <phase> <version>
+        \\  cloudio cloudflare rulesets account|zone version <scope-id> <ruleset-id> <version>|rules-by-tag <scope-id> <ruleset-id> <version> <tag>
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>
@@ -168,6 +171,8 @@ fn usage() void {
         \\  cloudio cloudflare dry-run health-checks smart-shield create <zone-id>|update|patch|delete <zone-id> <healthcheck-id>
         \\  cloudio cloudflare dry-run resource-tags account set|delete <account-id>
         \\  cloudio cloudflare dry-run resource-tags zone set|delete <zone-id>
+        \\  cloudio cloudflare dry-run rulesets account|zone create <scope-id>|update|delete <scope-id> <ruleset-id>|update-entrypoint <scope-id> <phase>
+        \\  cloudio cloudflare dry-run rulesets account|zone create-rule <scope-id> <ruleset-id>|update-rule|delete-rule <scope-id> <ruleset-id> <rule-id>|delete-version <scope-id> <ruleset-id> <version>
         \\  cloudio cloudflare dry-run token create
         \\  cloudio cloudflare dry-run token delete|update|roll <token-id>
         \\  cloudio cloudflare dry-run account create|batch-move

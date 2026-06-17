@@ -48,6 +48,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandHealthChecks(ctx, args);
     } else if (std.mem.eql(u8, sub, "resource-tags") or std.mem.eql(u8, sub, "tags")) {
         try commandResourceTags(ctx, args);
+    } else if (std.mem.eql(u8, sub, "rulesets") or std.mem.eql(u8, sub, "ruleset")) {
+        try commandRulesets(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -86,6 +88,7 @@ fn commandDryRun(ctx: Context, args: []const []const u8) !void {
     if (std.mem.eql(u8, args[1], "load-balancing") or std.mem.eql(u8, args[1], "lb")) return try commandDryRunLoadBalancing(ctx, args);
     if (std.mem.eql(u8, args[1], "health-checks") or std.mem.eql(u8, args[1], "health")) return try commandDryRunHealthChecks(ctx, args);
     if (std.mem.eql(u8, args[1], "resource-tags") or std.mem.eql(u8, args[1], "tags")) return try commandDryRunResourceTags(ctx, args);
+    if (std.mem.eql(u8, args[1], "rulesets") or std.mem.eql(u8, args[1], "ruleset")) return try commandDryRunRulesets(ctx, args);
     std.debug.print("unknown cloudflare dry-run target: {s}\n", .{args[1]});
 }
 
@@ -465,6 +468,61 @@ fn commandDryRunResourceTags(ctx: Context, args: []const []const u8) !void {
     }));
 }
 
+fn commandDryRunRulesets(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 5) {
+        std.debug.print("scope, operation, and id required for dry-run rulesets\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.RulesetScope.parse(args[2]) orelse {
+        std.debug.print("unknown rulesets dry-run scope: {s}\n", .{args[2]});
+        return;
+    };
+    const endpoint = app_cloudflare.RulesetMutationEndpoint.parse(args[3]) orelse {
+        std.debug.print("unknown rulesets dry-run operation: {s}\n", .{args[3]});
+        return;
+    };
+
+    var index: usize = 5;
+    var mutation_args: app_cloudflare.RulesetMutationArgs = .{
+        .scope = scope,
+        .scope_id = args[4],
+    };
+
+    if (endpoint.requiresRulesetId()) {
+        if (args.len <= index) {
+            std.debug.print("ruleset id required for dry-run rulesets {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        mutation_args.ruleset_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresPhase()) {
+        if (args.len <= index) {
+            std.debug.print("ruleset phase required for dry-run rulesets {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        mutation_args.phase = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresRuleId()) {
+        if (args.len <= index) {
+            std.debug.print("rule id required for dry-run rulesets {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        mutation_args.rule_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresVersion()) {
+        if (args.len <= index) {
+            std.debug.print("ruleset version required for dry-run rulesets {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        mutation_args.version = args[index];
+    }
+
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planRulesetMutation(appContext(ctx), endpoint, mutation_args));
+}
+
 fn commandDns(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1) {
         cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
@@ -687,6 +745,58 @@ fn commandResourceTags(ctx: Context, args: []const []const u8) !void {
         return;
     }
     std.debug.print("unknown resource-tags scope: {s}\n", .{args[1]});
+}
+
+fn commandRulesets(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("rulesets account|zone command and id required\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.RulesetScope.parse(args[1]) orelse {
+        std.debug.print("unknown rulesets scope: {s}\n", .{args[1]});
+        return;
+    };
+    const endpoint = app_cloudflare.RulesetReadEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown rulesets command: {s}\n", .{args[2]});
+        return;
+    };
+    const scope_id = args[3];
+    var index: usize = 4;
+    var read_args: app_cloudflare.RulesetReadArgs = .{};
+
+    if (endpoint.requiresRulesetId()) {
+        if (args.len <= index) {
+            std.debug.print("ruleset id required for rulesets {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        read_args.ruleset_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresPhase()) {
+        if (args.len <= index) {
+            std.debug.print("ruleset phase required for rulesets {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        read_args.phase = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresVersion()) {
+        if (args.len <= index) {
+            std.debug.print("ruleset version required for rulesets {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        read_args.version = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresRuleTag()) {
+        if (args.len <= index) {
+            std.debug.print("rule tag required for rulesets {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        read_args.rule_tag = args[index];
+    }
+
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectRulesetEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
 }
 
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
