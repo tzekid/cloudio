@@ -759,6 +759,28 @@ pub const L1Audit = struct {
         if (filter.includes("cloudflare")) try writeL1ProviderAudit(self.cloudflare, writer);
         if (filter.includes("hostinger")) try writeL1ProviderAudit(self.hostinger, writer);
     }
+
+    pub fn writeJson(self: L1Audit, filter: ProviderFilter, writer: anytype) !void {
+        const total_failures = self.totalFailures(filter);
+        try writer.writeByte('{');
+        try writeJsonField(writer, "kind", "coverage_l1_audit", true);
+        try writeJsonField(writer, "filter", filter.name(), true);
+        try writeJsonField(writer, "status", if (total_failures == 0) "pass" else "fail", true);
+        try writeJsonBoolField(writer, "passed", total_failures == 0, true);
+        try writeJsonCountField(writer, "total_failures", total_failures, true);
+        try writeJsonField(writer, "evidence", "generated manifest route contracts checked against Cloudio generic dispatch invariants", true);
+        try writer.writeAll("\"providers\":[");
+        var wrote_provider = false;
+        if (filter.includes("cloudflare")) {
+            try writeL1ProviderAuditJson(self.cloudflare, writer);
+            wrote_provider = true;
+        }
+        if (filter.includes("hostinger")) {
+            if (wrote_provider) try writer.writeByte(',');
+            try writeL1ProviderAuditJson(self.hostinger, writer);
+        }
+        try writer.writeAll("]}");
+    }
 };
 
 pub fn load(io: Io, gpa: Allocator, paths: Paths) !Summary {
@@ -950,6 +972,11 @@ pub fn auditL1FromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_te
 pub fn writeL1AuditTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter, writer: anytype) !void {
     const audit = try auditL1(io, gpa, paths, filter);
     try audit.writeText(filter, writer);
+}
+
+pub fn writeL1AuditJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter, writer: anytype) !void {
+    const audit = try auditL1(io, gpa, paths, filter);
+    try audit.writeJson(filter, writer);
 }
 
 pub fn loadRoutes(io: Io, gpa: Allocator, paths: Paths, filter: RouteFilter) !CoverageRoutes {
@@ -1826,6 +1853,49 @@ fn writeL1ProviderAudit(audit: L1ProviderAudit, writer: anytype) !void {
     try writer.writeByte('\n');
 }
 
+fn writeL1ProviderAuditJson(audit: L1ProviderAudit, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "name", audit.name, true);
+    try writeJsonField(writer, "status", if (audit.passed()) "pass" else "fail", true);
+    try writeJsonBoolField(writer, "passed", audit.passed(), true);
+    try writeJsonCountField(writer, "total", audit.total, true);
+    try writeJsonCountField(writer, "non_deprecated", audit.non_deprecated, true);
+    try writeJsonCountField(writer, "deprecated", audit.deprecated, true);
+    try writeJsonCountField(writer, "not_applicable", audit.not_applicable, true);
+    try writeJsonCountField(writer, "routable", audit.routable, true);
+    try writeJsonCountField(writer, "read_routes", audit.read_routes, true);
+    try writeJsonCountField(writer, "live_read_supported", audit.live_read_supported, true);
+    try writeJsonCountField(writer, "dry_run_routes", audit.dry_run_routes, true);
+    try writeJsonCountField(writer, "dry_run_supported", audit.dry_run_supported, true);
+    try writeJsonCountField(writer, "required_query_routes", audit.required_query_routes, true);
+    try writeJsonCountField(writer, "required_header_routes", audit.required_header_routes, true);
+    try writeJsonCountField(writer, "missing_operation_id", audit.missing_operation_id, true);
+    try writeJsonCountField(writer, "deprecated_routable", audit.deprecated_routable, true);
+    try writeJsonCountField(writer, "failures_total", audit.failures.total(), true);
+    try writer.writeAll("\"failures\":");
+    try writeL1AuditFailuresJson(audit.failures, writer);
+    try writer.writeByte('}');
+}
+
+fn writeL1AuditFailuresJson(failures: L1AuditFailures, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonCountField(writer, "bad_path_params", failures.bad_path_params, true);
+    try writeJsonCountField(writer, "missing_responses", failures.missing_responses, true);
+    try writeJsonCountField(writer, "missing_security", failures.missing_security, true);
+    try writeJsonCountField(writer, "deprecated_support_mismatch", failures.deprecated_support_mismatch, true);
+    try writeJsonCountField(writer, "not_applicable_contract_mismatch", failures.not_applicable_contract_mismatch, true);
+    try writeJsonCountField(writer, "unexpected_write_mode", failures.unexpected_write_mode, true);
+    try writeJsonCountField(writer, "unsupported_mode", failures.unsupported_mode, true);
+    try writeJsonCountField(writer, "read_not_get", failures.read_not_get, true);
+    try writeJsonCountField(writer, "read_body_required", failures.read_body_required, true);
+    try writeJsonCountField(writer, "read_auth_unsupported", failures.read_auth_unsupported, true);
+    try writeJsonCountField(writer, "dry_run_method_invalid", failures.dry_run_method_invalid, true);
+    try writeJsonCountField(writer, "dry_run_not_supported", failures.dry_run_not_supported, true);
+    try writeJsonCountField(writer, "method_mode_mismatch", failures.method_mode_mismatch, true);
+    try writeJsonCountField(writer, "unroutable_non_deprecated", failures.unroutable_non_deprecated, false);
+    try writer.writeByte('}');
+}
+
 fn writeFailureField(writer: anytype, name: []const u8, count: usize) !void {
     if (count == 0) return;
     try writer.print(" {s}={d}", .{ name, count });
@@ -2632,6 +2702,20 @@ test "audits L1 routability invariants across provider manifests" {
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider L1 routability audit\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "status: pass\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare: pass\n") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try audit.writeJson(.all, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_l1_audit\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"pass\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"passed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"total_failures\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"providers\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"name\":\"cloudflare\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"live_read_supported\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"unroutable_non_deprecated\":0") != null);
 }
 
 test "L1 audit reports broad manifest contract failures" {
@@ -2649,6 +2733,16 @@ test "L1 audit reports broad manifest contract failures" {
     try std.testing.expectEqual(@as(usize, 1), audit.cloudflare.failures.missing_responses);
     try std.testing.expectEqual(@as(usize, 1), audit.cloudflare.failures.missing_security);
     try std.testing.expectEqual(@as(usize, 1), audit.cloudflare.failures.read_auth_unsupported);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try audit.writeJson(.cloudflare, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"fail\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"passed\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"bad_path_params\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_responses\":1") != null);
 }
 
 test "lists provider coverage routes by provider and tag query" {

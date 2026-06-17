@@ -26,6 +26,11 @@ const LevelCommand = struct {
     format: RenderFormat = .text,
 };
 
+const L1Command = struct {
+    provider: app_coverage.ProviderFilter = .all,
+    format: RenderFormat = .text,
+};
+
 const LevelTagCommand = struct {
     options: app_coverage.LevelTagOptions = .{},
     format: RenderFormat = .text,
@@ -53,7 +58,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
 const Command = union(enum) {
     summary,
     tags: app_coverage.ProviderFilter,
-    l1: app_coverage.ProviderFilter,
+    l1: L1Command,
     gaps: GapCommand,
     levels: LevelCommand,
     level_tags: LevelTagCommand,
@@ -70,9 +75,7 @@ fn parseCommand(args: []const []const u8) Command {
         return .{ .tags = filter };
     }
     if (std.mem.eql(u8, args[0], "l1") or std.mem.eql(u8, args[0], "audit-l1")) {
-        if (args.len < 2) return .{ .l1 = .all };
-        const filter = app_coverage.ProviderFilter.parse(args[1]) orelse return .{ .unknown = args[1] };
-        return .{ .l1 = filter };
+        return parseL1(args[1..]);
     }
     if (std.mem.eql(u8, args[0], "gaps") or std.mem.eql(u8, args[0], "priorities")) {
         return parseGaps(args[1..]);
@@ -90,6 +93,31 @@ fn parseCommand(args: []const []const u8) Command {
         return .{ .plan = args[1..] };
     }
     return .{ .unknown = args[0] };
+}
+
+fn parseL1(args: []const []const u8) Command {
+    var command = L1Command{};
+    var provider_set = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--json")) {
+            command.format = .json;
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--format" };
+            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            const value = arg["--format=".len..];
+            command.format = parseFormat(value) orelse return .{ .unknown = value };
+        } else if (!provider_set) {
+            command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
+            provider_set = true;
+        } else {
+            return .{ .unknown = arg };
+        }
+    }
+    return .{ .l1 = command };
 }
 
 fn parseGaps(args: []const []const u8) Command {
@@ -273,10 +301,13 @@ fn commandTags(ctx: Context, filter: app_coverage.ProviderFilter) !void {
     try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
-fn commandL1(ctx: Context, filter: app_coverage.ProviderFilter) !void {
+fn commandL1(ctx: Context, command: L1Command) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
-    try app_coverage.writeL1AuditTextFromFiles(ctx.io, ctx.gpa, ctx.paths, filter, &out.writer);
+    switch (command.format) {
+        .text => try app_coverage.writeL1AuditTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
+        .json => try app_coverage.writeL1AuditJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
+    }
     try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
@@ -488,10 +519,13 @@ test "coverage command parser defaults to summary" {
     try std.testing.expectEqual(Command{ .tags = .hostinger }, parseCommand(hostinger_tags_args[0..]));
 
     const l1_args = [_][]const u8{ "l1", "cloudflare" };
-    try std.testing.expectEqual(Command{ .l1 = .cloudflare }, parseCommand(l1_args[0..]));
+    try std.testing.expectEqual(Command{ .l1 = .{ .provider = .cloudflare } }, parseCommand(l1_args[0..]));
 
     const l1_default_args = [_][]const u8{"audit-l1"};
-    try std.testing.expectEqual(Command{ .l1 = .all }, parseCommand(l1_default_args[0..]));
+    try std.testing.expectEqual(Command{ .l1 = .{} }, parseCommand(l1_default_args[0..]));
+
+    const l1_json_args = [_][]const u8{ "audit-l1", "hostinger", "--format=json" };
+    try std.testing.expectEqual(Command{ .l1 = .{ .provider = .hostinger, .format = .json } }, parseCommand(l1_json_args[0..]));
 
     const gaps_args = [_][]const u8{ "gaps", "hostinger", "--limit", "7" };
     switch (parseCommand(gaps_args[0..])) {
