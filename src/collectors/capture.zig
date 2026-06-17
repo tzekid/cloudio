@@ -25,7 +25,16 @@ pub const ResponseCapture = struct {
     capture_output: bool = false,
 };
 
-pub fn storeResponse(gpa: Allocator, db: *Db, input: ResponseCapture) ![]u8 {
+pub const StoredResponse = struct {
+    redacted: []u8,
+    snapshot_id: i64,
+
+    pub fn deinit(self: StoredResponse, gpa: Allocator) void {
+        gpa.free(self.redacted);
+    }
+};
+
+pub fn storeResponseWithSnapshotId(gpa: Allocator, db: *Db, input: ResponseCapture) !StoredResponse {
     const body = if (input.body.len == 0) try emptyBodyDiagnostic(gpa, input) else input.body;
     defer if (input.body.len == 0) gpa.free(body);
     const redacted = if (std.mem.indexOf(u8, input.kind, "token") != null)
@@ -35,9 +44,14 @@ pub fn storeResponse(gpa: Allocator, db: *Db, input: ResponseCapture) ![]u8 {
     errdefer gpa.free(redacted);
     const summary = try net_http.summary(gpa, input.summary_label, input.status);
     defer gpa.free(summary);
-    _ = try db.insertSnapshot(input.provider, input.kind, input.target, net_http.statusText(input.status), summary, redacted, null);
+    const snapshot_id = try db.insertSnapshot(input.provider, input.kind, input.target, net_http.statusText(input.status), summary, redacted, null);
     try db.insertProviderRaw(input.provider, input.endpoint, @intFromEnum(input.status), redacted);
-    return redacted;
+    return .{ .redacted = redacted, .snapshot_id = snapshot_id };
+}
+
+pub fn storeResponse(gpa: Allocator, db: *Db, input: ResponseCapture) ![]u8 {
+    const stored = try storeResponseWithSnapshotId(gpa, db, input);
+    return stored.redacted;
 }
 
 fn emptyBodyDiagnostic(gpa: Allocator, input: ResponseCapture) ![]u8 {
@@ -77,10 +91,10 @@ fn writeJsonString(writer: anytype, value: []const u8) !void {
 }
 
 pub fn captureResponse(gpa: Allocator, db: *Db, input: ResponseCapture) !Output {
-    const redacted = try storeResponse(gpa, db, input);
-    errdefer gpa.free(redacted);
-    if (input.capture_output) return .{ .text = redacted };
-    gpa.free(redacted);
+    const stored = try storeResponseWithSnapshotId(gpa, db, input);
+    errdefer stored.deinit(gpa);
+    if (input.capture_output) return .{ .text = stored.redacted };
+    stored.deinit(gpa);
     return .{};
 }
 
@@ -118,6 +132,41 @@ test "captures redacted provider response into snapshots and provider raw" {
     try std.testing.expect(std.mem.indexOf(u8, output.text.?, "abcdefghijklmnopqrstuvwxyz") == null);
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("provider_raw"));
+}
+
+test "captures exact snapshot id next to redacted provider response" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/capture-id.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    const first = try storeResponseWithSnapshotId(allocator, &db, .{
+        .provider = "fixture",
+        .kind = "inventory",
+        .summary_label = "inventory",
+        .endpoint = "/first",
+        .status = .ok,
+        .body = "{\"ok\":true}",
+    });
+    defer first.deinit(allocator);
+    const second = try storeResponseWithSnapshotId(allocator, &db, .{
+        .provider = "fixture",
+        .kind = "inventory",
+        .summary_label = "inventory",
+        .endpoint = "/second",
+        .status = .ok,
+        .body = "{\"ok\":true}",
+    });
+    defer second.deinit(allocator);
+
+    try std.testing.expectEqual(@as(i64, 1), first.snapshot_id);
+    try std.testing.expectEqual(@as(i64, 2), second.snapshot_id);
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("snapshots"));
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("provider_raw"));
 }
 
 test "captures empty provider response as structured diagnostic" {

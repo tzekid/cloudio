@@ -258,6 +258,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "collector_capture", .module = collector_capture_mod },
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "net_pagination", .module = net_pagination_mod },
             .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },

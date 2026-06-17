@@ -42,6 +42,8 @@ const ParsedCaptureArgs = struct {
     plan_args: []const []const u8,
     kind: ?[]const u8,
     target: ?[]const u8,
+    paginate: bool = false,
+    max_pages: usize = 25,
 
     fn deinit(self: ParsedCaptureArgs, gpa: Allocator) void {
         gpa.free(self.plan_args);
@@ -81,7 +83,12 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
                 return;
             },
             ctx.db,
-            .{ .kind = capture_args.kind, .target = capture_args.target },
+            .{
+                .kind = capture_args.kind,
+                .target = capture_args.target,
+                .paginate = capture_args.paginate,
+                .max_pages = capture_args.max_pages,
+            },
         ) catch |err| {
             std.debug.print("route capture failed: {s}\n", .{@errorName(err)});
             return;
@@ -129,11 +136,21 @@ fn parseCaptureArgs(gpa: Allocator, args: []const []const u8) !ParsedCaptureArgs
     errdefer plan_args.deinit(gpa);
     var kind: ?[]const u8 = null;
     var target: ?[]const u8 = null;
+    var paginate = false;
+    var max_pages: usize = 25;
 
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--kind") or std.mem.eql(u8, arg, "--snapshot-kind")) {
+        if (std.mem.eql(u8, arg, "--paginate")) {
+            paginate = true;
+        } else if (std.mem.eql(u8, arg, "--max-pages")) {
+            index += 1;
+            if (index >= args.len) return error.MissingRouteCaptureOptionValue;
+            max_pages = try parseMaxPages(args[index]);
+        } else if (std.mem.startsWith(u8, arg, "--max-pages=")) {
+            max_pages = try parseMaxPages(arg["--max-pages=".len..]);
+        } else if (std.mem.eql(u8, arg, "--kind") or std.mem.eql(u8, arg, "--snapshot-kind")) {
             index += 1;
             if (index >= args.len) return error.MissingRouteCaptureOptionValue;
             kind = args[index];
@@ -158,7 +175,15 @@ fn parseCaptureArgs(gpa: Allocator, args: []const []const u8) !ParsedCaptureArgs
         .plan_args = try plan_args.toOwnedSlice(gpa),
         .kind = kind,
         .target = target,
+        .paginate = paginate,
+        .max_pages = max_pages,
     };
+}
+
+fn parseMaxPages(value: []const u8) !usize {
+    const parsed = try std.fmt.parseInt(usize, value, 10);
+    if (parsed == 0) return error.InvalidRouteCaptureMaxPages;
+    return parsed;
 }
 
 fn usage() void {
@@ -166,7 +191,7 @@ fn usage() void {
         \\Usage:
         \\  cloudio route plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\  cloudio route read <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value]
-        \\  cloudio route capture <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--kind <snapshot-kind>] [--target <snapshot-target>]
+        \\  cloudio route capture <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--kind <snapshot-kind>] [--target <snapshot-target>] [--paginate] [--max-pages <n>]
         \\  cloudio route dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\
     , .{});
@@ -193,12 +218,16 @@ test "route capture parser separates snapshot labels from route request argument
         "--target=vps-123",
         "--kind",
         "route-vps-metrics",
+        "--paginate",
+        "--max-pages=3",
         "--query-param=date_from=2026-06-16T00:00:00Z",
     };
     const parsed = try parseCaptureArgs(allocator, args[0..]);
     defer parsed.deinit(allocator);
     try std.testing.expectEqualStrings("route-vps-metrics", parsed.kind orelse "");
     try std.testing.expectEqualStrings("vps-123", parsed.target orelse "");
+    try std.testing.expect(parsed.paginate);
+    try std.testing.expectEqual(@as(usize, 3), parsed.max_pages);
     try std.testing.expectEqual(@as(usize, 5), parsed.plan_args.len);
     try std.testing.expectEqualStrings("hostinger", parsed.plan_args[0]);
     try std.testing.expectEqualStrings("--operation=VPS_getMetricsV1", parsed.plan_args[1]);
@@ -207,6 +236,7 @@ test "route capture parser separates snapshot labels from route request argument
     try std.testing.expectEqualStrings("--query-param=date_from=2026-06-16T00:00:00Z", parsed.plan_args[4]);
 
     try std.testing.expectError(error.MissingRouteCaptureOptionValue, parseCaptureArgs(allocator, &.{"--target"}));
+    try std.testing.expectError(error.InvalidRouteCaptureMaxPages, parseCaptureArgs(allocator, &.{ "--max-pages", "0" }));
 }
 
 test "route auth selection requires an exact provider" {

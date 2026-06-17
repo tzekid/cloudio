@@ -88,5 +88,6 @@ test "facade exposes stable integration modules" {
     _ = providers.cloudflare.client.Client;
     _ = providers.hostinger.client.Client;
     _ = collectors.capture.Output;
+    _ = collectors.capture.StoredResponse;
     _ = collectors.caddy.Paths;
 }
