@@ -407,6 +407,15 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_coverage", .module = app_coverage_mod },
         },
     });
+    const cli_route_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/route.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_coverage", .module = app_coverage_mod },
+            .{ .name = "cli_coverage", .module = cli_coverage_mod },
+        },
+    });
     const cli_caddy_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/caddy.zig"),
         .target = target,
@@ -477,6 +486,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_coverage", .module = cli_coverage_mod },
             .{ .name = "cli_hostinger", .module = cli_hostinger_mod },
             .{ .name = "cli_projects", .module = cli_projects_mod },
+            .{ .name = "cli_route", .module = cli_route_mod },
             .{ .name = "cli_system", .module = cli_system_mod },
             .{ .name = "cloudio", .module = cloudio_mod },
             .{ .name = "core_config", .module = core_config_mod },
@@ -509,6 +519,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cli_root_mod);
     addModuleTest(b, test_step, cli_render_mod);
     addModuleTest(b, test_step, cli_coverage_mod);
+    addModuleTest(b, test_step, cli_route_mod);
     addModuleTest(b, test_step, cli_caddy_mod);
     addModuleTest(b, test_step, cli_cloudflare_mod);
     addModuleTest(b, test_step, cli_hostinger_mod);

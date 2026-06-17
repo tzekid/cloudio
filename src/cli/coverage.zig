@@ -152,20 +152,20 @@ fn commandPlan(ctx: Context, args: []const []const u8) !void {
     std.debug.print("{s}", .{text});
 }
 
-const ParsedPlan = struct {
+pub const ParsedPlan = struct {
     plan: app_coverage.RoutePlanInput,
     path_params: []app_coverage.PathParam,
     query_params: []app_coverage.QueryParam,
     header_params: []app_coverage.HeaderParam,
 
-    fn deinit(self: ParsedPlan, gpa: Allocator) void {
+    pub fn deinit(self: ParsedPlan, gpa: Allocator) void {
         gpa.free(self.path_params);
         gpa.free(self.query_params);
         gpa.free(self.header_params);
     }
 };
 
-fn parsePlan(gpa: Allocator, args: []const []const u8) !ParsedPlan {
+pub fn parsePlan(gpa: Allocator, args: []const []const u8) !ParsedPlan {
     if (args.len == 0) return error.MissingCoveragePlanProvider;
 
     var filter = app_coverage.RouteFilter{};

@@ -12,6 +12,7 @@ const cli_cloudflare = @import("cli_cloudflare");
 const cli_coverage = @import("cli_coverage");
 const cli_hostinger = @import("cli_hostinger");
 const cli_projects = @import("cli_projects");
+const cli_route = @import("cli_route");
 const cli_system = @import("cli_system");
 const db_store = @import("db_store");
 
@@ -52,6 +53,13 @@ pub fn run(init: std.process.Init) !void {
         try cli_coverage.run(.{
             .io = init.io,
             .gpa = init.gpa,
+        }, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "route")) {
+        try cli_route.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
+            .cloudflare_auth = .{ .cloudflare = cloudflareAuth(cfg) },
+            .hostinger_token = cfg.hostinger_api_token,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "log")) {
         try commandLog(init.io, init.gpa, cfg);
@@ -110,6 +118,7 @@ fn usage() void {
         \\  cloudio export
         \\  cloudio coverage summary|tags|routes [all|cloudflare|hostinger] [tag-query] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>]
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]
+        \\  cloudio route plan|read|dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\  cloudio log
         \\  cloudio cloudflare account [list]|account show <account-id>|account profile <account-id>|account organizations <account-id>
         \\  cloudio cloudflare account dns-record-usage <account-id>

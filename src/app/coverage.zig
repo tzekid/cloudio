@@ -30,6 +30,7 @@ pub const QueryParam = provider_routes.QueryParam;
 pub const HeaderParam = provider_routes.HeaderParam;
 pub const Request = provider_routes.Request;
 pub const BodyInput = provider_routes.BodyInput;
+pub const Auth = provider_dispatch.Auth;
 
 pub const Paths = struct {
     cloudflare_manifest: []const u8 = "coverage/generated/cloudflare.jsonl",
@@ -398,6 +399,32 @@ pub fn routePlanJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput
     return try routePlanJsonFromRoutes(gpa, routes.items, input.request);
 }
 
+pub fn routeReadMetadataJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, auth: Auth) ![]u8 {
+    var routes = try loadRoutes(io, gpa, paths, input.filter);
+    defer routes.deinit(gpa);
+    const route = try selectSingleRoute(routes.items);
+    const client = provider_dispatch.Client.init(auth);
+    const result = try client.callReadRouteResultRequest(io, gpa, route.route, input.request);
+    defer result.deinit(gpa);
+    return try provider_dispatch.readRouteResultMetadataJson(gpa, route.route, result);
+}
+
+pub fn routeDryRunJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, auth: Auth) ![]u8 {
+    var routes = try loadRoutes(io, gpa, paths, input.filter);
+    defer routes.deinit(gpa);
+    const route = try selectSingleRoute(routes.items);
+    const client = provider_dispatch.Client.init(auth);
+    return try client.dryRunRouteRequest(gpa, route.route, input.request);
+}
+
+pub fn routeDryRunJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, input: RoutePlanInput, auth: Auth) ![]u8 {
+    var routes = try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, input.filter);
+    defer routes.deinit(gpa);
+    const route = try selectSingleRoute(routes.items);
+    const client = provider_dispatch.Client.init(auth);
+    return try client.dryRunRouteRequest(gpa, route.route, input.request);
+}
+
 pub fn routePlanJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, input: RoutePlanInput) ![]u8 {
     var routes = try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, input.filter);
     defer routes.deinit(gpa);
@@ -412,9 +439,14 @@ pub fn writeRoutePlanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, input: 
 }
 
 fn routePlanJsonFromRoutes(gpa: Allocator, routes: []const CoverageRoute, request: Request) ![]u8 {
+    const route = try selectSingleRoute(routes);
+    return try provider_dispatch.planRouteJsonRequest(gpa, route.route, request);
+}
+
+fn selectSingleRoute(routes: []const CoverageRoute) !CoverageRoute {
     if (routes.len == 0) return error.ProviderRoutePlanNotFound;
     if (routes.len != 1) return error.ProviderRoutePlanAmbiguous;
-    return try provider_dispatch.planRouteJsonRequest(gpa, routes[0].route, request);
+    return routes[0];
 }
 
 fn summarizeProvider(gpa: Allocator, provider: []const u8, text: []const u8, summary: *ProviderSummary) !void {
@@ -743,7 +775,7 @@ test "lists provider coverage routes by provider and tag query" {
     const hostinger =
         \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/metrics","operation_id":"VPS_getMetricsV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[{"name":"date_from","required":true},{"name":"date_to","required":true}],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/VPS.V1.VirtualMachine.MetricsResource"]},{"status":"401","content_types":["application/json"],"schema_refs":[]}],"support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"POC reads VPS metrics."}
         \\{"provider":"hostinger","tag":"Billing: Catalog","method":"GET","path":"/api/billing/v1/catalog","operation_id":"billing_getCatalogItemListV1","path_params":[],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/Billing.V1.Catalog.CatalogItemCollection"]}],"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"POC reads billing catalog."}
-        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"POST","path":"/api/vps/v1/virtual-machines","operation_id":"vps_createVirtualMachineV1","path_params":[],"query_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":["#/components/schemas/VPS.V1.VirtualMachine.PurchaseRequest"]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/Billing.V1.Order.VirtualMachineOrderResource"]}],"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"No writes in POC."}
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"POST","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_purchaseNewVirtualMachineV1","path_params":[],"query_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":["#/components/schemas/VPS.V1.VirtualMachine.PurchaseRequest"]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/Billing.V1.Order.VirtualMachineOrderResource"]}],"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"No writes in POC."}
         \\
     ;
 
@@ -850,5 +882,47 @@ test "plans exact provider coverage routes without live provider calls" {
     try std.testing.expectError(
         error.ProviderRoutePlanNotFound,
         routePlanJsonFromText(allocator, cloudflare, hostinger, .{ .filter = .{ .provider = .hostinger, .operation_id = "missing" } }),
+    );
+}
+
+test "renders exact provider route dry-runs through the shared route contract" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_email","api_key"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ok"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"POST","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_purchaseNewVirtualMachineV1","path_params":[],"query_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":["#/components/schemas/VPS.V1.VirtualMachine.PurchaseRequest"]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/Billing.V1.Order.VirtualMachineOrderResource"]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"No writes in POC."}
+        \\
+    ;
+
+    const plan = try routeDryRunJsonFromText(
+        allocator,
+        cloudflare,
+        hostinger,
+        .{
+            .filter = .{ .provider = .hostinger, .operation_id = "VPS_purchaseNewVirtualMachineV1" },
+            .request = .{ .body = .{ .present = true, .content_type = "application/json" } },
+        },
+        .{ .hostinger = "test-token" },
+    );
+    defer allocator.free(plan);
+
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"provider\":\"hostinger\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"VPS_purchaseNewVirtualMachineV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"dry_run\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "test-token") == null);
+
+    try std.testing.expectError(
+        error.ProviderRouteAuthMismatch,
+        routeDryRunJsonFromText(
+            allocator,
+            cloudflare,
+            hostinger,
+            .{ .filter = .{ .provider = .hostinger, .operation_id = "VPS_purchaseNewVirtualMachineV1" } },
+            .{ .cloudflare = .{ .token = "test-token" } },
+        ),
     );
 }

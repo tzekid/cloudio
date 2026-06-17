@@ -37,6 +37,19 @@ Cloudio also auto-loads ignored `.env` and `.env.fish` files before reading proc
 
 Each `refresh` writes a redacted `.cloudio/latest-run.log` with collector selection, credential presence, table counts, and the snapshots captured during that refresh. Empty provider response bodies are stored as structured diagnostic JSON with the HTTP status and endpoint so failed reads do not disappear as blank logs.
 
+Generic provider route dispatch:
+
+```sh
+zig build run -- route plan cloudflare --operation accounts-list-accounts
+zig build run -- route read cloudflare --operation accounts-list-accounts
+zig build run -- route plan hostinger --operation VPS_getVirtualMachinesV1
+zig build run -- route read hostinger --operation VPS_getVirtualMachinesV1
+zig build run -- route dry-run hostinger --operation VPS_purchaseNewVirtualMachineV1 --body-content-type application/json
+zig build run -- route dry-run cloudflare --operation argo-smart-routing-patch-argo-smart-routing-setting --path-param zone_id=<zone-id> --body-content-type application/json
+```
+
+`route plan` never sends HTTP. `route read` executes only generated bodyless `GET`/read routes with the configured provider credentials and prints response metadata without response bodies. `route dry-run` renders mutation plans with `will_execute:false`; it validates path/query/header/body metadata but never sends a provider write.
+
 Useful read-only Cloudflare checks:
 
 ```sh
