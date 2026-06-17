@@ -150,6 +150,17 @@ pub fn collectVpsInventoryDetail(ctx: Context, endpoint: VpsInventoryDetailEndpo
     return try collector_hostinger.collectVpsInventoryDetail(ctx.io, ctx.gpa, ctx.token, ctx.db, endpoint, id, true);
 }
 
+pub fn listResources(ctx: Context) !Output {
+    var rows = try ctx.db.hostingerResourceList(ctx.gpa);
+    defer rows.deinit(ctx.gpa);
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    for (rows.items) |row| {
+        try out.writer.print("{s}\t{s}\n", .{ row.name, row.value });
+    }
+    return .{ .text = try out.toOwnedSlice() };
+}
+
 pub fn defaultDomain(ctx: Context) []const u8 {
     return ctx.domains[0];
 }
@@ -165,4 +176,29 @@ test "hostinger app default domain uses first configured domain" {
         .db = &db,
     };
     try std.testing.expectEqualStrings("plosca.ru", defaultDomain(ctx));
+}
+
+test "hostinger app lists normalized resources" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/hostinger-app-resources.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertHostingerResource("hostinger-websites||plosca.ru", "hostinger-websites", "plosca.ru", null, "plosca.ru", "enabled", "plosca.ru", "{\"domain\":\"plosca.ru\"}");
+
+    const domains = [_][]const u8{"plosca.ru"};
+    const ctx = Context{
+        .io = std.testing.io,
+        .gpa = allocator,
+        .token = null,
+        .domains = domains[0..],
+        .db = &db,
+    };
+    var output = try listResources(ctx);
+    defer output.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "hostinger-websites/plosca.ru") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "enabled plosca.ru plosca.ru") != null);
 }

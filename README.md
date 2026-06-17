@@ -274,6 +274,7 @@ Useful read-only Hostinger checks:
 ```sh
 zig build run -- hostinger vps list
 zig build run -- hostinger vps show <vm-id>
+zig build run -- hostinger resources
 zig build run -- hostinger dry-run vps restart <vm-id>
 zig build run -- hostinger dry-run vps start-recovery <vm-id>
 zig build run -- hostinger dry-run vps create-ptr <vm-id> <ip-address-id>

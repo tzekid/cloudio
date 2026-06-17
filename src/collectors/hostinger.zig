@@ -138,6 +138,7 @@ pub fn collectVps(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, capture_o
     if (net_http.isOk(body.status)) {
         try db.clear("hostinger_vps");
         try persistVpsRows(gpa, db, redacted);
+        try persistResourceRows(gpa, db, "vps", null, redacted);
     }
     return .{ .text = if (capture_output) redacted else null };
 }
@@ -160,7 +161,10 @@ pub fn collectVpsDetails(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, vm
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
-    if (net_http.isOk(body.status)) try persistVpsRows(gpa, db, redacted);
+    if (net_http.isOk(body.status)) {
+        try persistVpsRows(gpa, db, redacted);
+        try persistResourceRows(gpa, db, "vps-detail", vm_id, redacted);
+    }
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -185,6 +189,7 @@ pub fn collectVmEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, vm
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, vm_id, redacted);
     if (endpoint == .metrics) try db.insertHostingerMetric(vm_id, endpoint_label, null, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
@@ -209,6 +214,7 @@ pub fn collectActionDetails(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db,
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, "action-detail", target, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -233,6 +239,7 @@ pub fn collectDockerEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, target, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -252,6 +259,7 @@ pub fn collectBillingEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *D
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, null, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -276,6 +284,7 @@ pub fn collectDnsEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, e
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, target, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -300,6 +309,7 @@ pub fn collectDomainEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, target, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -326,6 +336,7 @@ pub fn collectHostingEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *D
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, target, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -352,6 +363,7 @@ pub fn collectHorizonsEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, website_id, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -378,6 +390,7 @@ pub fn collectReachEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db,
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, target, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -399,6 +412,7 @@ pub fn collectVpsInventoryEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, d
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, null, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -421,6 +435,7 @@ pub fn collectVpsInventoryDetail(io: Io, gpa: Allocator, token: ?[]const u8, db:
         .body = body.body,
     });
     defer if (!capture_output) gpa.free(redacted);
+    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, id, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -429,6 +444,14 @@ pub fn persistVpsRows(gpa: Allocator, db: *Db, body: []const u8) !void {
     defer rows.deinit(gpa);
     for (rows.items) |row| {
         try db.upsertHostingerVps(row.id, row.name, row.status, row.ipv4, row.plan, row.raw_json);
+    }
+}
+
+pub fn persistResourceRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[]const u8, body: []const u8) !void {
+    var rows = try provider_hostinger_models.parseResourceRows(gpa, kind, target, body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertHostingerResource(row.key, row.kind, row.resource_id, row.target, row.name, row.status, row.domain, row.raw_json);
     }
 }
 
@@ -466,6 +489,7 @@ fn collectPagedVmEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, v
         errdefer gpa.free(redacted);
         try pages.append(gpa, redacted);
         if (!net_http.isOk(body.status)) break;
+        try persistResourceRows(gpa, db, endpoint_label, vm_id, redacted);
         const pagination = provider_hostinger_models.paginationInfo(redacted) orelse break;
         if (!pagination.hasNext()) break;
     }
@@ -507,6 +531,7 @@ fn collectPagedVpsInventoryEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, 
         errdefer gpa.free(redacted);
         try pages.append(gpa, redacted);
         if (!net_http.isOk(body.status)) break;
+        try persistResourceRows(gpa, db, endpoint_label, null, redacted);
         const pagination = provider_hostinger_models.paginationInfo(redacted) orelse break;
         if (!pagination.hasNext()) break;
     }
@@ -554,6 +579,7 @@ fn collectPagedHostingEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *
         errdefer gpa.free(redacted);
         try pages.append(gpa, redacted);
         if (!net_http.isOk(body.status)) break;
+        try persistResourceRows(gpa, db, endpoint_label, base_target, redacted);
         const pagination = provider_hostinger_models.paginationInfo(redacted) orelse break;
         if (!pagination.hasNext()) break;
     }
@@ -595,6 +621,7 @@ fn collectPagedEcommerceEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db:
         errdefer gpa.free(redacted);
         try pages.append(gpa, redacted);
         if (!net_http.isOk(body.status)) break;
+        try persistResourceRows(gpa, db, endpoint_label, null, redacted);
         const pagination = provider_hostinger_models.paginationInfo(redacted) orelse break;
         if (!pagination.hasNext()) break;
     }
@@ -642,6 +669,7 @@ fn collectPagedReachEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db
         errdefer gpa.free(redacted);
         try pages.append(gpa, redacted);
         if (!net_http.isOk(body.status)) break;
+        try persistResourceRows(gpa, db, endpoint_label, base_target, redacted);
         const pagination = provider_hostinger_models.paginationInfo(redacted) orelse break;
         if (!pagination.hasNext()) break;
     }
@@ -811,6 +839,33 @@ test "persists Hostinger VPS rows without nested template rows" {
     try std.testing.expectEqualStrings("running", columnText(stmt, 2) orelse "");
     try std.testing.expectEqualStrings("76.13.130.170", columnText(stmt, 3) orelse "");
     try std.testing.expectEqualStrings("KVM 4", columnText(stmt, 4) orelse "");
+}
+
+test "persists normalized Hostinger resource rows" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/hostinger-resources.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    try persistResourceRows(allocator, &db, "hostinger-websites", null,
+        \\{"data":[{"domain":"plosca.ru","username":"u123","is_enabled":true},{"domain":"sparkdate.love","username":"u123","is_enabled":false}]}
+    );
+    try persistResourceRows(allocator, &db, "hostinger-dns-zone", "plosca.ru",
+        \\[{"name":"@","type":"A","ttl":14400,"records":[{"content":"1.2.3.4"}]}]
+    );
+
+    try std.testing.expectEqual(@as(i64, 3), try db.countTable("hostinger_resources"));
+    const stmt = try db.prepare("SELECT resource_id, name, status, domain FROM hostinger_resources WHERE kind = 'hostinger-websites' ORDER BY resource_id LIMIT 1");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try std.testing.expectEqual(@as(c_int, sqlite.SQLITE_ROW), sqlite.sqlite3_step(stmt));
+    try std.testing.expectEqualStrings("plosca.ru", columnText(stmt, 0) orelse "");
+    try std.testing.expectEqualStrings("plosca.ru", columnText(stmt, 1) orelse "");
+    try std.testing.expectEqualStrings("enabled", columnText(stmt, 2) orelse "");
+    try std.testing.expectEqualStrings("plosca.ru", columnText(stmt, 3) orelse "");
 }
 
 test "missing Hostinger token records inventory snapshot without live API call" {

@@ -166,6 +166,24 @@ pub const migrations = [_]Migration{
         \\CREATE INDEX IF NOT EXISTS idx_audit_events_action_id ON audit_events(action, id DESC);
         ,
     },
+    .{
+        .version = 3,
+        .name = "hostinger_resource_inventory",
+        .sql =
+        \\CREATE TABLE IF NOT EXISTS hostinger_resources (
+        \\  key TEXT PRIMARY KEY,
+        \\  kind TEXT NOT NULL,
+        \\  resource_id TEXT NOT NULL,
+        \\  target TEXT,
+        \\  name TEXT,
+        \\  status TEXT,
+        \\  domain TEXT,
+        \\  raw_json TEXT,
+        \\  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        \\);
+        \\CREATE INDEX IF NOT EXISTS idx_hostinger_resources_kind ON hostinger_resources(kind, updated_at DESC);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;

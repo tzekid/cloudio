@@ -311,6 +311,24 @@ pub const Db = struct {
         try stepDone(stmt);
     }
 
+    pub fn upsertHostingerResource(self: *Db, key: []const u8, kind: []const u8, resource_id: []const u8, target: ?[]const u8, name: ?[]const u8, status: ?[]const u8, domain: ?[]const u8, raw: []const u8) !void {
+        const stmt = try self.prepare(
+            \\INSERT INTO hostinger_resources(key, kind, resource_id, target, name, status, domain, raw_json, updated_at)
+            \\VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            \\ON CONFLICT(key) DO UPDATE SET kind=excluded.kind, resource_id=excluded.resource_id, target=excluded.target, name=excluded.name, status=excluded.status, domain=excluded.domain, raw_json=excluded.raw_json, updated_at=CURRENT_TIMESTAMP
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, key);
+        try bindText(stmt, 2, kind);
+        try bindText(stmt, 3, resource_id);
+        try bindTextOpt(stmt, 4, target);
+        try bindTextOpt(stmt, 5, name);
+        try bindTextOpt(stmt, 6, status);
+        try bindTextOpt(stmt, 7, domain);
+        try bindText(stmt, 8, raw);
+        try stepDone(stmt);
+    }
+
     pub fn upsertCaddySite(self: *Db, host: []const u8, source_path: []const u8, raw_block: ?[]const u8) !void {
         const stmt = try self.prepare(
             \\INSERT INTO caddy_sites(host, source_path, raw_block, updated_at)
@@ -408,6 +426,7 @@ pub const Db = struct {
         try writer.print("cloudflare_zones={d}\n", .{try self.countTable("cloudflare_zones")});
         try writer.print("cloudflare_dns_records={d}\n", .{try self.countTable("cloudflare_dns_records")});
         try writer.print("hostinger_vps={d}\n", .{try self.countTable("hostinger_vps")});
+        try writer.print("hostinger_resources={d}\n", .{try self.countTable("hostinger_resources")});
         try writer.print("caddy_sites={d}\n", .{try self.countTable("caddy_sites")});
         try writer.print("caddy_upstreams={d}\n", .{try self.countTable("caddy_upstreams")});
         try writer.print("projects={d}\n", .{try self.countTable("projects")});
@@ -460,6 +479,16 @@ pub const Db = struct {
 
     pub fn containerList(self: *Db, gpa: Allocator) !NameValueRows {
         return try self.nameValueRows(gpa, "SELECT COALESCE(name,''), COALESCE(status,'') FROM containers ORDER BY 1 LIMIT 200");
+    }
+
+    pub fn hostingerResourceList(self: *Db, gpa: Allocator) !NameValueRows {
+        return try self.nameValueRows(gpa,
+            \\SELECT kind || '/' || resource_id,
+            \\       trim(COALESCE(status,'') || ' ' || COALESCE(domain,'') || ' ' || COALESCE(name,''))
+            \\FROM hostinger_resources
+            \\ORDER BY updated_at DESC, kind, resource_id
+            \\LIMIT 200
+        );
     }
 
     pub fn caddyUpstreams(self: *Db, gpa: Allocator) !NameValueRows {
@@ -721,10 +750,10 @@ pub fn columnText(stmt: *sqlite.sqlite3_stmt, idx: c_int) ?[]const u8 {
 
 fn isKnownTable(table: []const u8) bool {
     const known = [_][]const u8{
-        "snapshots",      "provider_raw",      "cloudflare_accounts", "cloudflare_zones", "cloudflare_dns_records",
-        "hostinger_vps",  "hostinger_metrics", "caddy_sites",         "caddy_upstreams",  "projects",
-        "system_metrics", "services",          "sockets",             "containers",       "audit_events",
-        "settings",
+        "snapshots",     "provider_raw",      "cloudflare_accounts", "cloudflare_zones", "cloudflare_dns_records",
+        "hostinger_vps", "hostinger_metrics", "hostinger_resources", "caddy_sites",      "caddy_upstreams",
+        "projects",      "system_metrics",    "services",            "sockets",          "containers",
+        "audit_events",  "settings",
     };
     for (known) |name| if (std.mem.eql(u8, table, name)) return true;
     return false;

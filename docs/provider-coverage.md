@@ -75,7 +75,7 @@ Cloudflare implementation must prefer API tokens. Legacy email/global-key auth r
 
 ## Hostinger Current Coverage
 
-Official schema size checked today: 133 operations; Hostinger OpenAPI version `0.19.1`. Read-only VPS endpoint URL/auth handling lives in `src/providers/hostinger/client.zig`; VPS inventory response normalization lives in `src/providers/hostinger/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Hostinger collection and SQLite normalization live in `src/collectors/hostinger.zig`.
+Official schema size checked today: 133 operations; Hostinger OpenAPI version `0.19.1`. Read-only VPS endpoint URL/auth handling lives in `src/providers/hostinger/client.zig`; VPS inventory response normalization and broad resource-row extraction live in `src/providers/hostinger/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Hostinger collection and SQLite normalization live in `src/collectors/hostinger.zig`.
 
 Current POC status:
 
@@ -101,6 +101,8 @@ Current POC status:
 | Horizons: Websites | partial | Reads Horizons website details by explicit website ID only and renders typed dry-run plans for website creation without sending live Hostinger requests. |
 | Domain Access Verifier | not_applicable | The official Hostinger `0.19.1` schema marks `GET /api/v2/direct/verifications/active` with `requestBody.required=true`, but the same API overview says JSON bodies are for `POST`, `PUT`, and `PATCH`; Zig `0.16.0` `std.http` also only allows request bodies for those methods, so Cloudio does not model this inconsistent transport contract. |
 | Remaining Hostinger mutations | deprecated | Non-deprecated Hostinger mutation routes are covered by typed dry-run plans; deprecated mutation routes remain classified as deprecated until explicit compatibility work is needed. |
+
+Successful Hostinger read collectors now also populate the generic `hostinger_resources` L3 table when the response item has stable identity such as `id`, `uuid`, `domain`, `hostname`, `name`, or `username`. The table records `kind`, provider resource ID, optional collection target, display name, status/state/enabled state, domain/hostname, and redacted raw JSON. `cloudio hostinger resources` lists the latest 200 normalized rows for CLI inspection. This is intentionally broad and reviewable: high-value tables such as `hostinger_vps` remain available for stronger typed workflows, while `hostinger_resources` gives future UI/API work one normalized inventory surface across billing, DNS, domains, hosting, ecommerce, reach, Docker, VPS inventory, and per-VM read groups.
 
 Hostinger metrics require `date_from` and `date_to` query parameters. Cloudio currently uses a read-only 24-hour UTC window for refresh and CLI metrics calls.
 
