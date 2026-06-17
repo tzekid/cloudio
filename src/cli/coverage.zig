@@ -315,7 +315,7 @@ test "coverage command parser defaults to summary" {
         else => return error.ExpectedCoverageRoutes,
     }
 
-    const plan_args = [_][]const u8{ "plan", "hostinger", "--operation=VPS_getMetricsV1", "--path-param", "virtualMachineId=vm/1", "--query=date_from=2026-06-16T00:00:00Z", "--query-param", "date_to=2026-06-17T00:00:00Z" };
+    const plan_args = [_][]const u8{ "plan", "hostinger", "--operation=VPS_getMetricsV1", "--path-param", "virtualMachineId=123", "--query=date_from=2026-06-16T00:00:00Z", "--query-param", "date_to=2026-06-17T00:00:00Z" };
     switch (parseCommand(plan_args[0..])) {
         .plan => |values| {
             try std.testing.expectEqual(@as(usize, plan_args.len - 1), values.len);

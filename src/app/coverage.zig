@@ -813,7 +813,7 @@ test "plans exact provider coverage routes without live provider calls" {
         .{
             .filter = .{ .provider = .hostinger, .operation_id = "VPS_getMetricsV1" },
             .request = .{
-                .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+                .path_params = &.{.{ .name = "virtualMachineId", .value = "123" }},
                 .query_params = &.{
                     .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
                     .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
@@ -823,7 +823,7 @@ test "plans exact provider coverage routes without live provider calls" {
     );
     defer allocator.free(read_plan);
     try std.testing.expect(std.mem.indexOf(u8, read_plan, "\"operation_id\":\"VPS_getMetricsV1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, read_plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, read_plan, "\"will_execute\":false") != null);
 
     const mutation_plan = try routePlanJsonFromText(

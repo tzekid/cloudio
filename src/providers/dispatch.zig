@@ -524,7 +524,7 @@ test "generic dispatch plans bodyless read routes without executing HTTP" {
         allocator,
         route,
         .{
-            .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+            .path_params = &.{.{ .name = "virtualMachineId", .value = "123" }},
             .query_params = &.{
                 .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
                 .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
@@ -536,8 +536,8 @@ test "generic dispatch plans bodyless read routes without executing HTTP" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"provider\":\"hostinger\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"VPS_getMetricsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"method\":\"GET\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"apiToken\"]]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path_param_shapes\":[{\"name\":\"virtualMachineId\",\"required\":true,\"style\":null,\"explode\":null,\"schema\":{\"schema_refs\":[],\"types\":[\"integer\"],\"formats\":[],\"enum_values\":[]}}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"query_param_shapes\":[{\"name\":\"date_from\",\"required\":true,\"style\":null,\"explode\":null,\"schema\":{\"schema_refs\":[],\"types\":[\"string\"],\"formats\":[\"date-time\"],\"enum_values\":[]}}") != null);
@@ -636,7 +636,7 @@ test "generic dispatch route planner validates read route request input" {
             allocator,
             route,
             .{
-                .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+                .path_params = &.{.{ .name = "virtualMachineId", .value = "123" }},
                 .query_params = &.{.{ .name = "date_from", .value = "2026-06-16T00:00:00Z" }},
             },
         ),
@@ -647,7 +647,7 @@ test "generic dispatch route planner validates read route request input" {
             allocator,
             route,
             .{
-                .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+                .path_params = &.{.{ .name = "virtualMachineId", .value = "123" }},
                 .query_params = &.{
                     .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
                     .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
@@ -849,7 +849,7 @@ test "generic dispatch validates required read query parameters before HTTP" {
             allocator,
             route,
             .{
-                .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+                .path_params = &.{.{ .name = "virtualMachineId", .value = "123" }},
                 .query_params = &.{.{ .name = "date_from", .value = "2026-06-16T00:00:00Z" }},
             },
         ),
@@ -879,5 +879,5 @@ test "generic dispatch validates mutation safety before HTTP" {
     defer route.deinit(allocator);
 
     const client = Client.init(.{ .hostinger = "test-token" });
-    try std.testing.expectError(error.ProviderRouteRequiresDryRun, client.callReadRoute(std.testing.io, allocator, route, &.{.{ .name = "virtualMachineId", .value = "vm/1" }}));
+    try std.testing.expectError(error.ProviderRouteRequiresDryRun, client.callReadRoute(std.testing.io, allocator, route, &.{.{ .name = "virtualMachineId", .value = "123" }}));
 }

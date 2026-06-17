@@ -152,7 +152,8 @@ pub const RouteParam = struct {
     }
 
     pub fn acceptsValue(self: RouteParam, value: []const u8) bool {
-        return self.schema.enum_values.len == 0 or containsString(self.schema.enum_values, value);
+        if (self.schema.enum_values.len != 0) return containsString(self.schema.enum_values, value);
+        return acceptsScalarTypeValue(self.schema.types, value);
     }
 };
 
@@ -978,6 +979,33 @@ fn containsString(items: []const []u8, candidate: []const u8) bool {
     return false;
 }
 
+fn acceptsScalarTypeValue(types: []const []u8, value: []const u8) bool {
+    if (types.len == 0) return true;
+    if (containsString(types, "string")) return true;
+    if (containsString(types, "object")) return true;
+    if (containsString(types, "boolean") and isRouteBoolean(value)) return true;
+    if (containsString(types, "integer") and isRouteInteger(value)) return true;
+    if (containsString(types, "number") and isRouteNumber(value)) return true;
+    if (containsString(types, "boolean") or containsString(types, "integer") or containsString(types, "number")) return false;
+    return true;
+}
+
+fn isRouteBoolean(value: []const u8) bool {
+    return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "false");
+}
+
+fn isRouteInteger(value: []const u8) bool {
+    if (value.len == 0) return false;
+    _ = std.fmt.parseInt(i64, value, 10) catch return false;
+    return true;
+}
+
+fn isRouteNumber(value: []const u8) bool {
+    if (value.len == 0) return false;
+    const parsed = std.fmt.parseFloat(f64, value) catch return false;
+    return std.math.isFinite(parsed);
+}
+
 fn responseStatusExact(status: []const u8, status_code: u16) bool {
     if (status.len != 3) return false;
     const parsed = std.fmt.parseInt(u16, status, 10) catch return false;
@@ -1369,26 +1397,26 @@ test "renders validated query parameters for route paths and urls" {
 
     const path = try route.renderPathWithQuery(
         allocator,
-        &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+        &.{.{ .name = "virtualMachineId", .value = "123" }},
         &.{
             .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
             .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
         },
     );
     defer allocator.free(path);
-    try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", path);
+    try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", path);
 
     const url = try route.renderUrlWithQuery(
         allocator,
         "https://example.test",
-        &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+        &.{.{ .name = "virtualMachineId", .value = "123" }},
         &.{
             .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
             .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
         },
     );
     defer allocator.free(url);
-    try std.testing.expectEqualStrings("https://example.test/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", url);
+    try std.testing.expectEqualStrings("https://example.test/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", url);
 }
 
 test "renders array query parameters according to OpenAPI explode metadata" {
@@ -1431,6 +1459,99 @@ test "renders array query parameters according to OpenAPI explode metadata" {
     });
     defer allocator.free(exploded_path);
     try std.testing.expectEqualStrings("/api/hosting/v1/accounts/user/websites/example.com/nodejs/builds?states=pending&states=running", exploded_path);
+}
+
+test "validates generated scalar types for route request parameters" {
+    const allocator = std.testing.allocator;
+
+    const hostinger_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getMetricsV1")) orelse return error.TestExpectedRoute;
+    defer hostinger_route.deinit(allocator);
+    const metrics_path = try hostinger_route.renderRequestPath(allocator, .{
+        .path_params = &.{.{ .name = "virtualMachineId", .value = "123" }},
+        .query_params = &.{
+            .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
+            .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
+        },
+    });
+    defer allocator.free(metrics_path);
+    try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", metrics_path);
+    try std.testing.expectError(
+        error.InvalidRouteParameterValue,
+        hostinger_route.renderRequestPath(allocator, .{
+            .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+            .query_params = &.{
+                .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
+                .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
+            },
+        }),
+    );
+
+    const hostinger_actions = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getActionsV1")) orelse return error.TestExpectedRoute;
+    defer hostinger_actions.deinit(allocator);
+    const actions_path = try hostinger_actions.renderRequestPath(allocator, .{
+        .path_params = &.{.{ .name = "virtualMachineId", .value = "123" }},
+        .query_params = &.{.{ .name = "page", .value = "2" }},
+    });
+    defer allocator.free(actions_path);
+    try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines/123/actions?page=2", actions_path);
+    try std.testing.expectError(
+        error.InvalidRouteQueryParameterValue,
+        hostinger_actions.renderRequestPath(allocator, .{
+            .path_params = &.{.{ .name = "virtualMachineId", .value = "123" }},
+            .query_params = &.{.{ .name = "page", .value = "two" }},
+        }),
+    );
+
+    const access_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "access-applications-list-access-applications")) orelse return error.TestExpectedRoute;
+    defer access_route.deinit(allocator);
+    const access_path = try access_route.renderRequestPath(allocator, .{
+        .path_params = &.{.{ .name = "account_id", .value = "acct" }},
+        .query_params = &.{.{ .name = "exact", .value = "true" }},
+    });
+    defer allocator.free(access_path);
+    try std.testing.expectEqualStrings("/accounts/acct/access/apps?exact=true", access_path);
+    try std.testing.expectError(
+        error.InvalidRouteQueryParameterValue,
+        access_route.renderRequestPath(allocator, .{
+            .path_params = &.{.{ .name = "account_id", .value = "acct" }},
+            .query_params = &.{.{ .name = "exact", .value = "yes" }},
+        }),
+    );
+
+    const accounts_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "accounts-list-accounts")) orelse return error.TestExpectedRoute;
+    defer accounts_route.deinit(allocator);
+    const accounts_path = try accounts_route.renderRequestPath(allocator, .{ .query_params = &.{.{ .name = "page", .value = "1.5" }} });
+    defer allocator.free(accounts_path);
+    try std.testing.expectEqualStrings("/accounts?page=1.5", accounts_path);
+    try std.testing.expectError(
+        error.InvalidRouteQueryParameterValue,
+        accounts_route.renderRequestPath(allocator, .{ .query_params = &.{.{ .name = "page", .value = "abc" }} }),
+    );
+
+    const audit_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "audit-logs-v2-get-account-audit-logs")) orelse return error.TestExpectedRoute;
+    defer audit_route.deinit(allocator);
+    const audit_path = try audit_route.renderRequestPath(allocator, .{
+        .path_params = &.{.{ .name = "account_id", .value = "acct" }},
+        .query_params = &.{
+            .{ .name = "since", .value = "2026-06-16" },
+            .{ .name = "before", .value = "2026-06-17" },
+            .{ .name = "raw_status_code", .value = "200" },
+            .{ .name = "raw_status_code", .value = "403" },
+        },
+    });
+    defer allocator.free(audit_path);
+    try std.testing.expectEqualStrings("/accounts/acct/logs/audit?since=2026-06-16&before=2026-06-17&raw_status_code=200&raw_status_code=403", audit_path);
+    try std.testing.expectError(
+        error.InvalidRouteQueryParameterValue,
+        audit_route.renderRequestPath(allocator, .{
+            .path_params = &.{.{ .name = "account_id", .value = "acct" }},
+            .query_params = &.{
+                .{ .name = "since", .value = "2026-06-16" },
+                .{ .name = "before", .value = "2026-06-17" },
+                .{ .name = "raw_status_code", .value = "ok" },
+            },
+        }),
+    );
 }
 
 test "validates generated enum values for route request parameters" {
@@ -1527,7 +1648,7 @@ test "renders route request objects for paths and urls" {
     defer route.deinit(allocator);
 
     const request = Request{
-        .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+        .path_params = &.{.{ .name = "virtualMachineId", .value = "123" }},
         .query_params = &.{
             .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
             .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
@@ -1536,11 +1657,11 @@ test "renders route request objects for paths and urls" {
 
     const path = try route.renderRequestPath(allocator, request);
     defer allocator.free(path);
-    try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", path);
+    try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", path);
 
     const url = try route.renderRequestUrl(allocator, "https://example.test", request);
     defer allocator.free(url);
-    try std.testing.expectEqualStrings("https://example.test/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", url);
+    try std.testing.expectEqualStrings("https://example.test/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", url);
 }
 
 test "validates required and known query parameters" {
@@ -1553,7 +1674,7 @@ test "validates required and known query parameters" {
         error.MissingRouteQueryParameter,
         route.renderPathWithQuery(
             allocator,
-            &.{.{ .name = "virtualMachineId", .value = "vm" }},
+            &.{.{ .name = "virtualMachineId", .value = "123" }},
             &.{.{ .name = "date_from", .value = "2026-06-16T00:00:00Z" }},
         ),
     );
@@ -1561,7 +1682,7 @@ test "validates required and known query parameters" {
         error.UnknownRouteQueryParameter,
         route.renderPathWithQuery(
             allocator,
-            &.{.{ .name = "virtualMachineId", .value = "vm" }},
+            &.{.{ .name = "virtualMachineId", .value = "123" }},
             &.{
                 .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
                 .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
