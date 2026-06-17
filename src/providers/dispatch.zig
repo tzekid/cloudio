@@ -94,7 +94,7 @@ pub const Client = struct {
 
     pub fn dryRunRouteRequest(self: Client, gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
         if (route.provider != self.provider()) return error.ProviderRouteAuthMismatch;
-        return try dryRunPlanJsonRequest(gpa, route, request);
+        return try dryRunPlanJsonRequestWithBase(gpa, route, request, self.baseUrl(route.provider));
     }
 
     fn baseUrl(self: Client, target_provider: provider_routes.Provider) ?[]const u8 {
@@ -214,6 +214,10 @@ pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, reques
 }
 
 pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
+    return try dryRunPlanJsonRequestWithBase(gpa, route, request, null);
+}
+
+fn dryRunPlanJsonRequestWithBase(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request, base_url_override: ?[]const u8) ![]u8 {
     if (!route.isRoutable()) return error.UnsupportedProviderRoute;
     if (route.mode != .dry_run or route.method == .GET or route.method == .HEAD) return error.ProviderRouteIsNotMutation;
     try route.validateRequestHeaders(request);
@@ -221,6 +225,8 @@ pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, reque
 
     const path = try route.renderRequestPath(gpa, request);
     defer gpa.free(path);
+    const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ base_url_override orelse route.provider.baseUrl(), path });
+    defer gpa.free(url);
 
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
@@ -236,6 +242,7 @@ pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, reque
     }
     try writeJsonField(writer, "method", route.method.name(), true);
     try writeJsonField(writer, "path", path, true);
+    try writeJsonField(writer, "url", url, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
     try writeSecurityField(writer, "security", route, true);
     try writeRouteParamShapeField(writer, "path_param_shapes", route.path_params, true);
@@ -479,6 +486,7 @@ test "generic dispatch renders dry-run plans without executing mutations" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"access-idp-federation-grants-create\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"method\":\"POST\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct%2F1/access/idp_federation_grants\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://api.cloudflare.com/client/v4/accounts/acct%2F1/access/idp_federation_grants\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body_input\":{\"present\":false,\"content_type\":null,\"required_missing\":true}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"responses\":[{\"status\":\"201\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/access_idp_federation_grant_response\"]},{\"status\":\"4XX\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/access_api-response-common-failure\"]}]") != null);
@@ -501,6 +509,7 @@ test "generic dispatch renders query-aware dry-run plans" {
 
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"worker-assets-upload\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct%2F1/workers/assets/upload?base64=true\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://api.cloudflare.com/client/v4/accounts/acct%2F1/workers/assets/upload?base64=true\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true,\"content_types\":[\"multipart/form-data\"],\"schema_refs\":[]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"responses\":[{\"status\":\"201\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/workers_completed-upload-assets-response\"]},{\"status\":\"202\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/workers_upload-assets-response\"]},{\"status\":\"4XX\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/workers_api-response-common-failure\"]}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
@@ -739,7 +748,10 @@ test "generic dispatch accepts route request objects" {
     const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
     defer route.deinit(allocator);
 
-    const client = Client.init(.{ .cloudflare = .{ .token = "test-token" } });
+    const client = Client{
+        .auth = .{ .cloudflare = .{ .token = "test-token" } },
+        .cloudflare_base_url_override = "https://fixture.cloudflare.test",
+    };
     const plan = try client.dryRunRouteRequest(
         allocator,
         route,
@@ -752,6 +764,7 @@ test "generic dispatch accepts route request objects" {
     defer allocator.free(plan);
 
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct%2F1/workers/assets/upload?base64=true\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://fixture.cloudflare.test/accounts/acct%2F1/workers/assets/upload?base64=true\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body_input\":{\"present\":true,\"content_type\":\"multipart/form-data; boundary=test\",\"required_missing\":false}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
