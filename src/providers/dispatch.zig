@@ -198,6 +198,9 @@ pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, reques
     try writeJsonField(writer, "url", url, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
     try writeSecurityField(writer, "security", route, true);
+    try writeRouteParamShapeField(writer, "path_param_shapes", route.path_params, true);
+    try writeRouteParamShapeField(writer, "query_param_shapes", route.query_params, true);
+    try writeRouteParamShapeField(writer, "header_param_shapes", route.header_params, true);
     try writeRouteParamField(writer, "header_params", route.header_params, true);
     try writeHeaderInputField(writer, "header_params_input", request.header_params, true);
     try writeRequestBodyField(writer, "request_body", route.request_body, true);
@@ -235,6 +238,9 @@ pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, reque
     try writeJsonField(writer, "path", path, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
     try writeSecurityField(writer, "security", route, true);
+    try writeRouteParamShapeField(writer, "path_param_shapes", route.path_params, true);
+    try writeRouteParamShapeField(writer, "query_param_shapes", route.query_params, true);
+    try writeRouteParamShapeField(writer, "header_param_shapes", route.header_params, true);
     try writeRouteParamField(writer, "header_params", route.header_params, true);
     try writeHeaderInputField(writer, "header_params_input", request.header_params, true);
     try writeRequestBodyField(writer, "request_body", route.request_body, true);
@@ -301,6 +307,39 @@ fn writeSecurityField(writer: anytype, name: []const u8, route: provider_routes.
         try writer.writeByte(']');
     }
     try writer.writeAll("]}");
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeRouteParamShapeField(writer: anytype, name: []const u8, params: []const provider_routes.RouteParam, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeAll(":[");
+    for (params, 0..) |param, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.writeByte('{');
+        try writeJsonField(writer, "name", param.name, true);
+        try writer.writeAll("\"required\":");
+        try writer.writeAll(if (param.required) "true" else "false");
+        try writer.writeByte(',');
+        if (param.style) |style| {
+            try writeJsonField(writer, "style", style, true);
+        } else {
+            try writer.writeAll("\"style\":null,");
+        }
+        if (param.explode) |explode| {
+            try writer.writeAll("\"explode\":");
+            try writer.writeAll(if (explode) "true" else "false");
+            try writer.writeByte(',');
+        } else {
+            try writer.writeAll("\"explode\":null,");
+        }
+        try writer.writeAll("\"schema\":{");
+        try writeStringArrayField(writer, "schema_refs", param.schema.schema_refs, true);
+        try writeStringArrayField(writer, "types", param.schema.types, true);
+        try writeStringArrayField(writer, "formats", param.schema.formats, true);
+        try writeStringArrayField(writer, "enum_values", param.schema.enum_values, false);
+        try writer.writeAll("}}");
+    }
+    try writer.writeByte(']');
     if (trailing_comma) try writer.writeByte(',');
 }
 
@@ -479,6 +518,8 @@ test "generic dispatch plans bodyless read routes without executing HTTP" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"apiToken\"]]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"path_param_shapes\":[{\"name\":\"virtualMachineId\",\"required\":true,\"style\":null,\"explode\":null,\"schema\":{\"schema_refs\":[],\"types\":[\"integer\"],\"formats\":[],\"enum_values\":[]}}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"query_param_shapes\":[{\"name\":\"date_from\",\"required\":true,\"style\":null,\"explode\":null,\"schema\":{\"schema_refs\":[],\"types\":[\"string\"],\"formats\":[\"date-time\"],\"enum_values\":[]}}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"read\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
@@ -571,7 +612,8 @@ test "generic dispatch route planner validates and hides header values" {
 
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"header_params\":[{\"name\":\"cf-r2-jurisdiction\",\"required\":false}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"header_params_input\":[{\"name\":\"CF-R2-Jurisdiction\",\"provided\":true}]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plan, "eu") == null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"header_param_shapes\":[{\"name\":\"cf-r2-jurisdiction\",\"required\":false,\"style\":null,\"explode\":null,\"schema\":{\"schema_refs\":[\"#/components/schemas/r2_jurisdiction\"],\"types\":[\"string\"],\"formats\":[],\"enum_values\":[\"default\",\"eu\",\"fedramp\"]}}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"value\":\"eu\"") == null);
 
     try std.testing.expectError(
         error.UnknownRouteHeaderParameter,

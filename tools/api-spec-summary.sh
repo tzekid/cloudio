@@ -50,6 +50,41 @@ security_counts() {
   '
 }
 
+parameter_shape_summary() {
+  jq -r '
+    def pointer_token:
+      gsub("~1"; "/") | gsub("~0"; "~");
+    def deref($root):
+      if (type == "object") and has("$ref") then
+        (."$ref" | sub("^#/"; "") | split("/") | reduce .[] as $part ($root; .[$part | pointer_token]))
+      else
+        .
+      end;
+    . as $root
+    | [
+        .paths
+        | to_entries[]
+        | .value as $path_item
+        | $path_item
+        | to_entries[]
+        | select(.value | type == "object")
+        | .value as $operation
+        | (($path_item.parameters // []) + ($operation.parameters // []))[]?
+        | deref($root)
+      ] as $params
+    | {
+        total: ($params | length),
+        with_schema: ($params | map(select(.schema? != null)) | length),
+        with_style: ($params | map(select(.style? != null)) | length),
+        with_explode: ($params | map(select(.explode? != null)) | length),
+        array_params: ($params | map(select((.schema.type? // "") == "array")) | length),
+        enum_params: ($params | map(select((.schema.enum? // []) | length > 0)) | length)
+      }
+    | to_entries[]
+    | "\(.key)=\(.value)"
+  '
+}
+
 need curl
 need jq
 
@@ -80,6 +115,12 @@ printf 'cloudflare\n'
 security_counts < "$cloudflare_spec"
 printf 'hostinger\n'
 security_counts < "$hostinger_spec"
+
+printf '\nprovider_parameter_shapes\n'
+printf 'cloudflare\n'
+parameter_shape_summary < "$cloudflare_spec"
+printf 'hostinger\n'
+parameter_shape_summary < "$hostinger_spec"
 
 printf '\nhostinger_tags\n'
 tag_counts < "$hostinger_spec"

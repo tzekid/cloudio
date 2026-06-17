@@ -139,6 +139,16 @@ pub const Request = struct {
 pub const RouteParam = struct {
     name: []u8,
     required: bool,
+    style: ?[]u8,
+    explode: ?bool,
+    schema: ParamSchema,
+};
+
+pub const ParamSchema = struct {
+    schema_refs: [][]u8,
+    types: [][]u8,
+    formats: [][]u8,
+    enum_values: [][]u8,
 };
 
 pub const RequestBody = struct {
@@ -619,9 +629,56 @@ fn parseRouteParams(gpa: Allocator, value: std.json.Value, field_name: []const u
 
         const owned = try gpa.dupe(u8, name);
         errdefer gpa.free(owned);
-        try rows.append(gpa, .{ .name = owned, .required = required });
+        const style = if (core_json.fieldString(item, "style")) |style_text| try gpa.dupe(u8, style_text) else null;
+        errdefer if (style) |owned_style| gpa.free(owned_style);
+        const explode = core_json.fieldBool(item, "explode");
+        const schema = try parseParamSchema(gpa, item);
+        errdefer freeParamSchema(gpa, schema);
+
+        try rows.append(gpa, .{
+            .name = owned,
+            .required = required,
+            .style = style,
+            .explode = explode,
+            .schema = schema,
+        });
     }
     return try rows.toOwnedSlice(gpa);
+}
+
+fn parseParamSchema(gpa: Allocator, value: std.json.Value) !ParamSchema {
+    const field_value = core_json.field(value, "schema") orelse return try emptyParamSchema(gpa);
+    if (field_value != .object) return error.InvalidProviderRoute;
+    const schema_refs = try parseStringArray(gpa, field_value, "schema_refs");
+    errdefer freeStringArray(gpa, schema_refs);
+    const types = try parseStringArray(gpa, field_value, "types");
+    errdefer freeStringArray(gpa, types);
+    const formats = try parseStringArray(gpa, field_value, "formats");
+    errdefer freeStringArray(gpa, formats);
+    const enum_values = try parseStringArray(gpa, field_value, "enum_values");
+    errdefer freeStringArray(gpa, enum_values);
+    return .{
+        .schema_refs = schema_refs,
+        .types = types,
+        .formats = formats,
+        .enum_values = enum_values,
+    };
+}
+
+fn emptyParamSchema(gpa: Allocator) !ParamSchema {
+    const schema_refs = try gpa.alloc([]u8, 0);
+    errdefer gpa.free(schema_refs);
+    const types = try gpa.alloc([]u8, 0);
+    errdefer gpa.free(types);
+    const formats = try gpa.alloc([]u8, 0);
+    errdefer gpa.free(formats);
+    const enum_values = try gpa.alloc([]u8, 0);
+    return .{
+        .schema_refs = schema_refs,
+        .types = types,
+        .formats = formats,
+        .enum_values = enum_values,
+    };
 }
 
 fn parseRequestBody(gpa: Allocator, value: std.json.Value) !RequestBody {
@@ -713,8 +770,19 @@ fn parseStringArrayValue(gpa: Allocator, value: std.json.Value) ![][]u8 {
 }
 
 fn freeRouteParams(gpa: Allocator, params: []RouteParam) void {
-    for (params) |param| gpa.free(param.name);
+    for (params) |param| {
+        gpa.free(param.name);
+        if (param.style) |style| gpa.free(style);
+        freeParamSchema(gpa, param.schema);
+    }
     gpa.free(params);
+}
+
+fn freeParamSchema(gpa: Allocator, schema: ParamSchema) void {
+    freeStringArray(gpa, schema.schema_refs);
+    freeStringArray(gpa, schema.types);
+    freeStringArray(gpa, schema.formats);
+    freeStringArray(gpa, schema.enum_values);
 }
 
 fn freeRequestBody(gpa: Allocator, body: RequestBody) void {
@@ -749,7 +817,11 @@ fn deinitRouteList(rows: *std.ArrayList(Route), gpa: Allocator) void {
 }
 
 fn deinitRouteParamList(rows: *std.ArrayList(RouteParam), gpa: Allocator) void {
-    for (rows.items) |param| gpa.free(param.name);
+    for (rows.items) |param| {
+        gpa.free(param.name);
+        if (param.style) |style| gpa.free(style);
+        freeParamSchema(gpa, param.schema);
+    }
     rows.deinit(gpa);
 }
 
@@ -946,6 +1018,12 @@ test "loads generated header parameter metadata" {
     const optional_header_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "r2-get-event-notification-configs")) orelse return error.TestExpectedRoute;
     defer optional_header_route.deinit(allocator);
     try expectRouteParam(optional_header_route.header_params, "cf-r2-jurisdiction", false);
+    const jurisdiction = findRouteParam(optional_header_route.header_params, "cf-r2-jurisdiction") orelse return error.TestExpectedRouteParam;
+    try expectString(jurisdiction.schema.schema_refs, "#/components/schemas/r2_jurisdiction");
+    try expectString(jurisdiction.schema.types, "string");
+    try expectString(jurisdiction.schema.enum_values, "default");
+    try expectString(jurisdiction.schema.enum_values, "eu");
+    try expectString(jurisdiction.schema.enum_values, "fedramp");
     try optional_header_route.validateRequestHeaders(.{});
     try optional_header_route.validateRequestHeaders(.{ .header_params = &.{.{ .name = "CF-R2-Jurisdiction", .value = "eu" }} });
     try std.testing.expectError(error.UnknownRouteHeaderParameter, optional_header_route.validateRequestHeaders(.{ .header_params = &.{.{ .name = "x-unknown", .value = "value" }} }));
@@ -963,6 +1041,30 @@ test "loads generated header parameter metadata" {
     const hostinger_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getVirtualMachinesV1")) orelse return error.TestExpectedRoute;
     defer hostinger_route.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), hostinger_route.header_params.len);
+}
+
+test "loads generated parameter schema metadata" {
+    const allocator = std.testing.allocator;
+
+    const hostinger_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getMetricsV1")) orelse return error.TestExpectedRoute;
+    defer hostinger_route.deinit(allocator);
+    const virtual_machine_id = findRouteParam(hostinger_route.path_params, "virtualMachineId") orelse return error.TestExpectedRouteParam;
+    try expectString(virtual_machine_id.schema.types, "integer");
+    try std.testing.expectEqual(@as(usize, 0), virtual_machine_id.schema.formats.len);
+
+    const date_from = findRouteParam(hostinger_route.query_params, "date_from") orelse return error.TestExpectedRouteParam;
+    try expectString(date_from.schema.types, "string");
+    try expectString(date_from.schema.formats, "date-time");
+    try std.testing.expect(date_from.style == null);
+    try std.testing.expect(date_from.explode == null);
+
+    const node_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "hosting_listNodeJSBuildsV1")) orelse return error.TestExpectedRoute;
+    defer node_route.deinit(allocator);
+    const states = findRouteParam(node_route.query_params, "states") orelse return error.TestExpectedRouteParam;
+    try expectString(states.schema.types, "array");
+    try expectString(states.schema.types, "string");
+    try std.testing.expectEqualStrings("form", states.style orelse "");
+    try std.testing.expectEqual(true, states.explode orelse false);
 }
 
 test "loads generated security metadata" {
@@ -1295,6 +1397,13 @@ fn expectRouteParam(params: []const RouteParam, name: []const u8, required: bool
         }
     }
     return error.TestExpectedRouteParam;
+}
+
+fn findRouteParam(params: []const RouteParam, name: []const u8) ?*const RouteParam {
+    for (params) |*param| {
+        if (std.mem.eql(u8, param.name, name)) return param;
+    }
+    return null;
 }
 
 fn expectString(items: []const []u8, expected: []const u8) !void {

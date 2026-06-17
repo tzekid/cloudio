@@ -576,6 +576,9 @@ fn writeRouteDetail(writer: anytype, route: provider_routes.Route) !void {
     try writer.writeAll("      header_params: ");
     try writeRouteParamList(writer, route.header_params);
     try writer.writeByte('\n');
+    try writeRouteParamShapeDetails(writer, "path_param_shapes", route.path_params);
+    try writeRouteParamShapeDetails(writer, "query_param_shapes", route.query_params);
+    try writeRouteParamShapeDetails(writer, "header_param_shapes", route.header_params);
     try writer.print("      security: required={} alternatives=", .{route.security.required});
     try writeSecurityAlternatives(writer, route.security.alternatives);
     try writer.writeByte('\n');
@@ -615,6 +618,34 @@ fn writeSecurityAlternatives(writer: anytype, alternatives: []const provider_rou
             if (scheme_index != 0) try writer.writeByte('+');
             try writer.writeAll(scheme);
         }
+    }
+}
+
+fn writeRouteParamShapeDetails(writer: anytype, label: []const u8, params: []const provider_routes.RouteParam) !void {
+    if (params.len == 0) return;
+    try writer.print("      {s}:\n", .{label});
+    for (params) |param| {
+        try writer.print("        {s} style=", .{param.name});
+        if (param.style) |style| {
+            try writer.writeAll(style);
+        } else {
+            try writer.writeAll("default");
+        }
+        try writer.writeAll(" explode=");
+        if (param.explode) |explode| {
+            try writer.writeAll(if (explode) "true" else "false");
+        } else {
+            try writer.writeAll("default");
+        }
+        try writer.writeAll(" schema_types=");
+        try writeStringList(writer, param.schema.types);
+        try writer.writeAll(" schema_formats=");
+        try writeStringList(writer, param.schema.formats);
+        try writer.writeAll(" enum_values=");
+        try writeStringList(writer, param.schema.enum_values);
+        try writer.writeAll(" schema_refs=");
+        try writeStringList(writer, param.schema.schema_refs);
+        try writer.writeByte('\n');
     }
 }
 

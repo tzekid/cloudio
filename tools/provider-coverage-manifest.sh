@@ -81,17 +81,6 @@ generate_manifest() {
         .
       end;
 
-    def operation_params($root; $path_item; $operation; $location):
-      (($path_item.parameters // []) + ($operation.parameters // []))
-      | map(deref($root))
-      | map(select((.in // null) == $location and (.name // null | type == "string")))
-      | unique_by(.name)
-      | sort_by(.name)
-      | map({
-          name: .name,
-          required: (.required // false)
-        });
-
     def schema_refs:
       if type != "object" then
         []
@@ -108,6 +97,83 @@ generate_manifest() {
           ([.properties[]? | schema_refs] | add // [])
         )
       end;
+
+    def schema_types($root):
+      if type != "object" then
+        []
+      elif has("$ref") then
+        (deref($root) | schema_types($root))
+      else
+        (
+          (if (.type? | type) == "string" then [.type] elif (.type? | type) == "array" then .type else [] end) +
+          ([.allOf[]? | schema_types($root)] | add // []) +
+          ([.anyOf[]? | schema_types($root)] | add // []) +
+          ([.oneOf[]? | schema_types($root)] | add // []) +
+          ((.not? | schema_types($root)) // []) +
+          ((.items? | schema_types($root)) // []) +
+          ((.additionalProperties? | schema_types($root)) // []) +
+          ([.properties[]? | schema_types($root)] | add // [])
+        )
+      end;
+
+    def schema_formats($root):
+      if type != "object" then
+        []
+      elif has("$ref") then
+        (deref($root) | schema_formats($root))
+      else
+        (
+          (if (.format? | type) == "string" then [.format] else [] end) +
+          ([.allOf[]? | schema_formats($root)] | add // []) +
+          ([.anyOf[]? | schema_formats($root)] | add // []) +
+          ([.oneOf[]? | schema_formats($root)] | add // []) +
+          ((.not? | schema_formats($root)) // []) +
+          ((.items? | schema_formats($root)) // []) +
+          ((.additionalProperties? | schema_formats($root)) // []) +
+          ([.properties[]? | schema_formats($root)] | add // [])
+        )
+      end;
+
+    def schema_enum_values($root):
+      if type != "object" then
+        []
+      elif has("$ref") then
+        (deref($root) | schema_enum_values($root))
+      else
+        (
+          ([.enum[]? | tostring]) +
+          ([.allOf[]? | schema_enum_values($root)] | add // []) +
+          ([.anyOf[]? | schema_enum_values($root)] | add // []) +
+          ([.oneOf[]? | schema_enum_values($root)] | add // []) +
+          ((.not? | schema_enum_values($root)) // []) +
+          ((.items? | schema_enum_values($root)) // []) +
+          ((.additionalProperties? | schema_enum_values($root)) // []) +
+          ([.properties[]? | schema_enum_values($root)] | add // [])
+        )
+      end;
+
+    def parameter_schema($root; $param):
+      ($param.schema // null) as $schema
+      | {
+          schema_refs: ([$schema | schema_refs[]] | unique | sort),
+          types: ([$schema | schema_types($root)[]] | unique | sort),
+          formats: ([$schema | schema_formats($root)[]] | unique | sort),
+          enum_values: ([$schema | schema_enum_values($root)[]] | unique | sort)
+        };
+
+    def operation_params($root; $path_item; $operation; $location):
+      (($path_item.parameters // []) + ($operation.parameters // []))
+      | map(deref($root))
+      | map(select((.in // null) == $location and (.name // null | type == "string")))
+      | unique_by(.name)
+      | sort_by(.name)
+      | map({
+          name: .name,
+          required: (.required // false),
+          style: (.style // null),
+          explode: (.explode // null),
+          schema: parameter_schema($root; .)
+        });
 
     def operation_body($root; $operation):
       ($operation.requestBody // null) as $body_raw
@@ -223,6 +289,17 @@ generate_manifest() {
 validate_manifest() {
   file="$1"
   jq -e -s '
+    def valid_parameter_schema($schema):
+      ($schema | type == "object") and
+      ($schema.schema_refs | type == "array") and
+      (all($schema.schema_refs[]; type == "string")) and
+      ($schema.types | type == "array") and
+      (all($schema.types[]; type == "string")) and
+      ($schema.formats | type == "array") and
+      (all($schema.formats[]; type == "string")) and
+      ($schema.enum_values | type == "array") and
+      (all($schema.enum_values[]; type == "string"));
+
     all(.[]; (. as $row | (
       ($row.provider | type == "string") and
       ($row.tag | type == "string") and
@@ -232,17 +309,26 @@ validate_manifest() {
       ($row.path_params | type == "array") and
       (all($row.path_params[]; (
         (.name | type == "string") and
-        (.required | type == "boolean")
+        (.required | type == "boolean") and
+        ((.style == null) or (.style | type == "string")) and
+        ((.explode == null) or (.explode | type == "boolean")) and
+        valid_parameter_schema(.schema)
       ))) and
       ($row.query_params | type == "array") and
       (all($row.query_params[]; (
         (.name | type == "string") and
-        (.required | type == "boolean")
+        (.required | type == "boolean") and
+        ((.style == null) or (.style | type == "string")) and
+        ((.explode == null) or (.explode | type == "boolean")) and
+        valid_parameter_schema(.schema)
       ))) and
       ($row.header_params | type == "array") and
       (all($row.header_params[]; (
         (.name | type == "string") and
-        (.required | type == "boolean")
+        (.required | type == "boolean") and
+        ((.style == null) or (.style | type == "string")) and
+        ((.explode == null) or (.explode | type == "boolean")) and
+        valid_parameter_schema(.schema)
       ))) and
       ($row.request_body | type == "object") and
       ($row.request_body.required | type == "boolean") and
@@ -304,7 +390,7 @@ generate_all() {
     --argjson cloudflare_operations "$cloudflare_count" \
     --argjson hostinger_operations "$hostinger_count" \
     '{
-      schema_version: 5,
+      schema_version: 6,
       sources: {
         cloudflare: $cloudflare_url,
         hostinger: $hostinger_url
