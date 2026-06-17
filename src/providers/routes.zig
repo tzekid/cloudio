@@ -104,6 +104,11 @@ pub const QueryParam = struct {
     value: []const u8,
 };
 
+pub const Request = struct {
+    path_params: []const PathParam = &.{},
+    query_params: []const QueryParam = &.{},
+};
+
 pub const RouteParam = struct {
     name: []u8,
     required: bool,
@@ -227,9 +232,13 @@ pub const Route = struct {
     }
 
     pub fn renderPathWithQuery(self: Route, gpa: Allocator, path_params: []const PathParam, query_params: []const QueryParam) ![]u8 {
-        const path = try self.renderPath(gpa, path_params);
+        return try self.renderRequestPath(gpa, .{ .path_params = path_params, .query_params = query_params });
+    }
+
+    pub fn renderRequestPath(self: Route, gpa: Allocator, request: Request) ![]u8 {
+        const path = try self.renderPath(gpa, request.path_params);
         defer gpa.free(path);
-        return try appendRouteQuery(gpa, path, self.query_params, query_params);
+        return try appendRouteQuery(gpa, path, self.query_params, request.query_params);
     }
 
     pub fn renderUrl(self: Route, gpa: Allocator, base_url_override: ?[]const u8, params: []const PathParam) ![]u8 {
@@ -237,7 +246,11 @@ pub const Route = struct {
     }
 
     pub fn renderUrlWithQuery(self: Route, gpa: Allocator, base_url_override: ?[]const u8, path_params: []const PathParam, query_params: []const QueryParam) ![]u8 {
-        const path = try self.renderPathWithQuery(gpa, path_params, query_params);
+        return try self.renderRequestUrl(gpa, base_url_override, .{ .path_params = path_params, .query_params = query_params });
+    }
+
+    pub fn renderRequestUrl(self: Route, gpa: Allocator, base_url_override: ?[]const u8, request: Request) ![]u8 {
+        const path = try self.renderRequestPath(gpa, request);
         defer gpa.free(path);
         const base_url = base_url_override orelse self.provider.baseUrl();
         return try std.fmt.allocPrint(gpa, "{s}{s}", .{ base_url, path });
@@ -863,6 +876,29 @@ test "renders validated query parameters for route paths and urls" {
             .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
         },
     );
+    defer allocator.free(url);
+    try std.testing.expectEqualStrings("https://example.test/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", url);
+}
+
+test "renders route request objects for paths and urls" {
+    const allocator = std.testing.allocator;
+
+    const route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getMetricsV1")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const request = Request{
+        .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+        .query_params = &.{
+            .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
+            .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
+        },
+    };
+
+    const path = try route.renderRequestPath(allocator, request);
+    defer allocator.free(path);
+    try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", path);
+
+    const url = try route.renderRequestUrl(allocator, "https://example.test", request);
     defer allocator.free(url);
     try std.testing.expectEqualStrings("https://example.test/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", url);
 }
