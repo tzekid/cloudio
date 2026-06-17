@@ -323,6 +323,35 @@ pub const GapReport = struct {
             try writer.print("omitted={d}\n", .{omitted});
         }
     }
+
+    pub fn writeJson(self: GapReport, writer: anytype, options: GapOptions) !void {
+        try writer.writeByte('{');
+        try writeJsonField(writer, "kind", "coverage_gaps", true);
+        try writeJsonField(writer, "filter", options.provider.name(), true);
+        try writeJsonCountField(writer, "limit", options.limit, true);
+        try writeJsonField(writer, "rank", "planned_read + blocked_read + unsafe_dry_run", true);
+        try writer.writeAll("\"items\":[");
+
+        var visible: usize = 0;
+        var omitted: usize = 0;
+        var first = true;
+        for (self.items) |row| {
+            if (row.priority() == 0) continue;
+            if (options.limit != 0 and visible >= options.limit) {
+                omitted += 1;
+                continue;
+            }
+            if (!first) try writer.writeByte(',');
+            first = false;
+            visible += 1;
+            try writeGapJson(row, writer);
+        }
+
+        try writer.writeAll("],");
+        try writeJsonCountField(writer, "omitted", omitted, false);
+        try writer.writeByte('}');
+        try writer.writeByte('\n');
+    }
 };
 
 pub const LevelProviderEvidence = struct {
@@ -429,6 +458,42 @@ pub const LevelTagReport = struct {
             if (hidden_closed != 0) try writer.print("closed_or_evidence_only_rows_hidden={d}\n", .{hidden_closed});
         }
     }
+
+    pub fn writeJson(self: LevelTagReport, writer: anytype, options: LevelTagOptions) !void {
+        try writer.writeByte('{');
+        try writeJsonField(writer, "kind", "coverage_level_tags", true);
+        try writeJsonField(writer, "filter", options.provider.name(), true);
+        try writeJsonCountField(writer, "limit", options.limit, true);
+        try writeJsonField(writer, "evidence", "generated manifest + Cloudio support overlay, not final completion proof", true);
+        try writeJsonField(writer, "rank", "pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs", true);
+        try writer.writeAll("\"items\":[");
+
+        var visible: usize = 0;
+        var omitted: usize = 0;
+        var hidden_closed: usize = 0;
+        var first = true;
+        for (self.items) |row| {
+            const priority = row.priority();
+            if (options.limit != 0 and priority == 0) {
+                hidden_closed += 1;
+                continue;
+            }
+            if (options.limit != 0 and visible >= options.limit) {
+                omitted += 1;
+                continue;
+            }
+            if (!first) try writer.writeByte(',');
+            first = false;
+            visible += 1;
+            try writeLevelTagJson(row, writer);
+        }
+
+        try writer.writeAll("],");
+        try writeJsonCountField(writer, "omitted", omitted, true);
+        try writeJsonCountField(writer, "closed_or_evidence_only_rows_hidden", hidden_closed, false);
+        try writer.writeByte('}');
+        try writer.writeByte('\n');
+    }
 };
 
 pub const LevelReport = struct {
@@ -447,6 +512,25 @@ pub const LevelReport = struct {
         try writer.writeAll("evidence: generated manifest + Cloudio support overlay, not final completion proof\n");
         if (filter.includes("cloudflare")) try writeLevelProviderEvidence(self.cloudflare, writer);
         if (filter.includes("hostinger")) try writeLevelProviderEvidence(self.hostinger, writer);
+    }
+
+    pub fn writeJson(self: LevelReport, filter: ProviderFilter, writer: anytype) !void {
+        try writer.writeByte('{');
+        try writeJsonField(writer, "kind", "coverage_levels", true);
+        try writeJsonField(writer, "filter", filter.name(), true);
+        try writeJsonField(writer, "evidence", "generated manifest + Cloudio support overlay, not final completion proof", true);
+        try writer.writeAll("\"providers\":[");
+        var first = true;
+        if (filter.includes("cloudflare")) {
+            try writeMaybeJsonComma(writer, &first);
+            try writeLevelProviderEvidenceJson(self.cloudflare, writer);
+        }
+        if (filter.includes("hostinger")) {
+            try writeMaybeJsonComma(writer, &first);
+            try writeLevelProviderEvidenceJson(self.hostinger, writer);
+        }
+        try writer.writeAll("]}");
+        try writer.writeByte('\n');
     }
 };
 
@@ -746,6 +830,12 @@ pub fn writeGapsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: Gap
     try gaps.writeText(writer, options);
 }
 
+pub fn writeGapsJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: GapOptions, writer: anytype) !void {
+    var gaps = try loadGaps(io, gpa, paths, options.provider);
+    defer gaps.deinit(gpa);
+    try gaps.writeJson(writer, options);
+}
+
 pub fn loadLevels(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !LevelReport {
     var report = LevelReport.init();
     if (filter.includes("cloudflare")) {
@@ -771,6 +861,11 @@ pub fn loadLevelsFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger
 pub fn writeLevelsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter, writer: anytype) !void {
     const report = try loadLevels(io, gpa, paths, filter);
     try report.writeText(filter, writer);
+}
+
+pub fn writeLevelsJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter, writer: anytype) !void {
+    const report = try loadLevels(io, gpa, paths, filter);
+    try report.writeJson(filter, writer);
 }
 
 pub fn loadLevelTags(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !LevelTagReport {
@@ -805,6 +900,12 @@ pub fn writeLevelTagsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options
     var report = try loadLevelTags(io, gpa, paths, options.provider);
     defer report.deinit(gpa);
     try report.writeText(writer, options);
+}
+
+pub fn writeLevelTagsJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: LevelTagOptions, writer: anytype) !void {
+    var report = try loadLevelTags(io, gpa, paths, options.provider);
+    defer report.deinit(gpa);
+    try report.writeJson(writer, options);
 }
 
 pub fn auditL1(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !L1Audit {
@@ -1768,6 +1869,72 @@ fn writeLevelTagRow(row: LevelTagEvidence, writer: anytype) !void {
     });
 }
 
+fn writeGapJson(row: GapSummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", row.provider, true);
+    try writeJsonField(writer, "tag", row.tag, true);
+    try writeJsonCountField(writer, "priority", row.priority(), true);
+    try writeJsonCountField(writer, "total", row.total, true);
+    try writeJsonCountField(writer, "non_deprecated", row.non_deprecated, true);
+    try writeJsonCountField(writer, "routable", row.routable, true);
+    try writeJsonCountField(writer, "read_routes", row.read_routes, true);
+    try writeJsonCountField(writer, "dry_run_routes", row.dry_run_routes, true);
+    try writeJsonCountField(writer, "planned_read", row.planned_read, true);
+    try writeJsonCountField(writer, "blocked_read", row.blocked_read, true);
+    try writeJsonCountField(writer, "partial_read", row.partial_read, true);
+    try writeJsonCountField(writer, "partial_dry_run", row.partial_dry_run, true);
+    try writeJsonCountField(writer, "unsafe_dry_run", row.unsafe_dry_run, true);
+    try writeJsonCountField(writer, "not_applicable", row.not_applicable, true);
+    try writeJsonCountField(writer, "deprecated", row.deprecated, false);
+    try writer.writeByte('}');
+}
+
+fn writeLevelTagJson(row: LevelTagEvidence, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", row.provider, true);
+    try writeJsonField(writer, "tag", row.tag, true);
+    try writeJsonCountField(writer, "priority", row.priority(), true);
+    try writer.writeAll("\"evidence\":");
+    try writeLevelProviderEvidenceJson(row.evidence, writer);
+    try writer.writeByte('}');
+}
+
+fn writeLevelProviderEvidenceJson(evidence: LevelProviderEvidence, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "name", evidence.name, true);
+    try writeJsonCountField(writer, "total", evidence.total, true);
+    try writeJsonCountField(writer, "deprecated", evidence.deprecated, true);
+    try writeJsonCountField(writer, "not_applicable", evidence.not_applicable, true);
+    try writeJsonCountField(writer, "non_deprecated", evidence.non_deprecated, true);
+    try writeJsonCountField(writer, "routable", evidence.routable, true);
+    try writeJsonCountField(writer, "read_routes", evidence.read_routes, true);
+    try writeJsonCountField(writer, "dry_run_routes", evidence.dry_run_routes, true);
+    try writeJsonCountField(writer, "l2_read_evidence", evidence.l2_read_evidence, true);
+    try writeJsonCountField(writer, "l2_partial_reads", evidence.l2_partial_reads, true);
+    try writeJsonCountField(writer, "l2_diagnostic_reads", evidence.l2_diagnostic_reads, true);
+    try writeJsonCountField(writer, "pending_reads", evidence.pending_reads, true);
+    try writeJsonCountField(writer, "read_missing_tests", evidence.read_missing_tests, true);
+    try writeJsonCountField(writer, "dry_run_evidence", evidence.dry_run_evidence, true);
+    try writeJsonCountField(writer, "pending_mutation_dry_runs", evidence.pending_mutation_dry_runs, true);
+    try writeJsonCountField(writer, "l3_generic_inventory_candidates", evidence.l3_generic_inventory_candidates, true);
+    try writeJsonCountField(writer, "l3_typed_table_evidence", evidence.l3_typed_table_evidence, false);
+    try writer.writeByte('}');
+}
+
+fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
+    if (first.*) {
+        first.* = false;
+    } else {
+        try writer.writeByte(',');
+    }
+}
+
+fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.print(":{d}", .{value});
+    if (trailing_comma) try writer.writeByte(',');
+}
+
 fn writeGapField(writer: anytype, name: []const u8, count: usize) !void {
     if (count == 0) return;
     try writer.print(" {s}={d}", .{ name, count });
@@ -2124,6 +2291,18 @@ test "ranks provider coverage gaps by broad unresolved tag groups" {
     try std.testing.expect(std.mem.indexOf(u8, text, "planned_read=2") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "unsafe_dry_run=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try gaps.writeJson(&json_out.writer, .{ .provider = .all, .limit = 1 });
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_gaps\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"filter\":\"all\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"items\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"AI Gateway\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"omitted\":1") != null);
 }
 
 test "summarizes manifest-backed provider coverage levels" {
@@ -2158,6 +2337,18 @@ test "summarizes manifest-backed provider coverage levels" {
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage levels\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "L2 read_evidence=1 partial_reads=1 diagnostic_blocked_reads=0 pending_reads=1 read_missing_tests=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "L3 evidence generic_inventory_candidates=1 typed_table_evidence=1") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try levels.writeJson(.all, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_levels\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"providers\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"name\":\"cloudflare\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"pending_reads\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"name\":\"hostinger\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"l2_diagnostic_reads\":1") != null);
 }
 
 test "ranks manifest-backed provider coverage levels by tag" {
@@ -2210,6 +2401,26 @@ test "ranks manifest-backed provider coverage levels by tag" {
     const full_text = try full_out.toOwnedSlice();
     defer allocator.free(full_text);
     try std.testing.expect(std.mem.indexOf(u8, full_text, "cloudflare | Accounts: priority=0") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try report.writeJson(&json_out.writer, .{ .provider = .all, .limit = 1 });
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_level_tags\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"items\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Workers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"pending_reads\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"omitted\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"closed_or_evidence_only_rows_hidden\":1") != null);
+
+    var full_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer full_json_out.deinit();
+    try report.writeJson(&full_json_out.writer, .{ .provider = .all, .limit = 0 });
+    const full_json = try full_json_out.toOwnedSlice();
+    defer allocator.free(full_json);
+    try std.testing.expect(std.mem.indexOf(u8, full_json, "\"tag\":\"Accounts\"") != null);
 }
 
 test "audits L1 routability invariants across provider manifests" {
