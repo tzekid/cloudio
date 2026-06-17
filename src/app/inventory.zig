@@ -1,4 +1,5 @@
 const std = @import("std");
+const core_json = @import("core_json");
 const db_store = @import("db_store");
 
 const Allocator = std.mem.Allocator;
@@ -44,6 +45,18 @@ pub fn writeText(ctx: Context, options: ListOptions, writer: anytype) !void {
     for (rows.items) |item| try writeItem(item, writer);
 }
 
+pub fn writeJson(ctx: Context, options: ListOptions, writer: anytype) !void {
+    var rows = try list(ctx, options);
+    defer rows.deinit(ctx.gpa);
+    try writer.writeAll("{\"items\":[");
+    for (rows.items, 0..) |item, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writeItemJson(item, writer);
+    }
+    try writer.writeAll("]}");
+    try writer.writeByte('\n');
+}
+
 pub fn writeSummaryText(ctx: Context, options: ListOptions, writer: anytype) !void {
     var rows = try summary(ctx, options);
     defer rows.deinit(ctx.gpa);
@@ -53,6 +66,18 @@ pub fn writeSummaryText(ctx: Context, options: ListOptions, writer: anytype) !vo
     }
     try writer.writeAll("inventory summary\n");
     for (rows.items) |row| try writeFacet(row, writer);
+}
+
+pub fn writeSummaryJson(ctx: Context, options: ListOptions, writer: anytype) !void {
+    var rows = try summary(ctx, options);
+    defer rows.deinit(ctx.gpa);
+    try writer.writeAll("{\"facets\":[");
+    for (rows.items, 0..) |row, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writeFacetJson(row, writer);
+    }
+    try writer.writeAll("]}");
+    try writer.writeByte('\n');
 }
 
 fn writeItem(item: db_store.InventoryItem, writer: anytype) !void {
@@ -74,6 +99,29 @@ fn writeItem(item: db_store.InventoryItem, writer: anytype) !void {
     try writer.writeByte('\n');
 }
 
+fn writeItemJson(item: db_store.InventoryItem, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonStringField(writer, "provider", item.provider, true);
+    try writeJsonStringField(writer, "kind", item.kind, true);
+    try writeJsonStringField(writer, "resource_id", item.resource_id, true);
+    try writeJsonStringField(writer, "display_name", item.display_name, true);
+    try writeJsonStringField(writer, "status", item.status, true);
+    try writeJsonStringField(writer, "category", item.category, true);
+    try writeJsonStringField(writer, "domain", item.domain, true);
+    try writeJsonStringField(writer, "scope", item.scope, true);
+    try writeJsonStringField(writer, "scope_id", item.scope_id, true);
+    try writeJsonStringField(writer, "username", item.username, true);
+    try writeJsonStringField(writer, "account_id", item.account_id, true);
+    try writeJsonStringField(writer, "zone_id", item.zone_id, true);
+    try writeJsonStringField(writer, "related_id", item.related_id, true);
+    try writeJsonStringField(writer, "flag", item.flag, true);
+    try writeJsonStringField(writer, "created_at_source", item.created_at_source, true);
+    try writeJsonStringField(writer, "updated_at_source", item.updated_at_source, true);
+    try writeJsonStringField(writer, "expires_at_source", item.expires_at_source, true);
+    try writeJsonStringField(writer, "updated_at", item.updated_at, false);
+    try writer.writeByte('}');
+}
+
 fn writeFacet(row: db_store.InventoryFacet, writer: anytype) !void {
     try writer.print("{s}\t{s}", .{ row.provider, row.kind });
     try writer.print("\tcount={d}", .{row.count});
@@ -82,6 +130,29 @@ fn writeFacet(row: db_store.InventoryFacet, writer: anytype) !void {
     try writeField(writer, "category", row.category);
     try writeField(writer, "latest", row.latest_updated);
     try writer.writeByte('\n');
+}
+
+fn writeFacetJson(row: db_store.InventoryFacet, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonStringField(writer, "provider", row.provider, true);
+    try writeJsonStringField(writer, "kind", row.kind, true);
+    try writeJsonStringField(writer, "status", row.status, true);
+    try writeJsonStringField(writer, "category", row.category, true);
+    try writer.writeAll("\"count\":");
+    try writer.print("{d}", .{row.count});
+    try writer.writeByte(',');
+    try writer.writeAll("\"domains\":");
+    try writer.print("{d}", .{row.domains});
+    try writer.writeByte(',');
+    try writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
+    try writer.writeByte('}');
+}
+
+fn writeJsonStringField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    try core_json.writeString(writer, value);
+    if (trailing_comma) try writer.writeByte(',');
 }
 
 fn writeScope(writer: anytype, item: db_store.InventoryItem) !void {
@@ -120,6 +191,18 @@ test "inventory app renders provider-neutral typed rows" {
     try std.testing.expect(std.mem.indexOf(u8, text, "scope=zone/zone-1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger\thostinger-websites/plosca.ru") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "username=u123") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeJson(.{ .gpa = allocator, .db = &db }, .{ .provider = "hostinger" }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"items\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"provider\":\"hostinger\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"hostinger-websites\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"username\":\"u123\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"provider\":\"cloudflare\"") == null);
 }
 
 test "inventory app renders provider-neutral typed row facets" {
@@ -145,6 +228,18 @@ test "inventory app renders provider-neutral typed row facets" {
     try std.testing.expect(std.mem.indexOf(u8, text, "inventory summary\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger\thostinger-websites\tcount=2\tdomains=2\tstatus=enabled\tcategory=main") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare") == null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeSummaryJson(.{ .gpa = allocator, .db = &db }, .{ .provider = "hostinger" }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"facets\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"provider\":\"hostinger\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"hostinger-websites\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"count\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"domains\":2") != null);
 }
 
 test "inventory app reports empty filtered results" {

@@ -10,6 +10,16 @@ pub const Context = struct {
     db: *Db,
 };
 
+pub const RenderFormat = enum {
+    text,
+    json,
+};
+
+pub const Parsed = struct {
+    options: app_inventory.ListOptions = .{},
+    format: RenderFormat = .text,
+};
+
 pub fn run(ctx: Context, args: []const []const u8) !void {
     const command = parseCommand(args) catch |err| {
         std.debug.print("invalid inventory command: {s}\n", .{@errorName(err)});
@@ -22,8 +32,14 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .db = ctx.db,
     };
     switch (command) {
-        .list => |options| try app_inventory.writeText(app_ctx, options, &out.writer),
-        .summary => |options| try app_inventory.writeSummaryText(app_ctx, options, &out.writer),
+        .list => |parsed| switch (parsed.format) {
+            .text => try app_inventory.writeText(app_ctx, parsed.options, &out.writer),
+            .json => try app_inventory.writeJson(app_ctx, parsed.options, &out.writer),
+        },
+        .summary => |parsed| switch (parsed.format) {
+            .text => try app_inventory.writeSummaryText(app_ctx, parsed.options, &out.writer),
+            .json => try app_inventory.writeSummaryJson(app_ctx, parsed.options, &out.writer),
+        },
     }
     const text = try out.toOwnedSlice();
     defer ctx.gpa.free(text);
@@ -31,47 +47,59 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
 }
 
 pub const Command = union(enum) {
-    list: app_inventory.ListOptions,
-    summary: app_inventory.ListOptions,
+    list: Parsed,
+    summary: Parsed,
 };
 
 pub fn parseCommand(args: []const []const u8) !Command {
     if (args.len != 0 and (std.mem.eql(u8, args[0], "summary") or std.mem.eql(u8, args[0], "facets"))) {
-        return .{ .summary = try parseOptions(args[1..]) };
+        return .{ .summary = try parseParsed(args[1..]) };
     }
-    return .{ .list = try parseOptions(args) };
+    return .{ .list = try parseParsed(args) };
 }
 
 pub fn parseOptions(args: []const []const u8) !app_inventory.ListOptions {
-    var options = app_inventory.ListOptions{};
+    return (try parseParsed(args)).options;
+}
+
+pub fn parseParsed(args: []const []const u8) !Parsed {
+    var parsed = Parsed{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--provider")) {
             i += 1;
             if (i >= args.len) return error.MissingProvider;
-            options.provider = try parseProvider(args[i]);
+            parsed.options.provider = try parseProvider(args[i]);
         } else if (std.mem.eql(u8, arg, "--domain")) {
             i += 1;
             if (i >= args.len) return error.MissingDomain;
-            options.domain = args[i];
+            parsed.options.domain = args[i];
         } else if (std.mem.eql(u8, arg, "--query")) {
             i += 1;
             if (i >= args.len) return error.MissingQuery;
-            options.query = args[i];
+            parsed.options.query = args[i];
         } else if (std.mem.eql(u8, arg, "--limit")) {
             i += 1;
             if (i >= args.len) return error.MissingLimit;
-            options.limit = try parseLimit(args[i]);
-        } else if (isProvider(arg) and options.provider == null) {
-            options.provider = arg;
-        } else if (options.query == null) {
-            options.query = arg;
+            parsed.options.limit = try parseLimit(args[i]);
+        } else if (std.mem.eql(u8, arg, "--json")) {
+            parsed.format = .json;
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            i += 1;
+            if (i >= args.len) return error.MissingFormat;
+            parsed.format = try parseFormat(args[i]);
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            parsed.format = try parseFormat(arg["--format=".len..]);
+        } else if (isProvider(arg) and parsed.options.provider == null) {
+            parsed.options.provider = arg;
+        } else if (parsed.options.query == null) {
+            parsed.options.query = arg;
         } else {
             return error.UnexpectedArgument;
         }
     }
-    return options;
+    return parsed;
 }
 
 fn parseProvider(value: []const u8) ![]const u8 {
@@ -89,6 +117,12 @@ fn parseLimit(value: []const u8) !i64 {
     return parsed;
 }
 
+fn parseFormat(value: []const u8) !RenderFormat {
+    if (std.mem.eql(u8, value, "text")) return .text;
+    if (std.mem.eql(u8, value, "json")) return .json;
+    return error.InvalidFormat;
+}
+
 test "inventory parser maps positional provider and filters" {
     const args = [_][]const u8{ "cloudflare", "--domain", "plosca.ru", "--query", "dns", "--limit", "25" };
     const options = try parseOptions(args[0..]);
@@ -101,21 +135,35 @@ test "inventory parser maps positional provider and filters" {
 test "inventory parser routes summary command with filters" {
     const args = [_][]const u8{ "summary", "hostinger", "--domain", "plosca.ru", "--limit", "10" };
     switch (try parseCommand(args[0..])) {
-        .summary => |options| {
-            try std.testing.expectEqualStrings("hostinger", options.provider.?);
-            try std.testing.expectEqualStrings("plosca.ru", options.domain.?);
-            try std.testing.expectEqual(@as(i64, 10), options.limit);
+        .summary => |parsed| {
+            try std.testing.expectEqualStrings("hostinger", parsed.options.provider.?);
+            try std.testing.expectEqualStrings("plosca.ru", parsed.options.domain.?);
+            try std.testing.expectEqual(@as(i64, 10), parsed.options.limit);
+            try std.testing.expectEqual(RenderFormat.text, parsed.format);
         },
         .list => return error.ExpectedInventorySummary,
     }
 
-    const facets_args = [_][]const u8{ "facets", "--provider", "cloudflare", "dns" };
+    const facets_args = [_][]const u8{ "facets", "--provider", "cloudflare", "dns", "--format=json" };
     switch (try parseCommand(facets_args[0..])) {
-        .summary => |options| {
-            try std.testing.expectEqualStrings("cloudflare", options.provider.?);
-            try std.testing.expectEqualStrings("dns", options.query.?);
+        .summary => |parsed| {
+            try std.testing.expectEqualStrings("cloudflare", parsed.options.provider.?);
+            try std.testing.expectEqualStrings("dns", parsed.options.query.?);
+            try std.testing.expectEqual(RenderFormat.json, parsed.format);
         },
         .list => return error.ExpectedInventorySummary,
+    }
+}
+
+test "inventory parser accepts json output for list commands" {
+    const args = [_][]const u8{ "hostinger", "--json", "--limit", "5" };
+    switch (try parseCommand(args[0..])) {
+        .list => |parsed| {
+            try std.testing.expectEqualStrings("hostinger", parsed.options.provider.?);
+            try std.testing.expectEqual(RenderFormat.json, parsed.format);
+            try std.testing.expectEqual(@as(i64, 5), parsed.options.limit);
+        },
+        .summary => return error.ExpectedInventoryList,
     }
 }
 
