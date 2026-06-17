@@ -352,6 +352,92 @@ pub const Summary = struct {
     }
 };
 
+pub const L1AuditFailures = struct {
+    bad_path_params: usize = 0,
+    missing_responses: usize = 0,
+    missing_security: usize = 0,
+    deprecated_support_mismatch: usize = 0,
+    not_applicable_contract_mismatch: usize = 0,
+    unexpected_write_mode: usize = 0,
+    unsupported_mode: usize = 0,
+    read_not_get: usize = 0,
+    read_body_required: usize = 0,
+    read_auth_unsupported: usize = 0,
+    dry_run_method_invalid: usize = 0,
+    dry_run_not_supported: usize = 0,
+    method_mode_mismatch: usize = 0,
+    unroutable_non_deprecated: usize = 0,
+
+    pub fn total(self: L1AuditFailures) usize {
+        return self.bad_path_params +
+            self.missing_responses +
+            self.missing_security +
+            self.deprecated_support_mismatch +
+            self.not_applicable_contract_mismatch +
+            self.unexpected_write_mode +
+            self.unsupported_mode +
+            self.read_not_get +
+            self.read_body_required +
+            self.read_auth_unsupported +
+            self.dry_run_method_invalid +
+            self.dry_run_not_supported +
+            self.method_mode_mismatch +
+            self.unroutable_non_deprecated;
+    }
+};
+
+pub const L1ProviderAudit = struct {
+    name: []const u8,
+    total: usize = 0,
+    non_deprecated: usize = 0,
+    deprecated: usize = 0,
+    not_applicable: usize = 0,
+    routable: usize = 0,
+    read_routes: usize = 0,
+    dry_run_routes: usize = 0,
+    live_read_supported: usize = 0,
+    dry_run_supported: usize = 0,
+    required_query_routes: usize = 0,
+    required_header_routes: usize = 0,
+    missing_operation_id: usize = 0,
+    deprecated_routable: usize = 0,
+    failures: L1AuditFailures = .{},
+
+    pub fn init(name: []const u8) L1ProviderAudit {
+        return .{ .name = name };
+    }
+
+    pub fn passed(self: L1ProviderAudit) bool {
+        return self.failures.total() == 0;
+    }
+};
+
+pub const L1Audit = struct {
+    cloudflare: L1ProviderAudit,
+    hostinger: L1ProviderAudit,
+
+    pub fn init() L1Audit {
+        return .{
+            .cloudflare = L1ProviderAudit.init("cloudflare"),
+            .hostinger = L1ProviderAudit.init("hostinger"),
+        };
+    }
+
+    pub fn totalFailures(self: L1Audit, filter: ProviderFilter) usize {
+        var count: usize = 0;
+        if (filter.includes("cloudflare")) count += self.cloudflare.failures.total();
+        if (filter.includes("hostinger")) count += self.hostinger.failures.total();
+        return count;
+    }
+
+    pub fn writeText(self: L1Audit, filter: ProviderFilter, writer: anytype) !void {
+        try writer.writeAll("Cloudio provider L1 routability audit\n");
+        try writer.print("status: {s}\n", .{if (self.totalFailures(filter) == 0) "pass" else "fail"});
+        if (filter.includes("cloudflare")) try writeL1ProviderAudit(self.cloudflare, writer);
+        if (filter.includes("hostinger")) try writeL1ProviderAudit(self.hostinger, writer);
+    }
+};
+
 pub fn load(io: Io, gpa: Allocator, paths: Paths) !Summary {
     const cloudflare_text = try Io.Dir.cwd().readFileAlloc(io, paths.cloudflare_manifest, gpa, .limited(max_manifest_bytes));
     defer gpa.free(cloudflare_text);
@@ -402,6 +488,33 @@ pub fn writeTagsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: Prov
     var rows = try loadTags(io, gpa, paths, filter);
     defer rows.deinit(gpa);
     try rows.writeText(writer);
+}
+
+pub fn auditL1(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !L1Audit {
+    var audit = L1Audit.init();
+    if (filter.includes("cloudflare")) {
+        const text = try Io.Dir.cwd().readFileAlloc(io, paths.cloudflare_manifest, gpa, .limited(max_manifest_bytes));
+        defer gpa.free(text);
+        try auditProviderL1(gpa, "cloudflare", text, &audit.cloudflare);
+    }
+    if (filter.includes("hostinger")) {
+        const text = try Io.Dir.cwd().readFileAlloc(io, paths.hostinger_manifest, gpa, .limited(max_manifest_bytes));
+        defer gpa.free(text);
+        try auditProviderL1(gpa, "hostinger", text, &audit.hostinger);
+    }
+    return audit;
+}
+
+pub fn auditL1FromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, filter: ProviderFilter) !L1Audit {
+    var audit = L1Audit.init();
+    if (filter.includes("cloudflare")) try auditProviderL1(gpa, "cloudflare", cloudflare_text, &audit.cloudflare);
+    if (filter.includes("hostinger")) try auditProviderL1(gpa, "hostinger", hostinger_text, &audit.hostinger);
+    return audit;
+}
+
+pub fn writeL1AuditTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter, writer: anytype) !void {
+    const audit = try auditL1(io, gpa, paths, filter);
+    try audit.writeText(filter, writer);
 }
 
 pub fn loadRoutes(io: Io, gpa: Allocator, paths: Paths, filter: RouteFilter) !CoverageRoutes {
@@ -983,6 +1096,88 @@ fn appendProviderRoutes(gpa: Allocator, provider: []const u8, text: []const u8, 
     }
 }
 
+fn auditProviderL1(gpa: Allocator, provider: []const u8, text: []const u8, audit: *L1ProviderAudit) !void {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line_raw| {
+        const line = std.mem.trim(u8, line_raw, " \t\r\n");
+        if (line.len == 0) continue;
+
+        var parsed = try std.json.parseFromSlice(std.json.Value, gpa, line, .{});
+        defer parsed.deinit();
+
+        const row_provider = core_json.fieldString(parsed.value, "provider") orelse return error.InvalidCoverageRow;
+        if (!std.mem.eql(u8, row_provider, provider)) return error.InvalidCoverageProvider;
+        var row = try CoverageRoute.init(gpa, provider, parsed.value);
+        defer row.deinit(gpa);
+        try auditRouteL1(gpa, row.route, audit);
+    }
+}
+
+fn auditRouteL1(gpa: Allocator, route: provider_routes.Route, audit: *L1ProviderAudit) !void {
+    audit.total += 1;
+    if (route.operation_id == null) audit.missing_operation_id += 1;
+    if (route.hasRequiredQueryParameters()) audit.required_query_routes += 1;
+    if (routeHasRequiredHeaderParameters(route)) audit.required_header_routes += 1;
+    if (route.responses.len == 0) audit.failures.missing_responses += 1;
+    if (route.security.required and route.security.alternatives.len == 0) audit.failures.missing_security += 1;
+    if (!try routePathMetadataValid(gpa, route)) audit.failures.bad_path_params += 1;
+
+    if (route.deprecated) {
+        audit.deprecated += 1;
+        if (route.support != .deprecated) audit.failures.deprecated_support_mismatch += 1;
+        if (route.mode != .none or route.isRoutable()) audit.deprecated_routable += 1;
+        return;
+    }
+
+    audit.non_deprecated += 1;
+    if (route.support == .not_applicable) audit.not_applicable += 1;
+    if (route.isRoutable()) audit.routable += 1;
+
+    if (route.mode == .write) audit.failures.unexpected_write_mode += 1;
+
+    switch (route.mode) {
+        .read => {
+            audit.read_routes += 1;
+            if (route.method != .GET) audit.failures.read_not_get += 1;
+            if (route.request_body.required) audit.failures.read_body_required += 1;
+            if (provider_dispatch.routeLiveCallSupported(route)) {
+                audit.live_read_supported += 1;
+            } else if (!route.request_body.required and route.method == .GET and !provider_dispatch.cloudioSupportsRouteAuth(route)) {
+                audit.failures.read_auth_unsupported += 1;
+            }
+        },
+        .dry_run => {
+            audit.dry_run_routes += 1;
+            if (route.method == .GET or route.method == .HEAD) audit.failures.dry_run_method_invalid += 1;
+            if (provider_dispatch.routeDryRunSupported(route)) {
+                audit.dry_run_supported += 1;
+            } else {
+                audit.failures.dry_run_not_supported += 1;
+            }
+        },
+        .none => {
+            if (route.support != .not_applicable) audit.failures.unsupported_mode += 1;
+        },
+        .write => {},
+    }
+
+    if (route.support == .not_applicable) {
+        if (route.mode != .none or route.isRoutable()) audit.failures.not_applicable_contract_mismatch += 1;
+    } else if (!route.isRoutable()) {
+        audit.failures.unroutable_non_deprecated += 1;
+    }
+
+    if (route.method == .GET) {
+        if (route.request_body.required) {
+            if (route.support != .not_applicable or route.mode != .none) audit.failures.method_mode_mismatch += 1;
+        } else if (route.mode != .read) {
+            audit.failures.method_mode_mismatch += 1;
+        }
+    } else if (route.mode != .dry_run) {
+        audit.failures.method_mode_mismatch += 1;
+    }
+}
+
 fn tagRow(gpa: Allocator, rows: *std.ArrayList(TagSummary), provider: []const u8, tag: []const u8) !*TagSummary {
     for (rows.items) |*row| {
         if (std.mem.eql(u8, row.provider, provider) and std.mem.eql(u8, row.tag, tag)) return row;
@@ -1035,11 +1230,91 @@ fn writeProvider(summary: ProviderSummary, writer: anytype) !void {
     try writer.print("\n  upstream deprecated flags={d}\n", .{summary.deprecated});
 }
 
+fn writeL1ProviderAudit(audit: L1ProviderAudit, writer: anytype) !void {
+    try writer.print("\n{s}: {s}\n", .{ audit.name, if (audit.passed()) "pass" else "fail" });
+    try writer.print("  total={d} non_deprecated={d} deprecated={d} not_applicable={d} routable={d}\n", .{
+        audit.total,
+        audit.non_deprecated,
+        audit.deprecated,
+        audit.not_applicable,
+        audit.routable,
+    });
+    try writer.print("  read_routes={d} live_read_supported={d} dry_run_routes={d} dry_run_supported={d}\n", .{
+        audit.read_routes,
+        audit.live_read_supported,
+        audit.dry_run_routes,
+        audit.dry_run_supported,
+    });
+    try writer.print("  required_query_routes={d} required_header_routes={d} missing_operation_id={d} deprecated_routable={d}\n", .{
+        audit.required_query_routes,
+        audit.required_header_routes,
+        audit.missing_operation_id,
+        audit.deprecated_routable,
+    });
+    try writer.print("  failures={d}", .{audit.failures.total()});
+    try writeFailureField(writer, "bad_path_params", audit.failures.bad_path_params);
+    try writeFailureField(writer, "missing_responses", audit.failures.missing_responses);
+    try writeFailureField(writer, "missing_security", audit.failures.missing_security);
+    try writeFailureField(writer, "deprecated_support_mismatch", audit.failures.deprecated_support_mismatch);
+    try writeFailureField(writer, "not_applicable_contract_mismatch", audit.failures.not_applicable_contract_mismatch);
+    try writeFailureField(writer, "unexpected_write_mode", audit.failures.unexpected_write_mode);
+    try writeFailureField(writer, "unsupported_mode", audit.failures.unsupported_mode);
+    try writeFailureField(writer, "read_not_get", audit.failures.read_not_get);
+    try writeFailureField(writer, "read_body_required", audit.failures.read_body_required);
+    try writeFailureField(writer, "read_auth_unsupported", audit.failures.read_auth_unsupported);
+    try writeFailureField(writer, "dry_run_method_invalid", audit.failures.dry_run_method_invalid);
+    try writeFailureField(writer, "dry_run_not_supported", audit.failures.dry_run_not_supported);
+    try writeFailureField(writer, "method_mode_mismatch", audit.failures.method_mode_mismatch);
+    try writeFailureField(writer, "unroutable_non_deprecated", audit.failures.unroutable_non_deprecated);
+    try writer.writeByte('\n');
+}
+
+fn writeFailureField(writer: anytype, name: []const u8, count: usize) !void {
+    if (count == 0) return;
+    try writer.print(" {s}={d}", .{ name, count });
+}
+
 fn indexOfName(names: []const []const u8, value: []const u8) ?usize {
     for (names, 0..) |name, index| {
         if (std.mem.eql(u8, name, value)) return index;
     }
     return null;
+}
+
+fn routePathMetadataValid(gpa: Allocator, route: provider_routes.Route) !bool {
+    const names = route.parameterNames(gpa) catch |err| switch (err) {
+        error.InvalidRouteTemplate => return false,
+        else => return err,
+    };
+    defer provider_routes.freeParameterNames(gpa, names);
+    for (route.path_params) |param| {
+        if (!param.required or !containsOwnedName(names, param.name)) return false;
+    }
+    for (names) |name| {
+        if (!containsRouteParam(route.path_params, name)) return false;
+    }
+    return true;
+}
+
+fn containsOwnedName(names: []const []u8, candidate: []const u8) bool {
+    for (names) |name| {
+        if (std.mem.eql(u8, name, candidate)) return true;
+    }
+    return false;
+}
+
+fn containsRouteParam(params: []const provider_routes.RouteParam, candidate: []const u8) bool {
+    for (params) |param| {
+        if (std.mem.eql(u8, param.name, candidate)) return true;
+    }
+    return false;
+}
+
+fn routeHasRequiredHeaderParameters(route: provider_routes.Route) bool {
+    for (route.header_params) |param| {
+        if (param.required) return true;
+    }
+    return false;
 }
 
 fn writeRouteDetail(writer: anytype, route: provider_routes.Route) !void {
@@ -1208,6 +1483,56 @@ test "summarizes provider coverage by tag with provider filters" {
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage by tag\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Accounts: total=2 support: partial=1 unsafe_mutation=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger") == null);
+}
+
+test "audits L1 routability invariants across provider manifests" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Tokens","method":"GET","path":"/accounts/{account_id}/tokens","operation_id":"account-tokens-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_email","api_key","api_token"]]},"support":"planned","mode":"read","tests":"generated","deprecated":false,"notes":"read"}
+        \\{"provider":"cloudflare","tag":"Tokens","method":"DELETE","path":"/accounts/{account_id}/tokens/{token_id}","operation_id":"account-tokens-delete","path_params":[{"name":"account_id","required":true},{"name":"token_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_email","api_key","api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"generated","deprecated":false,"notes":"dry-run"}
+        \\{"provider":"cloudflare","tag":"Old","method":"GET","path":"/old","operation_id":"old-route","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":false,"alternatives":[[]]},"support":"deprecated","mode":"none","tests":"generated","deprecated":true,"notes":"old"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS","method":"POST","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_purchaseNewVirtualMachineV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"generated","deprecated":false,"notes":"dry-run"}
+        \\{"provider":"hostinger","tag":"Verifications","method":"GET","path":"/api/v2/direct/verifications/active","operation_id":"v2_getDomainVerificationsDIRECT","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"not_applicable","mode":"none","tests":"generated","deprecated":false,"notes":"GET body"}
+        \\
+    ;
+
+    const audit = try auditL1FromText(allocator, cloudflare, hostinger, .all);
+    try std.testing.expectEqual(@as(usize, 0), audit.totalFailures(.all));
+    try std.testing.expectEqual(@as(usize, 3), audit.cloudflare.total);
+    try std.testing.expectEqual(@as(usize, 2), audit.cloudflare.routable);
+    try std.testing.expectEqual(@as(usize, 1), audit.cloudflare.live_read_supported);
+    try std.testing.expectEqual(@as(usize, 1), audit.cloudflare.dry_run_supported);
+    try std.testing.expectEqual(@as(usize, 1), audit.hostinger.not_applicable);
+    try std.testing.expectEqual(@as(usize, 1), audit.hostinger.dry_run_supported);
+
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+    try audit.writeText(.all, &out.writer);
+    const text = try out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider L1 routability audit\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "status: pass\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare: pass\n") != null);
+}
+
+test "L1 audit reports broad manifest contract failures" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Broken","method":"GET","path":"/accounts/{account_id}","operation_id":null,"path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[],"security":{"required":true,"alternatives":[]},"support":"planned","mode":"read","tests":"generated","deprecated":false,"notes":"bad"}
+        \\
+    ;
+    const hostinger = "";
+
+    const audit = try auditL1FromText(allocator, cloudflare, hostinger, .cloudflare);
+    try std.testing.expect(audit.totalFailures(.cloudflare) >= 4);
+    try std.testing.expectEqual(@as(usize, 1), audit.cloudflare.missing_operation_id);
+    try std.testing.expectEqual(@as(usize, 1), audit.cloudflare.failures.bad_path_params);
+    try std.testing.expectEqual(@as(usize, 1), audit.cloudflare.failures.missing_responses);
+    try std.testing.expectEqual(@as(usize, 1), audit.cloudflare.failures.missing_security);
+    try std.testing.expectEqual(@as(usize, 1), audit.cloudflare.failures.read_auth_unsupported);
 }
 
 test "lists provider coverage routes by provider and tag query" {

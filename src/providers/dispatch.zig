@@ -423,7 +423,7 @@ fn validateHostingerRouteAuth(security: provider_routes.Security, token: []const
     return error.UnsupportedRouteAuthScheme;
 }
 
-fn cloudioSupportsRouteAuth(route: provider_routes.Route) bool {
+pub fn cloudioSupportsRouteAuth(route: provider_routes.Route) bool {
     if (!route.security.required) return true;
     return switch (route.provider) {
         .cloudflare => cloudflareSecurityAcceptsApiToken(route.security) or cloudflareSecurityAcceptsLegacyAuth(route.security),
@@ -431,11 +431,11 @@ fn cloudioSupportsRouteAuth(route: provider_routes.Route) bool {
     };
 }
 
-fn routeLiveCallSupported(route: provider_routes.Route) bool {
+pub fn routeLiveCallSupported(route: provider_routes.Route) bool {
     return route.isRoutable() and route.mode == .read and route.method == .GET and !route.request_body.required and cloudioSupportsRouteAuth(route);
 }
 
-fn routeDryRunSupported(route: provider_routes.Route) bool {
+pub fn routeDryRunSupported(route: provider_routes.Route) bool {
     return route.isRoutable() and route.isDryRunMutation();
 }
 

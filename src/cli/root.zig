@@ -124,7 +124,7 @@ fn usage() void {
         \\  cloudio overview
         \\  cloudio inventory [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>]
         \\  cloudio export
-        \\  cloudio coverage summary|tags|routes [all|cloudflare|hostinger] [tag-query] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>]
+        \\  cloudio coverage summary|tags|l1|routes [all|cloudflare|hostinger] [tag-query] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>]
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]
         \\  cloudio route plan|read|capture|dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--paginate] [--max-pages <n>] [--body-present|--body-content-type <type>]
         \\  cloudio log
