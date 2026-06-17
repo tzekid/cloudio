@@ -122,7 +122,7 @@ fn usage() void {
         \\  cloudio doctor
         \\  cloudio refresh [--all|--cloudflare|--hostinger|--caddy|--system|--projects]
         \\  cloudio overview
-        \\  cloudio inventory [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>]
+        \\  cloudio inventory [summary|facets] [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>]
         \\  cloudio export
         \\  cloudio coverage summary|tags|l1|gaps|levels|level-tags|routes [all|cloudflare|hostinger] [tag-query] [--limit <n>] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>]
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]

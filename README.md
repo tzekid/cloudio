@@ -42,6 +42,8 @@ Central inventory reads join the typed Cloudflare and Hostinger inventory projec
 
 ```sh
 zig build run -- inventory
+zig build run -- inventory summary
+zig build run -- inventory summary hostinger --domain plosca.ru
 zig build run -- inventory cloudflare --domain plosca.ru
 zig build run -- inventory hostinger --query plosca.ru --limit 50
 ```

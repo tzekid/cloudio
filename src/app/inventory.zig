@@ -25,6 +25,15 @@ pub fn list(ctx: Context, options: ListOptions) !db_store.InventoryItems {
     });
 }
 
+pub fn summary(ctx: Context, options: ListOptions) !db_store.InventoryFacets {
+    return try ctx.db.inventoryFacets(ctx.gpa, .{
+        .provider = options.provider,
+        .domain = options.domain,
+        .query = options.query,
+        .limit = options.limit,
+    });
+}
+
 pub fn writeText(ctx: Context, options: ListOptions, writer: anytype) !void {
     var rows = try list(ctx, options);
     defer rows.deinit(ctx.gpa);
@@ -33,6 +42,17 @@ pub fn writeText(ctx: Context, options: ListOptions, writer: anytype) !void {
         return;
     }
     for (rows.items) |item| try writeItem(item, writer);
+}
+
+pub fn writeSummaryText(ctx: Context, options: ListOptions, writer: anytype) !void {
+    var rows = try summary(ctx, options);
+    defer rows.deinit(ctx.gpa);
+    if (rows.items.len == 0) {
+        try writer.writeAll("inventory summary: no facets\n");
+        return;
+    }
+    try writer.writeAll("inventory summary\n");
+    for (rows.items) |row| try writeFacet(row, writer);
 }
 
 fn writeItem(item: db_store.InventoryItem, writer: anytype) !void {
@@ -51,6 +71,16 @@ fn writeItem(item: db_store.InventoryItem, writer: anytype) !void {
     try writeField(writer, "source_updated", item.updated_at_source);
     try writeField(writer, "expires", item.expires_at_source);
     try writeField(writer, "collected", item.updated_at);
+    try writer.writeByte('\n');
+}
+
+fn writeFacet(row: db_store.InventoryFacet, writer: anytype) !void {
+    try writer.print("{s}\t{s}", .{ row.provider, row.kind });
+    try writer.print("\tcount={d}", .{row.count});
+    if (row.domains != 0) try writer.print("\tdomains={d}", .{row.domains});
+    try writeField(writer, "status", row.status);
+    try writeField(writer, "category", row.category);
+    try writeField(writer, "latest", row.latest_updated);
     try writer.writeByte('\n');
 }
 
@@ -90,6 +120,31 @@ test "inventory app renders provider-neutral typed rows" {
     try std.testing.expect(std.mem.indexOf(u8, text, "scope=zone/zone-1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger\thostinger-websites/plosca.ru") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "username=u123") != null);
+}
+
+test "inventory app renders provider-neutral typed row facets" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudio-app-inventory-summary.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    try db.upsertCloudflareInventoryItem("dns-records|zone|zone-1|record-1", "dns-records", "record-1", "zone", "zone-1", "plosca.ru", "active", "A", "plosca.ru", "acct-1", "zone-1", "76.13.130.170", "dns_only", null, "2026-06-17T00:00:00Z", null, "{\"id\":\"record-1\"}");
+    try db.upsertHostingerInventoryItem("hostinger-websites||plosca.ru", "hostinger-websites", "plosca.ru", "plosca.ru", "enabled", "main", "plosca.ru", "u123", "12345", "enabled", "2026-01-01T00:00:00Z", null, null, "{\"domain\":\"plosca.ru\"}");
+    try db.upsertHostingerInventoryItem("hostinger-websites||sparkdate.love", "hostinger-websites", "sparkdate.love", "sparkdate.love", "enabled", "main", "sparkdate.love", "u123", "12346", "enabled", "2026-01-01T00:00:00Z", null, null, "{\"domain\":\"sparkdate.love\"}");
+
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+    try writeSummaryText(.{ .gpa = allocator, .db = &db }, .{ .provider = "hostinger" }, &out.writer);
+    const text = try out.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "inventory summary\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "hostinger\thostinger-websites\tcount=2\tdomains=2\tstatus=enabled\tcategory=main") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare") == null);
 }
 
 test "inventory app reports empty filtered results" {

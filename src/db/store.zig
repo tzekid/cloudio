@@ -119,6 +119,33 @@ pub const InventoryItems = struct {
     }
 };
 
+pub const InventoryFacet = struct {
+    provider: []u8,
+    kind: []u8,
+    status: []u8,
+    category: []u8,
+    count: i64,
+    domains: i64,
+    latest_updated: []u8,
+
+    pub fn deinit(self: InventoryFacet, allocator: Allocator) void {
+        allocator.free(self.provider);
+        allocator.free(self.kind);
+        allocator.free(self.status);
+        allocator.free(self.category);
+        allocator.free(self.latest_updated);
+    }
+};
+
+pub const InventoryFacets = struct {
+    items: []InventoryFacet,
+
+    pub fn deinit(self: *InventoryFacets, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const ProjectDetails = struct {
     name: []u8,
     source: []u8,
@@ -758,6 +785,79 @@ pub const Db = struct {
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
 
+    pub fn inventoryFacets(self: *Db, gpa: Allocator, filter: InventoryFilter) !InventoryFacets {
+        const stmt = try self.prepare(
+            \\WITH inventory AS (
+            \\  SELECT 'cloudflare' AS provider,
+            \\         kind,
+            \\         COALESCE(resource_id, '') AS resource_id,
+            \\         COALESCE(scope, '') AS scope,
+            \\         COALESCE(scope_id, '') AS scope_id,
+            \\         COALESCE(display_name, '') AS display_name,
+            \\         COALESCE(status, '') AS status,
+            \\         COALESCE(category, '') AS category,
+            \\         COALESCE(domain, '') AS domain,
+            \\         '' AS username,
+            \\         COALESCE(account_id, '') AS account_id,
+            \\         COALESCE(zone_id, '') AS zone_id,
+            \\         COALESCE(related_id, '') AS related_id,
+            \\         COALESCE(flag, '') AS flag,
+            \\         updated_at
+            \\  FROM cloudflare_inventory_items
+            \\  UNION ALL
+            \\  SELECT 'hostinger' AS provider,
+            \\         kind,
+            \\         COALESCE(resource_id, '') AS resource_id,
+            \\         '' AS scope,
+            \\         '' AS scope_id,
+            \\         COALESCE(display_name, '') AS display_name,
+            \\         COALESCE(status, '') AS status,
+            \\         COALESCE(category, '') AS category,
+            \\         COALESCE(domain, '') AS domain,
+            \\         COALESCE(username, '') AS username,
+            \\         '' AS account_id,
+            \\         '' AS zone_id,
+            \\         COALESCE(related_id, '') AS related_id,
+            \\         COALESCE(flag, '') AS flag,
+            \\         updated_at
+            \\  FROM hostinger_inventory_items
+            \\)
+            \\SELECT provider,
+            \\       kind,
+            \\       status,
+            \\       category,
+            \\       COUNT(*) AS item_count,
+            \\       COUNT(DISTINCT NULLIF(domain, '')) AS domain_count,
+            \\       COALESCE(MAX(updated_at), '') AS latest_updated
+            \\FROM inventory
+            \\WHERE (? IS NULL OR provider = ?)
+            \\  AND (? IS NULL OR domain = ?)
+            \\  AND (? IS NULL OR lower(provider || ' ' || kind || ' ' || resource_id || ' ' || scope || ' ' || scope_id || ' ' || display_name || ' ' || status || ' ' || category || ' ' || domain || ' ' || username || ' ' || account_id || ' ' || zone_id || ' ' || related_id || ' ' || flag) LIKE '%' || lower(?) || '%')
+            \\GROUP BY provider, kind, status, category
+            \\ORDER BY item_count DESC, provider, kind, status, category
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindTextOpt(stmt, 1, filter.provider);
+        try bindTextOpt(stmt, 2, filter.provider);
+        try bindTextOpt(stmt, 3, filter.domain);
+        try bindTextOpt(stmt, 4, filter.domain);
+        try bindTextOpt(stmt, 5, filter.query);
+        try bindTextOpt(stmt, 6, filter.query);
+        try bindI64(stmt, 7, if (filter.limit > 0) filter.limit else 200);
+
+        var rows = std.ArrayList(InventoryFacet).empty;
+        errdefer deinitInventoryFacetList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try inventoryFacetFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
     pub fn caddyUpstreams(self: *Db, gpa: Allocator) !NameValueRows {
         return try self.nameValueRows(gpa, "SELECT host, upstream FROM caddy_upstreams ORDER BY host, upstream");
     }
@@ -897,6 +997,11 @@ fn deinitNameValueList(rows: *std.ArrayList(NameValueRow), allocator: Allocator)
 }
 
 fn deinitInventoryItemList(rows: *std.ArrayList(InventoryItem), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
+fn deinitInventoryFacetList(rows: *std.ArrayList(InventoryFacet), allocator: Allocator) void {
     for (rows.items) |row| row.deinit(allocator);
     rows.deinit(allocator);
 }
@@ -1042,6 +1147,28 @@ fn inventoryItemFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !Inve
     };
 }
 
+fn inventoryFacetFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !InventoryFacet {
+    const provider = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(provider);
+    const kind = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(kind);
+    const status = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(status);
+    const category = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(category);
+    const latest_updated = try dupeColumn(allocator, stmt, 6);
+    errdefer allocator.free(latest_updated);
+    return .{
+        .provider = provider,
+        .kind = kind,
+        .status = status,
+        .category = category,
+        .count = sqlite.sqlite3_column_int64(stmt, 4),
+        .domains = sqlite.sqlite3_column_int64(stmt, 5),
+        .latest_updated = latest_updated,
+    };
+}
+
 fn projectDetailsFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !ProjectDetails {
     const name = try dupeColumn(allocator, stmt, 0);
     errdefer allocator.free(name);
@@ -1152,4 +1279,21 @@ test "provider inventory read model joins and filters typed inventory" {
     try std.testing.expectEqual(@as(usize, 1), query.items.len);
     try std.testing.expectEqualStrings("hostinger", query.items[0].provider);
     try std.testing.expectEqualStrings("u123", query.items[0].username);
+
+    var facets = try db.inventoryFacets(allocator, .{ .domain = "plosca.ru" });
+    defer facets.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), facets.items.len);
+    try std.testing.expectEqualStrings("cloudflare", facets.items[0].provider);
+    try std.testing.expectEqualStrings("dns-records", facets.items[0].kind);
+    try std.testing.expectEqualStrings("active", facets.items[0].status);
+    try std.testing.expectEqualStrings("A", facets.items[0].category);
+    try std.testing.expectEqual(@as(i64, 1), facets.items[0].count);
+    try std.testing.expectEqual(@as(i64, 1), facets.items[0].domains);
+
+    var hostinger_facets = try db.inventoryFacets(allocator, .{ .provider = "hostinger", .query = "u123" });
+    defer hostinger_facets.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), hostinger_facets.items.len);
+    try std.testing.expectEqualStrings("hostinger-websites", hostinger_facets.items[0].kind);
+    try std.testing.expectEqualStrings("enabled", hostinger_facets.items[0].status);
+    try std.testing.expectEqualStrings("main", hostinger_facets.items[0].category);
 }

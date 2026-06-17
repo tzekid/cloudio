@@ -11,19 +11,35 @@ pub const Context = struct {
 };
 
 pub fn run(ctx: Context, args: []const []const u8) !void {
-    const options = parseOptions(args) catch |err| {
+    const command = parseCommand(args) catch |err| {
         std.debug.print("invalid inventory command: {s}\n", .{@errorName(err)});
         return err;
     };
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
-    try app_inventory.writeText(.{
+    const app_ctx = app_inventory.Context{
         .gpa = ctx.gpa,
         .db = ctx.db,
-    }, options, &out.writer);
+    };
+    switch (command) {
+        .list => |options| try app_inventory.writeText(app_ctx, options, &out.writer),
+        .summary => |options| try app_inventory.writeSummaryText(app_ctx, options, &out.writer),
+    }
     const text = try out.toOwnedSlice();
     defer ctx.gpa.free(text);
     std.debug.print("{s}", .{text});
+}
+
+pub const Command = union(enum) {
+    list: app_inventory.ListOptions,
+    summary: app_inventory.ListOptions,
+};
+
+pub fn parseCommand(args: []const []const u8) !Command {
+    if (args.len != 0 and (std.mem.eql(u8, args[0], "summary") or std.mem.eql(u8, args[0], "facets"))) {
+        return .{ .summary = try parseOptions(args[1..]) };
+    }
+    return .{ .list = try parseOptions(args) };
 }
 
 pub fn parseOptions(args: []const []const u8) !app_inventory.ListOptions {
@@ -80,6 +96,27 @@ test "inventory parser maps positional provider and filters" {
     try std.testing.expectEqualStrings("plosca.ru", options.domain.?);
     try std.testing.expectEqualStrings("dns", options.query.?);
     try std.testing.expectEqual(@as(i64, 25), options.limit);
+}
+
+test "inventory parser routes summary command with filters" {
+    const args = [_][]const u8{ "summary", "hostinger", "--domain", "plosca.ru", "--limit", "10" };
+    switch (try parseCommand(args[0..])) {
+        .summary => |options| {
+            try std.testing.expectEqualStrings("hostinger", options.provider.?);
+            try std.testing.expectEqualStrings("plosca.ru", options.domain.?);
+            try std.testing.expectEqual(@as(i64, 10), options.limit);
+        },
+        .list => return error.ExpectedInventorySummary,
+    }
+
+    const facets_args = [_][]const u8{ "facets", "--provider", "cloudflare", "dns" };
+    switch (try parseCommand(facets_args[0..])) {
+        .summary => |options| {
+            try std.testing.expectEqualStrings("cloudflare", options.provider.?);
+            try std.testing.expectEqualStrings("dns", options.query.?);
+        },
+        .list => return error.ExpectedInventorySummary,
+    }
 }
 
 test "inventory parser accepts provider flag and query positional" {
