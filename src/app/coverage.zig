@@ -325,6 +325,49 @@ pub const GapReport = struct {
     }
 };
 
+pub const LevelProviderEvidence = struct {
+    name: []const u8,
+    total: usize = 0,
+    deprecated: usize = 0,
+    not_applicable: usize = 0,
+    non_deprecated: usize = 0,
+    routable: usize = 0,
+    read_routes: usize = 0,
+    dry_run_routes: usize = 0,
+    l2_read_evidence: usize = 0,
+    l2_partial_reads: usize = 0,
+    l2_diagnostic_reads: usize = 0,
+    pending_reads: usize = 0,
+    read_missing_tests: usize = 0,
+    dry_run_evidence: usize = 0,
+    pending_mutation_dry_runs: usize = 0,
+    l3_generic_inventory_candidates: usize = 0,
+    l3_typed_table_evidence: usize = 0,
+
+    pub fn init(name: []const u8) LevelProviderEvidence {
+        return .{ .name = name };
+    }
+};
+
+pub const LevelReport = struct {
+    cloudflare: LevelProviderEvidence,
+    hostinger: LevelProviderEvidence,
+
+    pub fn init() LevelReport {
+        return .{
+            .cloudflare = LevelProviderEvidence.init("cloudflare"),
+            .hostinger = LevelProviderEvidence.init("hostinger"),
+        };
+    }
+
+    pub fn writeText(self: LevelReport, filter: ProviderFilter, writer: anytype) !void {
+        try writer.writeAll("Cloudio provider coverage levels\n");
+        try writer.writeAll("evidence: generated manifest + Cloudio support overlay, not final completion proof\n");
+        if (filter.includes("cloudflare")) try writeLevelProviderEvidence(self.cloudflare, writer);
+        if (filter.includes("hostinger")) try writeLevelProviderEvidence(self.hostinger, writer);
+    }
+};
+
 pub const RouteFilter = struct {
     provider: ProviderFilter = .all,
     tag_query: ?[]const u8 = null,
@@ -619,6 +662,33 @@ pub fn writeGapsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: Gap
     var gaps = try loadGaps(io, gpa, paths, options.provider);
     defer gaps.deinit(gpa);
     try gaps.writeText(writer, options);
+}
+
+pub fn loadLevels(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !LevelReport {
+    var report = LevelReport.init();
+    if (filter.includes("cloudflare")) {
+        const text = try Io.Dir.cwd().readFileAlloc(io, paths.cloudflare_manifest, gpa, .limited(max_manifest_bytes));
+        defer gpa.free(text);
+        try summarizeProviderLevels(gpa, "cloudflare", text, &report.cloudflare);
+    }
+    if (filter.includes("hostinger")) {
+        const text = try Io.Dir.cwd().readFileAlloc(io, paths.hostinger_manifest, gpa, .limited(max_manifest_bytes));
+        defer gpa.free(text);
+        try summarizeProviderLevels(gpa, "hostinger", text, &report.hostinger);
+    }
+    return report;
+}
+
+pub fn loadLevelsFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, filter: ProviderFilter) !LevelReport {
+    var report = LevelReport.init();
+    if (filter.includes("cloudflare")) try summarizeProviderLevels(gpa, "cloudflare", cloudflare_text, &report.cloudflare);
+    if (filter.includes("hostinger")) try summarizeProviderLevels(gpa, "hostinger", hostinger_text, &report.hostinger);
+    return report;
+}
+
+pub fn writeLevelsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter, writer: anytype) !void {
+    const report = try loadLevels(io, gpa, paths, filter);
+    try report.writeText(filter, writer);
 }
 
 pub fn auditL1(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !L1Audit {
@@ -1232,6 +1302,40 @@ fn summarizeProviderGaps(gpa: Allocator, provider: []const u8, text: []const u8,
     }
 }
 
+fn summarizeProviderLevels(gpa: Allocator, provider: []const u8, text: []const u8, evidence: *LevelProviderEvidence) !void {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line_raw| {
+        const line = std.mem.trim(u8, line_raw, " \t\r\n");
+        if (line.len == 0) continue;
+
+        var parsed = try std.json.parseFromSlice(std.json.Value, gpa, line, .{});
+        defer parsed.deinit();
+
+        const row_provider = core_json.fieldString(parsed.value, "provider") orelse return error.InvalidCoverageRow;
+        if (!std.mem.eql(u8, row_provider, provider)) return error.InvalidCoverageProvider;
+        var row = try CoverageRoute.init(gpa, provider, parsed.value);
+        defer row.deinit(gpa);
+
+        evidence.total += 1;
+        if (row.route.deprecated) {
+            evidence.deprecated += 1;
+            continue;
+        }
+        evidence.non_deprecated += 1;
+        if (row.route.support == .not_applicable) {
+            evidence.not_applicable += 1;
+            continue;
+        }
+        if (row.route.isRoutable()) evidence.routable += 1;
+
+        switch (row.route.mode) {
+            .read => updateReadLevelEvidence(evidence, row),
+            .dry_run => updateDryRunLevelEvidence(evidence, row),
+            .write, .none => {},
+        }
+    }
+}
+
 fn appendProviderRoutes(gpa: Allocator, provider: []const u8, text: []const u8, filter: RouteFilter, rows: *std.ArrayList(CoverageRoute)) !void {
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |line_raw| {
@@ -1469,6 +1573,36 @@ fn writeFailureField(writer: anytype, name: []const u8, count: usize) !void {
     try writer.print(" {s}={d}", .{ name, count });
 }
 
+fn writeLevelProviderEvidence(evidence: LevelProviderEvidence, writer: anytype) !void {
+    try writer.print("\n{s}\n", .{evidence.name});
+    try writer.print("  L0 classified={d} non_deprecated={d} deprecated={d} not_applicable={d}\n", .{
+        evidence.total,
+        evidence.non_deprecated,
+        evidence.deprecated,
+        evidence.not_applicable,
+    });
+    try writer.print("  L1 routable={d} read_routes={d} dry_run_routes={d}\n", .{
+        evidence.routable,
+        evidence.read_routes,
+        evidence.dry_run_routes,
+    });
+    try writer.print("  L2 read_evidence={d} partial_reads={d} diagnostic_blocked_reads={d} pending_reads={d} read_missing_tests={d}\n", .{
+        evidence.l2_read_evidence,
+        evidence.l2_partial_reads,
+        evidence.l2_diagnostic_reads,
+        evidence.pending_reads,
+        evidence.read_missing_tests,
+    });
+    try writer.print("  dry_run evidence={d} pending_mutation_dry_runs={d}\n", .{
+        evidence.dry_run_evidence,
+        evidence.pending_mutation_dry_runs,
+    });
+    try writer.print("  L3 evidence generic_inventory_candidates={d} typed_table_evidence={d}\n", .{
+        evidence.l3_generic_inventory_candidates,
+        evidence.l3_typed_table_evidence,
+    });
+}
+
 fn writeGapField(writer: anytype, name: []const u8, count: usize) !void {
     if (count == 0) return;
     try writer.print(" {s}={d}", .{ name, count });
@@ -1485,6 +1619,58 @@ fn gapLessThan(_: void, lhs: GapSummary, rhs: GapSummary) bool {
     const provider_order = std.mem.order(u8, lhs.provider, rhs.provider);
     if (provider_order != .eq) return provider_order == .lt;
     return std.mem.order(u8, lhs.tag, rhs.tag) == .lt;
+}
+
+fn updateReadLevelEvidence(evidence: *LevelProviderEvidence, row: CoverageRoute) void {
+    evidence.read_routes += 1;
+    const has_evidence = hasCoverageEvidence(row.tests);
+    if (!has_evidence) evidence.read_missing_tests += 1;
+
+    switch (row.route.support) {
+        .partial => {
+            evidence.l2_partial_reads += 1;
+            if (has_evidence) {
+                evidence.l2_read_evidence += 1;
+                evidence.l3_generic_inventory_candidates += 1;
+                if (isTypedTableCoverageCandidate(row.route.provider.name(), row.route.tag)) evidence.l3_typed_table_evidence += 1;
+            }
+        },
+        .blocked_permission => {
+            if (has_evidence) {
+                evidence.l2_read_evidence += 1;
+                evidence.l2_diagnostic_reads += 1;
+            }
+        },
+        .planned => evidence.pending_reads += 1,
+        .implemented, .unsafe_mutation, .deprecated, .not_applicable => {},
+    }
+}
+
+fn updateDryRunLevelEvidence(evidence: *LevelProviderEvidence, row: CoverageRoute) void {
+    evidence.dry_run_routes += 1;
+    switch (row.route.support) {
+        .partial => {
+            if (hasCoverageEvidence(row.tests)) evidence.dry_run_evidence += 1;
+        },
+        .unsafe_mutation => evidence.pending_mutation_dry_runs += 1,
+        .implemented, .planned, .blocked_permission, .deprecated, .not_applicable => {},
+    }
+}
+
+fn hasCoverageEvidence(tests: []const u8) bool {
+    return tests.len != 0 and !std.mem.eql(u8, tests, "missing");
+}
+
+fn isTypedTableCoverageCandidate(provider: []const u8, tag: []const u8) bool {
+    if (std.mem.eql(u8, provider, "hostinger")) {
+        return std.mem.eql(u8, tag, "VPS: Virtual machine");
+    }
+    if (std.mem.eql(u8, provider, "cloudflare")) {
+        return std.mem.eql(u8, tag, "Accounts") or
+            std.mem.eql(u8, tag, "Zone") or
+            std.mem.eql(u8, tag, "DNS Records for a Zone");
+    }
+    return false;
 }
 
 fn indexOfName(names: []const []const u8, value: []const u8) ?usize {
@@ -1737,6 +1923,40 @@ test "ranks provider coverage gaps by broad unresolved tag groups" {
     try std.testing.expect(std.mem.indexOf(u8, text, "planned_read=2") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "unsafe_dry_run=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
+}
+
+test "summarizes manifest-backed provider coverage levels" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"POC reads accounts and stores typed account rows."}
+        \\{"provider":"cloudflare","tag":"Workers","method":"GET","path":"/accounts/{account_id}/workers","operation_id":"workers-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"pending"}
+        \\{"provider":"cloudflare","tag":"Workers","method":"POST","path":"/accounts/{account_id}/workers","operation_id":"workers-create","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"pending dry-run"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker","operation_id":"VPS_getProjectListV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"unsupported OS diagnostic"}
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"POST","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker","operation_id":"VPS_createNewProjectV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"dry_run","tests":"fixture","deprecated":false,"notes":"dry-run reviewed"}
+        \\
+    ;
+
+    const levels = try loadLevelsFromText(allocator, cloudflare, hostinger, .all);
+    try std.testing.expectEqual(@as(usize, 3), levels.cloudflare.total);
+    try std.testing.expectEqual(@as(usize, 2), levels.cloudflare.read_routes);
+    try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.l2_read_evidence);
+    try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.pending_reads);
+    try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.pending_mutation_dry_runs);
+    try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.l3_typed_table_evidence);
+    try std.testing.expectEqual(@as(usize, 1), levels.hostinger.l2_diagnostic_reads);
+    try std.testing.expectEqual(@as(usize, 1), levels.hostinger.dry_run_evidence);
+
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+    try levels.writeText(.all, &out.writer);
+    const text = try out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage levels\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "L2 read_evidence=1 partial_reads=1 diagnostic_blocked_reads=0 pending_reads=1 read_missing_tests=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "L3 evidence generic_inventory_candidates=1 typed_table_evidence=1") != null);
 }
 
 test "audits L1 routability invariants across provider manifests" {

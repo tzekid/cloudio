@@ -16,6 +16,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .tags => |filter| try commandTags(ctx, filter),
         .l1 => |filter| try commandL1(ctx, filter),
         .gaps => |options| try commandGaps(ctx, options),
+        .levels => |filter| try commandLevels(ctx, filter),
         .routes => |filter| try commandRoutes(ctx, filter),
         .plan => |plan_args| try commandPlan(ctx, plan_args),
         .unknown => |name| std.debug.print("unknown coverage command: {s}\n", .{name}),
@@ -27,6 +28,7 @@ const Command = union(enum) {
     tags: app_coverage.ProviderFilter,
     l1: app_coverage.ProviderFilter,
     gaps: app_coverage.GapOptions,
+    levels: app_coverage.ProviderFilter,
     routes: app_coverage.RouteFilter,
     plan: []const []const u8,
     unknown: []const u8,
@@ -46,6 +48,11 @@ fn parseCommand(args: []const []const u8) Command {
     }
     if (std.mem.eql(u8, args[0], "gaps") or std.mem.eql(u8, args[0], "priorities")) {
         return parseGaps(args[1..]);
+    }
+    if (std.mem.eql(u8, args[0], "levels")) {
+        if (args.len < 2) return .{ .levels = .all };
+        const filter = app_coverage.ProviderFilter.parse(args[1]) orelse return .{ .unknown = args[1] };
+        return .{ .levels = filter };
     }
     if (std.mem.eql(u8, args[0], "routes")) {
         return parseRoutes(args[1..]);
@@ -173,6 +180,15 @@ fn commandGaps(ctx: Context, options: app_coverage.GapOptions) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_coverage.writeGapsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, options, &out.writer);
+    const text = try out.toOwnedSlice();
+    defer ctx.gpa.free(text);
+    std.debug.print("{s}", .{text});
+}
+
+fn commandLevels(ctx: Context, filter: app_coverage.ProviderFilter) !void {
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    try app_coverage.writeLevelsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, filter, &out.writer);
     const text = try out.toOwnedSlice();
     defer ctx.gpa.free(text);
     std.debug.print("{s}", .{text});
@@ -379,6 +395,12 @@ test "coverage command parser defaults to summary" {
         },
         else => return error.ExpectedCoverageGaps,
     }
+
+    const levels_args = [_][]const u8{ "levels", "cloudflare" };
+    try std.testing.expectEqual(Command{ .levels = .cloudflare }, parseCommand(levels_args[0..]));
+
+    const levels_default_args = [_][]const u8{"levels"};
+    try std.testing.expectEqual(Command{ .levels = .all }, parseCommand(levels_default_args[0..]));
 
     const routes_args = [_][]const u8{"routes"};
     switch (parseCommand(routes_args[0..])) {
