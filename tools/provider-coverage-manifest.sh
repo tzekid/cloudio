@@ -71,6 +71,27 @@ generate_manifest() {
   overrides="$3"
   out="$4"
   jq -c --arg provider "$provider" --slurpfile overrides "$overrides" '
+    def pointer_token:
+      gsub("~1"; "/") | gsub("~0"; "~");
+
+    def deref($root):
+      if (type == "object") and has("$ref") then
+        (."$ref" | sub("^#/"; "") | split("/") | reduce .[] as $part ($root; .[$part | pointer_token]))
+      else
+        .
+      end;
+
+    def operation_params($root; $path_item; $operation; $location):
+      (($path_item.parameters // []) + ($operation.parameters // []))
+      | map(deref($root))
+      | map(select((.in // null) == $location and (.name // null | type == "string")))
+      | unique_by(.name)
+      | sort_by(.name)
+      | map({
+          name: .name,
+          required: (.required // false)
+        });
+
     def default_coverage($method; $deprecated):
       if $deprecated then
         {
@@ -98,21 +119,27 @@ generate_manifest() {
     def override_coverage($method; $path):
       [ $overrides[] | select(.method == ($method | ascii_upcase) and .path == $path) ][0] // null;
 
+    . as $root
+    |
     .paths
     | to_entries[]
     | .key as $path
-    | .value
+    | .value as $path_item
+    | $path_item
     | to_entries[]
     | select(.value | type == "object")
     | .key as $method
+    | .value as $operation
     | (.value.deprecated // false) as $deprecated
     | (override_coverage($method; $path) // default_coverage($method; $deprecated)) as $coverage
     | {
         provider: $provider,
-        tag: (.value.tags[0] // "untagged"),
+        tag: ($operation.tags[0] // "untagged"),
         method: ($method | ascii_upcase),
         path: $path,
-        operation_id: (.value.operationId // null),
+        operation_id: ($operation.operationId // null),
+        path_params: operation_params($root; $path_item; $operation; "path"),
+        query_params: operation_params($root; $path_item; $operation; "query"),
         support: $coverage.support,
         mode: $coverage.mode,
         tests: $coverage.tests,
@@ -131,6 +158,16 @@ validate_manifest() {
       ($row.method | type == "string") and
       ($row.path | type == "string") and
       (($row.operation_id == null) or ($row.operation_id | type == "string")) and
+      ($row.path_params | type == "array") and
+      (all($row.path_params[]; (
+        (.name | type == "string") and
+        (.required | type == "boolean")
+      ))) and
+      ($row.query_params | type == "array") and
+      (all($row.query_params[]; (
+        (.name | type == "string") and
+        (.required | type == "boolean")
+      ))) and
       (["implemented", "partial", "planned", "blocked_permission", "unsafe_mutation", "deprecated", "not_applicable"] | index($row.support)) and
       (["read", "dry_run", "write", "none"] | index($row.mode)) and
       ($row.tests | type == "string") and

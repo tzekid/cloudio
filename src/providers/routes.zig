@@ -99,12 +99,19 @@ pub const PathParam = struct {
     value: []const u8,
 };
 
+pub const RouteParam = struct {
+    name: []u8,
+    required: bool,
+};
+
 pub const Route = struct {
     provider: Provider,
     tag: []u8,
     method: Method,
     path_template: []u8,
     operation_id: ?[]u8,
+    path_params: []RouteParam,
+    query_params: []RouteParam,
     support: Support,
     mode: Mode,
     deprecated: bool,
@@ -121,6 +128,9 @@ pub const Route = struct {
         const support_text = core_json.fieldString(value, "support") orelse return error.InvalidProviderRoute;
         const mode_text = core_json.fieldString(value, "mode") orelse return error.InvalidProviderRoute;
         const deprecated = core_json.fieldBool(value, "deprecated") orelse return error.InvalidProviderRoute;
+        const method = Method.parse(method_text) orelse return error.InvalidProviderRoute;
+        const support = Support.parse(support_text) orelse return error.InvalidProviderRoute;
+        const mode = Mode.parse(mode_text) orelse return error.InvalidProviderRoute;
 
         const tag_owned = try gpa.dupe(u8, tag);
         errdefer gpa.free(tag_owned);
@@ -128,15 +138,21 @@ pub const Route = struct {
         errdefer gpa.free(path_owned);
         const operation_id_owned = if (operation_id) |id| try gpa.dupe(u8, id) else null;
         errdefer if (operation_id_owned) |id| gpa.free(id);
+        const path_params = try parseRouteParams(gpa, value, "path_params");
+        errdefer freeRouteParams(gpa, path_params);
+        const query_params = try parseRouteParams(gpa, value, "query_params");
+        errdefer freeRouteParams(gpa, query_params);
 
         return .{
             .provider = provider,
             .tag = tag_owned,
-            .method = Method.parse(method_text) orelse return error.InvalidProviderRoute,
+            .method = method,
             .path_template = path_owned,
             .operation_id = operation_id_owned,
-            .support = Support.parse(support_text) orelse return error.InvalidProviderRoute,
-            .mode = Mode.parse(mode_text) orelse return error.InvalidProviderRoute,
+            .path_params = path_params,
+            .query_params = query_params,
+            .support = support,
+            .mode = mode,
             .deprecated = deprecated,
         };
     }
@@ -145,6 +161,8 @@ pub const Route = struct {
         gpa.free(self.tag);
         gpa.free(self.path_template);
         if (self.operation_id) |id| gpa.free(id);
+        freeRouteParams(gpa, self.path_params);
+        freeRouteParams(gpa, self.query_params);
     }
 
     pub fn isRoutable(self: Route) bool {
@@ -157,6 +175,13 @@ pub const Route = struct {
 
     pub fn parameterNames(self: Route, gpa: Allocator) ![][]u8 {
         return try templateParameterNames(gpa, self.path_template);
+    }
+
+    pub fn hasRequiredQueryParameters(self: Route) bool {
+        for (self.query_params) |param| {
+            if (param.required) return true;
+        }
+        return false;
     }
 
     pub fn renderPath(self: Route, gpa: Allocator, params: []const PathParam) ![]u8 {
@@ -359,8 +384,36 @@ fn appendProvider(gpa: Allocator, provider: Provider, text: []const u8, rows: *s
     }
 }
 
+fn parseRouteParams(gpa: Allocator, value: std.json.Value, field_name: []const u8) ![]RouteParam {
+    const field_value = core_json.field(value, field_name) orelse return try gpa.alloc(RouteParam, 0);
+    if (field_value != .array) return error.InvalidProviderRoute;
+
+    var rows = std.ArrayList(RouteParam).empty;
+    errdefer deinitRouteParamList(&rows, gpa);
+    for (field_value.array.items) |item| {
+        const name = core_json.fieldString(item, "name") orelse return error.InvalidProviderRoute;
+        const required = core_json.fieldBool(item, "required") orelse return error.InvalidProviderRoute;
+        if (containsRouteParamName(rows.items, name)) continue;
+
+        const owned = try gpa.dupe(u8, name);
+        errdefer gpa.free(owned);
+        try rows.append(gpa, .{ .name = owned, .required = required });
+    }
+    return try rows.toOwnedSlice(gpa);
+}
+
+fn freeRouteParams(gpa: Allocator, params: []RouteParam) void {
+    for (params) |param| gpa.free(param.name);
+    gpa.free(params);
+}
+
 fn deinitRouteList(rows: *std.ArrayList(Route), gpa: Allocator) void {
     for (rows.items) |row| row.deinit(gpa);
+    rows.deinit(gpa);
+}
+
+fn deinitRouteParamList(rows: *std.ArrayList(RouteParam), gpa: Allocator) void {
+    for (rows.items) |param| gpa.free(param.name);
     rows.deinit(gpa);
 }
 
@@ -372,6 +425,13 @@ fn deinitParamNames(rows: *std.ArrayList([]u8), gpa: Allocator) void {
 fn containsParamName(names: []const []u8, candidate: []const u8) bool {
     for (names) |name| {
         if (std.mem.eql(u8, name, candidate)) return true;
+    }
+    return false;
+}
+
+fn containsRouteParamName(params: []const RouteParam, candidate: []const u8) bool {
+    for (params) |param| {
+        if (std.mem.eql(u8, param.name, candidate)) return true;
     }
     return false;
 }
@@ -414,6 +474,10 @@ test "finds routes by operation id and template without loading full tables" {
     defer hostinger_route.deinit(allocator);
     try std.testing.expectEqualStrings("VPS: Virtual machine", hostinger_route.tag);
     try std.testing.expect(hostinger_route.isRoutable());
+    try expectRouteParam(hostinger_route.path_params, "virtualMachineId", true);
+    try expectRouteParam(hostinger_route.query_params, "date_from", true);
+    try expectRouteParam(hostinger_route.query_params, "date_to", true);
+    try std.testing.expect(hostinger_route.hasRequiredQueryParameters());
 }
 
 test "extracts required path parameters and renders escaped route paths" {
@@ -427,6 +491,8 @@ test "extracts required path parameters and renders escaped route paths" {
     try std.testing.expectEqual(@as(usize, 2), names.len);
     try std.testing.expectEqualStrings("account_id", names[0]);
     try std.testing.expectEqualStrings("app_id", names[1]);
+    try expectRouteParam(route.path_params, "account_id", true);
+    try expectRouteParam(route.path_params, "app_id", true);
 
     const path = try route.renderPath(allocator, &.{
         .{ .name = "account_id", .value = "acct/1" },
@@ -448,4 +514,14 @@ test "reports missing parameters and invalid templates" {
     try std.testing.expectError(error.MissingRouteParameter, renderTemplatePath(allocator, "/accounts/{account_id}", &.{}));
     try std.testing.expectError(error.InvalidRouteTemplate, renderTemplatePath(allocator, "/accounts/{account_id", &.{.{ .name = "account_id", .value = "acct" }}));
     try std.testing.expectError(error.InvalidRouteTemplate, templateParameterNames(allocator, "/accounts/}"));
+}
+
+fn expectRouteParam(params: []const RouteParam, name: []const u8, required: bool) !void {
+    for (params) |param| {
+        if (std.mem.eql(u8, param.name, name)) {
+            try std.testing.expectEqual(required, param.required);
+            return;
+        }
+    }
+    return error.TestExpectedRouteParam;
 }
