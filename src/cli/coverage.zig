@@ -31,6 +31,11 @@ const LevelTagCommand = struct {
     format: RenderFormat = .text,
 };
 
+const RouteCommand = struct {
+    filter: app_coverage.RouteFilter = .{},
+    format: RenderFormat = .text,
+};
+
 pub fn run(ctx: Context, args: []const []const u8) !void {
     switch (parseCommand(args)) {
         .summary => try commandSummary(ctx),
@@ -39,7 +44,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .gaps => |command| try commandGaps(ctx, command),
         .levels => |command| try commandLevels(ctx, command),
         .level_tags => |command| try commandLevelTags(ctx, command),
-        .routes => |filter| try commandRoutes(ctx, filter),
+        .routes => |command| try commandRoutes(ctx, command),
         .plan => |plan_args| try commandPlan(ctx, plan_args),
         .unknown => |name| std.debug.print("unknown coverage command: {s}\n", .{name}),
     }
@@ -52,7 +57,7 @@ const Command = union(enum) {
     gaps: GapCommand,
     levels: LevelCommand,
     level_tags: LevelTagCommand,
-    routes: app_coverage.RouteFilter,
+    routes: RouteCommand,
     plan: []const []const u8,
     unknown: []const u8,
 };
@@ -183,7 +188,7 @@ fn parseFormat(value: []const u8) ?RenderFormat {
 }
 
 fn parseRoutes(args: []const []const u8) Command {
-    var filter = app_coverage.RouteFilter{};
+    var command = RouteCommand{};
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
@@ -191,58 +196,67 @@ fn parseRoutes(args: []const []const u8) Command {
         if (std.mem.eql(u8, arg, "--support")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--support" };
-            filter.support = app_coverage.SupportFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
+            command.filter.support = app_coverage.SupportFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.eql(u8, arg, "--detail") or std.mem.eql(u8, arg, "--details")) {
-            filter.detail = true;
+            command.filter.detail = true;
+        } else if (std.mem.eql(u8, arg, "--json")) {
+            command.format = .json;
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--format" };
+            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            const value = arg["--format=".len..];
+            command.format = parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.startsWith(u8, arg, "--support=")) {
             const value = arg["--support=".len..];
-            filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
+            command.filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--operation") or std.mem.eql(u8, arg, "--operation-id")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--operation" };
-            filter.operation_id = args[index];
+            command.filter.operation_id = args[index];
         } else if (std.mem.startsWith(u8, arg, "--operation=")) {
-            filter.operation_id = arg["--operation=".len..];
+            command.filter.operation_id = arg["--operation=".len..];
         } else if (std.mem.startsWith(u8, arg, "--operation-id=")) {
-            filter.operation_id = arg["--operation-id=".len..];
+            command.filter.operation_id = arg["--operation-id=".len..];
         } else if (std.mem.eql(u8, arg, "--method")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--method" };
-            filter.method = app_coverage.parseRouteMethod(args[index]) orelse return .{ .unknown = args[index] };
+            command.filter.method = app_coverage.parseRouteMethod(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--method=")) {
             const value = arg["--method=".len..];
-            filter.method = app_coverage.parseRouteMethod(value) orelse return .{ .unknown = value };
+            command.filter.method = app_coverage.parseRouteMethod(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--path") or std.mem.eql(u8, arg, "--path-template")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--path" };
-            filter.path_template = args[index];
+            command.filter.path_template = args[index];
         } else if (std.mem.startsWith(u8, arg, "--path=")) {
-            filter.path_template = arg["--path=".len..];
+            command.filter.path_template = arg["--path=".len..];
         } else if (std.mem.startsWith(u8, arg, "--path-template=")) {
-            filter.path_template = arg["--path-template=".len..];
+            command.filter.path_template = arg["--path-template=".len..];
         } else if (std.mem.eql(u8, arg, "--mode")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--mode" };
-            filter.mode = app_coverage.ModeFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
+            command.filter.mode = app_coverage.ModeFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--mode=")) {
             const value = arg["--mode=".len..];
-            filter.mode = app_coverage.ModeFilter.parse(value) orelse return .{ .unknown = value };
+            command.filter.mode = app_coverage.ModeFilter.parse(value) orelse return .{ .unknown = value };
         } else if (!provider_set) {
             if (app_coverage.ProviderFilter.parse(arg)) |provider| {
-                filter.provider = provider;
+                command.filter.provider = provider;
                 provider_set = true;
-            } else if (filter.tag_query == null) {
-                filter.tag_query = arg;
+            } else if (command.filter.tag_query == null) {
+                command.filter.tag_query = arg;
             } else {
                 return .{ .unknown = arg };
             }
-        } else if (filter.tag_query == null) {
-            filter.tag_query = arg;
+        } else if (command.filter.tag_query == null) {
+            command.filter.tag_query = arg;
         } else {
             return .{ .unknown = arg };
         }
     }
-    return .{ .routes = filter };
+    return .{ .routes = command };
 }
 
 fn commandSummary(ctx: Context) !void {
@@ -296,10 +310,13 @@ fn commandLevelTags(ctx: Context, command: LevelTagCommand) !void {
     try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
-fn commandRoutes(ctx: Context, filter: app_coverage.RouteFilter) !void {
+fn commandRoutes(ctx: Context, command: RouteCommand) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
-    try app_coverage.writeRoutesTextFromFiles(ctx.io, ctx.gpa, ctx.paths, filter, &out.writer);
+    switch (command.format) {
+        .text => try app_coverage.writeRoutesTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.filter, &out.writer),
+        .json => try app_coverage.writeRoutesJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.filter, &out.writer),
+    }
     try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
@@ -536,12 +553,14 @@ test "coverage command parser defaults to summary" {
 
     const routes_args = [_][]const u8{"routes"};
     switch (parseCommand(routes_args[0..])) {
-        .routes => |filter| {
+        .routes => |command| {
+            const filter = command.filter;
             try std.testing.expectEqual(app_coverage.ProviderFilter.all, filter.provider);
             try std.testing.expect(filter.tag_query == null);
             try std.testing.expect(filter.support == null);
             try std.testing.expect(filter.mode == null);
             try std.testing.expect(!filter.detail);
+            try std.testing.expectEqual(RenderFormat.text, command.format);
         },
         else => return error.ExpectedCoverageRoutes,
     }
@@ -557,12 +576,14 @@ test "coverage command parser defaults to summary" {
 
     const hostinger_routes_args = [_][]const u8{ "routes", "hostinger", "VPS", "--support", "partial", "--mode=read", "--detail" };
     switch (parseCommand(hostinger_routes_args[0..])) {
-        .routes => |filter| {
+        .routes => |command| {
+            const filter = command.filter;
             try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, filter.provider);
             try std.testing.expectEqualStrings("VPS", filter.tag_query orelse "");
             try std.testing.expectEqual(app_coverage.SupportFilter.partial, filter.support.?);
             try std.testing.expectEqual(app_coverage.ModeFilter.read, filter.mode.?);
             try std.testing.expect(filter.detail);
+            try std.testing.expectEqual(RenderFormat.text, command.format);
             try std.testing.expect(filter.operation_id == null);
             try std.testing.expect(filter.method == null);
             try std.testing.expect(filter.path_template == null);
@@ -570,39 +591,45 @@ test "coverage command parser defaults to summary" {
         else => return error.ExpectedCoverageRoutes,
     }
 
-    const query_routes_args = [_][]const u8{ "routes", "--support=planned", "Zone Settings" };
+    const query_routes_args = [_][]const u8{ "routes", "--support=planned", "Zone Settings", "--json" };
     switch (parseCommand(query_routes_args[0..])) {
-        .routes => |filter| {
+        .routes => |command| {
+            const filter = command.filter;
             try std.testing.expectEqual(app_coverage.ProviderFilter.all, filter.provider);
             try std.testing.expectEqualStrings("Zone Settings", filter.tag_query orelse "");
             try std.testing.expectEqual(app_coverage.SupportFilter.planned, filter.support.?);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
         },
         else => return error.ExpectedCoverageRoutes,
     }
 
     const explicit_all_args = [_][]const u8{ "routes", "all", "hostinger" };
     switch (parseCommand(explicit_all_args[0..])) {
-        .routes => |filter| {
+        .routes => |command| {
+            const filter = command.filter;
             try std.testing.expectEqual(app_coverage.ProviderFilter.all, filter.provider);
             try std.testing.expectEqualStrings("hostinger", filter.tag_query orelse "");
         },
         else => return error.ExpectedCoverageRoutes,
     }
 
-    const exact_operation_args = [_][]const u8{ "routes", "cloudflare", "--operation", "accounts-list-accounts", "--method=GET", "--path=/accounts" };
+    const exact_operation_args = [_][]const u8{ "routes", "cloudflare", "--operation", "accounts-list-accounts", "--method=GET", "--path=/accounts", "--format=json" };
     switch (parseCommand(exact_operation_args[0..])) {
-        .routes => |filter| {
+        .routes => |command| {
+            const filter = command.filter;
             try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, filter.provider);
             try std.testing.expectEqualStrings("accounts-list-accounts", filter.operation_id orelse "");
             try std.testing.expectEqual(app_coverage.parseRouteMethod("GET").?, filter.method.?);
             try std.testing.expectEqualStrings("/accounts", filter.path_template orelse "");
+            try std.testing.expectEqual(RenderFormat.json, command.format);
         },
         else => return error.ExpectedCoverageRoutes,
     }
 
     const alias_args = [_][]const u8{ "routes", "hostinger", "--operation-id=VPS_getVirtualMachinesV1", "--path-template", "/api/vps/v1/virtual-machines" };
     switch (parseCommand(alias_args[0..])) {
-        .routes => |filter| {
+        .routes => |command| {
+            const filter = command.filter;
             try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, filter.provider);
             try std.testing.expectEqualStrings("VPS_getVirtualMachinesV1", filter.operation_id orelse "");
             try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines", filter.path_template orelse "");

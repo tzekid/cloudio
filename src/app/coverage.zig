@@ -632,6 +632,23 @@ pub const CoverageRoutes = struct {
             if (row.notes.len != 0) try writer.print("      notes: {s}\n", .{row.notes});
         }
     }
+
+    pub fn writeJson(self: CoverageRoutes, writer: anytype, filter: RouteFilter) !void {
+        try writer.writeByte('{');
+        try writeJsonField(writer, "kind", "coverage_routes", true);
+        try writer.writeAll("\"filter\":");
+        try writeRouteFilterJson(filter, writer);
+        try writer.writeByte(',');
+        try writeJsonCountField(writer, "count", self.items.len, true);
+        try writer.writeAll("\"routes\":[");
+        var first = true;
+        for (self.items) |row| {
+            try writeMaybeJsonComma(writer, &first);
+            try writeCoverageRouteJson(row, writer);
+        }
+        try writer.writeAll("]}");
+        try writer.writeByte('\n');
+    }
 };
 
 pub const Summary = struct {
@@ -965,6 +982,12 @@ pub fn writeRoutesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: Ro
     var routes = try loadRoutes(io, gpa, paths, filter);
     defer routes.deinit(gpa);
     try routes.writeText(writer, filter.detail);
+}
+
+pub fn writeRoutesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: RouteFilter, writer: anytype) !void {
+    var routes = try loadRoutes(io, gpa, paths, filter);
+    defer routes.deinit(gpa);
+    try routes.writeJson(writer, filter);
 }
 
 pub fn routePlanJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput) ![]u8 {
@@ -1921,6 +1944,132 @@ fn writeLevelProviderEvidenceJson(evidence: LevelProviderEvidence, writer: anyty
     try writer.writeByte('}');
 }
 
+fn writeRouteFilterJson(filter: RouteFilter, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", filter.provider.name(), true);
+    try writeJsonNullableStringField(writer, "tag_query", filter.tag_query, true);
+    try writeJsonNullableStringField(writer, "operation_id", filter.operation_id, true);
+    try writeJsonNullableStringField(writer, "method", if (filter.method) |method| method.name() else null, true);
+    try writeJsonNullableStringField(writer, "path_template", filter.path_template, true);
+    try writeJsonNullableStringField(writer, "support", if (filter.support) |support| support.name() else null, true);
+    try writeJsonNullableStringField(writer, "mode", if (filter.mode) |mode| mode.name() else null, true);
+    try writeJsonBoolField(writer, "detail", filter.detail, false);
+    try writer.writeByte('}');
+}
+
+fn writeCoverageRouteJson(row: CoverageRoute, writer: anytype) !void {
+    const route = row.route;
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", route.provider.name(), true);
+    try writeJsonField(writer, "tag", route.tag, true);
+    try writeJsonField(writer, "method", route.method.name(), true);
+    try writeJsonField(writer, "path_template", route.path_template, true);
+    try writeJsonNullableStringField(writer, "operation_id", route.operation_id, true);
+    try writeJsonField(writer, "support", @tagName(route.support), true);
+    try writeJsonField(writer, "mode", @tagName(route.mode), true);
+    try writeJsonBoolField(writer, "deprecated", route.deprecated, true);
+    try writeJsonBoolField(writer, "routable", route.isRoutable(), true);
+    try writeJsonField(writer, "tests", row.tests, true);
+    try writeJsonField(writer, "notes", row.notes, true);
+    try writer.writeAll("\"path_params\":");
+    try writeRouteParamsJson(route.path_params, writer);
+    try writer.writeByte(',');
+    try writer.writeAll("\"query_params\":");
+    try writeRouteParamsJson(route.query_params, writer);
+    try writer.writeByte(',');
+    try writer.writeAll("\"header_params\":");
+    try writeRouteParamsJson(route.header_params, writer);
+    try writer.writeByte(',');
+    try writer.writeAll("\"request_body\":");
+    try writeRequestBodyJson(route.request_body, writer);
+    try writer.writeByte(',');
+    try writer.writeAll("\"responses\":");
+    try writeResponsesJson(route.responses, writer);
+    try writer.writeByte(',');
+    try writer.writeAll("\"security\":");
+    try writeSecurityJson(route.security, writer);
+    try writer.writeByte('}');
+}
+
+fn writeRouteParamsJson(params: []const provider_routes.RouteParam, writer: anytype) !void {
+    try writer.writeByte('[');
+    for (params, 0..) |param, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.writeByte('{');
+        try writeJsonField(writer, "name", param.name, true);
+        try writeJsonBoolField(writer, "required", param.required, true);
+        try writeJsonNullableStringField(writer, "style", param.style, true);
+        try writeJsonNullableBoolField(writer, "explode", param.explode, true);
+        try writer.writeAll("\"schema\":");
+        try writeParamSchemaJson(param.schema, writer);
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
+}
+
+fn writeParamSchemaJson(schema: provider_routes.ParamSchema, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writer.writeAll("\"schema_refs\":");
+    try writeJsonStringArray(writer, schema.schema_refs);
+    try writer.writeByte(',');
+    try writer.writeAll("\"types\":");
+    try writeJsonStringArray(writer, schema.types);
+    try writer.writeByte(',');
+    try writer.writeAll("\"formats\":");
+    try writeJsonStringArray(writer, schema.formats);
+    try writer.writeByte(',');
+    try writer.writeAll("\"enum_values\":");
+    try writeJsonStringArray(writer, schema.enum_values);
+    try writer.writeByte('}');
+}
+
+fn writeRequestBodyJson(body: provider_routes.RequestBody, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonBoolField(writer, "required", body.required, true);
+    try writer.writeAll("\"content_types\":");
+    try writeJsonStringArray(writer, body.content_types);
+    try writer.writeByte(',');
+    try writer.writeAll("\"schema_refs\":");
+    try writeJsonStringArray(writer, body.schema_refs);
+    try writer.writeByte('}');
+}
+
+fn writeResponsesJson(responses: []const provider_routes.Response, writer: anytype) !void {
+    try writer.writeByte('[');
+    for (responses, 0..) |response, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.writeByte('{');
+        try writeJsonField(writer, "status", response.status, true);
+        try writer.writeAll("\"content_types\":");
+        try writeJsonStringArray(writer, response.content_types);
+        try writer.writeByte(',');
+        try writer.writeAll("\"schema_refs\":");
+        try writeJsonStringArray(writer, response.schema_refs);
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
+}
+
+fn writeSecurityJson(security: provider_routes.Security, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonBoolField(writer, "required", security.required, true);
+    try writer.writeAll("\"alternatives\":[");
+    for (security.alternatives, 0..) |alternative, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writeJsonStringArray(writer, alternative.schemes);
+    }
+    try writer.writeAll("]}");
+}
+
+fn writeJsonStringArray(writer: anytype, values: anytype) !void {
+    try writer.writeByte('[');
+    for (values, 0..) |value, index| {
+        if (index != 0) try writer.writeByte(',');
+        try core_json.writeString(writer, value);
+    }
+    try writer.writeByte(']');
+}
+
 fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
     if (first.*) {
         first.* = false;
@@ -1932,6 +2081,35 @@ fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
 fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
     try core_json.writeString(writer, name);
     try writer.print(":{d}", .{value});
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeJsonBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    try writer.writeAll(if (value) "true" else "false");
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeJsonNullableStringField(writer: anytype, name: []const u8, value: ?[]const u8, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    if (value) |text| {
+        try core_json.writeString(writer, text);
+    } else {
+        try writer.writeAll("null");
+    }
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeJsonNullableBoolField(writer: anytype, name: []const u8, value: ?bool, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    if (value) |flag| {
+        try writer.writeAll(if (flag) "true" else "false");
+    } else {
+        try writer.writeAll("null");
+    }
     if (trailing_comma) try writer.writeByte(',');
 }
 
@@ -2512,6 +2690,21 @@ test "lists provider coverage routes by provider and tag query" {
     try std.testing.expect(std.mem.indexOf(u8, detail_text, "query_params: date_from(required), date_to(required)") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail_text, "request_body: required=false content_types=none schema_refs=none") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail_text, "200 content_types=application/json schema_refs=#/components/schemas/VPS.V1.VirtualMachine.MetricsResource") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try routes.writeJson(&json_out.writer, .{ .provider = .hostinger, .tag_query = "vps", .support = .partial, .mode = .read });
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_routes\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"filter\":{\"provider\":\"hostinger\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getMetricsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"path_params\":[{\"name\":\"virtualMachineId\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"query_params\":[{\"name\":\"date_from\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"request_body\":{\"required\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"responses\":[{\"status\":\"200\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"security\":{\"required\":false") != null);
 
     var mutations = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .support = .unsafe_mutation, .mode = .dry_run });
     defer mutations.deinit(allocator);
