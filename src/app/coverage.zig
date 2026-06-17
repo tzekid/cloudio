@@ -560,6 +560,11 @@ pub const RouteFilter = struct {
     detail: bool = false,
 };
 
+pub const CaptureCandidateOptions = struct {
+    filter: RouteFilter = .{},
+    limit: usize = 25,
+};
+
 pub fn parseRouteMethod(value: []const u8) ?provider_routes.Method {
     return provider_routes.Method.parse(value);
 }
@@ -1055,6 +1060,40 @@ pub fn writeRoutesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: Ro
     try routes.writeJson(writer, filter);
 }
 
+pub fn writeCaptureCandidatesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: CaptureCandidateOptions, writer: anytype) !void {
+    var routes = try loadCaptureCandidateRoutes(io, gpa, paths, options);
+    defer routes.deinit(gpa);
+    try writeCaptureCandidatesText(gpa, routes.items, options, writer);
+}
+
+pub fn writeCaptureCandidatesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: CaptureCandidateOptions, writer: anytype) !void {
+    var routes = try loadCaptureCandidateRoutes(io, gpa, paths, options);
+    defer routes.deinit(gpa);
+    try writeCaptureCandidatesJson(gpa, routes.items, options, writer);
+}
+
+pub fn writeCaptureCandidatesTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: CaptureCandidateOptions, writer: anytype) !void {
+    var routes = try loadCaptureCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
+    defer routes.deinit(gpa);
+    try writeCaptureCandidatesText(gpa, routes.items, options, writer);
+}
+
+pub fn writeCaptureCandidatesJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: CaptureCandidateOptions, writer: anytype) !void {
+    var routes = try loadCaptureCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
+    defer routes.deinit(gpa);
+    try writeCaptureCandidatesJson(gpa, routes.items, options, writer);
+}
+
+fn loadCaptureCandidateRoutes(io: Io, gpa: Allocator, paths: Paths, options: CaptureCandidateOptions) !CoverageRoutes {
+    const filter = captureCandidateRouteFilter(options.filter);
+    return try loadRoutes(io, gpa, paths, filter);
+}
+
+fn loadCaptureCandidateRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: CaptureCandidateOptions) !CoverageRoutes {
+    const filter = captureCandidateRouteFilter(options.filter);
+    return try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, filter);
+}
+
 pub fn routePlanJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput) ![]u8 {
     var routes = try loadRoutes(io, gpa, paths, input.filter);
     defer routes.deinit(gpa);
@@ -1472,6 +1511,193 @@ fn captureEndpoint(gpa: Allocator, route: provider_routes.Route, request: Reques
     const sanitized = try redactedCursorEndpoint(gpa, endpoint);
     gpa.free(endpoint);
     return sanitized;
+}
+
+fn captureCandidateRouteFilter(filter: RouteFilter) RouteFilter {
+    var next = filter;
+    next.method = .GET;
+    next.mode = .read;
+    next.detail = false;
+    return next;
+}
+
+fn routeIsCaptureCandidate(row: CoverageRoute, options: CaptureCandidateOptions) bool {
+    const route = row.route;
+    if (route.deprecated or !route.isRoutable()) return false;
+    if (route.method != .GET or route.mode != .read) return false;
+    if (route.request_body.required) return false;
+    if (!std.mem.eql(u8, row.tests, "missing")) return false;
+    if (options.filter.support != null) return true;
+    return route.support == .planned or route.support == .blocked_permission;
+}
+
+fn writeCaptureCandidatesText(gpa: Allocator, routes: []const CoverageRoute, options: CaptureCandidateOptions, writer: anytype) !void {
+    try writer.writeAll("Cloudio route capture candidates\n");
+    try writer.writeAll("rank: generated bodyless GET/read routes missing L2 capture evidence\n");
+    try writer.print("filter provider={s}", .{options.filter.provider.name()});
+    if (options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
+    if (options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
+    try writer.writeAll(" limit=");
+    if (options.limit == 0) {
+        try writer.writeAll("all\n");
+    } else {
+        try writer.print("{d}\n", .{options.limit});
+    }
+
+    var visible: usize = 0;
+    var omitted: usize = 0;
+    var total: usize = 0;
+    var current_provider: ?[]const u8 = null;
+    var current_tag: ?[]const u8 = null;
+    for (routes) |row| {
+        if (!routeIsCaptureCandidate(row, options)) continue;
+        total += 1;
+        if (options.limit != 0 and visible >= options.limit) {
+            omitted += 1;
+            continue;
+        }
+        visible += 1;
+        if (current_provider == null or !std.mem.eql(u8, current_provider.?, row.route.provider.name())) {
+            current_provider = row.route.provider.name();
+            current_tag = null;
+            try writer.print("\n{s}\n", .{row.route.provider.name()});
+        }
+        if (current_tag == null or !std.mem.eql(u8, current_tag.?, row.route.tag)) {
+            current_tag = row.route.tag;
+            try writer.print("  {s}\n", .{row.route.tag});
+        }
+        try writer.print("    {s} {s} | support={s}", .{ row.route.method.name(), row.route.path_template, @tagName(row.route.support) });
+        if (row.route.operation_id) |id| try writer.print(" op={s}", .{id});
+        try writer.writeByte('\n');
+        try writer.writeAll("      required_path=");
+        try writeRequiredParamNamesText(writer, row.route.path_params);
+        try writer.writeAll(" required_query=");
+        try writeRequiredParamNamesText(writer, row.route.query_params);
+        try writer.writeAll(" required_header=");
+        try writeRequiredParamNamesText(writer, row.route.header_params);
+        try writer.print(" pagination={s}\n", .{routePaginationKind(row.route) orelse "none"});
+        const command = try routeCaptureCommand(gpa, row.route);
+        defer gpa.free(command);
+        try writer.print("      capture: {s}\n", .{command});
+    }
+
+    if (total == 0) {
+        try writer.writeAll("no capture candidates for filter\n");
+    } else if (omitted != 0) {
+        try writer.print("omitted={d}\n", .{omitted});
+    }
+}
+
+fn writeCaptureCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, options: CaptureCandidateOptions, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "kind", "coverage_capture_candidates", true);
+    try writer.writeAll("\"filter\":");
+    try writeRouteFilterJson(captureCandidateRouteFilter(options.filter), writer);
+    try writer.writeByte(',');
+    try writeJsonCountField(writer, "limit", options.limit, true);
+    try writeJsonField(writer, "rank", "generated bodyless GET/read routes missing L2 capture evidence", true);
+    try writer.writeAll("\"candidates\":[");
+
+    var visible: usize = 0;
+    var omitted: usize = 0;
+    var total: usize = 0;
+    var first = true;
+    for (routes) |row| {
+        if (!routeIsCaptureCandidate(row, options)) continue;
+        total += 1;
+        if (options.limit != 0 and visible >= options.limit) {
+            omitted += 1;
+            continue;
+        }
+        visible += 1;
+        try writeMaybeJsonComma(writer, &first);
+        try writeCaptureCandidateJson(gpa, row, writer);
+    }
+
+    try writer.writeAll("],");
+    try writeJsonCountField(writer, "total_candidates", total, true);
+    try writeJsonCountField(writer, "visible", visible, true);
+    try writeJsonCountField(writer, "omitted", omitted, false);
+    try writer.writeByte('}');
+    try writer.writeByte('\n');
+}
+
+fn writeCaptureCandidateJson(gpa: Allocator, row: CoverageRoute, writer: anytype) !void {
+    const route = row.route;
+    const command = try routeCaptureCommand(gpa, route);
+    defer gpa.free(command);
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", route.provider.name(), true);
+    try writeJsonField(writer, "tag", route.tag, true);
+    try writeJsonField(writer, "method", route.method.name(), true);
+    try writeJsonField(writer, "path_template", route.path_template, true);
+    try writeJsonNullableStringField(writer, "operation_id", route.operation_id, true);
+    try writeJsonField(writer, "support", @tagName(route.support), true);
+    try writeJsonField(writer, "tests", row.tests, true);
+    try writeJsonNullableStringField(writer, "pagination", routePaginationKind(route), true);
+    try writer.writeAll("\"required_path_params\":");
+    try writeRequiredParamNamesJson(writer, route.path_params);
+    try writer.writeByte(',');
+    try writer.writeAll("\"required_query_params\":");
+    try writeRequiredParamNamesJson(writer, route.query_params);
+    try writer.writeByte(',');
+    try writer.writeAll("\"required_header_params\":");
+    try writeRequiredParamNamesJson(writer, route.header_params);
+    try writer.writeByte(',');
+    try writeJsonField(writer, "capture_command", command, false);
+    try writer.writeByte('}');
+}
+
+fn routeCaptureCommand(gpa: Allocator, route: provider_routes.Route) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    const writer = &out.writer;
+    try writer.print("cloudio route capture {s}", .{route.provider.name()});
+    if (route.operation_id) |id| {
+        try writer.print(" --operation {s}", .{id});
+    } else {
+        try writer.print(" --method {s} --path {s}", .{ route.method.name(), route.path_template });
+    }
+    try writeRequiredParamPlaceholders(writer, "--path-param", route.path_params);
+    try writeRequiredParamPlaceholders(writer, "--query-param", route.query_params);
+    try writeRequiredParamPlaceholders(writer, "--header-param", route.header_params);
+    if (routePaginationKind(route) != null) try writer.writeAll(" --paginate");
+    return try out.toOwnedSlice();
+}
+
+fn routePaginationKind(route: provider_routes.Route) ?[]const u8 {
+    if (routeSupportsPageQuery(route)) return "page";
+    if (routeSupportsCursorQuery(route)) return "cursor";
+    return null;
+}
+
+fn writeRequiredParamPlaceholders(writer: anytype, option: []const u8, params: []const provider_routes.RouteParam) !void {
+    for (params) |param| {
+        if (!param.required) continue;
+        try writer.print(" {s} {s}=<{s}>", .{ option, param.name, param.name });
+    }
+}
+
+fn writeRequiredParamNamesText(writer: anytype, params: []const provider_routes.RouteParam) !void {
+    var wrote = false;
+    for (params) |param| {
+        if (!param.required) continue;
+        if (wrote) try writer.writeByte(',');
+        wrote = true;
+        try writer.writeAll(param.name);
+    }
+    if (!wrote) try writer.writeAll("-");
+}
+
+fn writeRequiredParamNamesJson(writer: anytype, params: []const provider_routes.RouteParam) !void {
+    try writer.writeByte('[');
+    var first = true;
+    for (params) |param| {
+        if (!param.required) continue;
+        try writeMaybeJsonComma(writer, &first);
+        try core_json.writeString(writer, param.name);
+    }
+    try writer.writeByte(']');
 }
 
 fn requestHasQueryParam(request: Request, name: []const u8) bool {
@@ -2649,6 +2875,53 @@ test "ranks provider coverage gaps by broad unresolved tag groups" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"AI Gateway\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":3") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"omitted\":1") != null);
+}
+
+test "lists route capture candidates for missing L2 read evidence" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Logs","method":"GET","path":"/accounts/{account_id}/logs","operation_id":"logs-list","path_params":[{"name":"account_id","required":true}],"query_params":[{"name":"page","required":false}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"pending"}
+        \\{"provider":"cloudflare","tag":"Logs","method":"GET","path":"/accounts/{account_id}/logs/blocked","operation_id":"logs-blocked","path_params":[{"name":"account_id","required":true}],"query_params":[{"name":"since","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"blocked_permission","mode":"read","tests":"missing","deprecated":false,"notes":"needs diagnostic"}
+        \\{"provider":"cloudflare","tag":"Logs","method":"GET","path":"/accounts/{account_id}/logs/ready","operation_id":"logs-ready","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"already captured"}
+        \\{"provider":"cloudflare","tag":"Logs","method":"POST","path":"/accounts/{account_id}/logs","operation_id":"logs-create","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"mutation"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS","method":"GET","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_getVirtualMachinesV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"other provider"}
+        \\
+    ;
+
+    var text_out = std.Io.Writer.Allocating.init(allocator);
+    defer text_out.deinit();
+    try writeCaptureCandidatesTextFromText(allocator, cloudflare, hostinger, .{
+        .filter = .{ .provider = .cloudflare, .tag_query = "Logs" },
+        .limit = 1,
+    }, &text_out.writer);
+    const text = try text_out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio route capture candidates\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "GET /accounts/{account_id}/logs | support=planned op=logs-list") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "required_path=account_id required_query=- required_header=- pagination=page") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudio route capture cloudflare --operation logs-list --path-param account_id=<account_id> --paginate") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "logs-ready") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeCaptureCandidatesJsonFromText(allocator, cloudflare, hostinger, .{
+        .filter = .{ .provider = .cloudflare, .tag_query = "Logs" },
+        .limit = 0,
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_capture_candidates\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"total_candidates\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"logs-list\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"logs-blocked\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"required_query_params\":[\"since\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"capture_command\":\"cloudio route capture cloudflare --operation logs-blocked --path-param account_id=<account_id> --query-param since=<since>\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "logs-ready") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "VPS_getVirtualMachinesV1") == null);
 }
 
 test "summarizes manifest-backed provider coverage levels" {
