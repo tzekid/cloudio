@@ -256,6 +256,12 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getTunnelEndpoint(self: Client, io: Io, gpa: Allocator, account_id: []const u8, endpoint: TunnelReadEndpoint, args: TunnelReadArgs) !net_http.Response {
+        const url = try tunnelReadUrl(gpa, self.base_url_override, account_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -4446,6 +4452,184 @@ pub const AccessMutationArgs = struct {
     certificate_id: ?[]const u8 = null,
 };
 
+pub const TunnelReadEndpoint = enum {
+    cfd_tunnels,
+    cfd_tunnel,
+    cfd_tunnel_configurations,
+    cfd_tunnel_connections,
+    cfd_tunnel_connector,
+    cfd_tunnel_token,
+    all_tunnels,
+    warp_connectors,
+    warp_connector,
+    warp_connector_configurations,
+    warp_connector_connections,
+    warp_connector_connector,
+    warp_connector_token,
+    tunnel_routes,
+    tunnel_route,
+    tunnel_route_by_ip,
+    virtual_networks,
+    zero_trust_connectivity_settings,
+    hostname_routes,
+    hostname_route,
+    subnets,
+    subnet,
+
+    pub fn parse(value: []const u8) ?TunnelReadEndpoint {
+        if (std.mem.eql(u8, value, "cfd-tunnels") or std.mem.eql(u8, value, "cloudflared") or std.mem.eql(u8, value, "list")) return .cfd_tunnels;
+        if (std.mem.eql(u8, value, "cfd-tunnel") or std.mem.eql(u8, value, "show")) return .cfd_tunnel;
+        if (std.mem.eql(u8, value, "cfd-configurations") or std.mem.eql(u8, value, "cfd-config")) return .cfd_tunnel_configurations;
+        if (std.mem.eql(u8, value, "cfd-connections")) return .cfd_tunnel_connections;
+        if (std.mem.eql(u8, value, "cfd-connector")) return .cfd_tunnel_connector;
+        if (std.mem.eql(u8, value, "cfd-token")) return .cfd_tunnel_token;
+        if (std.mem.eql(u8, value, "all-tunnels") or std.mem.eql(u8, value, "tunnels")) return .all_tunnels;
+        if (std.mem.eql(u8, value, "warp-connectors") or std.mem.eql(u8, value, "warp-list")) return .warp_connectors;
+        if (std.mem.eql(u8, value, "warp-connector") or std.mem.eql(u8, value, "warp-show")) return .warp_connector;
+        if (std.mem.eql(u8, value, "warp-configurations") or std.mem.eql(u8, value, "warp-config")) return .warp_connector_configurations;
+        if (std.mem.eql(u8, value, "warp-connections")) return .warp_connector_connections;
+        if (std.mem.eql(u8, value, "warp-connector-detail")) return .warp_connector_connector;
+        if (std.mem.eql(u8, value, "warp-token")) return .warp_connector_token;
+        if (std.mem.eql(u8, value, "routes")) return .tunnel_routes;
+        if (std.mem.eql(u8, value, "route")) return .tunnel_route;
+        if (std.mem.eql(u8, value, "route-ip") or std.mem.eql(u8, value, "route-by-ip")) return .tunnel_route_by_ip;
+        if (std.mem.eql(u8, value, "virtual-networks") or std.mem.eql(u8, value, "vnetworks")) return .virtual_networks;
+        if (std.mem.eql(u8, value, "connectivity-settings")) return .zero_trust_connectivity_settings;
+        if (std.mem.eql(u8, value, "hostname-routes")) return .hostname_routes;
+        if (std.mem.eql(u8, value, "hostname-route")) return .hostname_route;
+        if (std.mem.eql(u8, value, "subnets")) return .subnets;
+        if (std.mem.eql(u8, value, "subnet")) return .subnet;
+        return null;
+    }
+
+    pub fn commandName(self: TunnelReadEndpoint) []const u8 {
+        return switch (self) {
+            .cfd_tunnels => "cfd-tunnels",
+            .cfd_tunnel => "cfd-tunnel",
+            .cfd_tunnel_configurations => "cfd-configurations",
+            .cfd_tunnel_connections => "cfd-connections",
+            .cfd_tunnel_connector => "cfd-connector",
+            .cfd_tunnel_token => "cfd-token",
+            .all_tunnels => "all-tunnels",
+            .warp_connectors => "warp-connectors",
+            .warp_connector => "warp-connector",
+            .warp_connector_configurations => "warp-configurations",
+            .warp_connector_connections => "warp-connections",
+            .warp_connector_connector => "warp-connector-detail",
+            .warp_connector_token => "warp-token",
+            .tunnel_routes => "routes",
+            .tunnel_route => "route",
+            .tunnel_route_by_ip => "route-ip",
+            .virtual_networks => "virtual-networks",
+            .zero_trust_connectivity_settings => "connectivity-settings",
+            .hostname_routes => "hostname-routes",
+            .hostname_route => "hostname-route",
+            .subnets => "subnets",
+            .subnet => "subnet",
+        };
+    }
+
+    pub fn label(self: TunnelReadEndpoint) []const u8 {
+        return switch (self) {
+            .cfd_tunnels => "tunnel-cfd-tunnels",
+            .cfd_tunnel => "tunnel-cfd-tunnel",
+            .cfd_tunnel_configurations => "tunnel-cfd-configurations",
+            .cfd_tunnel_connections => "tunnel-cfd-connections",
+            .cfd_tunnel_connector => "tunnel-cfd-connector",
+            .cfd_tunnel_token => "tunnel-cfd-token",
+            .all_tunnels => "tunnel-all-tunnels",
+            .warp_connectors => "tunnel-warp-connectors",
+            .warp_connector => "tunnel-warp-connector",
+            .warp_connector_configurations => "tunnel-warp-configurations",
+            .warp_connector_connections => "tunnel-warp-connections",
+            .warp_connector_connector => "tunnel-warp-connector-detail",
+            .warp_connector_token => "tunnel-warp-token",
+            .tunnel_routes => "tunnel-routes",
+            .tunnel_route => "tunnel-route",
+            .tunnel_route_by_ip => "tunnel-route-by-ip",
+            .virtual_networks => "tunnel-virtual-networks",
+            .zero_trust_connectivity_settings => "zero-trust-connectivity-settings",
+            .hostname_routes => "zero-trust-hostname-routes",
+            .hostname_route => "zero-trust-hostname-route",
+            .subnets => "zero-trust-subnets",
+            .subnet => "zero-trust-subnet",
+        };
+    }
+
+    pub fn summary(self: TunnelReadEndpoint) []const u8 {
+        return switch (self) {
+            .cfd_tunnels => "List Cloudflare tunnels",
+            .cfd_tunnel => "Cloudflare tunnel details",
+            .cfd_tunnel_configurations => "Cloudflare tunnel configuration",
+            .cfd_tunnel_connections => "Cloudflare tunnel connections",
+            .cfd_tunnel_connector => "Cloudflare tunnel connector details",
+            .cfd_tunnel_token => "Cloudflare tunnel token",
+            .all_tunnels => "List all account tunnels",
+            .warp_connectors => "List WARP connectors",
+            .warp_connector => "WARP connector details",
+            .warp_connector_configurations => "WARP connector configuration",
+            .warp_connector_connections => "WARP connector connections",
+            .warp_connector_connector => "WARP connector connector details",
+            .warp_connector_token => "WARP connector token",
+            .tunnel_routes => "List tunnel routes",
+            .tunnel_route => "Tunnel route details",
+            .tunnel_route_by_ip => "Tunnel route details by IP",
+            .virtual_networks => "List tunnel virtual networks",
+            .zero_trust_connectivity_settings => "Zero Trust connectivity settings",
+            .hostname_routes => "List Zero Trust hostname routes",
+            .hostname_route => "Zero Trust hostname route details",
+            .subnets => "List Zero Trust subnets",
+            .subnet => "Zero Trust subnet details",
+        };
+    }
+
+    pub fn requiresTunnelId(self: TunnelReadEndpoint) bool {
+        return switch (self) {
+            .cfd_tunnel,
+            .cfd_tunnel_configurations,
+            .cfd_tunnel_connections,
+            .cfd_tunnel_connector,
+            .cfd_tunnel_token,
+            .warp_connector,
+            .warp_connector_configurations,
+            .warp_connector_connections,
+            .warp_connector_connector,
+            .warp_connector_token,
+            => true,
+            else => false,
+        };
+    }
+
+    pub fn requiresConnectorId(self: TunnelReadEndpoint) bool {
+        return self == .cfd_tunnel_connector or self == .warp_connector_connector;
+    }
+
+    pub fn requiresRouteId(self: TunnelReadEndpoint) bool {
+        return self == .tunnel_route;
+    }
+
+    pub fn requiresIp(self: TunnelReadEndpoint) bool {
+        return self == .tunnel_route_by_ip;
+    }
+
+    pub fn requiresHostnameRouteId(self: TunnelReadEndpoint) bool {
+        return self == .hostname_route;
+    }
+
+    pub fn requiresSubnetId(self: TunnelReadEndpoint) bool {
+        return self == .subnet;
+    }
+};
+
+pub const TunnelReadArgs = struct {
+    tunnel_id: ?[]const u8 = null,
+    connector_id: ?[]const u8 = null,
+    route_id: ?[]const u8 = null,
+    ip: ?[]const u8 = null,
+    hostname_route_id: ?[]const u8 = null,
+    subnet_id: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -7225,6 +7409,105 @@ pub fn accessMutationPlanJson(gpa: Allocator, endpoint: AccessMutationEndpoint, 
     });
 }
 
+pub fn tunnelReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: TunnelReadEndpoint, args: TunnelReadArgs) ![]u8 {
+    const path = try tunnelReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn tunnelReadPath(gpa: Allocator, account_id: []const u8, endpoint: TunnelReadEndpoint, args: TunnelReadArgs) ![]u8 {
+    return switch (endpoint) {
+        .cfd_tunnels => try tunnelCollectionPath(gpa, account_id, "cfd_tunnel"),
+        .cfd_tunnel => try tunnelResourcePath(gpa, account_id, "cfd_tunnel", args.tunnel_id),
+        .cfd_tunnel_configurations => try tunnelResourceSuffixPath(gpa, account_id, "cfd_tunnel", args.tunnel_id, "configurations"),
+        .cfd_tunnel_connections => try tunnelResourceSuffixPath(gpa, account_id, "cfd_tunnel", args.tunnel_id, "connections"),
+        .cfd_tunnel_connector => try tunnelConnectorPath(gpa, account_id, "cfd_tunnel", args),
+        .cfd_tunnel_token => try tunnelResourceSuffixPath(gpa, account_id, "cfd_tunnel", args.tunnel_id, "token"),
+        .all_tunnels => try tunnelCollectionPath(gpa, account_id, "tunnels"),
+        .warp_connectors => try tunnelCollectionPath(gpa, account_id, "warp_connector"),
+        .warp_connector => try tunnelResourcePath(gpa, account_id, "warp_connector", args.tunnel_id),
+        .warp_connector_configurations => try tunnelResourceSuffixPath(gpa, account_id, "warp_connector", args.tunnel_id, "configurations"),
+        .warp_connector_connections => try tunnelResourceSuffixPath(gpa, account_id, "warp_connector", args.tunnel_id, "connections"),
+        .warp_connector_connector => try tunnelConnectorPath(gpa, account_id, "warp_connector", args),
+        .warp_connector_token => try tunnelResourceSuffixPath(gpa, account_id, "warp_connector", args.tunnel_id, "token"),
+        .tunnel_routes => try tunnelCollectionPath(gpa, account_id, "teamnet/routes"),
+        .tunnel_route => try tunnelRoutePath(gpa, account_id, args.route_id),
+        .tunnel_route_by_ip => try tunnelRouteByIpPath(gpa, account_id, args.ip),
+        .virtual_networks => try tunnelCollectionPath(gpa, account_id, "teamnet/virtual_networks"),
+        .zero_trust_connectivity_settings => try tunnelCollectionPath(gpa, account_id, "zerotrust/connectivity_settings"),
+        .hostname_routes => try tunnelCollectionPath(gpa, account_id, "zerotrust/routes/hostname"),
+        .hostname_route => try hostnameRoutePath(gpa, account_id, args.hostname_route_id),
+        .subnets => try tunnelCollectionPath(gpa, account_id, "zerotrust/subnets"),
+        .subnet => try subnetPath(gpa, account_id, args.subnet_id),
+    };
+}
+
+fn tunnelCollectionPath(gpa: Allocator, account_id: []const u8, suffix: []const u8) ![]u8 {
+    const escaped_account_id = try pathEscape(gpa, account_id);
+    defer gpa.free(escaped_account_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ accounts_path, escaped_account_id, suffix });
+}
+
+fn tunnelResourcePath(gpa: Allocator, account_id: []const u8, collection: []const u8, maybe_tunnel_id: ?[]const u8) ![]u8 {
+    const tunnel_id = maybe_tunnel_id orelse return error.MissingCloudflareTunnelId;
+    const collection_path = try tunnelCollectionPath(gpa, account_id, collection);
+    defer gpa.free(collection_path);
+    const escaped_tunnel_id = try pathEscape(gpa, tunnel_id);
+    defer gpa.free(escaped_tunnel_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_tunnel_id });
+}
+
+fn tunnelResourceSuffixPath(gpa: Allocator, account_id: []const u8, collection: []const u8, maybe_tunnel_id: ?[]const u8, suffix: []const u8) ![]u8 {
+    const resource_path = try tunnelResourcePath(gpa, account_id, collection, maybe_tunnel_id);
+    defer gpa.free(resource_path);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ resource_path, suffix });
+}
+
+fn tunnelConnectorPath(gpa: Allocator, account_id: []const u8, collection: []const u8, args: TunnelReadArgs) ![]u8 {
+    const connectors_path = try tunnelResourceSuffixPath(gpa, account_id, collection, args.tunnel_id, "connectors");
+    defer gpa.free(connectors_path);
+    const connector_id = args.connector_id orelse return error.MissingCloudflareTunnelConnectorId;
+    const escaped_connector_id = try pathEscape(gpa, connector_id);
+    defer gpa.free(escaped_connector_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ connectors_path, escaped_connector_id });
+}
+
+fn tunnelRoutePath(gpa: Allocator, account_id: []const u8, maybe_route_id: ?[]const u8) ![]u8 {
+    const routes_path = try tunnelCollectionPath(gpa, account_id, "teamnet/routes");
+    defer gpa.free(routes_path);
+    const route_id = maybe_route_id orelse return error.MissingCloudflareTunnelRouteId;
+    const escaped_route_id = try pathEscape(gpa, route_id);
+    defer gpa.free(escaped_route_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ routes_path, escaped_route_id });
+}
+
+fn tunnelRouteByIpPath(gpa: Allocator, account_id: []const u8, maybe_ip: ?[]const u8) ![]u8 {
+    const routes_path = try tunnelCollectionPath(gpa, account_id, "teamnet/routes/ip");
+    defer gpa.free(routes_path);
+    const ip = maybe_ip orelse return error.MissingCloudflareTunnelRouteIp;
+    const escaped_ip = try pathEscape(gpa, ip);
+    defer gpa.free(escaped_ip);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ routes_path, escaped_ip });
+}
+
+fn hostnameRoutePath(gpa: Allocator, account_id: []const u8, maybe_hostname_route_id: ?[]const u8) ![]u8 {
+    const routes_path = try tunnelCollectionPath(gpa, account_id, "zerotrust/routes/hostname");
+    defer gpa.free(routes_path);
+    const route_id = maybe_hostname_route_id orelse return error.MissingCloudflareHostnameRouteId;
+    const escaped_route_id = try pathEscape(gpa, route_id);
+    defer gpa.free(escaped_route_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ routes_path, escaped_route_id });
+}
+
+fn subnetPath(gpa: Allocator, account_id: []const u8, maybe_subnet_id: ?[]const u8) ![]u8 {
+    const subnets_path = try tunnelCollectionPath(gpa, account_id, "zerotrust/subnets/warp");
+    defer gpa.free(subnets_path);
+    const subnet_id = maybe_subnet_id orelse return error.MissingCloudflareSubnetId;
+    const escaped_subnet_id = try pathEscape(gpa, subnet_id);
+    defer gpa.free(escaped_subnet_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ subnets_path, escaped_subnet_id });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -9140,6 +9423,68 @@ test "builds Access account and zone paths and dry-run plans" {
     try std.testing.expectError(error.MissingCloudflareAccessApplicationId, accessReadPath(allocator, .account, "acct/1", .application_details, .{}));
     try std.testing.expectError(error.MissingCloudflareAccessPolicyId, accessMutationPlanJson(allocator, .update_application_policy, .{ .scope = .account, .scope_id = "acct/1", .app_id = "app/1" }));
     try std.testing.expectError(error.UnsupportedCloudflareAccessMutation, accessMutationPlanJson(allocator, .rotate_service_token, .{ .scope = .zone, .scope_id = "zone/1", .service_token_id = "token/1" }));
+}
+
+test "cloudflare tunnel and zero trust network endpoints parse commands" {
+    try std.testing.expectEqual(TunnelReadEndpoint.cfd_tunnels, TunnelReadEndpoint.parse("cloudflared").?);
+    try std.testing.expectEqual(TunnelReadEndpoint.cfd_tunnel, TunnelReadEndpoint.parse("show").?);
+    try std.testing.expectEqual(TunnelReadEndpoint.all_tunnels, TunnelReadEndpoint.parse("tunnels").?);
+    try std.testing.expectEqual(TunnelReadEndpoint.warp_connector, TunnelReadEndpoint.parse("warp-show").?);
+    try std.testing.expectEqual(TunnelReadEndpoint.tunnel_route_by_ip, TunnelReadEndpoint.parse("route-by-ip").?);
+    try std.testing.expectEqual(TunnelReadEndpoint.zero_trust_connectivity_settings, TunnelReadEndpoint.parse("connectivity-settings").?);
+    try std.testing.expectEqual(TunnelReadEndpoint.hostname_routes, TunnelReadEndpoint.parse("hostname-routes").?);
+    try std.testing.expectEqual(TunnelReadEndpoint.subnet, TunnelReadEndpoint.parse("subnet").?);
+    try std.testing.expect(TunnelReadEndpoint.cfd_tunnel_token.requiresTunnelId());
+    try std.testing.expect(TunnelReadEndpoint.cfd_tunnel_connector.requiresConnectorId());
+    try std.testing.expect(TunnelReadEndpoint.tunnel_route.requiresRouteId());
+    try std.testing.expect(TunnelReadEndpoint.tunnel_route_by_ip.requiresIp());
+    try std.testing.expect(TunnelReadEndpoint.hostname_route.requiresHostnameRouteId());
+    try std.testing.expect(TunnelReadEndpoint.subnet.requiresSubnetId());
+    try std.testing.expectEqualStrings("tunnel-cfd-token", TunnelReadEndpoint.cfd_tunnel_token.label());
+    try std.testing.expectEqualStrings("List Zero Trust hostname routes", TunnelReadEndpoint.hostname_routes.summary());
+}
+
+test "builds Cloudflare tunnel and zero trust network paths" {
+    const allocator = std.testing.allocator;
+
+    const cfd_list = try tunnelReadUrl(allocator, base_url, "acct/1", .cfd_tunnels, .{});
+    defer allocator.free(cfd_list);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/cfd_tunnel", cfd_list);
+
+    const cfd_config = try tunnelReadPath(allocator, "acct/1", .cfd_tunnel_configurations, .{ .tunnel_id = "tunnel/1" });
+    defer allocator.free(cfd_config);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/cfd_tunnel/tunnel%2F1/configurations", cfd_config);
+
+    const cfd_connector = try tunnelReadPath(allocator, "acct/1", .cfd_tunnel_connector, .{ .tunnel_id = "tunnel/1", .connector_id = "connector/1" });
+    defer allocator.free(cfd_connector);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/cfd_tunnel/tunnel%2F1/connectors/connector%2F1", cfd_connector);
+
+    const all_tunnels = try tunnelReadPath(allocator, "acct 1", .all_tunnels, .{});
+    defer allocator.free(all_tunnels);
+    try std.testing.expectEqualStrings("/accounts/acct%201/tunnels", all_tunnels);
+
+    const warp_connections = try tunnelReadPath(allocator, "acct/1", .warp_connector_connections, .{ .tunnel_id = "warp/1" });
+    defer allocator.free(warp_connections);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/warp_connector/warp%2F1/connections", warp_connections);
+
+    const route_by_ip = try tunnelReadPath(allocator, "acct/1", .tunnel_route_by_ip, .{ .ip = "10.0.0.0/24" });
+    defer allocator.free(route_by_ip);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/teamnet/routes/ip/10.0.0.0%2F24", route_by_ip);
+
+    const hostname_route = try tunnelReadPath(allocator, "acct/1", .hostname_route, .{ .hostname_route_id = "route/1" });
+    defer allocator.free(hostname_route);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/zerotrust/routes/hostname/route%2F1", hostname_route);
+
+    const subnet = try tunnelReadPath(allocator, "acct/1", .subnet, .{ .subnet_id = "subnet/1" });
+    defer allocator.free(subnet);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/zerotrust/subnets/warp/subnet%2F1", subnet);
+
+    try std.testing.expectError(error.MissingCloudflareTunnelId, tunnelReadPath(allocator, "acct/1", .cfd_tunnel, .{}));
+    try std.testing.expectError(error.MissingCloudflareTunnelConnectorId, tunnelReadPath(allocator, "acct/1", .warp_connector_connector, .{ .tunnel_id = "warp/1" }));
+    try std.testing.expectError(error.MissingCloudflareTunnelRouteId, tunnelReadPath(allocator, "acct/1", .tunnel_route, .{}));
+    try std.testing.expectError(error.MissingCloudflareTunnelRouteIp, tunnelReadPath(allocator, "acct/1", .tunnel_route_by_ip, .{}));
+    try std.testing.expectError(error.MissingCloudflareHostnameRouteId, tunnelReadPath(allocator, "acct/1", .hostname_route, .{}));
+    try std.testing.expectError(error.MissingCloudflareSubnetId, tunnelReadPath(allocator, "acct/1", .subnet, .{}));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

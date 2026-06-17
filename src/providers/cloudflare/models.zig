@@ -212,6 +212,27 @@ pub fn parseResourceIdRows(gpa: Allocator, body: []const u8) !IdRows {
     return .{ .items = try rows.toOwnedSlice(gpa) };
 }
 
+pub fn parseResourceIdRowsMatchingString(gpa: Allocator, body: []const u8, field_name: []const u8, expected_value: []const u8) !IdRows {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(IdRow);
+    defer parsed.deinit();
+    const items = core_json.resultArray(parsed.value) orelse return emptyRows(IdRow);
+    var rows = std.ArrayList(IdRow).empty;
+    errdefer deinitPartial(IdRow, &rows, gpa);
+
+    for (items.items) |item| {
+        const actual = core_json.fieldString(item, field_name) orelse continue;
+        if (!std.mem.eql(u8, actual, expected_value)) continue;
+        const id_value = core_json.fieldString(item, "id") orelse
+            core_json.fieldString(item, "uid") orelse
+            core_json.fieldString(item, "name") orelse
+            continue;
+        const id = try dupeRequired(gpa, id_value);
+        errdefer gpa.free(id);
+        try rows.append(gpa, .{ .id = id });
+    }
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
 pub fn zoneIdFromResponse(gpa: Allocator, body: []const u8) !?[]u8 {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return null;
     defer parsed.deinit();
@@ -311,4 +332,16 @@ test "parses generic Cloudflare resource ids from id uid or name" {
     try std.testing.expectEqualStrings("page-id", rows.items[0].id);
     try std.testing.expectEqualStrings("access-uid", rows.items[1].id);
     try std.testing.expectEqualStrings("asset-name", rows.items[2].id);
+}
+
+test "parses generic Cloudflare resource ids matching a string field" {
+    const allocator = std.testing.allocator;
+    var rows = try parseResourceIdRowsMatchingString(allocator,
+        \\{"result":[{"id":"cloudflare-source","subnet_type":"cloudflare_source"},{"id":"warp-a","subnet_type":"warp"},{"uid":"warp-b","subnet_type":"warp"},{"id":"deleted","subnet_type":"deleted"}]}
+    , "subnet_type", "warp");
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), rows.items.len);
+    try std.testing.expectEqualStrings("warp-a", rows.items[0].id);
+    try std.testing.expectEqualStrings("warp-b", rows.items[1].id);
 }

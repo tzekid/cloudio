@@ -159,6 +159,10 @@ fn usage() void {
         \\  cloudio cloudflare access account idp-federation-grant|saml-certificate|saml-certificate-pem <account-id> <resource-id>
         \\  cloudio cloudflare access account reusable-policies|tags|authenticator-aaguids|idp-federation-grants|saml-certificates|scim-update-logs|keys|authentication-logs|mtls-certificates|mtls-settings|cas <account-id>
         \\  cloudio cloudflare access zone mtls-certificates|mtls-settings|cas <zone-id>
+        \\  cloudio cloudflare tunnel cfd-tunnels|all-tunnels|warp-connectors|routes|virtual-networks|connectivity-settings|hostname-routes|subnets <account-id>
+        \\  cloudio cloudflare tunnel cfd-tunnel|cfd-configurations|cfd-connections|cfd-token|warp-connector|warp-configurations|warp-connections|warp-token <account-id> <tunnel-id>
+        \\  cloudio cloudflare tunnel cfd-connector|warp-connector-detail <account-id> <tunnel-id> <connector-id>
+        \\  cloudio cloudflare tunnel route|hostname-route|subnet <account-id> <resource-id>|route-ip <account-id> <ip-or-cidr>
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>

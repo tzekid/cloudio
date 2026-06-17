@@ -117,6 +117,15 @@ zig build run -- cloudflare access account cas <account-id>
 zig build run -- cloudflare access zone applications <zone-id>
 zig build run -- cloudflare access zone mtls-certificates <zone-id>
 zig build run -- cloudflare access zone cas <zone-id>
+zig build run -- cloudflare tunnel cfd-tunnels <account-id>
+zig build run -- cloudflare tunnel cfd-configurations <account-id> <tunnel-id>
+zig build run -- cloudflare tunnel all-tunnels <account-id>
+zig build run -- cloudflare tunnel routes <account-id>
+zig build run -- cloudflare tunnel route-ip <account-id> 10.0.0.0/24
+zig build run -- cloudflare tunnel virtual-networks <account-id>
+zig build run -- cloudflare tunnel connectivity-settings <account-id>
+zig build run -- cloudflare tunnel hostname-routes <account-id>
+zig build run -- cloudflare tunnel subnets <account-id>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru

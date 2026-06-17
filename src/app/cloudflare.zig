@@ -63,6 +63,8 @@ pub const AccessMutationEndpoint = collector_cloudflare.AccessMutationEndpoint;
 pub const AccessReadArgs = collector_cloudflare.AccessReadArgs;
 pub const AccessReadEndpoint = collector_cloudflare.AccessReadEndpoint;
 pub const AccessScope = collector_cloudflare.AccessScope;
+pub const TunnelReadArgs = collector_cloudflare.TunnelReadArgs;
+pub const TunnelReadEndpoint = collector_cloudflare.TunnelReadEndpoint;
 pub const LoadBalancingAccountReadEndpoint = collector_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = collector_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = collector_cloudflare.LoadBalancingMutationEndpoint;
@@ -249,6 +251,10 @@ pub fn collectAccessCustomPageEndpoint(ctx: Context, account_id: []const u8, end
 
 pub fn collectAccessEndpoint(ctx: Context, scope: AccessScope, scope_id: []const u8, endpoint: AccessReadEndpoint, args: AccessReadArgs) !Output {
     return try collector_cloudflare.collectAccessEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, scope, scope_id, endpoint, args, true);
+}
+
+pub fn collectTunnelEndpoint(ctx: Context, account_id: []const u8, endpoint: TunnelReadEndpoint, args: TunnelReadArgs) !Output {
+    return try collector_cloudflare.collectTunnelEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, args, true);
 }
 
 pub fn collectIdentityEndpoint(ctx: Context, endpoint: IdentityEndpoint) !Output {

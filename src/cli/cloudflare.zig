@@ -64,6 +64,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandAccessCustomPages(ctx, args);
     } else if (std.mem.eql(u8, sub, "access")) {
         try commandAccess(ctx, args);
+    } else if (std.mem.eql(u8, sub, "tunnel") or std.mem.eql(u8, sub, "tunnels")) {
+        try commandTunnel(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -1295,6 +1297,59 @@ fn printMissingAccessReadArg(scope: app_cloudflare.AccessScope, endpoint: app_cl
 
 fn printMissingAccessMutationArg(scope: app_cloudflare.AccessScope, endpoint: app_cloudflare.AccessMutationEndpoint, label: []const u8) void {
     std.debug.print("{s} required for dry-run access {s} {s}\n", .{ label, scope.commandName(), endpoint.commandName() });
+}
+
+fn commandTunnel(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("tunnel <route> <account-id> [ids...] required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.TunnelReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown tunnel route: {s}\n", .{args[1]});
+        return;
+    };
+    const account_id = args[2];
+    var read_args: app_cloudflare.TunnelReadArgs = .{};
+    var index: usize = 3;
+    if (endpoint.requiresTunnelId()) {
+        if (index >= args.len) return printMissingTunnelReadArg(endpoint, "tunnel id");
+        read_args.tunnel_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresConnectorId()) {
+        if (index >= args.len) return printMissingTunnelReadArg(endpoint, "connector id");
+        read_args.connector_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresRouteId()) {
+        if (index >= args.len) return printMissingTunnelReadArg(endpoint, "route id");
+        read_args.route_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresIp()) {
+        if (index >= args.len) return printMissingTunnelReadArg(endpoint, "IP or CIDR");
+        read_args.ip = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresHostnameRouteId()) {
+        if (index >= args.len) return printMissingTunnelReadArg(endpoint, "hostname route id");
+        read_args.hostname_route_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresSubnetId()) {
+        if (index >= args.len) return printMissingTunnelReadArg(endpoint, "subnet id");
+        read_args.subnet_id = args[index];
+        index += 1;
+    }
+    if (index < args.len) {
+        std.debug.print("unused tunnel argument: {s}\n", .{args[index]});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectTunnelEndpoint(appContext(ctx), account_id, endpoint, read_args));
+}
+
+fn printMissingTunnelReadArg(endpoint: app_cloudflare.TunnelReadEndpoint, label: []const u8) void {
+    std.debug.print("{s} required for tunnel {s}\n", .{ label, endpoint.commandName() });
 }
 
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {

@@ -68,6 +68,8 @@ pub const AccessMutationEndpoint = provider_cloudflare.AccessMutationEndpoint;
 pub const AccessReadArgs = provider_cloudflare.AccessReadArgs;
 pub const AccessReadEndpoint = provider_cloudflare.AccessReadEndpoint;
 pub const AccessScope = provider_cloudflare.AccessScope;
+pub const TunnelReadArgs = provider_cloudflare.TunnelReadArgs;
+pub const TunnelReadEndpoint = provider_cloudflare.TunnelReadEndpoint;
 pub const LoadBalancingAccountReadEndpoint = provider_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = provider_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = provider_cloudflare.LoadBalancingMutationEndpoint;
@@ -174,6 +176,7 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     try collectCustomPagesForAccounts(gpa, io, client, db, redacted);
     try collectAccessCustomPagesForAccounts(gpa, io, client, db, redacted);
     try collectAccessForAccounts(gpa, io, client, db, redacted);
+    try collectTunnelsForAccounts(gpa, io, client, db, redacted);
     try collectAccountTokenEndpointsForAccounts(gpa, io, auth, client, db, redacted);
     try collectAccountDnsSettings(gpa, io, client, db, redacted);
     try collectAccountDnsRecordUsageForAccounts(gpa, io, client, db, redacted);
@@ -904,6 +907,30 @@ pub fn collectAccessEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope:
         .kind = endpoint_label,
         .target = target,
         .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectTunnelEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, endpoint: TunnelReadEndpoint, args: TunnelReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = try tunnelTarget(gpa, account_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getTunnelEndpoint(io, gpa, account_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.tunnelReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
         .endpoint = endpoint_path,
         .status = body.status,
         .body = body.body,
@@ -2517,6 +2544,88 @@ fn collectAccessSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Cli
     });
 }
 
+fn collectTunnelsForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const endpoints = [_]TunnelReadEndpoint{
+        .cfd_tunnels,
+        .all_tunnels,
+        .warp_connectors,
+        .tunnel_routes,
+        .virtual_networks,
+        .zero_trust_connectivity_settings,
+        .hostname_routes,
+        .subnets,
+    };
+    for (rows.items) |row| {
+        for (endpoints) |endpoint| {
+            try collectTunnelReadForAccount(gpa, io, client, db, row.id, endpoint, .{});
+        }
+    }
+}
+
+fn collectTunnelReadForAccount(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, endpoint: TunnelReadEndpoint, args: TunnelReadArgs) anyerror!void {
+    const redacted = collectTunnelSnapshot(gpa, io, client, db, account_id, endpoint, args) catch |err| {
+        const target = tunnelTarget(gpa, account_id, endpoint, args) catch try gpa.dupe(u8, account_id);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    try collectTunnelDetailsForList(gpa, io, client, db, account_id, endpoint, redacted);
+}
+
+fn collectTunnelDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, list_endpoint: TunnelReadEndpoint, list_body: []const u8) anyerror!void {
+    const detail_endpoints: []const TunnelReadEndpoint = switch (list_endpoint) {
+        .cfd_tunnels => &[_]TunnelReadEndpoint{ .cfd_tunnel, .cfd_tunnel_configurations, .cfd_tunnel_connections },
+        .warp_connectors => &[_]TunnelReadEndpoint{ .warp_connector, .warp_connector_configurations, .warp_connector_connections },
+        .tunnel_routes => &[_]TunnelReadEndpoint{.tunnel_route},
+        .hostname_routes => &[_]TunnelReadEndpoint{.hostname_route},
+        .subnets => &[_]TunnelReadEndpoint{.subnet},
+        else => &[_]TunnelReadEndpoint{},
+    };
+    if (detail_endpoints.len == 0) return;
+
+    var rows = if (list_endpoint == .subnets)
+        try provider_cloudflare_models.parseResourceIdRowsMatchingString(gpa, list_body, "subnet_type", "warp")
+    else
+        try provider_cloudflare_models.parseResourceIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        for (detail_endpoints) |endpoint| {
+            const args: TunnelReadArgs = switch (endpoint) {
+                .cfd_tunnel, .cfd_tunnel_configurations, .cfd_tunnel_connections => .{ .tunnel_id = row.id },
+                .warp_connector, .warp_connector_configurations, .warp_connector_connections => .{ .tunnel_id = row.id },
+                .tunnel_route => .{ .route_id = row.id },
+                .hostname_route => .{ .hostname_route_id = row.id },
+                .subnet => .{ .subnet_id = row.id },
+                else => .{},
+            };
+            try collectTunnelReadForAccount(gpa, io, client, db, account_id, endpoint, args);
+        }
+    }
+}
+
+fn collectTunnelSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, endpoint: TunnelReadEndpoint, args: TunnelReadArgs) ![]u8 {
+    const body = try client.getTunnelEndpoint(io, gpa, account_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.tunnelReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try tunnelTarget(gpa, account_id, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
 fn collectRulesetSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: RulesetScope, scope_id: []const u8, target_label: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
     const body = try client.getRulesetEndpoint(io, gpa, scope, scope_id, endpoint, args);
     defer body.deinit(gpa);
@@ -2907,6 +3016,35 @@ fn accessTarget(gpa: Allocator, scope_label: []const u8, endpoint: AccessReadEnd
         return try std.fmt.allocPrint(gpa, "{s}/certificate:{s}", .{ scope_label, certificate_id });
     }
     return try gpa.dupe(u8, scope_label);
+}
+
+fn tunnelTarget(gpa: Allocator, account_id: []const u8, endpoint: TunnelReadEndpoint, args: TunnelReadArgs) ![]u8 {
+    if (endpoint.requiresConnectorId()) {
+        const tunnel_id = args.tunnel_id orelse return try gpa.dupe(u8, account_id);
+        const connector_id = args.connector_id orelse return try std.fmt.allocPrint(gpa, "{s}/tunnel:{s}", .{ account_id, tunnel_id });
+        return try std.fmt.allocPrint(gpa, "{s}/tunnel:{s}/connector:{s}", .{ account_id, tunnel_id, connector_id });
+    }
+    if (endpoint.requiresTunnelId()) {
+        const tunnel_id = args.tunnel_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/tunnel:{s}", .{ account_id, tunnel_id });
+    }
+    if (endpoint.requiresRouteId()) {
+        const route_id = args.route_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/route:{s}", .{ account_id, route_id });
+    }
+    if (endpoint.requiresIp()) {
+        const ip = args.ip orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/ip:{s}", .{ account_id, ip });
+    }
+    if (endpoint.requiresHostnameRouteId()) {
+        const route_id = args.hostname_route_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/hostname-route:{s}", .{ account_id, route_id });
+    }
+    if (endpoint.requiresSubnetId()) {
+        const subnet_id = args.subnet_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/subnet:{s}", .{ account_id, subnet_id });
+    }
+    return try gpa.dupe(u8, account_id);
 }
 
 fn resourceTaggingAccountTarget(gpa: Allocator, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
