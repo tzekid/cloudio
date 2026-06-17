@@ -255,6 +255,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });

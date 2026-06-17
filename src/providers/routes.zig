@@ -104,6 +104,16 @@ pub const QueryParam = struct {
     value: []const u8,
 };
 
+pub fn parsePathParamAssignment(value: []const u8) !PathParam {
+    const parsed = try splitParamAssignment(value);
+    return .{ .name = parsed.name, .value = parsed.value };
+}
+
+pub fn parseQueryParamAssignment(value: []const u8) !QueryParam {
+    const parsed = try splitParamAssignment(value);
+    return .{ .name = parsed.name, .value = parsed.value };
+}
+
 pub const BodyInput = struct {
     present: bool = false,
     content_type: ?[]const u8 = null,
@@ -720,6 +730,19 @@ fn contentTypeBase(content_type: []const u8) []const u8 {
     return std.mem.trim(u8, content_type[0..semicolon], " \t\r\n");
 }
 
+const ParamAssignment = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
+fn splitParamAssignment(value: []const u8) !ParamAssignment {
+    const equals = std.mem.indexOfScalar(u8, value, '=') orelse return error.InvalidRouteParameterAssignment;
+    const name = std.mem.trim(u8, value[0..equals], " \t\r\n");
+    const param_value = std.mem.trim(u8, value[equals + 1 ..], " \t\r\n");
+    if (name.len == 0) return error.InvalidRouteParameterAssignment;
+    return .{ .name = name, .value = param_value };
+}
+
 fn findParam(params: []const PathParam, name: []const u8) ?[]const u8 {
     for (params) |param| {
         if (std.mem.eql(u8, param.name, name)) return param.value;
@@ -993,6 +1016,23 @@ test "renders validated query parameters for route paths and urls" {
     );
     defer allocator.free(url);
     try std.testing.expectEqualStrings("https://example.test/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", url);
+}
+
+test "parses route parameter assignments without allocation" {
+    const path_param = try parsePathParamAssignment(" account_id = acct/1 ");
+    try std.testing.expectEqualStrings("account_id", path_param.name);
+    try std.testing.expectEqualStrings("acct/1", path_param.value);
+
+    const query_param = try parseQueryParamAssignment("date_from=2026-06-16T00:00:00Z");
+    try std.testing.expectEqualStrings("date_from", query_param.name);
+    try std.testing.expectEqualStrings("2026-06-16T00:00:00Z", query_param.value);
+
+    const empty_value = try parseQueryParamAssignment("flag=");
+    try std.testing.expectEqualStrings("flag", empty_value.name);
+    try std.testing.expectEqualStrings("", empty_value.value);
+
+    try std.testing.expectError(error.InvalidRouteParameterAssignment, parsePathParamAssignment("missing-equals"));
+    try std.testing.expectError(error.InvalidRouteParameterAssignment, parseQueryParamAssignment("=value"));
 }
 
 test "renders route request objects for paths and urls" {

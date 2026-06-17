@@ -90,6 +90,43 @@ pub fn dryRunPlanJsonWithQuery(gpa: Allocator, route: provider_routes.Route, pat
     return try dryRunPlanJsonRequest(gpa, route, .{ .path_params = path_params, .query_params = query_params });
 }
 
+pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
+    if (!route.isRoutable()) return error.UnsupportedProviderRoute;
+    if (route.isDryRunMutation()) return try dryRunPlanJsonRequest(gpa, route, request);
+    if (route.mode != .read or route.method != .GET) return error.UnsupportedProviderRoutePlan;
+    if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
+
+    const path = try route.renderRequestPath(gpa, request);
+    defer gpa.free(path);
+    const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ route.provider.baseUrl(), path });
+    defer gpa.free(url);
+
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    const writer = &out.writer;
+    try writer.writeAll("{");
+    try writeJsonField(writer, "provider", route.provider.name(), true);
+    try writeJsonField(writer, "group", route.tag, true);
+    try writeJsonField(writer, "operation", route.operation_id orelse route.path_template, true);
+    if (route.operation_id) |id| {
+        try writeJsonField(writer, "operation_id", id, true);
+    } else {
+        try writer.writeAll("\"operation_id\":null,");
+    }
+    try writeJsonField(writer, "method", route.method.name(), true);
+    try writeJsonField(writer, "path", path, true);
+    try writeJsonField(writer, "url", url, true);
+    try writeJsonField(writer, "support", @tagName(route.support), true);
+    try writeRequestBodyField(writer, "request_body", route.request_body, true);
+    try writeRequestBodyInputField(writer, "request_body_input", route.request_body, request.body, true);
+    try writeResponsesField(writer, "responses", route.responses, true);
+    try writer.writeAll("\"mode\":\"read\",");
+    try writer.writeAll("\"will_execute\":false,");
+    try writeJsonField(writer, "safety", "No provider API request is sent. This is a generic request plan for a live read route.", false);
+    try writer.writeAll("}");
+    return try out.toOwnedSlice();
+}
+
 pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
     if (!route.isRoutable()) return error.UnsupportedProviderRoute;
     if (route.mode != .dry_run or route.method == .GET or route.method == .HEAD) return error.ProviderRouteIsNotMutation;
@@ -224,6 +261,87 @@ test "generic dispatch renders query-aware dry-run plans" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true,\"content_types\":[\"multipart/form-data\"],\"schema_refs\":[]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"responses\":[{\"status\":\"201\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/workers_completed-upload-assets-response\"]},{\"status\":\"202\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/workers_upload-assets-response\"]},{\"status\":\"4XX\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/workers_api-response-common-failure\"]}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+}
+
+test "generic dispatch plans bodyless read routes without executing HTTP" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getMetricsV1")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const plan = try planRouteJsonRequest(
+        allocator,
+        route,
+        .{
+            .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+            .query_params = &.{
+                .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
+                .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
+            },
+        },
+    );
+    defer allocator.free(plan);
+
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"provider\":\"hostinger\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"VPS_getMetricsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"method\":\"GET\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"read\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+}
+
+test "generic dispatch route planner keeps mutation plans dry-run only" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const plan = try planRouteJsonRequest(
+        allocator,
+        route,
+        .{
+            .path_params = &.{.{ .name = "account_id", .value = "acct/1" }},
+            .query_params = &.{.{ .name = "base64", .value = "true" }},
+            .body = .{ .present = true, .content_type = "multipart/form-data; boundary=test" },
+        },
+    );
+    defer allocator.free(plan);
+
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"worker-assets-upload\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"dry_run\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+}
+
+test "generic dispatch route planner validates read route request input" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getMetricsV1")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    try std.testing.expectError(
+        error.MissingRouteQueryParameter,
+        planRouteJsonRequest(
+            allocator,
+            route,
+            .{
+                .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+                .query_params = &.{.{ .name = "date_from", .value = "2026-06-16T00:00:00Z" }},
+            },
+        ),
+    );
+    try std.testing.expectError(
+        error.ProviderReadRouteIsBodyless,
+        planRouteJsonRequest(
+            allocator,
+            route,
+            .{
+                .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+                .query_params = &.{
+                    .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
+                    .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
+                },
+                .body = .{ .present = true, .content_type = "application/json" },
+            },
+        ),
+    );
 }
 
 test "generic dispatch accepts route request objects" {

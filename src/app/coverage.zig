@@ -1,5 +1,6 @@
 const std = @import("std");
 const core_json = @import("core_json");
+const provider_dispatch = @import("provider_dispatch");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -23,6 +24,11 @@ pub const mode_names = [_][]const u8{
     "write",
     "none",
 };
+
+pub const PathParam = provider_routes.PathParam;
+pub const QueryParam = provider_routes.QueryParam;
+pub const Request = provider_routes.Request;
+pub const BodyInput = provider_routes.BodyInput;
 
 pub const Paths = struct {
     cloudflare_manifest: []const u8 = "coverage/generated/cloudflare.jsonl",
@@ -191,6 +197,19 @@ pub const RouteFilter = struct {
 pub fn parseRouteMethod(value: []const u8) ?provider_routes.Method {
     return provider_routes.Method.parse(value);
 }
+
+pub fn parsePathParamAssignment(value: []const u8) !PathParam {
+    return provider_routes.parsePathParamAssignment(value);
+}
+
+pub fn parseQueryParamAssignment(value: []const u8) !QueryParam {
+    return provider_routes.parseQueryParamAssignment(value);
+}
+
+pub const RoutePlanInput = struct {
+    filter: RouteFilter,
+    request: Request = .{},
+};
 
 pub const CoverageRoute = struct {
     route: provider_routes.Route,
@@ -366,6 +385,31 @@ pub fn writeRoutesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: Ro
     var routes = try loadRoutes(io, gpa, paths, filter);
     defer routes.deinit(gpa);
     try routes.writeText(writer, filter.detail);
+}
+
+pub fn routePlanJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput) ![]u8 {
+    var routes = try loadRoutes(io, gpa, paths, input.filter);
+    defer routes.deinit(gpa);
+    return try routePlanJsonFromRoutes(gpa, routes.items, input.request);
+}
+
+pub fn routePlanJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, input: RoutePlanInput) ![]u8 {
+    var routes = try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, input.filter);
+    defer routes.deinit(gpa);
+    return try routePlanJsonFromRoutes(gpa, routes.items, input.request);
+}
+
+pub fn writeRoutePlanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, writer: anytype) !void {
+    const json = try routePlanJson(io, gpa, paths, input);
+    defer gpa.free(json);
+    try writer.writeAll(json);
+    try writer.writeByte('\n');
+}
+
+fn routePlanJsonFromRoutes(gpa: Allocator, routes: []const CoverageRoute, request: Request) ![]u8 {
+    if (routes.len == 0) return error.ProviderRoutePlanNotFound;
+    if (routes.len != 1) return error.ProviderRoutePlanAmbiguous;
+    return try provider_dispatch.planRouteJsonRequest(gpa, routes[0].route, request);
 }
 
 fn summarizeProvider(gpa: Allocator, provider: []const u8, text: []const u8, summary: *ProviderSummary) !void {
@@ -688,4 +732,63 @@ test "lists provider coverage routes by provider and tag query" {
     var mismatched_method = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .method = .POST, .path_template = "/api/billing/v1/catalog" });
     defer mismatched_method.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), mismatched_method.items.len);
+}
+
+test "plans exact provider coverage routes without live provider calls" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Worker Script","method":"POST","path":"/accounts/{account_id}/workers/assets/upload","operation_id":"worker-assets-upload","path_params":[{"name":"account_id","required":true}],"query_params":[{"name":"base64","required":true}],"request_body":{"required":true,"content_types":["multipart/form-data"],"schema_refs":[]},"responses":[{"status":"201","content_types":["application/json"],"schema_refs":[]}],"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"No writes."}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/metrics","operation_id":"VPS_getMetricsV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[{"name":"date_from","required":true},{"name":"date_to","required":true}],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/VPS.V1.VirtualMachine.MetricsResource"]}],"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"POC reads metrics."}
+        \\{"provider":"hostinger","tag":"Billing: Catalog","method":"GET","path":"/api/billing/v1/catalog","operation_id":"billing_getCatalogItemListV1","path_params":[],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"POC reads billing catalog."}
+        \\
+    ;
+
+    const read_plan = try routePlanJsonFromText(
+        allocator,
+        cloudflare,
+        hostinger,
+        .{
+            .filter = .{ .provider = .hostinger, .operation_id = "VPS_getMetricsV1" },
+            .request = .{
+                .path_params = &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+                .query_params = &.{
+                    .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
+                    .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
+                },
+            },
+        },
+    );
+    defer allocator.free(read_plan);
+    try std.testing.expect(std.mem.indexOf(u8, read_plan, "\"operation_id\":\"VPS_getMetricsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_plan, "\"will_execute\":false") != null);
+
+    const mutation_plan = try routePlanJsonFromText(
+        allocator,
+        cloudflare,
+        hostinger,
+        .{
+            .filter = .{ .provider = .cloudflare, .operation_id = "worker-assets-upload" },
+            .request = .{
+                .path_params = &.{.{ .name = "account_id", .value = "acct/1" }},
+                .query_params = &.{.{ .name = "base64", .value = "true" }},
+                .body = .{ .present = true, .content_type = "multipart/form-data; boundary=test" },
+            },
+        },
+    );
+    defer allocator.free(mutation_plan);
+    try std.testing.expect(std.mem.indexOf(u8, mutation_plan, "\"operation_id\":\"worker-assets-upload\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mutation_plan, "\"mode\":\"dry_run\"") != null);
+
+    try std.testing.expectError(
+        error.ProviderRoutePlanAmbiguous,
+        routePlanJsonFromText(allocator, cloudflare, hostinger, .{ .filter = .{ .provider = .hostinger } }),
+    );
+    try std.testing.expectError(
+        error.ProviderRoutePlanNotFound,
+        routePlanJsonFromText(allocator, cloudflare, hostinger, .{ .filter = .{ .provider = .hostinger, .operation_id = "missing" } }),
+    );
 }
