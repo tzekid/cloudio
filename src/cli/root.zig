@@ -257,7 +257,7 @@ fn usage() void {
         \\  cloudio cloudflare dry-run resource-group|user-group update|delete <account-id> <resource-id>
         \\  cloudio cloudflare dry-run account-user-group-member create|update <account-id> <user-group-id>
         \\  cloudio cloudflare dry-run account-user-group-member delete <account-id> <user-group-id> <member-id>
-        \\  cloudio hostinger vps [list|show <vm-id>|<vm-id>]|metrics <vm-id>|actions <vm-id>|action <vm-id> <action-id>|security <vm-id>|resources
+        \\  cloudio hostinger vps [list|show <vm-id>|<vm-id>]|metrics <vm-id>|actions <vm-id>|action <vm-id> <action-id>|security <vm-id>|inventory|resources
         \\  cloudio hostinger dry-run vps purchase|start|stop|restart|setup|recreate|start-recovery|stop-recovery|set-hostname|reset-hostname|set-nameservers|set-root-password|set-panel-password [vm-id]
         \\  cloudio hostinger dry-run vps create-ptr|delete-ptr <vm-id> <ip-address-id>
         \\  cloudio hostinger dry-run vps restore-backup <vm-id> <backup-id>

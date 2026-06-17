@@ -37,6 +37,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandActionDetails(ctx, args);
     } else if (std.mem.eql(u8, sub, "security")) {
         try commandVmEndpoint(ctx, args, .monarx);
+    } else if (std.mem.eql(u8, sub, "inventory")) {
+        cli_render.printOutput(ctx.gpa, try app_hostinger.listInventoryItems(appContext(ctx)));
     } else if (std.mem.eql(u8, sub, "resources")) {
         cli_render.printOutput(ctx.gpa, try app_hostinger.listResources(appContext(ctx)));
     } else if (app_hostinger.BillingEndpoint.parse(sub)) |endpoint| {

@@ -453,6 +453,30 @@ pub fn persistResourceRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[
     for (rows.items) |row| {
         try db.upsertHostingerResource(row.key, row.kind, row.resource_id, row.target, row.name, row.status, row.domain, row.raw_json);
     }
+    try persistInventoryRows(gpa, db, kind, target, body);
+}
+
+pub fn persistInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[]const u8, body: []const u8) !void {
+    var rows = try provider_hostinger_models.parseInventoryRows(gpa, kind, target, body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertHostingerInventoryItem(
+            row.key,
+            row.kind,
+            row.resource_id,
+            row.name,
+            row.status,
+            row.category,
+            row.domain,
+            row.username,
+            row.related_id,
+            row.flag,
+            row.created_at,
+            row.updated_at,
+            row.expires_at,
+            row.raw_json,
+        );
+    }
 }
 
 fn collectPagedVmEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, vm_id: []const u8, endpoint: VmEndpoint, capture_output: bool) !Output {
@@ -859,6 +883,7 @@ test "persists normalized Hostinger resource rows" {
     );
 
     try std.testing.expectEqual(@as(i64, 3), try db.countTable("hostinger_resources"));
+    try std.testing.expectEqual(@as(i64, 3), try db.countTable("hostinger_inventory_items"));
     const stmt = try db.prepare("SELECT resource_id, name, status, domain FROM hostinger_resources WHERE kind = 'hostinger-websites' ORDER BY resource_id LIMIT 1");
     defer _ = sqlite.sqlite3_finalize(stmt);
     try std.testing.expectEqual(@as(c_int, sqlite.SQLITE_ROW), sqlite.sqlite3_step(stmt));
@@ -866,6 +891,15 @@ test "persists normalized Hostinger resource rows" {
     try std.testing.expectEqualStrings("plosca.ru", columnText(stmt, 1) orelse "");
     try std.testing.expectEqualStrings("enabled", columnText(stmt, 2) orelse "");
     try std.testing.expectEqualStrings("plosca.ru", columnText(stmt, 3) orelse "");
+
+    const inventory_stmt = try db.prepare("SELECT resource_id, category, domain, flag, related_id FROM hostinger_inventory_items WHERE kind = 'hostinger-dns-zone' LIMIT 1");
+    defer _ = sqlite.sqlite3_finalize(inventory_stmt);
+    try std.testing.expectEqual(@as(c_int, sqlite.SQLITE_ROW), sqlite.sqlite3_step(inventory_stmt));
+    try std.testing.expectEqualStrings("@|A", columnText(inventory_stmt, 0) orelse "");
+    try std.testing.expectEqualStrings("A", columnText(inventory_stmt, 1) orelse "");
+    try std.testing.expectEqualStrings("plosca.ru", columnText(inventory_stmt, 2) orelse "");
+    try std.testing.expectEqualStrings("", columnText(inventory_stmt, 3) orelse "");
+    try std.testing.expectEqualStrings("1.2.3.4", columnText(inventory_stmt, 4) orelse "");
 }
 
 test "missing Hostinger token records inventory snapshot without live API call" {

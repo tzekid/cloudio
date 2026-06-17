@@ -161,6 +161,17 @@ pub fn listResources(ctx: Context) !Output {
     return .{ .text = try out.toOwnedSlice() };
 }
 
+pub fn listInventoryItems(ctx: Context) !Output {
+    var rows = try ctx.db.hostingerInventoryItemList(ctx.gpa);
+    defer rows.deinit(ctx.gpa);
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    for (rows.items) |row| {
+        try out.writer.print("{s}\t{s}\n", .{ row.name, row.value });
+    }
+    return .{ .text = try out.toOwnedSlice() };
+}
+
 pub fn defaultDomain(ctx: Context) []const u8 {
     return ctx.domains[0];
 }
@@ -201,4 +212,29 @@ test "hostinger app lists normalized resources" {
     defer output.deinit(allocator);
     try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "hostinger-websites/plosca.ru") != null);
     try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "enabled plosca.ru plosca.ru") != null);
+}
+
+test "hostinger app lists typed inventory items" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/hostinger-app-inventory.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertHostingerInventoryItem("hostinger-websites||plosca.ru", "hostinger-websites", "plosca.ru", "plosca.ru", "enabled", "main", "plosca.ru", "u123", "12345", "enabled", "2026-01-01T00:00:00Z", null, null, "{\"domain\":\"plosca.ru\"}");
+
+    const domains = [_][]const u8{"plosca.ru"};
+    const ctx = Context{
+        .io = std.testing.io,
+        .gpa = allocator,
+        .token = null,
+        .domains = domains[0..],
+        .db = &db,
+    };
+    var output = try listInventoryItems(ctx);
+    defer output.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "hostinger-websites/plosca.ru") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "enabled enabled main plosca.ru u123 plosca.ru 12345") != null);
 }

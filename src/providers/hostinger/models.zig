@@ -74,6 +74,50 @@ pub const ResourceRows = struct {
     }
 };
 
+pub const InventoryRow = struct {
+    key: []u8,
+    kind: []u8,
+    resource_id: []u8,
+    name: ?[]u8,
+    status: ?[]u8,
+    category: ?[]u8,
+    domain: ?[]u8,
+    username: ?[]u8,
+    related_id: ?[]u8,
+    flag: ?[]u8,
+    created_at: ?[]u8,
+    updated_at: ?[]u8,
+    expires_at: ?[]u8,
+    raw_json: []u8,
+
+    pub fn deinit(self: InventoryRow, allocator: Allocator) void {
+        allocator.free(self.key);
+        allocator.free(self.kind);
+        allocator.free(self.resource_id);
+        if (self.name) |value| allocator.free(value);
+        if (self.status) |value| allocator.free(value);
+        if (self.category) |value| allocator.free(value);
+        if (self.domain) |value| allocator.free(value);
+        if (self.username) |value| allocator.free(value);
+        if (self.related_id) |value| allocator.free(value);
+        if (self.flag) |value| allocator.free(value);
+        if (self.created_at) |value| allocator.free(value);
+        if (self.updated_at) |value| allocator.free(value);
+        if (self.expires_at) |value| allocator.free(value);
+        allocator.free(self.raw_json);
+    }
+};
+
+pub const InventoryRows = struct {
+    items: []InventoryRow,
+
+    pub fn deinit(self: InventoryRows, allocator: Allocator) void {
+        if (self.items.len == 0) return;
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const PaginationInfo = net_pagination.PageInfo;
 
 pub fn parseVpsRows(gpa: Allocator, body: []const u8) !VpsRows {
@@ -173,6 +217,20 @@ pub fn parseResourceRows(gpa: Allocator, kind: []const u8, target: ?[]const u8, 
     return .{ .items = try rows.toOwnedSlice(gpa) };
 }
 
+pub fn parseInventoryRows(gpa: Allocator, kind: []const u8, target: ?[]const u8, body: []const u8) !InventoryRows {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return .{ .items = &.{} };
+    defer parsed.deinit();
+
+    var rows = std.ArrayList(InventoryRow).empty;
+    errdefer {
+        for (rows.items) |row| row.deinit(gpa);
+        rows.deinit(gpa);
+    }
+
+    try appendInventoryRowsFromValue(gpa, &rows, kind, target, parsed.value);
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
 fn appendResourceRowsFromValue(gpa: Allocator, rows: *std.ArrayList(ResourceRow), kind: []const u8, target: ?[]const u8, value: std.json.Value) !void {
     switch (value) {
         .array => |array| {
@@ -219,6 +277,71 @@ fn appendResourceRow(gpa: Allocator, rows: *std.ArrayList(ResourceRow), kind: []
     });
 }
 
+fn appendInventoryRowsFromValue(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: []const u8, target: ?[]const u8, value: std.json.Value) !void {
+    switch (value) {
+        .array => |array| {
+            for (array.items) |item| try appendInventoryRow(gpa, rows, kind, target, item);
+        },
+        .object => |object| {
+            if (object.get("data")) |data| {
+                try appendInventoryRowsFromValue(gpa, rows, kind, target, data);
+            } else {
+                try appendInventoryRow(gpa, rows, kind, target, value);
+            }
+        },
+        else => {},
+    }
+}
+
+fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: []const u8, target: ?[]const u8, item: std.json.Value) !void {
+    if (item != .object) return;
+    const resource_id = try resourceId(gpa, item) orelse return;
+    errdefer gpa.free(resource_id);
+    const key = try resourceKey(gpa, kind, target, resource_id);
+    errdefer gpa.free(key);
+    const kind_owned = try gpa.dupe(u8, kind);
+    errdefer gpa.free(kind_owned);
+    const name = try resourceName(gpa, item);
+    errdefer if (name) |value| gpa.free(value);
+    const status = try resourceStatus(gpa, item);
+    errdefer if (status) |value| gpa.free(value);
+    const category = try resourceCategory(gpa, item);
+    errdefer if (category) |value| gpa.free(value);
+    const domain = try resourceDomain(gpa, item, target);
+    errdefer if (domain) |value| gpa.free(value);
+    const username = try resourceUsername(gpa, item);
+    errdefer if (username) |value| gpa.free(value);
+    const related_id = resourceRelatedId(gpa, item);
+    errdefer if (related_id) |value| gpa.free(value);
+    const flag = try resourceFlag(gpa, item);
+    errdefer if (flag) |value| gpa.free(value);
+    const created_at = try dupeOptional(gpa, core_json.fieldString(item, "created_at"));
+    errdefer if (created_at) |value| gpa.free(value);
+    const updated_at = try dupeOptional(gpa, core_json.fieldString(item, "updated_at"));
+    errdefer if (updated_at) |value| gpa.free(value);
+    const expires_at = try dupeOptional(gpa, core_json.fieldString(item, "expires_at") orelse core_json.fieldString(item, "next_billing_at"));
+    errdefer if (expires_at) |value| gpa.free(value);
+    const raw = try core_json.stringifyValue(gpa, item);
+    errdefer gpa.free(raw);
+
+    try rows.append(gpa, .{
+        .key = key,
+        .kind = kind_owned,
+        .resource_id = resource_id,
+        .name = name,
+        .status = status,
+        .category = category,
+        .domain = domain,
+        .username = username,
+        .related_id = related_id,
+        .flag = flag,
+        .created_at = created_at,
+        .updated_at = updated_at,
+        .expires_at = expires_at,
+        .raw_json = raw,
+    });
+}
+
 fn resourceId(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldAnyString(gpa, item, "id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "uuid")) |value| return value;
@@ -259,12 +382,61 @@ fn resourceStatus(gpa: Allocator, item: std.json.Value) !?[]u8 {
     return null;
 }
 
+fn resourceCategory(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    if (core_json.fieldString(item, "category")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "type")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "vhost_type")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "payment_method")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "entity_type")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "redirect_type")) |value| return try gpa.dupe(u8, value);
+    if (core_json.field(item, "plan")) |plan| {
+        if (core_json.fieldString(plan, "name")) |value| return try gpa.dupe(u8, value);
+    }
+    return null;
+}
+
 fn resourceDomain(gpa: Allocator, item: std.json.Value, target: ?[]const u8) !?[]u8 {
     if (core_json.fieldString(item, "domain")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "hostname")) |value| return try gpa.dupe(u8, value);
     if (target) |value| {
         if (isPlainDomainTarget(value)) return try gpa.dupe(u8, value);
     }
+    return null;
+}
+
+fn resourceUsername(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    if (core_json.fieldString(item, "username")) |value| return try gpa.dupe(u8, value);
+    return null;
+}
+
+fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
+    if (core_json.fieldAnyString(gpa, item, "subscription_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "order_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "client_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "owner_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "admin_id")) |value| return value;
+    if (core_json.fieldString(item, "parent_domain")) |value| return gpa.dupe(u8, value) catch null;
+    if (core_json.fieldString(item, "redirect_url")) |value| return gpa.dupe(u8, value) catch null;
+    if (core_json.field(item, "records")) |records| {
+        if (records == .array) {
+            for (records.array.items) |record| {
+                if (core_json.fieldString(record, "content")) |value| return gpa.dupe(u8, value) catch null;
+            }
+        }
+    }
+    return null;
+}
+
+fn resourceFlag(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    if (core_json.fieldBool(item, "is_enabled")) |enabled| return try gpa.dupe(u8, if (enabled) "enabled" else "disabled");
+    if (core_json.fieldBool(item, "is_default")) |default| return try gpa.dupe(u8, if (default) "default" else "not_default");
+    if (core_json.fieldBool(item, "is_expired")) |expired| return try gpa.dupe(u8, if (expired) "expired" else "not_expired");
+    if (core_json.fieldBool(item, "is_suspended")) |suspended| return try gpa.dupe(u8, if (suspended) "suspended" else "not_suspended");
+    if (core_json.fieldBool(item, "is_auto_renewed")) |auto| return try gpa.dupe(u8, if (auto) "auto_renewed" else "not_auto_renewed");
+    if (core_json.fieldBool(item, "is_privacy_protected")) |protected| return try gpa.dupe(u8, if (protected) "privacy_protected" else "privacy_unprotected");
+    if (core_json.fieldBool(item, "is_locked")) |locked| return try gpa.dupe(u8, if (locked) "locked" else "unlocked");
+    if (core_json.fieldBool(item, "is_valid")) |valid| return try gpa.dupe(u8, if (valid) "valid" else "invalid");
+    if (core_json.fieldBool(item, "is_synced")) |synced| return try gpa.dupe(u8, if (synced) "synced" else "unsynced");
     return null;
 }
 
@@ -368,6 +540,31 @@ test "parses normalized Hostinger resources from arrays data envelopes and singl
     try std.testing.expectEqualStrings("sub-1", single.items[0].resource_id);
     try std.testing.expectEqualStrings("KVM 1", single.items[0].name orelse "");
     try std.testing.expectEqualStrings("active", single.items[0].status orelse "");
+}
+
+test "parses typed Hostinger inventory rows across control plane groups" {
+    const allocator = std.testing.allocator;
+    var rows = try parseInventoryRows(allocator, "hostinger-inventory", "plosca.ru",
+        \\{"data":[
+        \\  {"id":"sub-1","name":"KVM 4","status":"active","billing_period":1,"is_auto_renewed":true,"created_at":"2026-01-01T00:00:00Z","expires_at":"2027-01-01T00:00:00Z"},
+        \\  {"domain":"plosca.ru","status":"active","type":"domain","is_locked":true,"expires_at":"2027-02-01T00:00:00Z"},
+        \\  {"name":"@","type":"A","ttl":14400,"records":[{"content":"76.13.130.170"}]},
+        \\  {"domain":"plosca.ru","username":"u123","vhost_type":"main","is_enabled":true,"order_id":12345}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 4), rows.items.len);
+    try std.testing.expectEqualStrings("sub-1", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("auto_renewed", rows.items[0].flag orelse "");
+    try std.testing.expectEqualStrings("2027-01-01T00:00:00Z", rows.items[0].expires_at orelse "");
+    try std.testing.expectEqualStrings("domain", rows.items[1].category orelse "");
+    try std.testing.expectEqualStrings("locked", rows.items[1].flag orelse "");
+    try std.testing.expectEqualStrings("@|A", rows.items[2].resource_id);
+    try std.testing.expectEqualStrings("76.13.130.170", rows.items[2].related_id orelse "");
+    try std.testing.expectEqualStrings("main", rows.items[3].category orelse "");
+    try std.testing.expectEqualStrings("u123", rows.items[3].username orelse "");
+    try std.testing.expectEqualStrings("12345", rows.items[3].related_id orelse "");
 }
 
 fn isVirtualMachineResource(value: std.json.Value) bool {

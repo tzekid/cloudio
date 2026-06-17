@@ -348,6 +348,46 @@ pub const Db = struct {
         try stepDone(stmt);
     }
 
+    pub fn upsertHostingerInventoryItem(
+        self: *Db,
+        key: []const u8,
+        kind: []const u8,
+        resource_id: []const u8,
+        display_name: ?[]const u8,
+        status: ?[]const u8,
+        category: ?[]const u8,
+        domain: ?[]const u8,
+        username: ?[]const u8,
+        related_id: ?[]const u8,
+        flag: ?[]const u8,
+        created_at_source: ?[]const u8,
+        updated_at_source: ?[]const u8,
+        expires_at_source: ?[]const u8,
+        raw: []const u8,
+    ) !void {
+        const stmt = try self.prepare(
+            \\INSERT INTO hostinger_inventory_items(key, kind, resource_id, display_name, status, category, domain, username, related_id, flag, created_at_source, updated_at_source, expires_at_source, raw_json, updated_at)
+            \\VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            \\ON CONFLICT(key) DO UPDATE SET kind=excluded.kind, resource_id=excluded.resource_id, display_name=excluded.display_name, status=excluded.status, category=excluded.category, domain=excluded.domain, username=excluded.username, related_id=excluded.related_id, flag=excluded.flag, created_at_source=excluded.created_at_source, updated_at_source=excluded.updated_at_source, expires_at_source=excluded.expires_at_source, raw_json=excluded.raw_json, updated_at=CURRENT_TIMESTAMP
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, key);
+        try bindText(stmt, 2, kind);
+        try bindText(stmt, 3, resource_id);
+        try bindTextOpt(stmt, 4, display_name);
+        try bindTextOpt(stmt, 5, status);
+        try bindTextOpt(stmt, 6, category);
+        try bindTextOpt(stmt, 7, domain);
+        try bindTextOpt(stmt, 8, username);
+        try bindTextOpt(stmt, 9, related_id);
+        try bindTextOpt(stmt, 10, flag);
+        try bindTextOpt(stmt, 11, created_at_source);
+        try bindTextOpt(stmt, 12, updated_at_source);
+        try bindTextOpt(stmt, 13, expires_at_source);
+        try bindText(stmt, 14, raw);
+        try stepDone(stmt);
+    }
+
     pub fn upsertCaddySite(self: *Db, host: []const u8, source_path: []const u8, raw_block: ?[]const u8) !void {
         const stmt = try self.prepare(
             \\INSERT INTO caddy_sites(host, source_path, raw_block, updated_at)
@@ -447,6 +487,7 @@ pub const Db = struct {
         try writer.print("cloudflare_resources={d}\n", .{try self.countTable("cloudflare_resources")});
         try writer.print("hostinger_vps={d}\n", .{try self.countTable("hostinger_vps")});
         try writer.print("hostinger_resources={d}\n", .{try self.countTable("hostinger_resources")});
+        try writer.print("hostinger_inventory_items={d}\n", .{try self.countTable("hostinger_inventory_items")});
         try writer.print("caddy_sites={d}\n", .{try self.countTable("caddy_sites")});
         try writer.print("caddy_upstreams={d}\n", .{try self.countTable("caddy_upstreams")});
         try writer.print("projects={d}\n", .{try self.countTable("projects")});
@@ -516,6 +557,16 @@ pub const Db = struct {
             \\SELECT kind || '/' || resource_id,
             \\       trim(COALESCE(status,'') || ' ' || COALESCE(domain,'') || ' ' || COALESCE(name,''))
             \\FROM hostinger_resources
+            \\ORDER BY updated_at DESC, kind, resource_id
+            \\LIMIT 200
+        );
+    }
+
+    pub fn hostingerInventoryItemList(self: *Db, gpa: Allocator) !NameValueRows {
+        return try self.nameValueRows(gpa,
+            \\SELECT kind || '/' || resource_id,
+            \\       trim(COALESCE(status,'') || ' ' || COALESCE(flag,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(domain,'') || ' ' || COALESCE(username,'') || ' ' || COALESCE(display_name,'') || ' ' || COALESCE(related_id,''))
+            \\FROM hostinger_inventory_items
             \\ORDER BY updated_at DESC, kind, resource_id
             \\LIMIT 200
         );
@@ -780,10 +831,10 @@ pub fn columnText(stmt: *sqlite.sqlite3_stmt, idx: c_int) ?[]const u8 {
 
 fn isKnownTable(table: []const u8) bool {
     const known = [_][]const u8{
-        "snapshots",            "provider_raw",  "cloudflare_accounts", "cloudflare_zones",    "cloudflare_dns_records",
-        "cloudflare_resources", "hostinger_vps", "hostinger_metrics",   "hostinger_resources", "caddy_sites",
-        "caddy_upstreams",      "projects",      "system_metrics",      "services",            "sockets",
-        "containers",           "audit_events",  "settings",
+        "snapshots",            "provider_raw",    "cloudflare_accounts", "cloudflare_zones",    "cloudflare_dns_records",
+        "cloudflare_resources", "hostinger_vps",   "hostinger_metrics",   "hostinger_resources", "hostinger_inventory_items",
+        "caddy_sites",          "caddy_upstreams", "projects",            "system_metrics",      "services",
+        "sockets",              "containers",      "audit_events",        "settings",
     };
     for (known) |name| if (std.mem.eql(u8, table, name)) return true;
     return false;

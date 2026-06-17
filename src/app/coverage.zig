@@ -1410,7 +1410,7 @@ test "captures generic route read results into snapshots and provider raw" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"captured\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"provider_raw\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"normalized_resources\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_rows\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_rows\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"snapshot_id\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"route-vps-inventory\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"target\":\"test-vps-list\"") != null);
@@ -1420,6 +1420,7 @@ test "captures generic route read results into snapshots and provider raw" {
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("provider_raw"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("audit_events"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("hostinger_resources"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("hostinger_inventory_items"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("hostinger_vps"));
     var resource_rows = try db.hostingerResourceList(allocator);
     defer resource_rows.deinit(allocator);
@@ -1551,7 +1552,7 @@ test "captures paginated generic route pages into snapshots and metadata" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"paginated\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"captured_pages\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"normalized_resources\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_rows\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_rows\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"snapshots\":[1,2]") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"pagination_envelope\":\"data_meta\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"data_len\":1") != null);
@@ -1562,6 +1563,7 @@ test "captures paginated generic route pages into snapshots and metadata" {
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("provider_raw"));
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("audit_events"));
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("hostinger_resources"));
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("hostinger_inventory_items"));
 }
 
 test "captures Cloudflare result_info paginated generic route pages" {

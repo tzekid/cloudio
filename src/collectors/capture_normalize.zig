@@ -49,9 +49,10 @@ fn normalizeHostingerRouteModels(gpa: Allocator, db: *Db, route: provider_routes
     for (rows.items) |row| {
         try db.upsertHostingerResource(row.key, row.kind, row.resource_id, row.target, row.name, row.status, row.domain, row.raw_json);
     }
+    const inventory_rows = try normalizeHostingerInventoryRows(gpa, db, kind, target, redacted_body);
     return .{
         .resources = rows.items.len,
-        .typed_rows = try normalizeHostingerTypedRows(gpa, db, route, redacted_body),
+        .typed_rows = inventory_rows + try normalizeHostingerTypedRows(gpa, db, route, redacted_body),
     };
 }
 
@@ -85,6 +86,30 @@ fn normalizeHostingerTypedRows(gpa: Allocator, db: *Db, route: provider_routes.R
     var rows = try provider_hostinger_models.parseVpsRows(gpa, redacted_body);
     defer rows.deinit(gpa);
     for (rows.items) |row| try db.upsertHostingerVps(row.id, row.name, row.status, row.ipv4, row.plan, row.raw_json);
+    return rows.items.len;
+}
+
+fn normalizeHostingerInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[]const u8, redacted_body: []const u8) !usize {
+    var rows = try provider_hostinger_models.parseInventoryRows(gpa, kind, target, redacted_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertHostingerInventoryItem(
+            row.key,
+            row.kind,
+            row.resource_id,
+            row.name,
+            row.status,
+            row.category,
+            row.domain,
+            row.username,
+            row.related_id,
+            row.flag,
+            row.created_at,
+            row.updated_at,
+            row.expires_at,
+            row.raw_json,
+        );
+    }
     return rows.items.len;
 }
 
