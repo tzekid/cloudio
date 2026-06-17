@@ -390,8 +390,8 @@ fn validateRouteAuth(route: provider_routes.Route, auth: Auth) !void {
 }
 
 fn validateCloudflareRouteAuth(security: provider_routes.Security, auth: provider_cloudflare.Auth) !void {
-    if (auth.hasApiToken() and security.acceptsSchemeSet(&.{"api_token"})) return;
-    if (hasCloudflareLegacyAuth(auth) and security.acceptsSchemeSet(&.{ "api_email", "api_key" })) return;
+    if (auth.hasApiToken() and cloudflareSecurityAcceptsApiToken(security)) return;
+    if (hasCloudflareLegacyAuth(auth) and cloudflareSecurityAcceptsLegacyAuth(security)) return;
     if (!auth.hasApiToken() and !hasCloudflareLegacyAuth(auth)) return error.MissingCloudflareAuth;
     return error.UnsupportedRouteAuthScheme;
 }
@@ -405,9 +405,21 @@ fn validateHostingerRouteAuth(security: provider_routes.Security, token: []const
 fn cloudioSupportsRouteAuth(route: provider_routes.Route) bool {
     if (!route.security.required) return true;
     return switch (route.provider) {
-        .cloudflare => route.security.acceptsSchemeSet(&.{"api_token"}) or route.security.acceptsSchemeSet(&.{ "api_email", "api_key" }),
+        .cloudflare => cloudflareSecurityAcceptsApiToken(route.security) or cloudflareSecurityAcceptsLegacyAuth(route.security),
         .hostinger => route.security.acceptsSchemeSet(&.{"apiToken"}),
     };
+}
+
+fn cloudflareSecurityAcceptsApiToken(security: provider_routes.Security) bool {
+    return security.acceptsSchemeSet(&.{"api_token"}) or cloudflareSecurityHasTokenOrLegacyBundle(security);
+}
+
+fn cloudflareSecurityAcceptsLegacyAuth(security: provider_routes.Security) bool {
+    return security.acceptsSchemeSet(&.{ "api_email", "api_key" }) or cloudflareSecurityHasTokenOrLegacyBundle(security);
+}
+
+fn cloudflareSecurityHasTokenOrLegacyBundle(security: provider_routes.Security) bool {
+    return security.hasAlternativeContainingSchemes(&.{ "api_email", "api_key", "api_token" });
 }
 
 fn hasCloudflareLegacyAuth(auth: provider_cloudflare.Auth) bool {
@@ -557,6 +569,26 @@ test "generic dispatch route planner reports anonymous security metadata" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"cloudflare-ips-cloudflare-ip-details\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":false,\"cloudio_supported\":true,\"alternatives\":[[]]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+}
+
+test "generic dispatch recognizes Cloudflare token or legacy auth bundles" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "access-applications-list-access-applications")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    try validateCloudflareRouteAuth(route.security, .{ .token = "test-token" });
+    try validateCloudflareRouteAuth(route.security, .{ .email = "ops@example.test", .key = "global-key" });
+    try std.testing.expectError(error.MissingCloudflareAuth, validateCloudflareRouteAuth(route.security, .{}));
+
+    const plan = try planRouteJsonRequest(
+        allocator,
+        route,
+        .{ .path_params = &.{.{ .name = "account_id", .value = "acct" }} },
+    );
+    defer allocator.free(plan);
+
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"access-applications-list-access-applications\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"api_email\",\"api_key\",\"api_token\"]]}") != null);
 }
 
 test "generic dispatch route planner uses OpenAPI query array serialization" {

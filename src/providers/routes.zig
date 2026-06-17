@@ -195,6 +195,13 @@ pub const SecurityAlternative = struct {
     pub fn isAnonymous(self: SecurityAlternative) bool {
         return self.schemes.len == 0;
     }
+
+    pub fn containsAllSchemes(self: SecurityAlternative, schemes: []const []const u8) bool {
+        for (schemes) |scheme| {
+            if (!containsScheme(self.schemes, scheme)) return false;
+        }
+        return true;
+    }
 };
 
 pub const Security = struct {
@@ -212,6 +219,13 @@ pub const Security = struct {
     pub fn hasAnonymousAlternative(self: Security) bool {
         for (self.alternatives) |alternative| {
             if (alternative.isAnonymous()) return true;
+        }
+        return false;
+    }
+
+    pub fn hasAlternativeContainingSchemes(self: Security, schemes: []const []const u8) bool {
+        for (self.alternatives) |alternative| {
+            if (alternative.containsAllSchemes(schemes)) return true;
         }
         return false;
     }
@@ -1135,6 +1149,16 @@ test "loads generated security metadata" {
     try expectString(legacy_route.security.alternatives[0].schemes, "api_key");
     try std.testing.expect(legacy_route.security.acceptsSchemeSet(&.{ "api_email", "api_key" }));
     try std.testing.expect(!legacy_route.security.acceptsSchemeSet(&.{"api_token"}));
+
+    const combined_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "access-applications-list-access-applications")) orelse return error.TestExpectedRoute;
+    defer combined_route.deinit(allocator);
+    try std.testing.expect(combined_route.security.required);
+    try expectString(combined_route.security.alternatives[0].schemes, "api_email");
+    try expectString(combined_route.security.alternatives[0].schemes, "api_key");
+    try expectString(combined_route.security.alternatives[0].schemes, "api_token");
+    try std.testing.expect(!combined_route.security.acceptsSchemeSet(&.{"api_token"}));
+    try std.testing.expect(!combined_route.security.acceptsSchemeSet(&.{ "api_email", "api_key" }));
+    try std.testing.expect(combined_route.security.hasAlternativeContainingSchemes(&.{ "api_email", "api_key", "api_token" }));
 
     const public_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "cloudflare-ips-cloudflare-ip-details")) orelse return error.TestExpectedRoute;
     defer public_route.deinit(allocator);

@@ -50,6 +50,50 @@ security_counts() {
   '
 }
 
+auth_dispatch_counts() {
+  provider="$1"
+  jq -r --arg provider "$provider" '
+    def sorted_keys: keys | sort;
+    def has_cf_token_or_legacy_bundle($schemes):
+      ($schemes == ["api_email", "api_key", "api_token"]);
+    def cf_requirement_supported($requirement):
+      ($requirement | sorted_keys) as $schemes
+      | ($schemes | length) == 0 or
+        ($schemes == ["api_token"]) or
+        ($schemes == ["api_email", "api_key"]) or
+        has_cf_token_or_legacy_bundle($schemes);
+    def hostinger_requirement_supported($requirement):
+      ($requirement | sorted_keys) as $schemes
+      | ($schemes | length) == 0 or ($schemes == ["apiToken"]);
+    def requirement_supported($provider; $requirement):
+      if $provider == "cloudflare" then
+        cf_requirement_supported($requirement)
+      else
+        hostinger_requirement_supported($requirement)
+      end;
+    . as $root
+    | [
+        .paths
+        | to_entries[]
+        | .value
+        | to_entries[]
+        | select(.value | type == "object")
+        | (.value.security // $root.security // []) as $security
+        | if ($security | length) == 0 then
+            "supported"
+          elif any($security[]; requirement_supported($provider; .)) then
+            "supported"
+          else
+            "unsupported"
+          end
+      ]
+    | group_by(.)
+    | map({support: .[0], count: length})
+    | sort_by(.support)[]
+    | "\(.support)=\(.count)"
+  '
+}
+
 parameter_shape_summary() {
   jq -r '
     def pointer_token:
@@ -115,6 +159,12 @@ printf 'cloudflare\n'
 security_counts < "$cloudflare_spec"
 printf 'hostinger\n'
 security_counts < "$hostinger_spec"
+
+printf '\nprovider_auth_dispatch\n'
+printf 'cloudflare\n'
+auth_dispatch_counts cloudflare < "$cloudflare_spec"
+printf 'hostinger\n'
+auth_dispatch_counts hostinger < "$hostinger_spec"
 
 printf '\nprovider_parameter_shapes\n'
 printf 'cloudflare\n'
