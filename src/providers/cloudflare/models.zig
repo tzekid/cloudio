@@ -113,22 +113,14 @@ pub const ResourceRows = Rows(ResourceRow);
 pub fn parseAccountRows(gpa: Allocator, body: []const u8) !AccountRows {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(AccountRow);
     defer parsed.deinit();
-    const items = core_json.resultArray(parsed.value) orelse return emptyRows(AccountRow);
+    const result = core_json.field(parsed.value, "result") orelse return emptyRows(AccountRow);
     var rows = std.ArrayList(AccountRow).empty;
     errdefer deinitPartial(AccountRow, &rows, gpa);
 
-    for (items.items) |item| {
-        const id = try dupeRequired(gpa, core_json.fieldString(item, "id") orelse continue);
-        errdefer gpa.free(id);
-        const raw = try core_json.stringifyValue(gpa, item);
-        errdefer gpa.free(raw);
-        const name = try dupeOptional(gpa, core_json.fieldString(item, "name"));
-        errdefer if (name) |value| gpa.free(value);
-        const typ = try dupeOptional(gpa, core_json.fieldString(item, "type"));
-        errdefer if (typ) |value| gpa.free(value);
-        const status = try dupeOptional(gpa, core_json.fieldString(item, "status"));
-        errdefer if (status) |value| gpa.free(value);
-        try rows.append(gpa, .{ .id = id, .name = name, .typ = typ, .status = status, .raw_json = raw });
+    switch (result) {
+        .array => |items| for (items.items) |item| try appendAccountRow(gpa, &rows, item),
+        .object => try appendAccountRow(gpa, &rows, result),
+        else => {},
     }
     return .{ .items = try rows.toOwnedSlice(gpa) };
 }
@@ -136,35 +128,14 @@ pub fn parseAccountRows(gpa: Allocator, body: []const u8) !AccountRows {
 pub fn parseZoneRows(gpa: Allocator, body: []const u8) !ZoneRows {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(ZoneRow);
     defer parsed.deinit();
-    const items = core_json.resultArray(parsed.value) orelse return emptyRows(ZoneRow);
+    const result = core_json.field(parsed.value, "result") orelse return emptyRows(ZoneRow);
     var rows = std.ArrayList(ZoneRow).empty;
     errdefer deinitPartial(ZoneRow, &rows, gpa);
 
-    for (items.items) |item| {
-        const id = try dupeRequired(gpa, core_json.fieldString(item, "id") orelse continue);
-        errdefer gpa.free(id);
-        const raw = try core_json.stringifyValue(gpa, item);
-        errdefer gpa.free(raw);
-        const name = try dupeOptional(gpa, core_json.fieldString(item, "name"));
-        errdefer if (name) |value| gpa.free(value);
-        const account_id = try dupeOptional(gpa, if (core_json.field(item, "account")) |acct| core_json.fieldString(acct, "id") else null);
-        errdefer if (account_id) |value| gpa.free(value);
-        const status = try dupeOptional(gpa, core_json.fieldString(item, "status"));
-        errdefer if (status) |value| gpa.free(value);
-        const typ = try dupeOptional(gpa, core_json.fieldString(item, "type"));
-        errdefer if (typ) |value| gpa.free(value);
-        const name_servers = if (core_json.field(item, "name_servers")) |value| try core_json.stringifyValue(gpa, value) else null;
-        errdefer if (name_servers) |value| gpa.free(value);
-        try rows.append(gpa, .{
-            .id = id,
-            .name = name,
-            .account_id = account_id,
-            .status = status,
-            .paused = core_json.fieldBool(item, "paused"),
-            .typ = typ,
-            .name_servers = name_servers,
-            .raw_json = raw,
-        });
+    switch (result) {
+        .array => |items| for (items.items) |item| try appendZoneRow(gpa, &rows, item),
+        .object => try appendZoneRow(gpa, &rows, result),
+        else => {},
     }
     return .{ .items = try rows.toOwnedSlice(gpa) };
 }
@@ -172,35 +143,82 @@ pub fn parseZoneRows(gpa: Allocator, body: []const u8) !ZoneRows {
 pub fn parseDnsRecordRows(gpa: Allocator, zone_id: []const u8, body: []const u8) !DnsRecordRows {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(DnsRecordRow);
     defer parsed.deinit();
-    const items = core_json.resultArray(parsed.value) orelse return emptyRows(DnsRecordRow);
+    const result = core_json.field(parsed.value, "result") orelse return emptyRows(DnsRecordRow);
     var rows = std.ArrayList(DnsRecordRow).empty;
     errdefer deinitPartial(DnsRecordRow, &rows, gpa);
 
-    for (items.items) |item| {
-        const id = try dupeRequired(gpa, core_json.fieldString(item, "id") orelse continue);
-        errdefer gpa.free(id);
-        const row_zone_id = try gpa.dupe(u8, zone_id);
-        errdefer gpa.free(row_zone_id);
-        const raw = try core_json.stringifyValue(gpa, item);
-        errdefer gpa.free(raw);
-        const name = try dupeOptional(gpa, core_json.fieldString(item, "name"));
-        errdefer if (name) |value| gpa.free(value);
-        const typ = try dupeOptional(gpa, core_json.fieldString(item, "type"));
-        errdefer if (typ) |value| gpa.free(value);
-        const content = try dupeOptional(gpa, core_json.fieldString(item, "content"));
-        errdefer if (content) |value| gpa.free(value);
-        try rows.append(gpa, .{
-            .id = id,
-            .zone_id = row_zone_id,
-            .name = name,
-            .typ = typ,
-            .content = content,
-            .ttl = core_json.fieldInt(item, "ttl"),
-            .proxied = core_json.fieldBool(item, "proxied"),
-            .raw_json = raw,
-        });
+    switch (result) {
+        .array => |items| for (items.items) |item| try appendDnsRecordRow(gpa, &rows, zone_id, item),
+        .object => try appendDnsRecordRow(gpa, &rows, zone_id, result),
+        else => {},
     }
     return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
+fn appendAccountRow(gpa: Allocator, rows: *std.ArrayList(AccountRow), item: std.json.Value) !void {
+    const id = try dupeRequired(gpa, core_json.fieldString(item, "id") orelse return);
+    errdefer gpa.free(id);
+    const raw = try core_json.stringifyValue(gpa, item);
+    errdefer gpa.free(raw);
+    const name = try dupeOptional(gpa, core_json.fieldString(item, "name"));
+    errdefer if (name) |value| gpa.free(value);
+    const typ = try dupeOptional(gpa, core_json.fieldString(item, "type"));
+    errdefer if (typ) |value| gpa.free(value);
+    const status = try dupeOptional(gpa, core_json.fieldString(item, "status"));
+    errdefer if (status) |value| gpa.free(value);
+    try rows.append(gpa, .{ .id = id, .name = name, .typ = typ, .status = status, .raw_json = raw });
+}
+
+fn appendZoneRow(gpa: Allocator, rows: *std.ArrayList(ZoneRow), item: std.json.Value) !void {
+    const id = try dupeRequired(gpa, core_json.fieldString(item, "id") orelse return);
+    errdefer gpa.free(id);
+    const raw = try core_json.stringifyValue(gpa, item);
+    errdefer gpa.free(raw);
+    const name = try dupeOptional(gpa, core_json.fieldString(item, "name"));
+    errdefer if (name) |value| gpa.free(value);
+    const account_id = try dupeOptional(gpa, if (core_json.field(item, "account")) |acct| core_json.fieldString(acct, "id") else null);
+    errdefer if (account_id) |value| gpa.free(value);
+    const status = try dupeOptional(gpa, core_json.fieldString(item, "status"));
+    errdefer if (status) |value| gpa.free(value);
+    const typ = try dupeOptional(gpa, core_json.fieldString(item, "type"));
+    errdefer if (typ) |value| gpa.free(value);
+    const name_servers = if (core_json.field(item, "name_servers")) |value| try core_json.stringifyValue(gpa, value) else null;
+    errdefer if (name_servers) |value| gpa.free(value);
+    try rows.append(gpa, .{
+        .id = id,
+        .name = name,
+        .account_id = account_id,
+        .status = status,
+        .paused = core_json.fieldBool(item, "paused"),
+        .typ = typ,
+        .name_servers = name_servers,
+        .raw_json = raw,
+    });
+}
+
+fn appendDnsRecordRow(gpa: Allocator, rows: *std.ArrayList(DnsRecordRow), zone_id: []const u8, item: std.json.Value) !void {
+    const id = try dupeRequired(gpa, core_json.fieldString(item, "id") orelse return);
+    errdefer gpa.free(id);
+    const row_zone_id = try gpa.dupe(u8, zone_id);
+    errdefer gpa.free(row_zone_id);
+    const raw = try core_json.stringifyValue(gpa, item);
+    errdefer gpa.free(raw);
+    const name = try dupeOptional(gpa, core_json.fieldString(item, "name"));
+    errdefer if (name) |value| gpa.free(value);
+    const typ = try dupeOptional(gpa, core_json.fieldString(item, "type"));
+    errdefer if (typ) |value| gpa.free(value);
+    const content = try dupeOptional(gpa, core_json.fieldString(item, "content"));
+    errdefer if (content) |value| gpa.free(value);
+    try rows.append(gpa, .{
+        .id = id,
+        .zone_id = row_zone_id,
+        .name = name,
+        .typ = typ,
+        .content = content,
+        .ttl = core_json.fieldInt(item, "ttl"),
+        .proxied = core_json.fieldBool(item, "proxied"),
+        .raw_json = raw,
+    });
 }
 
 pub fn parseIdRows(gpa: Allocator, body: []const u8) !IdRows {
@@ -427,6 +445,18 @@ test "parses Cloudflare account rows" {
     try std.testing.expectEqualStrings("active", rows.items[0].status orelse "");
 }
 
+test "parses Cloudflare account result object row" {
+    const allocator = std.testing.allocator;
+    var rows = try parseAccountRows(allocator,
+        \\{"result":{"id":"acct-1","name":"Main","type":"standard","status":"active"}}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), rows.items.len);
+    try std.testing.expectEqualStrings("acct-1", rows.items[0].id);
+    try std.testing.expectEqualStrings("Main", rows.items[0].name orelse "");
+}
+
 test "parses Cloudflare zone rows and zone id" {
     const allocator = std.testing.allocator;
     const body =
@@ -445,6 +475,18 @@ test "parses Cloudflare zone rows and zone id" {
     try std.testing.expectEqualStrings("zone-1", zone_id);
 }
 
+test "parses Cloudflare zone result object row" {
+    const allocator = std.testing.allocator;
+    var rows = try parseZoneRows(allocator,
+        \\{"result":{"id":"zone-1","name":"plosca.ru","status":"active","paused":false,"type":"full","account":{"id":"acct-1"}}}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), rows.items.len);
+    try std.testing.expectEqualStrings("zone-1", rows.items[0].id);
+    try std.testing.expectEqualStrings("acct-1", rows.items[0].account_id orelse "");
+}
+
 test "parses Cloudflare DNS record rows" {
     const allocator = std.testing.allocator;
     var rows = try parseDnsRecordRows(allocator, "zone-1",
@@ -460,6 +502,18 @@ test "parses Cloudflare DNS record rows" {
     try std.testing.expectEqualStrings("76.13.130.170", rows.items[0].content orelse "");
     try std.testing.expectEqual(@as(i64, 1), rows.items[0].ttl orelse -1);
     try std.testing.expectEqual(true, rows.items[0].proxied orelse false);
+}
+
+test "parses Cloudflare DNS record result object row" {
+    const allocator = std.testing.allocator;
+    var rows = try parseDnsRecordRows(allocator, "zone-1",
+        \\{"result":{"id":"dns-1","name":"plosca.ru","type":"A","content":"76.13.130.170","ttl":1,"proxied":true}}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), rows.items.len);
+    try std.testing.expectEqualStrings("dns-1", rows.items[0].id);
+    try std.testing.expectEqualStrings("zone-1", rows.items[0].zone_id);
 }
 
 test "parses generic Cloudflare result ids" {

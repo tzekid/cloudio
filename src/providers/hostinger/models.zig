@@ -90,7 +90,17 @@ pub fn parseVpsRows(gpa: Allocator, body: []const u8) !VpsRows {
         .array => |array| {
             for (array.items) |item| try appendVpsRow(gpa, &rows, item);
         },
-        .object => try appendVpsRow(gpa, &rows, parsed.value),
+        .object => |object| {
+            if (object.get("data")) |data| {
+                switch (data) {
+                    .array => |array| for (array.items) |item| try appendVpsRow(gpa, &rows, item),
+                    .object => try appendVpsRow(gpa, &rows, data),
+                    else => {},
+                }
+            } else {
+                try appendVpsRow(gpa, &rows, parsed.value);
+            }
+        },
         else => {},
     }
     return .{ .items = try rows.toOwnedSlice(gpa) };
@@ -385,6 +395,18 @@ test "parses Hostinger virtual machine collection rows" {
     try std.testing.expectEqualStrings("76.13.130.170", rows.items[0].ipv4 orelse "");
     try std.testing.expectEqualStrings("KVM 4", rows.items[0].plan orelse "");
     try std.testing.expect(std.mem.indexOf(u8, rows.items[0].raw_json, "\"template\"") != null);
+}
+
+test "parses Hostinger virtual machine data envelope rows" {
+    const allocator = std.testing.allocator;
+    var rows = try parseVpsRows(allocator,
+        \\{"data":[{"id":1307809,"plan":"KVM 4","hostname":"srv1307809.hstgr.cloud","state":"running","ipv4":[{"address":"76.13.130.170"}]}]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), rows.items.len);
+    try std.testing.expectEqualStrings("1307809", rows.items[0].id);
+    try std.testing.expectEqualStrings("srv1307809.hstgr.cloud", rows.items[0].name orelse "");
 }
 
 test "ignores nested template-shaped objects" {
