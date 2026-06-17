@@ -38,6 +38,8 @@ pub const net = struct {
 };
 
 pub const providers = struct {
+    pub const routes = @import("provider_routes");
+
     pub const cloudflare = struct {
         pub const client = @import("provider_cloudflare");
         pub const models = @import("provider_cloudflare_models");
@@ -78,6 +80,7 @@ test "facade exposes stable integration modules" {
     _ = db.store.Db;
     _ = net.http.Response;
     _ = net.pagination.PageInfo;
+    _ = providers.routes.Route;
     _ = providers.cloudflare.client.Client;
     _ = providers.hostinger.client.Client;
     _ = collectors.capture.Output;

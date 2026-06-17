@@ -4,7 +4,7 @@ Cloudio should become a small Zig toolkit, not a CLI-shaped monolith. The CLI re
 
 ## Current State
 
-The POC has moved the current data-gathering paths out of the original CLI-shaped executable. Core config/redaction/logging/process/time/JSON/filesystem helpers, reusable HTTP and JSON pagination helpers, SQLite migrations/storage, and the current Cloudflare, Hostinger, Caddy, system, and project collector paths are split into reviewable modules. `main.zig` is now process entry only, `cli/root.zig` owns top-level dispatch, command-group modules own deeper CLI parsing/rendering, and every CLI command group delegates domain behavior through `app/*` instead of importing collectors directly. `core/fs.zig` owns common relative-path parent creation and existence checks, `db/schema.zig` owns versioned SQLite migrations, `db/store.zig` owns connection/repository/query APIs, `net/pagination.zig` owns generic `{"data":[],"meta":{...}}` page envelope parsing/merging, `collectors/capture.zig` owns shared redacted API response capture into snapshots and raw-provider storage, `app/init.zig` owns reusable first-run config initialization, `app/doctor.zig` owns the reusable health-check report, `app/log.zig` owns reusable redacted run-log reading, `app/refresh.zig` owns reusable refresh orchestration, `app/overview.zig` owns the reusable overview query/read model, `app/export.zig` owns snapshot export JSON via the `app.exports` facade, and `app/caddy.zig`, `app/projects.zig`, `app/system.zig`, `app/cloudflare.zig`, and `app/hostinger.zig` own reusable command workflows for their domains. `cloudio.zig` exposes the first public library facade for future web/native integration. The next refactor goal is to keep shrinking CLI rendering and DB printing while expanding provider coverage against the checked upstream manifests.
+The POC has moved the current data-gathering paths out of the original CLI-shaped executable. Core config/redaction/logging/process/time/JSON/filesystem helpers, reusable HTTP and JSON pagination helpers, SQLite migrations/storage, and the current Cloudflare, Hostinger, Caddy, system, and project collector paths are split into reviewable modules. `main.zig` is now process entry only, `cli/root.zig` owns top-level dispatch, command-group modules own deeper CLI parsing/rendering, and every CLI command group delegates domain behavior through `app/*` instead of importing collectors directly. `core/fs.zig` owns common relative-path parent creation and existence checks, `db/schema.zig` owns versioned SQLite migrations, `db/store.zig` owns connection/repository/query APIs, `net/pagination.zig` owns generic `{"data":[],"meta":{...}}` page envelope parsing/merging, `providers/routes.zig` owns generated-manifest-backed route metadata lookup and path rendering, `collectors/capture.zig` owns shared redacted API response capture into snapshots and raw-provider storage, `app/init.zig` owns reusable first-run config initialization, `app/doctor.zig` owns the reusable health-check report, `app/log.zig` owns reusable redacted run-log reading, `app/refresh.zig` owns reusable refresh orchestration, `app/overview.zig` owns the reusable overview query/read model, `app/export.zig` owns snapshot export JSON via the `app.exports` facade, and `app/caddy.zig`, `app/projects.zig`, `app/system.zig`, `app/cloudflare.zig`, and `app/hostinger.zig` own reusable command workflows for their domains. `cloudio.zig` exposes the first public library facade for future web/native integration. The next refactor goal is to keep shrinking CLI rendering and DB printing while expanding provider coverage against the checked upstream manifests.
 
 ## Target Module Boundaries
 
@@ -27,15 +27,14 @@ src/
     http.zig               # std.http wrapper, headers, status, body limits
     pagination.zig         # cursor/page handling and collection envelopes
   providers/
+    routes.zig              # generated manifest-backed route lookup, params, URL rendering
     cloudflare/
       client.zig           # typed Cloudflare API client
       models.zig           # response types and normalization helpers
-      coverage.zig         # generated or checked endpoint manifest
     hostinger/
       client.zig           # typed Hostinger API client
       routes.zig           # endpoint enums, path/query construction, route tests
       models.zig
-      coverage.zig
   collectors/
     capture.zig            # shared redacted response capture to snapshots/provider_raw
     cloudflare.zig         # provider -> snapshots/store
@@ -73,14 +72,15 @@ src/
 - `zig build architecture-check` enforces module-boundary rules: `core`/`net` modules cannot import higher layers, database modules cannot import providers/collectors/apps/CLI, provider modules cannot import persistence/collector/app/CLI modules, collectors cannot import app/CLI modules, app modules cannot import CLI modules, and CLI adapters must delegate through `app.*` instead of importing provider or collector modules.
 - SQLite DDL lives in `db/schema.zig`; `db/store.zig` delegates initialization and exposes repository/read-model APIs. `zig build architecture-check` fails if schema DDL drifts back into the store module.
 - SQLite-backed Zig modules should use the `linkSqlite` helper in `build.zig`; direct per-module `linkSystemLibrary("sqlite3", ...)` and `link_libc` boilerplate should not be reintroduced.
-- Provider route modules own endpoint enums and path/query construction. Route modules should stay pure and fixture-testable so future UI/API layers can reuse provider operations without invoking HTTP.
+- `providers/routes.zig` owns generated-manifest-backed route metadata for Cloudflare and Hostinger: provider, tag, method, path template, operation ID, support/mode, deprecation state, path-parameter extraction, and escaped path/URL rendering. This is the L1 bridge for broad provider coverage and future generic dispatch.
+- Provider-specific route modules own typed endpoint enums and path/query construction where hand-written wrappers improve Cloudio ergonomics. Route modules should stay pure and fixture-testable so future UI/API layers can reuse provider operations without invoking HTTP.
 - Collector capture owns redacted raw API response persistence. It redacts response bodies once, writes `snapshots` and `provider_raw`, and returns the redacted body for optional CLI output or collector normalization.
 - Collectors own normalization. They call provider/system libraries, pass provider responses through shared capture, and normalize selected fields into indexed tables.
 - App services own cross-collector workflows and read models. They compose collectors, persistence, audit events, run logs, and typed query output behind stable inputs so CLI, web, or native surfaces can reuse the same behavior.
 - CLI commands are thin adapters. `cli/root.zig` should stay limited to top-level dispatch; command-group modules parse their own subcommands, call collectors or query services, and render output.
 - Redaction is core infrastructure. Any path that writes terminal output, run logs, exports, snapshots, diffs, or raw provider bodies must pass through the same redaction API unless the data is proven public.
 - Time-dependent code takes a clock abstraction or has a deterministic helper test. Provider-specific default windows, such as Hostinger metrics, should live in provider code.
-- Generated or checked provider coverage must be separate from hand-written client behavior. The manifest states what exists upstream; the client states what Cloudio supports safely.
+- Generated or checked provider coverage must be separate from hand-written client behavior. The manifest states what exists upstream, `providers/routes.zig` exposes the generic route contract, and typed clients state what Cloudio supports ergonomically and safely today.
 - Provider dry-run plans should be built from typed route metadata in `providers/*` and exposed through `app/*`; collectors remain responsible for live read capture and normalization.
 
 ## Provider Coverage Contract

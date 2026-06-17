@@ -64,6 +64,14 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_json", .module = core_json_mod },
         },
     });
+    const provider_routes_mod = b.createModule(.{
+        .root_source_file = b.path("src/providers/routes.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_json", .module = core_json_mod },
+        },
+    });
     const db_schema_mod = b.createModule(.{
         .root_source_file = b.path("src/db/schema.zig"),
         .target = target,
@@ -361,6 +369,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "net_http", .module = net_http_mod },
             .{ .name = "net_pagination", .module = net_pagination_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
             .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
             .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
@@ -511,6 +520,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, core_time_mod);
     addModuleTest(b, test_step, net_http_mod);
     addModuleTest(b, test_step, net_pagination_mod);
+    addModuleTest(b, test_step, provider_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_mod);
     addModuleTest(b, test_step, provider_cloudflare_models_mod);
     addModuleTest(b, test_step, provider_hostinger_mod);
