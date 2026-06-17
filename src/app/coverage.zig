@@ -349,6 +349,88 @@ pub const LevelProviderEvidence = struct {
     }
 };
 
+pub const LevelTagOptions = struct {
+    provider: ProviderFilter = .all,
+    limit: usize = 25,
+};
+
+pub const LevelTagEvidence = struct {
+    provider: []const u8,
+    tag: []u8,
+    evidence: LevelProviderEvidence,
+
+    pub fn init(gpa: Allocator, provider: []const u8, tag: []const u8) !LevelTagEvidence {
+        const tag_owned = try gpa.dupe(u8, tag);
+        return .{
+            .provider = provider,
+            .tag = tag_owned,
+            .evidence = LevelProviderEvidence.init(tag_owned),
+        };
+    }
+
+    pub fn deinit(self: LevelTagEvidence, gpa: Allocator) void {
+        gpa.free(self.tag);
+    }
+
+    pub fn priority(self: LevelTagEvidence) usize {
+        return self.evidence.pending_reads +
+            self.evidence.l2_diagnostic_reads +
+            self.evidence.pending_mutation_dry_runs;
+    }
+
+    pub fn evidenceScore(self: LevelTagEvidence) usize {
+        return self.evidence.l2_read_evidence +
+            self.evidence.dry_run_evidence +
+            self.evidence.l3_generic_inventory_candidates +
+            self.evidence.l3_typed_table_evidence;
+    }
+};
+
+pub const LevelTagReport = struct {
+    items: []LevelTagEvidence,
+
+    pub fn deinit(self: *LevelTagReport, gpa: Allocator) void {
+        for (self.items) |row| row.deinit(gpa);
+        gpa.free(self.items);
+    }
+
+    pub fn writeText(self: LevelTagReport, writer: anytype, options: LevelTagOptions) !void {
+        try writer.writeAll("Cloudio provider coverage levels by tag\n");
+        try writer.writeAll("evidence: generated manifest + Cloudio support overlay, not final completion proof\n");
+        try writer.writeAll("rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n");
+        try writer.print("filter={s} limit=", .{options.provider.name()});
+        if (options.limit == 0) {
+            try writer.writeAll("all\n");
+        } else {
+            try writer.print("{d}\n", .{options.limit});
+        }
+
+        var visible: usize = 0;
+        var omitted: usize = 0;
+        var hidden_closed: usize = 0;
+        for (self.items) |row| {
+            const priority = row.priority();
+            if (options.limit != 0 and priority == 0) {
+                hidden_closed += 1;
+                continue;
+            }
+            if (options.limit != 0 and visible >= options.limit) {
+                omitted += 1;
+                continue;
+            }
+            visible += 1;
+            try writeLevelTagRow(row, writer);
+        }
+
+        if (visible == 0) {
+            try writer.writeAll("no level tag rows for filter\n");
+        } else {
+            if (omitted != 0) try writer.print("omitted={d}\n", .{omitted});
+            if (hidden_closed != 0) try writer.print("closed_or_evidence_only_rows_hidden={d}\n", .{hidden_closed});
+        }
+    }
+};
+
 pub const LevelReport = struct {
     cloudflare: LevelProviderEvidence,
     hostinger: LevelProviderEvidence,
@@ -689,6 +771,40 @@ pub fn loadLevelsFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger
 pub fn writeLevelsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter, writer: anytype) !void {
     const report = try loadLevels(io, gpa, paths, filter);
     try report.writeText(filter, writer);
+}
+
+pub fn loadLevelTags(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !LevelTagReport {
+    var rows = std.ArrayList(LevelTagEvidence).empty;
+    errdefer deinitLevelTagList(&rows, gpa);
+
+    if (filter.includes("cloudflare")) {
+        const text = try Io.Dir.cwd().readFileAlloc(io, paths.cloudflare_manifest, gpa, .limited(max_manifest_bytes));
+        defer gpa.free(text);
+        try summarizeProviderLevelTags(gpa, "cloudflare", text, &rows);
+    }
+    if (filter.includes("hostinger")) {
+        const text = try Io.Dir.cwd().readFileAlloc(io, paths.hostinger_manifest, gpa, .limited(max_manifest_bytes));
+        defer gpa.free(text);
+        try summarizeProviderLevelTags(gpa, "hostinger", text, &rows);
+    }
+
+    std.mem.sort(LevelTagEvidence, rows.items, {}, levelTagLessThan);
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
+pub fn loadLevelTagsFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, filter: ProviderFilter) !LevelTagReport {
+    var rows = std.ArrayList(LevelTagEvidence).empty;
+    errdefer deinitLevelTagList(&rows, gpa);
+    if (filter.includes("cloudflare")) try summarizeProviderLevelTags(gpa, "cloudflare", cloudflare_text, &rows);
+    if (filter.includes("hostinger")) try summarizeProviderLevelTags(gpa, "hostinger", hostinger_text, &rows);
+    std.mem.sort(LevelTagEvidence, rows.items, {}, levelTagLessThan);
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
+pub fn writeLevelTagsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: LevelTagOptions, writer: anytype) !void {
+    var report = try loadLevelTags(io, gpa, paths, options.provider);
+    defer report.deinit(gpa);
+    try report.writeText(writer, options);
 }
 
 pub fn auditL1(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !L1Audit {
@@ -1316,23 +1432,26 @@ fn summarizeProviderLevels(gpa: Allocator, provider: []const u8, text: []const u
         var row = try CoverageRoute.init(gpa, provider, parsed.value);
         defer row.deinit(gpa);
 
-        evidence.total += 1;
-        if (row.route.deprecated) {
-            evidence.deprecated += 1;
-            continue;
-        }
-        evidence.non_deprecated += 1;
-        if (row.route.support == .not_applicable) {
-            evidence.not_applicable += 1;
-            continue;
-        }
-        if (row.route.isRoutable()) evidence.routable += 1;
+        updateLevelEvidence(evidence, row);
+    }
+}
 
-        switch (row.route.mode) {
-            .read => updateReadLevelEvidence(evidence, row),
-            .dry_run => updateDryRunLevelEvidence(evidence, row),
-            .write, .none => {},
-        }
+fn summarizeProviderLevelTags(gpa: Allocator, provider: []const u8, text: []const u8, rows: *std.ArrayList(LevelTagEvidence)) !void {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line_raw| {
+        const line = std.mem.trim(u8, line_raw, " \t\r\n");
+        if (line.len == 0) continue;
+
+        var parsed = try std.json.parseFromSlice(std.json.Value, gpa, line, .{});
+        defer parsed.deinit();
+
+        const row_provider = core_json.fieldString(parsed.value, "provider") orelse return error.InvalidCoverageRow;
+        if (!std.mem.eql(u8, row_provider, provider)) return error.InvalidCoverageProvider;
+        var coverage_row = try CoverageRoute.init(gpa, provider, parsed.value);
+        defer coverage_row.deinit(gpa);
+
+        const row = try levelTagRow(gpa, rows, provider, coverage_row.route.tag);
+        updateLevelEvidence(&row.evidence, coverage_row);
     }
 }
 
@@ -1482,12 +1601,27 @@ fn gapRow(gpa: Allocator, rows: *std.ArrayList(GapSummary), provider: []const u8
     return &rows.items[rows.items.len - 1];
 }
 
+fn levelTagRow(gpa: Allocator, rows: *std.ArrayList(LevelTagEvidence), provider: []const u8, tag: []const u8) !*LevelTagEvidence {
+    for (rows.items) |*row| {
+        if (std.mem.eql(u8, row.provider, provider) and std.mem.eql(u8, row.tag, tag)) return row;
+    }
+    const row = try LevelTagEvidence.init(gpa, provider, tag);
+    errdefer row.deinit(gpa);
+    try rows.append(gpa, row);
+    return &rows.items[rows.items.len - 1];
+}
+
 fn deinitTagList(rows: *std.ArrayList(TagSummary), gpa: Allocator) void {
     for (rows.items) |row| row.deinit(gpa);
     rows.deinit(gpa);
 }
 
 fn deinitGapList(rows: *std.ArrayList(GapSummary), gpa: Allocator) void {
+    for (rows.items) |row| row.deinit(gpa);
+    rows.deinit(gpa);
+}
+
+fn deinitLevelTagList(rows: *std.ArrayList(LevelTagEvidence), gpa: Allocator) void {
     for (rows.items) |row| row.deinit(gpa);
     rows.deinit(gpa);
 }
@@ -1603,6 +1737,37 @@ fn writeLevelProviderEvidence(evidence: LevelProviderEvidence, writer: anytype) 
     });
 }
 
+fn writeLevelTagRow(row: LevelTagEvidence, writer: anytype) !void {
+    const evidence = row.evidence;
+    try writer.print("{s} | {s}: priority={d} L0={d} non_deprecated={d} deprecated={d} not_applicable={d} L1_routable={d} read={d} dry_run={d}", .{
+        row.provider,
+        row.tag,
+        row.priority(),
+        evidence.total,
+        evidence.non_deprecated,
+        evidence.deprecated,
+        evidence.not_applicable,
+        evidence.routable,
+        evidence.read_routes,
+        evidence.dry_run_routes,
+    });
+    try writer.print(" L2_read_evidence={d} partial_reads={d} diagnostic_blocked_reads={d} pending_reads={d} read_missing_tests={d}", .{
+        evidence.l2_read_evidence,
+        evidence.l2_partial_reads,
+        evidence.l2_diagnostic_reads,
+        evidence.pending_reads,
+        evidence.read_missing_tests,
+    });
+    try writer.print(" dry_run_evidence={d} pending_mutation_dry_runs={d}", .{
+        evidence.dry_run_evidence,
+        evidence.pending_mutation_dry_runs,
+    });
+    try writer.print(" L3_generic={d} typed={d}\n", .{
+        evidence.l3_generic_inventory_candidates,
+        evidence.l3_typed_table_evidence,
+    });
+}
+
 fn writeGapField(writer: anytype, name: []const u8, count: usize) !void {
     if (count == 0) return;
     try writer.print(" {s}={d}", .{ name, count });
@@ -1619,6 +1784,42 @@ fn gapLessThan(_: void, lhs: GapSummary, rhs: GapSummary) bool {
     const provider_order = std.mem.order(u8, lhs.provider, rhs.provider);
     if (provider_order != .eq) return provider_order == .lt;
     return std.mem.order(u8, lhs.tag, rhs.tag) == .lt;
+}
+
+fn levelTagLessThan(_: void, lhs: LevelTagEvidence, rhs: LevelTagEvidence) bool {
+    const lhs_priority = lhs.priority();
+    const rhs_priority = rhs.priority();
+    if (lhs_priority != rhs_priority) return lhs_priority > rhs_priority;
+    if (lhs.evidence.pending_reads != rhs.evidence.pending_reads) return lhs.evidence.pending_reads > rhs.evidence.pending_reads;
+    if (lhs.evidence.pending_mutation_dry_runs != rhs.evidence.pending_mutation_dry_runs) return lhs.evidence.pending_mutation_dry_runs > rhs.evidence.pending_mutation_dry_runs;
+    if (lhs.evidence.l2_diagnostic_reads != rhs.evidence.l2_diagnostic_reads) return lhs.evidence.l2_diagnostic_reads > rhs.evidence.l2_diagnostic_reads;
+    const lhs_evidence = lhs.evidenceScore();
+    const rhs_evidence = rhs.evidenceScore();
+    if (lhs_evidence != rhs_evidence) return lhs_evidence > rhs_evidence;
+    if (lhs.evidence.non_deprecated != rhs.evidence.non_deprecated) return lhs.evidence.non_deprecated > rhs.evidence.non_deprecated;
+    const provider_order = std.mem.order(u8, lhs.provider, rhs.provider);
+    if (provider_order != .eq) return provider_order == .lt;
+    return std.mem.order(u8, lhs.tag, rhs.tag) == .lt;
+}
+
+fn updateLevelEvidence(evidence: *LevelProviderEvidence, row: CoverageRoute) void {
+    evidence.total += 1;
+    if (row.route.deprecated) {
+        evidence.deprecated += 1;
+        return;
+    }
+    evidence.non_deprecated += 1;
+    if (row.route.support == .not_applicable) {
+        evidence.not_applicable += 1;
+        return;
+    }
+    if (row.route.isRoutable()) evidence.routable += 1;
+
+    switch (row.route.mode) {
+        .read => updateReadLevelEvidence(evidence, row),
+        .dry_run => updateDryRunLevelEvidence(evidence, row),
+        .write, .none => {},
+    }
 }
 
 fn updateReadLevelEvidence(evidence: *LevelProviderEvidence, row: CoverageRoute) void {
@@ -1957,6 +2158,58 @@ test "summarizes manifest-backed provider coverage levels" {
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage levels\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "L2 read_evidence=1 partial_reads=1 diagnostic_blocked_reads=0 pending_reads=1 read_missing_tests=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "L3 evidence generic_inventory_candidates=1 typed_table_evidence=1") != null);
+}
+
+test "ranks manifest-backed provider coverage levels by tag" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"POC reads accounts and stores typed account rows."}
+        \\{"provider":"cloudflare","tag":"Workers","method":"GET","path":"/accounts/{account_id}/workers","operation_id":"workers-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"pending"}
+        \\{"provider":"cloudflare","tag":"Workers","method":"POST","path":"/accounts/{account_id}/workers","operation_id":"workers-create","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"pending dry-run"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker","operation_id":"VPS_getProjectListV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"unsupported OS diagnostic"}
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"POST","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker","operation_id":"VPS_createNewProjectV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"dry_run","tests":"fixture","deprecated":false,"notes":"dry-run reviewed"}
+        \\
+    ;
+
+    var report = try loadLevelTagsFromText(allocator, cloudflare, hostinger, .all);
+    defer report.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), report.items.len);
+    try std.testing.expectEqualStrings("cloudflare", report.items[0].provider);
+    try std.testing.expectEqualStrings("Workers", report.items[0].tag);
+    try std.testing.expectEqual(@as(usize, 2), report.items[0].priority());
+    try std.testing.expectEqual(@as(usize, 1), report.items[0].evidence.pending_reads);
+    try std.testing.expectEqual(@as(usize, 1), report.items[0].evidence.pending_mutation_dry_runs);
+    try std.testing.expectEqualStrings("hostinger", report.items[1].provider);
+    try std.testing.expectEqualStrings("VPS: Docker Manager", report.items[1].tag);
+    try std.testing.expectEqual(@as(usize, 1), report.items[1].priority());
+    try std.testing.expectEqual(@as(usize, 1), report.items[1].evidence.l2_diagnostic_reads);
+    try std.testing.expectEqual(@as(usize, 1), report.items[1].evidence.dry_run_evidence);
+    try std.testing.expectEqualStrings("Accounts", report.items[2].tag);
+    try std.testing.expectEqual(@as(usize, 0), report.items[2].priority());
+    try std.testing.expectEqual(@as(usize, 1), report.items[2].evidence.l3_typed_table_evidence);
+
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+    try report.writeText(&out.writer, .{ .provider = .all, .limit = 1 });
+    const text = try out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage levels by tag\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Workers: priority=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "pending_reads=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "closed_or_evidence_only_rows_hidden=1") != null);
+
+    var full_out = std.Io.Writer.Allocating.init(allocator);
+    defer full_out.deinit();
+    try report.writeText(&full_out.writer, .{ .provider = .all, .limit = 0 });
+    const full_text = try full_out.toOwnedSlice();
+    defer allocator.free(full_text);
+    try std.testing.expect(std.mem.indexOf(u8, full_text, "cloudflare | Accounts: priority=0") != null);
 }
 
 test "audits L1 routability invariants across provider manifests" {

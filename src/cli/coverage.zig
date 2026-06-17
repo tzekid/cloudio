@@ -17,6 +17,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .l1 => |filter| try commandL1(ctx, filter),
         .gaps => |options| try commandGaps(ctx, options),
         .levels => |filter| try commandLevels(ctx, filter),
+        .level_tags => |options| try commandLevelTags(ctx, options),
         .routes => |filter| try commandRoutes(ctx, filter),
         .plan => |plan_args| try commandPlan(ctx, plan_args),
         .unknown => |name| std.debug.print("unknown coverage command: {s}\n", .{name}),
@@ -29,6 +30,7 @@ const Command = union(enum) {
     l1: app_coverage.ProviderFilter,
     gaps: app_coverage.GapOptions,
     levels: app_coverage.ProviderFilter,
+    level_tags: app_coverage.LevelTagOptions,
     routes: app_coverage.RouteFilter,
     plan: []const []const u8,
     unknown: []const u8,
@@ -53,6 +55,9 @@ fn parseCommand(args: []const []const u8) Command {
         if (args.len < 2) return .{ .levels = .all };
         const filter = app_coverage.ProviderFilter.parse(args[1]) orelse return .{ .unknown = args[1] };
         return .{ .levels = filter };
+    }
+    if (std.mem.eql(u8, args[0], "level-tags") or std.mem.eql(u8, args[0], "levels-by-tag") or std.mem.eql(u8, args[0], "evidence")) {
+        return parseLevelTags(args[1..]);
     }
     if (std.mem.eql(u8, args[0], "routes")) {
         return parseRoutes(args[1..]);
@@ -84,6 +89,29 @@ fn parseGaps(args: []const []const u8) Command {
         }
     }
     return .{ .gaps = options };
+}
+
+fn parseLevelTags(args: []const []const u8) Command {
+    var options = app_coverage.LevelTagOptions{};
+    var provider_set = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--limit")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--limit" };
+            options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
+            const value = arg["--limit=".len..];
+            options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
+        } else if (!provider_set) {
+            options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
+            provider_set = true;
+        } else {
+            return .{ .unknown = arg };
+        }
+    }
+    return .{ .level_tags = options };
 }
 
 fn parseRoutes(args: []const []const u8) Command {
@@ -189,6 +217,15 @@ fn commandLevels(ctx: Context, filter: app_coverage.ProviderFilter) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_coverage.writeLevelsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, filter, &out.writer);
+    const text = try out.toOwnedSlice();
+    defer ctx.gpa.free(text);
+    std.debug.print("{s}", .{text});
+}
+
+fn commandLevelTags(ctx: Context, options: app_coverage.LevelTagOptions) !void {
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    try app_coverage.writeLevelTagsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, options, &out.writer);
     const text = try out.toOwnedSlice();
     defer ctx.gpa.free(text);
     std.debug.print("{s}", .{text});
@@ -401,6 +438,24 @@ test "coverage command parser defaults to summary" {
 
     const levels_default_args = [_][]const u8{"levels"};
     try std.testing.expectEqual(Command{ .levels = .all }, parseCommand(levels_default_args[0..]));
+
+    const level_tags_args = [_][]const u8{ "level-tags", "cloudflare", "--limit", "9" };
+    switch (parseCommand(level_tags_args[0..])) {
+        .level_tags => |options| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, options.provider);
+            try std.testing.expectEqual(@as(usize, 9), options.limit);
+        },
+        else => return error.ExpectedCoverageLevelTags,
+    }
+
+    const evidence_args = [_][]const u8{ "evidence", "hostinger", "--limit=0" };
+    switch (parseCommand(evidence_args[0..])) {
+        .level_tags => |options| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, options.provider);
+            try std.testing.expectEqual(@as(usize, 0), options.limit);
+        },
+        else => return error.ExpectedCoverageLevelTags,
+    }
 
     const routes_args = [_][]const u8{"routes"};
     switch (parseCommand(routes_args[0..])) {

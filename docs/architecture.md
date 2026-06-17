@@ -111,7 +111,7 @@ Every provider endpoint should have one generated coverage row with:
 - `tests`: fixture, live smoke, or missing
 - `notes`
 
-Coverage rows are checked against the latest official OpenAPI source before provider work begins. If an upstream endpoint appears or disappears, `zig build coverage-check` should show that drift explicitly. `cloudio coverage gaps` then ranks unresolved work by upstream tag group, while `cloudio coverage levels` separates L0/L1/L2 evidence from L3 projection candidates, keeping provider review broad enough for human inspection without turning evidence summaries into completion claims.
+Coverage rows are checked against the latest official OpenAPI source before provider work begins. If an upstream endpoint appears or disappears, `zig build coverage-check` should show that drift explicitly. `cloudio coverage gaps` then ranks unresolved work by upstream tag group, while `cloudio coverage levels` separates L0/L1/L2 evidence from L3 projection candidates. `cloudio coverage level-tags` applies the same evidence accounting per upstream tag group so reviews can choose a whole API family before drilling into exact `coverage routes` entries, keeping provider work broad enough for human inspection without turning evidence summaries into completion claims.
 Route-library tests also check that every generated `path_params` entry is required and exactly matches a placeholder in the generated path template. Route rendering rejects unknown path keys and missing required path values before generic dispatch can build an HTTP URL or dry-run plan.
 
 ## Review Shape
