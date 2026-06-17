@@ -46,18 +46,21 @@ pub const Client = struct {
         if (!route.isRoutable()) return error.UnsupportedProviderRoute;
         if (route.method != .GET or route.mode != .read) return error.ProviderRouteRequiresDryRun;
         if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
+        try route.validateRequestHeaders(request);
 
         const url = try route.renderRequestUrl(gpa, self.baseUrl(route.provider), request);
         defer gpa.free(url);
+        const headers = try requestHeaders(gpa, request.header_params);
+        defer gpa.free(headers);
         return switch (self.auth) {
             .cloudflare => |auth| try (provider_cloudflare.Client{
                 .auth = auth,
                 .base_url_override = self.cloudflare_base_url_override,
-            }).get(io, gpa, url),
+            }).getWithHeaders(io, gpa, url, headers),
             .hostinger => |token| try (provider_hostinger.Client{
                 .token = token,
                 .base_url_override = self.hostinger_base_url_override,
-            }).get(io, gpa, url),
+            }).getWithHeaders(io, gpa, url, headers),
         };
     }
 
@@ -164,6 +167,7 @@ pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, reques
     if (route.isDryRunMutation()) return try dryRunPlanJsonRequest(gpa, route, request);
     if (route.mode != .read or route.method != .GET) return error.UnsupportedProviderRoutePlan;
     if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
+    try route.validateRequestHeaders(request);
 
     const path = try route.renderRequestPath(gpa, request);
     defer gpa.free(path);
@@ -186,6 +190,8 @@ pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, reques
     try writeJsonField(writer, "path", path, true);
     try writeJsonField(writer, "url", url, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
+    try writeRouteParamField(writer, "header_params", route.header_params, true);
+    try writeHeaderInputField(writer, "header_params_input", request.header_params, true);
     try writeRequestBodyField(writer, "request_body", route.request_body, true);
     try writeRequestBodyInputField(writer, "request_body_input", route.request_body, request.body, true);
     try writeResponsesField(writer, "responses", route.responses, true);
@@ -199,6 +205,7 @@ pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, reques
 pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
     if (!route.isRoutable()) return error.UnsupportedProviderRoute;
     if (route.mode != .dry_run or route.method == .GET or route.method == .HEAD) return error.ProviderRouteIsNotMutation;
+    try route.validateRequestHeaders(request);
     try route.validateProvidedBodyInput(request);
 
     const path = try route.renderRequestPath(gpa, request);
@@ -219,6 +226,8 @@ pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, reque
     try writeJsonField(writer, "method", route.method.name(), true);
     try writeJsonField(writer, "path", path, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
+    try writeRouteParamField(writer, "header_params", route.header_params, true);
+    try writeHeaderInputField(writer, "header_params_input", request.header_params, true);
     try writeRequestBodyField(writer, "request_body", route.request_body, true);
     try writeRequestBodyInputField(writer, "request_body_input", route.request_body, request.body, true);
     try writeResponsesField(writer, "responses", route.responses, true);
@@ -248,6 +257,34 @@ fn writeRequestBodyField(writer: anytype, name: []const u8, body: provider_route
     if (trailing_comma) try writer.writeByte(',');
 }
 
+fn writeRouteParamField(writer: anytype, name: []const u8, params: []const provider_routes.RouteParam, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeAll(":[");
+    for (params, 0..) |param, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.writeByte('{');
+        try writeJsonField(writer, "name", param.name, true);
+        try writer.writeAll("\"required\":");
+        try writer.writeAll(if (param.required) "true" else "false");
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeHeaderInputField(writer: anytype, name: []const u8, params: []const provider_routes.HeaderParam, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeAll(":[");
+    for (params, 0..) |param, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.writeByte('{');
+        try writeJsonField(writer, "name", param.name, true);
+        try writer.writeAll("\"provided\":true}");
+    }
+    try writer.writeByte(']');
+    if (trailing_comma) try writer.writeByte(',');
+}
+
 fn writeRequestBodyInputField(writer: anytype, name: []const u8, body: provider_routes.RequestBody, input: provider_routes.BodyInput, trailing_comma: bool) !void {
     try core_json.writeString(writer, name);
     try writer.writeAll(":{");
@@ -263,6 +300,14 @@ fn writeRequestBodyInputField(writer: anytype, name: []const u8, body: provider_
     try writer.writeAll(if (body.required and !input.present) "true" else "false");
     try writer.writeByte('}');
     if (trailing_comma) try writer.writeByte(',');
+}
+
+fn requestHeaders(gpa: Allocator, params: []const provider_routes.HeaderParam) ![]std.http.Header {
+    const headers = try gpa.alloc(std.http.Header, params.len);
+    for (params, 0..) |param, index| {
+        headers[index] = .{ .name = param.name, .value = param.value };
+    }
+    return headers;
 }
 
 fn writeResponsesField(writer: anytype, name: []const u8, responses: []const provider_routes.Response, trailing_comma: bool) !void {
@@ -419,6 +464,44 @@ test "generic dispatch route planner validates read route request input" {
                     .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
                 },
                 .body = .{ .present = true, .content_type = "application/json" },
+            },
+        ),
+    );
+}
+
+test "generic dispatch route planner validates and hides header values" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "r2-get-event-notification-configs")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const plan = try planRouteJsonRequest(
+        allocator,
+        route,
+        .{
+            .path_params = &.{
+                .{ .name = "account_id", .value = "acct/1" },
+                .{ .name = "bucket_name", .value = "bucket" },
+            },
+            .header_params = &.{.{ .name = "CF-R2-Jurisdiction", .value = "eu" }},
+        },
+    );
+    defer allocator.free(plan);
+
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"header_params\":[{\"name\":\"cf-r2-jurisdiction\",\"required\":false}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"header_params_input\":[{\"name\":\"CF-R2-Jurisdiction\",\"provided\":true}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "eu") == null);
+
+    try std.testing.expectError(
+        error.UnknownRouteHeaderParameter,
+        planRouteJsonRequest(
+            allocator,
+            route,
+            .{
+                .path_params = &.{
+                    .{ .name = "account_id", .value = "acct/1" },
+                    .{ .name = "bucket_name", .value = "bucket" },
+                },
+                .header_params = &.{.{ .name = "x-unknown", .value = "value" }},
             },
         ),
     );

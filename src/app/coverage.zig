@@ -27,6 +27,7 @@ pub const mode_names = [_][]const u8{
 
 pub const PathParam = provider_routes.PathParam;
 pub const QueryParam = provider_routes.QueryParam;
+pub const HeaderParam = provider_routes.HeaderParam;
 pub const Request = provider_routes.Request;
 pub const BodyInput = provider_routes.BodyInput;
 
@@ -204,6 +205,10 @@ pub fn parsePathParamAssignment(value: []const u8) !PathParam {
 
 pub fn parseQueryParamAssignment(value: []const u8) !QueryParam {
     return provider_routes.parseQueryParamAssignment(value);
+}
+
+pub fn parseHeaderParamAssignment(value: []const u8) !HeaderParam {
+    return provider_routes.parseHeaderParamAssignment(value);
 }
 
 pub const RoutePlanInput = struct {
@@ -567,6 +572,9 @@ fn writeRouteDetail(writer: anytype, route: provider_routes.Route) !void {
     try writer.writeByte('\n');
     try writer.writeAll("      query_params: ");
     try writeRouteParamList(writer, route.query_params);
+    try writer.writeByte('\n');
+    try writer.writeAll("      header_params: ");
+    try writeRouteParamList(writer, route.header_params);
     try writer.writeByte('\n');
     try writer.print("      request_body: required={}", .{route.request_body.required});
     try writer.writeAll(" content_types=");

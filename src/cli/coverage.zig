@@ -153,10 +153,12 @@ const ParsedPlan = struct {
     plan: app_coverage.RoutePlanInput,
     path_params: []app_coverage.PathParam,
     query_params: []app_coverage.QueryParam,
+    header_params: []app_coverage.HeaderParam,
 
     fn deinit(self: ParsedPlan, gpa: Allocator) void {
         gpa.free(self.path_params);
         gpa.free(self.query_params);
+        gpa.free(self.header_params);
     }
 };
 
@@ -170,6 +172,8 @@ fn parsePlan(gpa: Allocator, args: []const []const u8) !ParsedPlan {
     errdefer path_params.deinit(gpa);
     var query_params = std.ArrayList(app_coverage.QueryParam).empty;
     errdefer query_params.deinit(gpa);
+    var header_params = std.ArrayList(app_coverage.HeaderParam).empty;
+    errdefer header_params.deinit(gpa);
     var body = app_coverage.BodyInput{};
 
     var index: usize = 1;
@@ -234,6 +238,14 @@ fn parsePlan(gpa: Allocator, args: []const []const u8) !ParsedPlan {
             try query_params.append(gpa, try app_coverage.parseQueryParamAssignment(arg["--query-param=".len..]));
         } else if (std.mem.startsWith(u8, arg, "--query=")) {
             try query_params.append(gpa, try app_coverage.parseQueryParamAssignment(arg["--query=".len..]));
+        } else if (std.mem.eql(u8, arg, "--header-param") or std.mem.eql(u8, arg, "--header")) {
+            index += 1;
+            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
+            try header_params.append(gpa, try app_coverage.parseHeaderParamAssignment(args[index]));
+        } else if (std.mem.startsWith(u8, arg, "--header-param=")) {
+            try header_params.append(gpa, try app_coverage.parseHeaderParamAssignment(arg["--header-param=".len..]));
+        } else if (std.mem.startsWith(u8, arg, "--header=")) {
+            try header_params.append(gpa, try app_coverage.parseHeaderParamAssignment(arg["--header=".len..]));
         } else if (std.mem.eql(u8, arg, "--body-present")) {
             body.present = true;
         } else if (std.mem.eql(u8, arg, "--body-content-type") or std.mem.eql(u8, arg, "--content-type")) {
@@ -256,6 +268,8 @@ fn parsePlan(gpa: Allocator, args: []const []const u8) !ParsedPlan {
     errdefer gpa.free(path_owned);
     const query_owned = try query_params.toOwnedSlice(gpa);
     errdefer gpa.free(query_owned);
+    const header_owned = try header_params.toOwnedSlice(gpa);
+    errdefer gpa.free(header_owned);
 
     return .{
         .plan = .{
@@ -263,11 +277,13 @@ fn parsePlan(gpa: Allocator, args: []const []const u8) !ParsedPlan {
             .request = .{
                 .path_params = path_owned,
                 .query_params = query_owned,
+                .header_params = header_owned,
                 .body = body,
             },
         },
         .path_params = path_owned,
         .query_params = query_owned,
+        .header_params = header_owned,
     };
 }
 
@@ -395,6 +411,8 @@ test "coverage plan parser builds reusable provider route requests" {
         "--path-param=account_id=acct/1",
         "--query",
         "base64=true",
+        "--header-param",
+        "CF-R2-Jurisdiction=eu",
         "--content-type",
         "multipart/form-data; boundary=test",
     };
@@ -411,6 +429,9 @@ test "coverage plan parser builds reusable provider route requests" {
     try std.testing.expectEqual(@as(usize, 1), parsed.plan.request.query_params.len);
     try std.testing.expectEqualStrings("base64", parsed.plan.request.query_params[0].name);
     try std.testing.expectEqualStrings("true", parsed.plan.request.query_params[0].value);
+    try std.testing.expectEqual(@as(usize, 1), parsed.plan.request.header_params.len);
+    try std.testing.expectEqualStrings("CF-R2-Jurisdiction", parsed.plan.request.header_params[0].name);
+    try std.testing.expectEqualStrings("eu", parsed.plan.request.header_params[0].value);
     try std.testing.expect(parsed.plan.request.body.present);
     try std.testing.expectEqualStrings("multipart/form-data; boundary=test", parsed.plan.request.body.content_type orelse "");
 }

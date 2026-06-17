@@ -104,12 +104,22 @@ pub const QueryParam = struct {
     value: []const u8,
 };
 
+pub const HeaderParam = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
 pub fn parsePathParamAssignment(value: []const u8) !PathParam {
     const parsed = try splitParamAssignment(value);
     return .{ .name = parsed.name, .value = parsed.value };
 }
 
 pub fn parseQueryParamAssignment(value: []const u8) !QueryParam {
+    const parsed = try splitParamAssignment(value);
+    return .{ .name = parsed.name, .value = parsed.value };
+}
+
+pub fn parseHeaderParamAssignment(value: []const u8) !HeaderParam {
     const parsed = try splitParamAssignment(value);
     return .{ .name = parsed.name, .value = parsed.value };
 }
@@ -122,6 +132,7 @@ pub const BodyInput = struct {
 pub const Request = struct {
     path_params: []const PathParam = &.{},
     query_params: []const QueryParam = &.{},
+    header_params: []const HeaderParam = &.{},
     body: BodyInput = .{},
 };
 
@@ -168,6 +179,7 @@ pub const Route = struct {
     operation_id: ?[]u8,
     path_params: []RouteParam,
     query_params: []RouteParam,
+    header_params: []RouteParam,
     request_body: RequestBody,
     responses: []Response,
     support: Support,
@@ -200,6 +212,8 @@ pub const Route = struct {
         errdefer freeRouteParams(gpa, path_params);
         const query_params = try parseRouteParams(gpa, value, "query_params");
         errdefer freeRouteParams(gpa, query_params);
+        const header_params = try parseRouteParams(gpa, value, "header_params");
+        errdefer freeRouteParams(gpa, header_params);
         const request_body = try parseRequestBody(gpa, value);
         errdefer freeRequestBody(gpa, request_body);
         const responses = try parseResponses(gpa, value);
@@ -213,6 +227,7 @@ pub const Route = struct {
             .operation_id = operation_id_owned,
             .path_params = path_params,
             .query_params = query_params,
+            .header_params = header_params,
             .request_body = request_body,
             .responses = responses,
             .support = support,
@@ -227,6 +242,7 @@ pub const Route = struct {
         if (self.operation_id) |id| gpa.free(id);
         freeRouteParams(gpa, self.path_params);
         freeRouteParams(gpa, self.query_params);
+        freeRouteParams(gpa, self.header_params);
         freeRequestBody(gpa, self.request_body);
         freeResponses(gpa, self.responses);
     }
@@ -311,6 +327,10 @@ pub const Route = struct {
 
         const content_type = request.body.content_type orelse return error.MissingRouteRequestBodyContentType;
         if (!self.request_body.acceptsContentType(content_type)) return error.UnsupportedRouteRequestBodyContentType;
+    }
+
+    pub fn validateRequestHeaders(self: Route, request: Request) !void {
+        try validateHeaderParams(self.header_params, request.header_params);
     }
 };
 
@@ -529,6 +549,15 @@ fn validatePathParams(allowed_params: []const RouteParam, params: []const PathPa
     }
 }
 
+fn validateHeaderParams(allowed_params: []const RouteParam, params: []const HeaderParam) !void {
+    for (params) |param| {
+        if (!containsRouteParamNameIgnoreCase(allowed_params, param.name)) return error.UnknownRouteHeaderParameter;
+    }
+    for (allowed_params) |allowed| {
+        if (allowed.required and !containsHeaderParam(params, allowed.name)) return error.MissingRouteHeaderParameter;
+    }
+}
+
 fn appendProvider(gpa: Allocator, provider: Provider, text: []const u8, rows: *std.ArrayList(Route)) !void {
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |line_raw| {
@@ -694,9 +723,23 @@ fn containsRouteParamName(params: []const RouteParam, candidate: []const u8) boo
     return false;
 }
 
+fn containsRouteParamNameIgnoreCase(params: []const RouteParam, candidate: []const u8) bool {
+    for (params) |param| {
+        if (std.ascii.eqlIgnoreCase(param.name, candidate)) return true;
+    }
+    return false;
+}
+
 fn containsQueryParam(params: []const QueryParam, candidate: []const u8) bool {
     for (params) |param| {
         if (std.mem.eql(u8, param.name, candidate)) return true;
+    }
+    return false;
+}
+
+fn containsHeaderParam(params: []const HeaderParam, candidate: []const u8) bool {
+    for (params) |param| {
+        if (std.ascii.eqlIgnoreCase(param.name, candidate)) return true;
     }
     return false;
 }
@@ -811,6 +854,31 @@ test "finds routes by operation id and template without loading full tables" {
     try expectRouteParam(hostinger_route.query_params, "date_from", true);
     try expectRouteParam(hostinger_route.query_params, "date_to", true);
     try std.testing.expect(hostinger_route.hasRequiredQueryParameters());
+}
+
+test "loads generated header parameter metadata" {
+    const allocator = std.testing.allocator;
+
+    const optional_header_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "r2-get-event-notification-configs")) orelse return error.TestExpectedRoute;
+    defer optional_header_route.deinit(allocator);
+    try expectRouteParam(optional_header_route.header_params, "cf-r2-jurisdiction", false);
+    try optional_header_route.validateRequestHeaders(.{});
+    try optional_header_route.validateRequestHeaders(.{ .header_params = &.{.{ .name = "CF-R2-Jurisdiction", .value = "eu" }} });
+    try std.testing.expectError(error.UnknownRouteHeaderParameter, optional_header_route.validateRequestHeaders(.{ .header_params = &.{.{ .name = "x-unknown", .value = "value" }} }));
+
+    const required_header_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "stream-videos-initiate-video-uploads-using-tus")) orelse return error.TestExpectedRoute;
+    defer required_header_route.deinit(allocator);
+    try expectRouteParam(required_header_route.header_params, "Tus-Resumable", true);
+    try expectRouteParam(required_header_route.header_params, "Upload-Length", true);
+    try std.testing.expectError(error.MissingRouteHeaderParameter, required_header_route.validateRequestHeaders(.{}));
+    try required_header_route.validateRequestHeaders(.{ .header_params = &.{
+        .{ .name = "tus-resumable", .value = "1.0.0" },
+        .{ .name = "upload-length", .value = "123" },
+    } });
+
+    const hostinger_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getVirtualMachinesV1")) orelse return error.TestExpectedRoute;
+    defer hostinger_route.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), hostinger_route.header_params.len);
 }
 
 test "generated path parameter metadata matches route templates" {
@@ -1030,6 +1098,10 @@ test "parses route parameter assignments without allocation" {
     const empty_value = try parseQueryParamAssignment("flag=");
     try std.testing.expectEqualStrings("flag", empty_value.name);
     try std.testing.expectEqualStrings("", empty_value.value);
+
+    const header_param = try parseHeaderParamAssignment("CF-R2-Jurisdiction=eu");
+    try std.testing.expectEqualStrings("CF-R2-Jurisdiction", header_param.name);
+    try std.testing.expectEqualStrings("eu", header_param.value);
 
     try std.testing.expectError(error.InvalidRouteParameterAssignment, parsePathParamAssignment("missing-equals"));
     try std.testing.expectError(error.InvalidRouteParameterAssignment, parseQueryParamAssignment("=value"));

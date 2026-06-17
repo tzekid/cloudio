@@ -195,6 +195,7 @@ generate_manifest() {
         operation_id: ($operation.operationId // null),
         path_params: operation_params($root; $path_item; $operation; "path"),
         query_params: operation_params($root; $path_item; $operation; "query"),
+        header_params: operation_params($root; $path_item; $operation; "header"),
         request_body: $body,
         responses: operation_responses($root; $operation),
         support: $coverage.support,
@@ -222,6 +223,11 @@ validate_manifest() {
       ))) and
       ($row.query_params | type == "array") and
       (all($row.query_params[]; (
+        (.name | type == "string") and
+        (.required | type == "boolean")
+      ))) and
+      ($row.header_params | type == "array") and
+      (all($row.header_params[]; (
         (.name | type == "string") and
         (.required | type == "boolean")
       ))) and
@@ -278,7 +284,7 @@ generate_all() {
     --argjson cloudflare_operations "$cloudflare_count" \
     --argjson hostinger_operations "$hostinger_count" \
     '{
-      schema_version: 3,
+      schema_version: 4,
       sources: {
         cloudflare: $cloudflare_url,
         hostinger: $hostinger_url

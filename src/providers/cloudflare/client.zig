@@ -335,13 +335,19 @@ pub const Client = struct {
     }
 
     pub fn get(self: Client, io: Io, gpa: Allocator, url: []const u8) !net_http.Response {
+        return try self.getWithHeaders(io, gpa, url, &.{});
+    }
+
+    pub fn getWithHeaders(self: Client, io: Io, gpa: Allocator, url: []const u8, route_headers: []const std.http.Header) !net_http.Response {
         const common = jsonHeaders();
         if (self.auth.token) |token| {
             if (token.len == 0) return error.MissingCloudflareAuth;
             const auth_header = try std.fmt.allocPrint(gpa, "Bearer {s}", .{token});
             defer gpa.free(auth_header);
             const privileged = [_]std.http.Header{.{ .name = "Authorization", .value = auth_header }};
-            return try net_http.get(gpa, io, url, &common, &privileged);
+            const headers = try mergeHeaders(gpa, &common, route_headers);
+            defer gpa.free(headers);
+            return try net_http.get(gpa, io, url, headers, &privileged);
         }
         const email = self.auth.email orelse return error.MissingCloudflareAuth;
         const key = self.auth.key orelse return error.MissingCloudflareAuth;
@@ -352,7 +358,9 @@ pub const Client = struct {
             .{ .name = "X-Auth-Email", .value = email },
             .{ .name = "X-Auth-Key", .value = key },
         };
-        return try net_http.get(gpa, io, url, &legacy, &.{});
+        const headers = try mergeHeaders(gpa, &legacy, route_headers);
+        defer gpa.free(headers);
+        return try net_http.get(gpa, io, url, headers, &.{});
     }
 
     pub fn getPublic(self: Client, io: Io, gpa: Allocator, url: []const u8) !net_http.Response {
@@ -367,6 +375,13 @@ fn jsonHeaders() [2]std.http.Header {
         .{ .name = "Accept", .value = "application/json" },
         .{ .name = "Content-Type", .value = "application/json" },
     };
+}
+
+fn mergeHeaders(gpa: Allocator, base: []const std.http.Header, extra: []const std.http.Header) ![]std.http.Header {
+    const merged = try gpa.alloc(std.http.Header, base.len + extra.len);
+    @memcpy(merged[0..base.len], base);
+    @memcpy(merged[base.len..], extra);
+    return merged;
 }
 
 pub const AccountEndpoint = enum {
