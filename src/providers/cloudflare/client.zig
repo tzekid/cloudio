@@ -40,6 +40,12 @@ pub const Auth = struct {
         const token = self.token orelse return false;
         return token.len != 0;
     }
+
+    pub fn hasLegacy(self: Auth) bool {
+        const email = self.email orelse return false;
+        const key = self.key orelse return false;
+        return email.len != 0 and key.len != 0;
+    }
 };
 
 pub const Client = struct {
@@ -268,6 +274,24 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getEmailAuthEndpoint(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, endpoint: EmailAuthReadEndpoint, args: EmailAuthReadArgs) !net_http.Response {
+        const url = try emailAuthReadUrl(gpa, self.base_url_override, zone_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getEmailSendingAccountEndpoint(self: Client, io: Io, gpa: Allocator, account_id: []const u8, endpoint: EmailSendingAccountReadEndpoint, args: EmailSendingAccountReadArgs) !net_http.Response {
+        const url = try emailSendingAccountReadUrl(gpa, self.base_url_override, account_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.getLegacy(io, gpa, url);
+    }
+
+    pub fn getEmailSendingZoneEndpoint(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, endpoint: EmailSendingZoneReadEndpoint, args: EmailSendingZoneReadArgs) !net_http.Response {
+        const url = try emailSendingZoneReadUrl(gpa, self.base_url_override, zone_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.getLegacy(io, gpa, url);
+    }
+
     pub fn getCustomPageEndpoint(self: Client, io: Io, gpa: Allocator, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) !net_http.Response {
         const url = try customPageReadUrl(gpa, self.base_url_override, scope, scope_id, resource, endpoint, args);
         defer gpa.free(url);
@@ -416,6 +440,10 @@ pub const Client = struct {
         return try self.getWithHeaders(io, gpa, url, &.{});
     }
 
+    pub fn getLegacy(self: Client, io: Io, gpa: Allocator, url: []const u8) !net_http.Response {
+        return try self.getWithLegacyHeaders(io, gpa, url, &.{});
+    }
+
     pub fn getWithHeaders(self: Client, io: Io, gpa: Allocator, url: []const u8, route_headers: []const std.http.Header) !net_http.Response {
         const common = jsonHeaders();
         if (self.auth.token) |token| {
@@ -427,6 +455,10 @@ pub const Client = struct {
             defer gpa.free(headers);
             return try net_http.get(gpa, io, url, headers, &privileged);
         }
+        return try self.getWithLegacyHeaders(io, gpa, url, route_headers);
+    }
+
+    pub fn getWithLegacyHeaders(self: Client, io: Io, gpa: Allocator, url: []const u8, route_headers: []const std.http.Header) !net_http.Response {
         const email = self.auth.email orelse return error.MissingCloudflareAuth;
         const key = self.auth.key orelse return error.MissingCloudflareAuth;
         if (email.len == 0 or key.len == 0) return error.MissingCloudflareAuth;
@@ -3654,6 +3686,147 @@ pub const EmailRoutingZoneReadArgs = struct {
     enabled: ?[]const u8 = null,
     page: ?[]const u8 = null,
     per_page: ?[]const u8 = null,
+};
+
+pub const EmailAuthReadEndpoint = enum {
+    dmarc_reports,
+    spf_inspect,
+
+    pub fn parse(value: []const u8) ?EmailAuthReadEndpoint {
+        if (std.mem.eql(u8, value, "dmarc-reports") or std.mem.eql(u8, value, "dmarc")) return .dmarc_reports;
+        if (std.mem.eql(u8, value, "spf-inspect") or std.mem.eql(u8, value, "spf")) return .spf_inspect;
+        return null;
+    }
+
+    pub fn commandName(self: EmailAuthReadEndpoint) []const u8 {
+        return switch (self) {
+            .dmarc_reports => "dmarc-reports",
+            .spf_inspect => "spf-inspect",
+        };
+    }
+
+    pub fn label(self: EmailAuthReadEndpoint) []const u8 {
+        return switch (self) {
+            .dmarc_reports => "zone-email-auth-dmarc-reports",
+            .spf_inspect => "zone-email-auth-spf-inspect",
+        };
+    }
+
+    pub fn operationId(self: EmailAuthReadEndpoint) []const u8 {
+        return switch (self) {
+            .dmarc_reports => "get_dmarc_reports_status",
+            .spf_inspect => "inspect_spf",
+        };
+    }
+
+    pub fn summary(self: EmailAuthReadEndpoint) []const u8 {
+        return switch (self) {
+            .dmarc_reports => "Get Email Auth DMARC report status",
+            .spf_inspect => "Inspect Email Auth SPF record",
+        };
+    }
+
+    pub fn requiresSpfRecordId(self: EmailAuthReadEndpoint) bool {
+        return self == .spf_inspect;
+    }
+};
+
+pub const EmailAuthReadArgs = struct {
+    spf_record_id: ?[]const u8 = null,
+};
+
+pub const EmailSendingAccountReadEndpoint = enum {
+    limits,
+
+    pub fn parse(value: []const u8) ?EmailSendingAccountReadEndpoint {
+        if (std.mem.eql(u8, value, "limits") or std.mem.eql(u8, value, "sending-limits")) return .limits;
+        return null;
+    }
+
+    pub fn commandName(self: EmailSendingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .limits => "limits",
+        };
+    }
+
+    pub fn label(self: EmailSendingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .limits => "account-email-sending-limits",
+        };
+    }
+
+    pub fn operationId(self: EmailSendingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .limits => "email-sending-get-sending-limits",
+        };
+    }
+
+    pub fn summary(self: EmailSendingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .limits => "Get Email Sending limits",
+        };
+    }
+};
+
+pub const EmailSendingAccountReadArgs = struct {};
+
+pub const EmailSendingZoneReadEndpoint = enum {
+    subdomains,
+    subdomain,
+    subdomain_dns,
+    subdomain_dns_status,
+
+    pub fn parse(value: []const u8) ?EmailSendingZoneReadEndpoint {
+        if (std.mem.eql(u8, value, "subdomains") or std.mem.eql(u8, value, "sending-subdomains")) return .subdomains;
+        if (std.mem.eql(u8, value, "subdomain") or std.mem.eql(u8, value, "sending-subdomain")) return .subdomain;
+        if (std.mem.eql(u8, value, "subdomain-dns") or std.mem.eql(u8, value, "dns")) return .subdomain_dns;
+        if (std.mem.eql(u8, value, "subdomain-dns-status") or std.mem.eql(u8, value, "dns-status")) return .subdomain_dns_status;
+        return null;
+    }
+
+    pub fn commandName(self: EmailSendingZoneReadEndpoint) []const u8 {
+        return switch (self) {
+            .subdomains => "subdomains",
+            .subdomain => "subdomain",
+            .subdomain_dns => "subdomain-dns",
+            .subdomain_dns_status => "subdomain-dns-status",
+        };
+    }
+
+    pub fn label(self: EmailSendingZoneReadEndpoint) []const u8 {
+        return switch (self) {
+            .subdomains => "zone-email-sending-subdomains",
+            .subdomain => "zone-email-sending-subdomain",
+            .subdomain_dns => "zone-email-sending-subdomain-dns",
+            .subdomain_dns_status => "zone-email-sending-subdomain-dns-status",
+        };
+    }
+
+    pub fn operationId(self: EmailSendingZoneReadEndpoint) []const u8 {
+        return switch (self) {
+            .subdomains => "email-sending-subdomains-list-sending-subdomains",
+            .subdomain => "email-sending-subdomains-get-sending-subdomain",
+            .subdomain_dns => "email-sending-subdomains-get-sending-subdomain-dns",
+            .subdomain_dns_status => "email-sending-subdomains-get-sending-subdomain-dns-status",
+        };
+    }
+
+    pub fn summary(self: EmailSendingZoneReadEndpoint) []const u8 {
+        return switch (self) {
+            .subdomains => "List Email Sending subdomains",
+            .subdomain => "Get an Email Sending subdomain",
+            .subdomain_dns => "Get Email Sending subdomain DNS records",
+            .subdomain_dns_status => "Get Email Sending subdomain DNS status",
+        };
+    }
+
+    pub fn requiresSubdomainId(self: EmailSendingZoneReadEndpoint) bool {
+        return self != .subdomains;
+    }
+};
+
+pub const EmailSendingZoneReadArgs = struct {
+    subdomain_id: ?[]const u8 = null,
 };
 
 pub const EmailSecuritySettingsReadEndpoint = enum {
@@ -9069,6 +9242,71 @@ pub fn emailRoutingZoneReadPath(gpa: Allocator, zone_id: []const u8, endpoint: E
     };
 }
 
+pub fn emailAuthReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, endpoint: EmailAuthReadEndpoint, args: EmailAuthReadArgs) ![]u8 {
+    const path = try emailAuthReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn emailAuthReadPath(gpa: Allocator, zone_id: []const u8, endpoint: EmailAuthReadEndpoint, args: EmailAuthReadArgs) ![]u8 {
+    const escaped_zone_id = try pathEscape(gpa, zone_id);
+    defer gpa.free(escaped_zone_id);
+    const auth_base = try std.fmt.allocPrint(gpa, "{s}/{s}/email/auth", .{ zones_path, escaped_zone_id });
+    defer gpa.free(auth_base);
+    return switch (endpoint) {
+        .dmarc_reports => try std.fmt.allocPrint(gpa, "{s}/dmarc-reports", .{auth_base}),
+        .spf_inspect => blk: {
+            const spf_record_id = args.spf_record_id orelse return error.MissingCloudflareEmailAuthSpfRecordId;
+            const inspect_path = try std.fmt.allocPrint(gpa, "{s}/spf/inspect", .{auth_base});
+            defer gpa.free(inspect_path);
+            break :blk try appendQuery(gpa, inspect_path, &[_]QueryParam{
+                .{ .name = "id", .value = spf_record_id },
+            });
+        },
+    };
+}
+
+pub fn emailSendingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: EmailSendingAccountReadEndpoint, args: EmailSendingAccountReadArgs) ![]u8 {
+    const path = try emailSendingAccountReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn emailSendingAccountReadPath(gpa: Allocator, account_id: []const u8, endpoint: EmailSendingAccountReadEndpoint, args: EmailSendingAccountReadArgs) ![]u8 {
+    _ = args;
+    const escaped_account_id = try pathEscape(gpa, account_id);
+    defer gpa.free(escaped_account_id);
+    return switch (endpoint) {
+        .limits => try std.fmt.allocPrint(gpa, "{s}/{s}/email/sending/limits", .{ accounts_path, escaped_account_id }),
+    };
+}
+
+pub fn emailSendingZoneReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, endpoint: EmailSendingZoneReadEndpoint, args: EmailSendingZoneReadArgs) ![]u8 {
+    const path = try emailSendingZoneReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn emailSendingZoneReadPath(gpa: Allocator, zone_id: []const u8, endpoint: EmailSendingZoneReadEndpoint, args: EmailSendingZoneReadArgs) ![]u8 {
+    const escaped_zone_id = try pathEscape(gpa, zone_id);
+    defer gpa.free(escaped_zone_id);
+    const subdomains_base = try std.fmt.allocPrint(gpa, "{s}/{s}/email/sending/subdomains", .{ zones_path, escaped_zone_id });
+    defer gpa.free(subdomains_base);
+    return switch (endpoint) {
+        .subdomains => try gpa.dupe(u8, subdomains_base),
+        .subdomain, .subdomain_dns, .subdomain_dns_status => blk: {
+            const subdomain_id = args.subdomain_id orelse return error.MissingCloudflareEmailSendingSubdomainId;
+            const escaped_subdomain_id = try pathEscape(gpa, subdomain_id);
+            defer gpa.free(escaped_subdomain_id);
+            const subdomain_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ subdomains_base, escaped_subdomain_id });
+            if (endpoint == .subdomain) break :blk subdomain_path;
+            defer gpa.free(subdomain_path);
+            if (endpoint == .subdomain_dns) break :blk try std.fmt.allocPrint(gpa, "{s}/dns", .{subdomain_path});
+            break :blk try std.fmt.allocPrint(gpa, "{s}/dns/status", .{subdomain_path});
+        },
+    };
+}
+
 pub fn emailSecuritySettingsReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: EmailSecuritySettingsReadEndpoint, args: EmailSecuritySettingsReadArgs) ![]u8 {
     const path = try emailSecuritySettingsReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -10926,6 +11164,8 @@ test "auth detects token and legacy credentials" {
     try std.testing.expect((Auth{ .token = "token" }).isConfigured());
     try std.testing.expect((Auth{ .email = "a@example.com", .key = "global" }).isConfigured());
     try std.testing.expect(!(Auth{ .email = "a@example.com" }).isConfigured());
+    try std.testing.expect((Auth{ .email = "a@example.com", .key = "global" }).hasLegacy());
+    try std.testing.expect(!(Auth{ .token = "token" }).hasLegacy());
 }
 
 test "builds Cloudflare IP range URLs" {
@@ -12163,6 +12403,62 @@ test "builds email routing read paths" {
 
     try std.testing.expectError(error.MissingCloudflareEmailRoutingAddressId, emailRoutingAccountReadPath(allocator, "acct/1", .address, .{}));
     try std.testing.expectError(error.MissingCloudflareEmailRoutingRuleId, emailRoutingZoneReadPath(allocator, "zone/1", .rule, .{}));
+}
+
+test "email auth and sending endpoints map to official operation metadata" {
+    try std.testing.expectEqual(EmailAuthReadEndpoint.dmarc_reports, EmailAuthReadEndpoint.parse("dmarc").?);
+    try std.testing.expectEqual(EmailAuthReadEndpoint.spf_inspect, EmailAuthReadEndpoint.parse("spf").?);
+    try std.testing.expectEqualStrings("get_dmarc_reports_status", EmailAuthReadEndpoint.dmarc_reports.operationId());
+    try std.testing.expectEqualStrings("inspect_spf", EmailAuthReadEndpoint.spf_inspect.operationId());
+    try std.testing.expect(EmailAuthReadEndpoint.spf_inspect.requiresSpfRecordId());
+    try std.testing.expect(!EmailAuthReadEndpoint.dmarc_reports.requiresSpfRecordId());
+
+    try std.testing.expectEqual(EmailSendingAccountReadEndpoint.limits, EmailSendingAccountReadEndpoint.parse("sending-limits").?);
+    try std.testing.expectEqualStrings("email-sending-get-sending-limits", EmailSendingAccountReadEndpoint.limits.operationId());
+    try std.testing.expectEqualStrings("account-email-sending-limits", EmailSendingAccountReadEndpoint.limits.label());
+
+    try std.testing.expectEqual(EmailSendingZoneReadEndpoint.subdomains, EmailSendingZoneReadEndpoint.parse("sending-subdomains").?);
+    try std.testing.expectEqual(EmailSendingZoneReadEndpoint.subdomain_dns, EmailSendingZoneReadEndpoint.parse("dns").?);
+    try std.testing.expectEqual(EmailSendingZoneReadEndpoint.subdomain_dns_status, EmailSendingZoneReadEndpoint.parse("dns-status").?);
+    try std.testing.expectEqualStrings("email-sending-subdomains-list-sending-subdomains", EmailSendingZoneReadEndpoint.subdomains.operationId());
+    try std.testing.expectEqualStrings("email-sending-subdomains-get-sending-subdomain-dns-status", EmailSendingZoneReadEndpoint.subdomain_dns_status.operationId());
+    try std.testing.expect(EmailSendingZoneReadEndpoint.subdomain.requiresSubdomainId());
+    try std.testing.expect(!EmailSendingZoneReadEndpoint.subdomains.requiresSubdomainId());
+}
+
+test "builds email auth and sending read paths" {
+    const allocator = std.testing.allocator;
+
+    const dmarc = try emailAuthReadUrl(allocator, base_url, "zone/1", .dmarc_reports, .{});
+    defer allocator.free(dmarc);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone%2F1/email/auth/dmarc-reports", dmarc);
+
+    const spf = try emailAuthReadPath(allocator, "zone/1", .spf_inspect, .{ .spf_record_id = "rec/1" });
+    defer allocator.free(spf);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/email/auth/spf/inspect?id=rec%2F1", spf);
+
+    const limits = try emailSendingAccountReadUrl(allocator, base_url, "acct/1", .limits, .{});
+    defer allocator.free(limits);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/email/sending/limits", limits);
+
+    const subdomains = try emailSendingZoneReadPath(allocator, "zone/1", .subdomains, .{});
+    defer allocator.free(subdomains);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/email/sending/subdomains", subdomains);
+
+    const subdomain = try emailSendingZoneReadPath(allocator, "zone/1", .subdomain, .{ .subdomain_id = "sub/1" });
+    defer allocator.free(subdomain);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/email/sending/subdomains/sub%2F1", subdomain);
+
+    const dns = try emailSendingZoneReadPath(allocator, "zone/1", .subdomain_dns, .{ .subdomain_id = "sub/1" });
+    defer allocator.free(dns);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/email/sending/subdomains/sub%2F1/dns", dns);
+
+    const dns_status = try emailSendingZoneReadPath(allocator, "zone/1", .subdomain_dns_status, .{ .subdomain_id = "sub/1" });
+    defer allocator.free(dns_status);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/email/sending/subdomains/sub%2F1/dns/status", dns_status);
+
+    try std.testing.expectError(error.MissingCloudflareEmailAuthSpfRecordId, emailAuthReadPath(allocator, "zone/1", .spf_inspect, .{}));
+    try std.testing.expectError(error.MissingCloudflareEmailSendingSubdomainId, emailSendingZoneReadPath(allocator, "zone/1", .subdomain_dns, .{}));
 }
 
 test "email security settings endpoints map to official operation metadata" {

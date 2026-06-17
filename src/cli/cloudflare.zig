@@ -66,6 +66,10 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandZoneSecurityPosture(ctx, args);
     } else if (std.mem.eql(u8, sub, "email-security")) {
         try commandEmailSecurity(ctx, args);
+    } else if (std.mem.eql(u8, sub, "email-auth")) {
+        try commandEmailAuth(ctx, args);
+    } else if (std.mem.eql(u8, sub, "email-sending")) {
+        try commandEmailSending(ctx, args);
     } else if (std.mem.eql(u8, sub, "email-routing") or std.mem.eql(u8, sub, "email")) {
         try commandEmailRouting(ctx, args);
     } else if (std.mem.eql(u8, sub, "custom-pages")) {
@@ -1373,6 +1377,60 @@ fn commandEmailRouting(ctx: Context, args: []const []const u8) !void {
         return;
     }
     std.debug.print("unknown email-routing scope: {s}\n", .{args[1]});
+}
+
+fn commandEmailAuth(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("email-auth dmarc-reports|spf-inspect <zone-id> [spf-record-id] required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.EmailAuthReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown email-auth command: {s}\n", .{args[1]});
+        return;
+    };
+    const zone_id = args[2];
+    var read_args: app_cloudflare.EmailAuthReadArgs = .{};
+    if (endpoint.requiresSpfRecordId()) {
+        if (args.len < 4) {
+            std.debug.print("spf record id required for email-auth {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.spf_record_id = args[3];
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailAuthEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+}
+
+fn commandEmailSending(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("email-sending account limits <account-id> or email-sending zone subdomains|subdomain|subdomain-dns|subdomain-dns-status <zone-id> [subdomain-id] required\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "account")) {
+        const endpoint = app_cloudflare.EmailSendingAccountReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown email-sending account command: {s}\n", .{args[2]});
+            return;
+        };
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailSendingAccountEndpoint(appContext(ctx), args[3], endpoint, .{}));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "zone")) {
+        const endpoint = app_cloudflare.EmailSendingZoneReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown email-sending zone command: {s}\n", .{args[2]});
+            return;
+        };
+        const zone_id = args[3];
+        var read_args: app_cloudflare.EmailSendingZoneReadArgs = .{};
+        if (endpoint.requiresSubdomainId()) {
+            if (args.len < 5) {
+                std.debug.print("subdomain id required for email-sending zone {s}\n", .{endpoint.commandName()});
+                return;
+            }
+            read_args.subdomain_id = args[4];
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailSendingZoneEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+        return;
+    }
+    std.debug.print("unknown email-sending scope: {s}\n", .{args[1]});
 }
 
 fn commandCustomPages(ctx: Context, args: []const []const u8) !void {

@@ -164,6 +164,11 @@ zig build run -- cloudflare email-routing zone settings <zone-id>
 zig build run -- cloudflare email-routing zone dns <zone-id>
 zig build run -- cloudflare email-routing zone rules <zone-id>
 zig build run -- cloudflare email-routing zone catch-all <zone-id>
+zig build run -- cloudflare email-auth dmarc-reports <zone-id>
+zig build run -- cloudflare email-auth spf-inspect <zone-id> <spf-record-id>
+zig build run -- cloudflare email-sending account limits <account-id>
+zig build run -- cloudflare email-sending zone subdomains <zone-id>
+zig build run -- cloudflare email-sending zone subdomain-dns <zone-id> <subdomain-id>
 zig build run -- cloudflare email-security settings domains <account-id>
 zig build run -- cloudflare email-security settings trusted-domains <account-id>
 zig build run -- cloudflare email-security settings allow-policies <account-id>
@@ -287,6 +292,8 @@ zig build run -- cloudflare dry-run user-group delete <account-id> <user-group-i
 zig build run -- cloudflare dry-run account-user-group-member create <account-id> <user-group-id>
 zig build run -- cloudflare dry-run account-user-group-member delete <account-id> <user-group-id> <member-id>
 ```
+
+Cloudflare Email Sending inventory routes currently require API Email + Global API Key auth in the official schema. Token-only or unauthorized credentials are stored as skipped/permission diagnostics; send operations remain dry-run only.
 
 Useful read-only Hostinger checks:
 

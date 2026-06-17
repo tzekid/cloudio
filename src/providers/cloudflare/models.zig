@@ -397,6 +397,7 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "dataset",
         "hostname",
         "name",
+        "tag",
     };
     for (fields) |field_name| {
         const value = core_json.field(item, field_name) orelse continue;
@@ -536,11 +537,11 @@ test "parses generic Cloudflare result ids" {
 test "parses generic Cloudflare resource ids from common id fields" {
     const allocator = std.testing.allocator;
     var rows = try parseResourceIdRows(allocator,
-        \\{"result":[{"id":"page-id"},{"id":42},{"uid":"access-uid"},{"issue_id":"insight-issue"},{"operation_id":"api-op"},{"discovery_id":"discovery-op"},{"client_certificate_id":"client-cert"},{"detection_id":"leaked-detection"},{"expression_id":"scan-expression"},{"uuid":"audit-uuid"},{"dataset_id":"dataset-id"},{"dataset":"dataset-name"},{"hostname":"www.example.test"},{"name":"asset-name"},{"description":"missing"}]}
+        \\{"result":[{"id":"page-id"},{"id":42},{"uid":"access-uid"},{"issue_id":"insight-issue"},{"operation_id":"api-op"},{"discovery_id":"discovery-op"},{"client_certificate_id":"client-cert"},{"detection_id":"leaked-detection"},{"expression_id":"scan-expression"},{"uuid":"audit-uuid"},{"dataset_id":"dataset-id"},{"dataset":"dataset-name"},{"hostname":"www.example.test"},{"name":"asset-name"},{"tag":"email-sending-tag"},{"description":"missing"}]}
     );
     defer rows.deinit(allocator);
 
-    try std.testing.expectEqual(@as(usize, 14), rows.items.len);
+    try std.testing.expectEqual(@as(usize, 15), rows.items.len);
     try std.testing.expectEqualStrings("page-id", rows.items[0].id);
     try std.testing.expectEqualStrings("42", rows.items[1].id);
     try std.testing.expectEqualStrings("access-uid", rows.items[2].id);
@@ -555,6 +556,7 @@ test "parses generic Cloudflare resource ids from common id fields" {
     try std.testing.expectEqualStrings("dataset-name", rows.items[11].id);
     try std.testing.expectEqualStrings("www.example.test", rows.items[12].id);
     try std.testing.expectEqualStrings("asset-name", rows.items[13].id);
+    try std.testing.expectEqualStrings("email-sending-tag", rows.items[14].id);
 }
 
 test "parses generic Cloudflare resource ids matching a string field" {

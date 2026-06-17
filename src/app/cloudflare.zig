@@ -71,6 +71,12 @@ pub const EmailRoutingAccountReadArgs = collector_cloudflare.EmailRoutingAccount
 pub const EmailRoutingAccountReadEndpoint = collector_cloudflare.EmailRoutingAccountReadEndpoint;
 pub const EmailRoutingZoneReadArgs = collector_cloudflare.EmailRoutingZoneReadArgs;
 pub const EmailRoutingZoneReadEndpoint = collector_cloudflare.EmailRoutingZoneReadEndpoint;
+pub const EmailAuthReadArgs = collector_cloudflare.EmailAuthReadArgs;
+pub const EmailAuthReadEndpoint = collector_cloudflare.EmailAuthReadEndpoint;
+pub const EmailSendingAccountReadArgs = collector_cloudflare.EmailSendingAccountReadArgs;
+pub const EmailSendingAccountReadEndpoint = collector_cloudflare.EmailSendingAccountReadEndpoint;
+pub const EmailSendingZoneReadArgs = collector_cloudflare.EmailSendingZoneReadArgs;
+pub const EmailSendingZoneReadEndpoint = collector_cloudflare.EmailSendingZoneReadEndpoint;
 pub const EmailSecuritySettingsReadArgs = collector_cloudflare.EmailSecuritySettingsReadArgs;
 pub const EmailSecuritySettingsReadEndpoint = collector_cloudflare.EmailSecuritySettingsReadEndpoint;
 pub const TunnelReadArgs = collector_cloudflare.TunnelReadArgs;
@@ -282,6 +288,18 @@ pub fn collectEmailRoutingAccountEndpoint(ctx: Context, account_id: []const u8, 
 
 pub fn collectEmailRoutingZoneEndpoint(ctx: Context, zone_id: []const u8, endpoint: EmailRoutingZoneReadEndpoint, args: EmailRoutingZoneReadArgs) !Output {
     return try collector_cloudflare.collectEmailRoutingZoneEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, args, true);
+}
+
+pub fn collectEmailAuthEndpoint(ctx: Context, zone_id: []const u8, endpoint: EmailAuthReadEndpoint, args: EmailAuthReadArgs) !Output {
+    return try collector_cloudflare.collectEmailAuthEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, args, true);
+}
+
+pub fn collectEmailSendingAccountEndpoint(ctx: Context, account_id: []const u8, endpoint: EmailSendingAccountReadEndpoint, args: EmailSendingAccountReadArgs) !Output {
+    return try collector_cloudflare.collectEmailSendingAccountEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, args, true);
+}
+
+pub fn collectEmailSendingZoneEndpoint(ctx: Context, zone_id: []const u8, endpoint: EmailSendingZoneReadEndpoint, args: EmailSendingZoneReadArgs) !Output {
+    return try collector_cloudflare.collectEmailSendingZoneEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, args, true);
 }
 
 pub fn collectEmailSecuritySettingsEndpoint(ctx: Context, account_id: []const u8, endpoint: EmailSecuritySettingsReadEndpoint, args: EmailSecuritySettingsReadArgs) !Output {
