@@ -150,6 +150,10 @@ pub const RouteParam = struct {
     pub fn queryExplodes(self: RouteParam) bool {
         return self.explode orelse true;
     }
+
+    pub fn acceptsValue(self: RouteParam, value: []const u8) bool {
+        return self.schema.enum_values.len == 0 or containsString(self.schema.enum_values, value);
+    }
 };
 
 pub const ParamSchema = struct {
@@ -578,7 +582,8 @@ pub fn queryEscape(gpa: Allocator, value: []const u8) ![]u8 {
 
 pub fn appendRouteQuery(gpa: Allocator, base: []const u8, allowed_params: []const RouteParam, params: []const QueryParam) ![]u8 {
     for (params) |param| {
-        if (!containsRouteParamName(allowed_params, param.name)) return error.UnknownRouteQueryParameter;
+        const route_param = findRouteParamConst(allowed_params, param.name) orelse return error.UnknownRouteQueryParameter;
+        if (!route_param.acceptsValue(param.value)) return error.InvalidRouteQueryParameterValue;
     }
     for (allowed_params) |allowed| {
         if (allowed.required and !containsQueryParam(params, allowed.name)) return error.MissingRouteQueryParameter;
@@ -635,7 +640,8 @@ fn firstQueryParamIndex(params: []const QueryParam, name: []const u8) usize {
 
 fn validatePathParams(allowed_params: []const RouteParam, params: []const PathParam) !void {
     for (params) |param| {
-        if (!containsRouteParamName(allowed_params, param.name)) return error.UnknownRouteParameter;
+        const route_param = findRouteParamConst(allowed_params, param.name) orelse return error.UnknownRouteParameter;
+        if (!route_param.acceptsValue(param.value)) return error.InvalidRouteParameterValue;
     }
     for (allowed_params) |allowed| {
         if (allowed.required and findParam(params, allowed.name) == null) return error.MissingRouteParameter;
@@ -644,7 +650,8 @@ fn validatePathParams(allowed_params: []const RouteParam, params: []const PathPa
 
 fn validateHeaderParams(allowed_params: []const RouteParam, params: []const HeaderParam) !void {
     for (params) |param| {
-        if (!containsRouteParamNameIgnoreCase(allowed_params, param.name)) return error.UnknownRouteHeaderParameter;
+        const route_param = findRouteParamConstIgnoreCase(allowed_params, param.name) orelse return error.UnknownRouteHeaderParameter;
+        if (!route_param.acceptsValue(param.value)) return error.InvalidRouteHeaderParameterValue;
     }
     for (allowed_params) |allowed| {
         if (allowed.required and !containsHeaderParam(params, allowed.name)) return error.MissingRouteHeaderParameter;
@@ -922,11 +929,11 @@ fn findRouteParamConst(params: []const RouteParam, candidate: []const u8) ?Route
     return null;
 }
 
-fn containsRouteParamNameIgnoreCase(params: []const RouteParam, candidate: []const u8) bool {
+fn findRouteParamConstIgnoreCase(params: []const RouteParam, candidate: []const u8) ?RouteParam {
     for (params) |param| {
-        if (std.ascii.eqlIgnoreCase(param.name, candidate)) return true;
+        if (std.ascii.eqlIgnoreCase(param.name, candidate)) return param;
     }
-    return false;
+    return null;
 }
 
 fn containsQueryParam(params: []const QueryParam, candidate: []const u8) bool {
@@ -1424,6 +1431,72 @@ test "renders array query parameters according to OpenAPI explode metadata" {
     });
     defer allocator.free(exploded_path);
     try std.testing.expectEqualStrings("/api/hosting/v1/accounts/user/websites/example.com/nodejs/builds?states=pending&states=running", exploded_path);
+}
+
+test "validates generated enum values for route request parameters" {
+    const allocator = std.testing.allocator;
+
+    const d1_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "d1-get-database")) orelse return error.TestExpectedRoute;
+    defer d1_route.deinit(allocator);
+    try std.testing.expectError(
+        error.InvalidRouteQueryParameterValue,
+        d1_route.renderRequestPath(
+            allocator,
+            .{
+                .path_params = &.{
+                    .{ .name = "account_id", .value = "acct" },
+                    .{ .name = "database_id", .value = "db" },
+                },
+                .query_params = &.{.{ .name = "fields", .value = "not_a_field" }},
+            },
+        ),
+    );
+
+    const node_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "hosting_listNodeJSBuildsV1")) orelse return error.TestExpectedRoute;
+    defer node_route.deinit(allocator);
+    try std.testing.expectError(
+        error.InvalidRouteQueryParameterValue,
+        node_route.renderRequestPath(
+            allocator,
+            .{
+                .path_params = &.{
+                    .{ .name = "username", .value = "user" },
+                    .{ .name = "domain", .value = "example.com" },
+                },
+                .query_params = &.{.{ .name = "states", .value = "paused" }},
+            },
+        ),
+    );
+
+    const custom_page_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "custom-pages-for-a-zone-get-a-custom-page")) orelse return error.TestExpectedRoute;
+    defer custom_page_route.deinit(allocator);
+    try std.testing.expectError(
+        error.InvalidRouteParameterValue,
+        custom_page_route.renderPath(
+            allocator,
+            &.{
+                .{ .name = "zone_identifier", .value = "zone" },
+                .{ .name = "identifier", .value = "unknown_page" },
+            },
+        ),
+    );
+    const custom_page_path = try custom_page_route.renderPath(
+        allocator,
+        &.{
+            .{ .name = "zone_identifier", .value = "zone" },
+            .{ .name = "identifier", .value = "waf_block" },
+        },
+    );
+    defer allocator.free(custom_page_path);
+    try std.testing.expectEqualStrings("/zones/zone/custom_pages/waf_block", custom_page_path);
+
+    const r2_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "r2-get-event-notification-configs")) orelse return error.TestExpectedRoute;
+    defer r2_route.deinit(allocator);
+    try r2_route.validateRequestHeaders(.{ .header_params = &.{.{ .name = "CF-R2-Jurisdiction", .value = "eu" }} });
+    try std.testing.expectError(
+        error.InvalidRouteHeaderParameterValue,
+        r2_route.validateRequestHeaders(.{ .header_params = &.{.{ .name = "CF-R2-Jurisdiction", .value = "mars" }} }),
+    );
 }
 
 test "parses route parameter assignments without allocation" {

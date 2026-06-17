@@ -143,7 +143,10 @@ fn commandPlan(ctx: Context, args: []const []const u8) !void {
 
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
-    try app_coverage.writeRoutePlanTextFromFiles(ctx.io, ctx.gpa, ctx.paths, input.plan, &out.writer);
+    app_coverage.writeRoutePlanTextFromFiles(ctx.io, ctx.gpa, ctx.paths, input.plan, &out.writer) catch |err| {
+        std.debug.print("coverage plan failed: {s}\n", .{@errorName(err)});
+        return;
+    };
     const text = try out.toOwnedSlice();
     defer ctx.gpa.free(text);
     std.debug.print("{s}", .{text});
