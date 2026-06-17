@@ -126,6 +126,14 @@ zig build run -- cloudflare tunnel virtual-networks <account-id>
 zig build run -- cloudflare tunnel connectivity-settings <account-id>
 zig build run -- cloudflare tunnel hostname-routes <account-id>
 zig build run -- cloudflare tunnel subnets <account-id>
+zig build run -- cloudflare zero-trust gateway <account-id>
+zig build run -- cloudflare zero-trust gateway-configuration <account-id>
+zig build run -- cloudflare zero-trust rules <account-id>
+zig build run -- cloudflare zero-trust rule <account-id> <rule-id>
+zig build run -- cloudflare zero-trust lists <account-id> type=SERIAL
+zig build run -- cloudflare zero-trust list-items <account-id> <list-id>
+zig build run -- cloudflare zero-trust users <account-id> search=admin
+zig build run -- cloudflare zero-trust user-last-seen-identity <account-id> <user-id>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru

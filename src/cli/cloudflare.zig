@@ -66,6 +66,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandAccess(ctx, args);
     } else if (std.mem.eql(u8, sub, "tunnel") or std.mem.eql(u8, sub, "tunnels")) {
         try commandTunnel(ctx, args);
+    } else if (std.mem.eql(u8, sub, "zero-trust") or std.mem.eql(u8, sub, "zerotrust") or std.mem.eql(u8, sub, "gateway")) {
+        try commandZeroTrust(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -1352,6 +1354,76 @@ fn printMissingTunnelReadArg(endpoint: app_cloudflare.TunnelReadEndpoint, label:
     std.debug.print("{s} required for tunnel {s}\n", .{ label, endpoint.commandName() });
 }
 
+fn commandZeroTrust(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("zero-trust <route> <account-id> [ids...] [key=value...] required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.ZeroTrustReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown zero-trust route: {s}\n", .{args[1]});
+        return;
+    };
+    const account_id = args[2];
+    var read_args: app_cloudflare.ZeroTrustReadArgs = .{};
+    var index: usize = 3;
+    if (endpoint.requiresOperationId()) {
+        if (index >= args.len) return printMissingZeroTrustReadArg(endpoint, "operation id");
+        read_args.operation_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresLocationId()) {
+        if (index >= args.len) return printMissingZeroTrustReadArg(endpoint, "location id");
+        read_args.location_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresProxyEndpointId()) {
+        if (index >= args.len) return printMissingZeroTrustReadArg(endpoint, "proxy endpoint id");
+        read_args.proxy_endpoint_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresRuleId()) {
+        if (index >= args.len) return printMissingZeroTrustReadArg(endpoint, "rule id");
+        read_args.rule_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresPacfileId()) {
+        if (index >= args.len) return printMissingZeroTrustReadArg(endpoint, "PAC file id");
+        read_args.pacfile_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresCertificateId()) {
+        if (index >= args.len) return printMissingZeroTrustReadArg(endpoint, "certificate id");
+        read_args.certificate_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresListId()) {
+        if (index >= args.len) return printMissingZeroTrustReadArg(endpoint, "list id");
+        read_args.list_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresUserId()) {
+        if (index >= args.len) return printMissingZeroTrustReadArg(endpoint, "user id");
+        read_args.user_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresNonce()) {
+        if (index >= args.len) return printMissingZeroTrustReadArg(endpoint, "session nonce");
+        read_args.nonce = args[index];
+        index += 1;
+    }
+    while (index < args.len) : (index += 1) {
+        if (!applyZeroTrustReadFilter(&read_args, args[index])) {
+            std.debug.print("unused zero-trust argument: {s}\n", .{args[index]});
+            return;
+        }
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZeroTrustEndpoint(appContext(ctx), account_id, endpoint, read_args));
+}
+
+fn printMissingZeroTrustReadArg(endpoint: app_cloudflare.ZeroTrustReadEndpoint, label: []const u8) void {
+    std.debug.print("{s} required for zero-trust {s}\n", .{ label, endpoint.commandName() });
+}
+
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
     if (args.len > 1 and std.mem.eql(u8, args[1], "zsk")) {
         const domain = if (args.len > 2) args[2] else ctx.domains[0];
@@ -1550,6 +1622,28 @@ fn isKeyValue(value: []const u8) bool {
     return std.mem.indexOfScalar(u8, value, '=') != null;
 }
 
+fn applyZeroTrustReadFilter(args: *app_cloudflare.ZeroTrustReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "type") or std.mem.eql(u8, key, "list_type")) {
+        args.list_type = value;
+    } else if (std.mem.eql(u8, key, "email")) {
+        args.email = value;
+    } else if (std.mem.eql(u8, key, "name")) {
+        args.name = value;
+    } else if (std.mem.eql(u8, key, "page")) {
+        args.page = value;
+    } else if (std.mem.eql(u8, key, "per_page") or std.mem.eql(u8, key, "per-page")) {
+        args.per_page = value;
+    } else if (std.mem.eql(u8, key, "search")) {
+        args.search = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 fn applyCloudforceOneRuleFilter(args: *app_cloudflare.CloudforceOneRuleReadArgs, raw: []const u8) bool {
     const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
     const key = raw[0..eq];
@@ -1691,6 +1785,23 @@ test "cloudforce one rule filters parse key value arguments" {
     try std.testing.expectEqualStrings("yara/workers", args.namespace.?);
     try std.testing.expectEqualStrings("malicious", args.search_filter.?);
     try std.testing.expectEqualStrings("proxy worker", args.query.?);
+}
+
+test "zero trust read filters parse key value arguments" {
+    var args: app_cloudflare.ZeroTrustReadArgs = .{};
+    try std.testing.expect(applyZeroTrustReadFilter(&args, "type=SERIAL"));
+    try std.testing.expect(applyZeroTrustReadFilter(&args, "email=admin@example.test"));
+    try std.testing.expect(applyZeroTrustReadFilter(&args, "name=Admin User"));
+    try std.testing.expect(applyZeroTrustReadFilter(&args, "page=2"));
+    try std.testing.expect(applyZeroTrustReadFilter(&args, "per-page=50"));
+    try std.testing.expect(applyZeroTrustReadFilter(&args, "search=admin"));
+    try std.testing.expect(!applyZeroTrustReadFilter(&args, "unknown=value"));
+    try std.testing.expect(!applyZeroTrustReadFilter(&args, "search"));
+    try std.testing.expectEqualStrings("SERIAL", args.list_type.?);
+    try std.testing.expectEqualStrings("admin@example.test", args.email.?);
+    try std.testing.expectEqualStrings("Admin User", args.name.?);
+    try std.testing.expectEqualStrings("50", args.per_page.?);
+    try std.testing.expectEqualStrings("admin", args.search.?);
 }
 
 test "ip access rule filters parse key value arguments" {

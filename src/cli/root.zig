@@ -163,6 +163,8 @@ fn usage() void {
         \\  cloudio cloudflare tunnel cfd-tunnel|cfd-configurations|cfd-connections|cfd-token|warp-connector|warp-configurations|warp-connections|warp-token <account-id> <tunnel-id>
         \\  cloudio cloudflare tunnel cfd-connector|warp-connector-detail <account-id> <tunnel-id> <connector-id>
         \\  cloudio cloudflare tunnel route|hostname-route|subnet <account-id> <resource-id>|route-ip <account-id> <ip-or-cidr>
+        \\  cloudio cloudflare zero-trust gateway|device-settings|gateway-configuration|gateway-egress-cidr-pairs|gateway-logging|dns-destination-ips|app-types|categories|operations|locations|proxy-endpoints|rules|tenant-rules|ssh-settings|apps-review-status|certificates|pacfiles|lists|organization|organization-doh|users <account-id> [key=value...]
+        \\  cloudio cloudflare zero-trust operation|location|proxy-endpoint|rule|certificate|pacfile|list|list-items|user|user-active-sessions|user-active-session|user-failed-logins|user-last-seen-identity <account-id> <resource-id> [nonce]
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>

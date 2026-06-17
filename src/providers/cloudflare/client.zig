@@ -262,6 +262,12 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getZeroTrustEndpoint(self: Client, io: Io, gpa: Allocator, account_id: []const u8, endpoint: ZeroTrustReadEndpoint, args: ZeroTrustReadArgs) !net_http.Response {
+        const url = try zeroTrustReadUrl(gpa, self.base_url_override, account_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -4630,6 +4636,324 @@ pub const TunnelReadArgs = struct {
     subnet_id: ?[]const u8 = null,
 };
 
+pub const ZeroTrustReadEndpoint = enum {
+    device_settings,
+    gateway_account,
+    gateway_configuration,
+    gateway_egress_cidr_pairs,
+    gateway_logging,
+    dns_destination_ips,
+    app_types,
+    categories,
+    operations,
+    operation,
+    locations,
+    location,
+    proxy_endpoints,
+    proxy_endpoint,
+    rules,
+    tenant_rules,
+    rule,
+    ssh_settings,
+    applications_review_status,
+    certificates,
+    certificate,
+    pacfiles,
+    pacfile,
+    lists,
+    list,
+    list_items,
+    organization,
+    organization_doh,
+    users,
+    user,
+    user_active_sessions,
+    user_active_session,
+    user_failed_logins,
+    user_last_seen_identity,
+
+    pub fn parse(value: []const u8) ?ZeroTrustReadEndpoint {
+        if (std.mem.eql(u8, value, "device-settings") or std.mem.eql(u8, value, "devices-settings")) return .device_settings;
+        if (std.mem.eql(u8, value, "gateway") or std.mem.eql(u8, value, "account")) return .gateway_account;
+        if (std.mem.eql(u8, value, "gateway-configuration") or std.mem.eql(u8, value, "gateway-config") or std.mem.eql(u8, value, "configuration")) return .gateway_configuration;
+        if (std.mem.eql(u8, value, "gateway-egress-cidr-pairs") or std.mem.eql(u8, value, "egress-cidr-pairs")) return .gateway_egress_cidr_pairs;
+        if (std.mem.eql(u8, value, "gateway-logging") or std.mem.eql(u8, value, "logging")) return .gateway_logging;
+        if (std.mem.eql(u8, value, "dns-destination-ips")) return .dns_destination_ips;
+        if (std.mem.eql(u8, value, "app-types") or std.mem.eql(u8, value, "applications")) return .app_types;
+        if (std.mem.eql(u8, value, "categories")) return .categories;
+        if (std.mem.eql(u8, value, "operations")) return .operations;
+        if (std.mem.eql(u8, value, "operation")) return .operation;
+        if (std.mem.eql(u8, value, "locations")) return .locations;
+        if (std.mem.eql(u8, value, "location")) return .location;
+        if (std.mem.eql(u8, value, "proxy-endpoints")) return .proxy_endpoints;
+        if (std.mem.eql(u8, value, "proxy-endpoint")) return .proxy_endpoint;
+        if (std.mem.eql(u8, value, "rules")) return .rules;
+        if (std.mem.eql(u8, value, "tenant-rules")) return .tenant_rules;
+        if (std.mem.eql(u8, value, "rule")) return .rule;
+        if (std.mem.eql(u8, value, "ssh-settings") or std.mem.eql(u8, value, "audit-ssh-settings")) return .ssh_settings;
+        if (std.mem.eql(u8, value, "apps-review-status") or std.mem.eql(u8, value, "review-status")) return .applications_review_status;
+        if (std.mem.eql(u8, value, "certificates")) return .certificates;
+        if (std.mem.eql(u8, value, "certificate")) return .certificate;
+        if (std.mem.eql(u8, value, "pacfiles") or std.mem.eql(u8, value, "pac-files")) return .pacfiles;
+        if (std.mem.eql(u8, value, "pacfile") or std.mem.eql(u8, value, "pac-file")) return .pacfile;
+        if (std.mem.eql(u8, value, "lists")) return .lists;
+        if (std.mem.eql(u8, value, "list")) return .list;
+        if (std.mem.eql(u8, value, "list-items")) return .list_items;
+        if (std.mem.eql(u8, value, "organization") or std.mem.eql(u8, value, "org")) return .organization;
+        if (std.mem.eql(u8, value, "organization-doh") or std.mem.eql(u8, value, "org-doh")) return .organization_doh;
+        if (std.mem.eql(u8, value, "users")) return .users;
+        if (std.mem.eql(u8, value, "user")) return .user;
+        if (std.mem.eql(u8, value, "user-active-sessions") or std.mem.eql(u8, value, "active-sessions")) return .user_active_sessions;
+        if (std.mem.eql(u8, value, "user-active-session") or std.mem.eql(u8, value, "active-session")) return .user_active_session;
+        if (std.mem.eql(u8, value, "user-failed-logins") or std.mem.eql(u8, value, "failed-logins")) return .user_failed_logins;
+        if (std.mem.eql(u8, value, "user-last-seen-identity") or std.mem.eql(u8, value, "last-seen-identity")) return .user_last_seen_identity;
+        return null;
+    }
+
+    pub fn commandName(self: ZeroTrustReadEndpoint) []const u8 {
+        return switch (self) {
+            .device_settings => "device-settings",
+            .gateway_account => "gateway",
+            .gateway_configuration => "gateway-configuration",
+            .gateway_egress_cidr_pairs => "gateway-egress-cidr-pairs",
+            .gateway_logging => "gateway-logging",
+            .dns_destination_ips => "dns-destination-ips",
+            .app_types => "app-types",
+            .categories => "categories",
+            .operations => "operations",
+            .operation => "operation",
+            .locations => "locations",
+            .location => "location",
+            .proxy_endpoints => "proxy-endpoints",
+            .proxy_endpoint => "proxy-endpoint",
+            .rules => "rules",
+            .tenant_rules => "tenant-rules",
+            .rule => "rule",
+            .ssh_settings => "ssh-settings",
+            .applications_review_status => "apps-review-status",
+            .certificates => "certificates",
+            .certificate => "certificate",
+            .pacfiles => "pacfiles",
+            .pacfile => "pacfile",
+            .lists => "lists",
+            .list => "list",
+            .list_items => "list-items",
+            .organization => "organization",
+            .organization_doh => "organization-doh",
+            .users => "users",
+            .user => "user",
+            .user_active_sessions => "user-active-sessions",
+            .user_active_session => "user-active-session",
+            .user_failed_logins => "user-failed-logins",
+            .user_last_seen_identity => "user-last-seen-identity",
+        };
+    }
+
+    pub fn label(self: ZeroTrustReadEndpoint) []const u8 {
+        return switch (self) {
+            .device_settings => "zero-trust-device-settings",
+            .gateway_account => "zero-trust-gateway-account",
+            .gateway_configuration => "zero-trust-gateway-configuration",
+            .gateway_egress_cidr_pairs => "zero-trust-gateway-egress-cidr-pairs",
+            .gateway_logging => "zero-trust-gateway-logging",
+            .dns_destination_ips => "zero-trust-gateway-dns-destination-ips",
+            .app_types => "zero-trust-gateway-app-types",
+            .categories => "zero-trust-gateway-categories",
+            .operations => "zero-trust-gateway-operations",
+            .operation => "zero-trust-gateway-operation",
+            .locations => "zero-trust-gateway-locations",
+            .location => "zero-trust-gateway-location",
+            .proxy_endpoints => "zero-trust-gateway-proxy-endpoints",
+            .proxy_endpoint => "zero-trust-gateway-proxy-endpoint",
+            .rules => "zero-trust-gateway-rules",
+            .tenant_rules => "zero-trust-gateway-tenant-rules",
+            .rule => "zero-trust-gateway-rule",
+            .ssh_settings => "zero-trust-gateway-ssh-settings",
+            .applications_review_status => "zero-trust-gateway-apps-review-status",
+            .certificates => "zero-trust-gateway-certificates",
+            .certificate => "zero-trust-gateway-certificate",
+            .pacfiles => "zero-trust-gateway-pacfiles",
+            .pacfile => "zero-trust-gateway-pacfile",
+            .lists => "zero-trust-gateway-lists",
+            .list => "zero-trust-gateway-list",
+            .list_items => "zero-trust-gateway-list-items",
+            .organization => "zero-trust-organization",
+            .organization_doh => "zero-trust-organization-doh",
+            .users => "zero-trust-users",
+            .user => "zero-trust-user",
+            .user_active_sessions => "zero-trust-user-active-sessions",
+            .user_active_session => "zero-trust-user-active-session",
+            .user_failed_logins => "zero-trust-user-failed-logins",
+            .user_last_seen_identity => "zero-trust-user-last-seen-identity",
+        };
+    }
+
+    pub fn group(self: ZeroTrustReadEndpoint) []const u8 {
+        return switch (self) {
+            .device_settings,
+            .gateway_account,
+            .gateway_configuration,
+            .gateway_egress_cidr_pairs,
+            .gateway_logging,
+            => "Zero Trust accounts",
+            .dns_destination_ips => "Zero Trust Gateway DNS destination IPv4 address pairs",
+            .app_types => "Zero Trust Gateway application and application type mappings",
+            .categories => "Zero Trust Gateway categories",
+            .operations, .operation => "Zero Trust Gateway operations",
+            .locations, .location => "Zero Trust Gateway locations",
+            .proxy_endpoints, .proxy_endpoint => "Zero Trust Gateway proxy endpoints",
+            .rules, .tenant_rules, .rule => "Zero Trust Gateway rules",
+            .ssh_settings => "Zero Trust SSH Settings",
+            .applications_review_status => "Zero Trust applications review status",
+            .certificates, .certificate => "Zero Trust certificates",
+            .pacfiles, .pacfile => "Zero Trust Gateway PAC files",
+            .lists, .list, .list_items => "Zero Trust lists",
+            .organization, .organization_doh => "Zero Trust organization",
+            .users, .user, .user_active_sessions, .user_active_session, .user_failed_logins, .user_last_seen_identity => "Zero Trust users",
+        };
+    }
+
+    pub fn operationId(self: ZeroTrustReadEndpoint) []const u8 {
+        return switch (self) {
+            .device_settings => "zero-trust-accounts-get-device-settings-for-zero-trust-account",
+            .gateway_account => "zero-trust-accounts-get-zero-trust-account-information",
+            .gateway_configuration => "zero-trust-accounts-get-zero-trust-account-configuration",
+            .gateway_egress_cidr_pairs => "zero-trust-accounts-get-egress-cidr-pairs",
+            .gateway_logging => "zero-trust-accounts-get-logging-settings-for-the-zero-trust-account",
+            .dns_destination_ips => "zero-trust-dns-destination-ips-list-dns-destination-ips",
+            .app_types => "zero-trust-gateway-application-and-application-type-mappings-list-application-and-application-type-mappings",
+            .categories => "zero-trust-gateway-categories-list-categories",
+            .operations => "zero-trust-gateway-operations-list-zero-trust-gateway-operations",
+            .operation => "zero-trust-gateway-operations-zero-trust-gateway-operation-details",
+            .locations => "zero-trust-gateway-locations-list-zero-trust-gateway-locations",
+            .location => "zero-trust-gateway-locations-zero-trust-gateway-location-details",
+            .proxy_endpoints => "zero-trust-gateway-proxy-endpoints-list-proxy-endpoints",
+            .proxy_endpoint => "zero-trust-gateway-proxy-endpoints-proxy-endpoint-details",
+            .rules => "zero-trust-gateway-rules-list-zero-trust-gateway-rules",
+            .tenant_rules => "zero-trust-gateway-rules-list-zero-trust-gateway-rules-tenant",
+            .rule => "zero-trust-gateway-rules-zero-trust-gateway-rule-details",
+            .ssh_settings => "zero-trust-get-audit-ssh-settings",
+            .applications_review_status => "zero-trust-applications-review-status-list",
+            .certificates => "zero-trust-certificates-list-zero-trust-certificates",
+            .certificate => "zero-trust-certificates-zero-trust-certificate-details",
+            .pacfiles => "zero-trust-gateway-pacfiles-list",
+            .pacfile => "zero-trust-gateway-pacfiles-details",
+            .lists => "zero-trust-lists-list-zero-trust-lists",
+            .list => "zero-trust-lists-zero-trust-list-details",
+            .list_items => "zero-trust-lists-zero-trust-list-items",
+            .organization => "zero-trust-organization-get-your-zero-trust-organization",
+            .organization_doh => "zero-trust-organization-get-your-zero-trust-organization-doh-settings",
+            .users => "zero-trust-users-get-users",
+            .user => "zero-trust-users-get-user",
+            .user_active_sessions => "zero-trust-users-get-active-sessions",
+            .user_active_session => "zero-trust-users-get-active-session",
+            .user_failed_logins => "zero-trust-users-get-failed-logins",
+            .user_last_seen_identity => "zero-trust-users-get-last-seen-identity",
+        };
+    }
+
+    pub fn summary(self: ZeroTrustReadEndpoint) []const u8 {
+        return switch (self) {
+            .device_settings => "Zero Trust device settings",
+            .gateway_account => "Zero Trust account information",
+            .gateway_configuration => "Zero Trust account Gateway configuration",
+            .gateway_egress_cidr_pairs => "Zero Trust account egress CIDR pairs",
+            .gateway_logging => "Zero Trust account logging settings",
+            .dns_destination_ips => "Zero Trust Gateway DNS destination IP pairs",
+            .app_types => "Zero Trust Gateway application type mappings",
+            .categories => "Zero Trust Gateway categories",
+            .operations => "List Zero Trust Gateway operations",
+            .operation => "Zero Trust Gateway operation details",
+            .locations => "List Zero Trust Gateway locations",
+            .location => "Zero Trust Gateway location details",
+            .proxy_endpoints => "List Zero Trust Gateway proxy endpoints",
+            .proxy_endpoint => "Zero Trust Gateway proxy endpoint details",
+            .rules => "List Zero Trust Gateway rules",
+            .tenant_rules => "List inherited Zero Trust Gateway rules",
+            .rule => "Zero Trust Gateway rule details",
+            .ssh_settings => "Zero Trust Gateway SSH audit settings",
+            .applications_review_status => "Zero Trust Gateway application review status",
+            .certificates => "List Zero Trust Gateway certificates",
+            .certificate => "Zero Trust Gateway certificate details",
+            .pacfiles => "List Zero Trust Gateway PAC files",
+            .pacfile => "Zero Trust Gateway PAC file details",
+            .lists => "List Zero Trust Gateway lists",
+            .list => "Zero Trust Gateway list details",
+            .list_items => "Zero Trust Gateway list items",
+            .organization => "Zero Trust organization settings",
+            .organization_doh => "Zero Trust organization DoH settings",
+            .users => "List Zero Trust users",
+            .user => "Zero Trust user details",
+            .user_active_sessions => "Zero Trust user active sessions",
+            .user_active_session => "Zero Trust user active session details",
+            .user_failed_logins => "Zero Trust user failed logins",
+            .user_last_seen_identity => "Zero Trust user last seen identity",
+        };
+    }
+
+    pub fn requiresOperationId(self: ZeroTrustReadEndpoint) bool {
+        return self == .operation;
+    }
+
+    pub fn requiresLocationId(self: ZeroTrustReadEndpoint) bool {
+        return self == .location;
+    }
+
+    pub fn requiresProxyEndpointId(self: ZeroTrustReadEndpoint) bool {
+        return self == .proxy_endpoint;
+    }
+
+    pub fn requiresRuleId(self: ZeroTrustReadEndpoint) bool {
+        return self == .rule;
+    }
+
+    pub fn requiresPacfileId(self: ZeroTrustReadEndpoint) bool {
+        return self == .pacfile;
+    }
+
+    pub fn requiresCertificateId(self: ZeroTrustReadEndpoint) bool {
+        return self == .certificate;
+    }
+
+    pub fn requiresListId(self: ZeroTrustReadEndpoint) bool {
+        return self == .list or self == .list_items;
+    }
+
+    pub fn requiresUserId(self: ZeroTrustReadEndpoint) bool {
+        return switch (self) {
+            .user,
+            .user_active_sessions,
+            .user_active_session,
+            .user_failed_logins,
+            .user_last_seen_identity,
+            => true,
+            else => false,
+        };
+    }
+
+    pub fn requiresNonce(self: ZeroTrustReadEndpoint) bool {
+        return self == .user_active_session;
+    }
+};
+
+pub const ZeroTrustReadArgs = struct {
+    operation_id: ?[]const u8 = null,
+    location_id: ?[]const u8 = null,
+    proxy_endpoint_id: ?[]const u8 = null,
+    rule_id: ?[]const u8 = null,
+    pacfile_id: ?[]const u8 = null,
+    certificate_id: ?[]const u8 = null,
+    list_id: ?[]const u8 = null,
+    user_id: ?[]const u8 = null,
+    nonce: ?[]const u8 = null,
+    list_type: ?[]const u8 = null,
+    email: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+    page: ?[]const u8 = null,
+    per_page: ?[]const u8 = null,
+    search: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -7508,6 +7832,112 @@ fn subnetPath(gpa: Allocator, account_id: []const u8, maybe_subnet_id: ?[]const 
     return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ subnets_path, escaped_subnet_id });
 }
 
+pub fn zeroTrustReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ZeroTrustReadEndpoint, args: ZeroTrustReadArgs) ![]u8 {
+    const path = try zeroTrustReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn zeroTrustReadPath(gpa: Allocator, account_id: []const u8, endpoint: ZeroTrustReadEndpoint, args: ZeroTrustReadArgs) ![]u8 {
+    return switch (endpoint) {
+        .device_settings => try zeroTrustAccountPath(gpa, account_id, "devices/settings"),
+        .gateway_account => try zeroTrustAccountPath(gpa, account_id, "gateway"),
+        .gateway_configuration => try zeroTrustAccountPath(gpa, account_id, "gateway/configuration"),
+        .gateway_egress_cidr_pairs => try zeroTrustAccountPath(gpa, account_id, "gateway/egress_cidr_pairs"),
+        .gateway_logging => try zeroTrustAccountPath(gpa, account_id, "gateway/logging"),
+        .dns_destination_ips => try zeroTrustGatewayPath(gpa, account_id, "dns_destination_ips"),
+        .app_types => try zeroTrustGatewayPath(gpa, account_id, "app_types"),
+        .categories => try zeroTrustGatewayPath(gpa, account_id, "categories"),
+        .operations => try zeroTrustGatewayPath(gpa, account_id, "operations"),
+        .operation => try zeroTrustGatewayResourcePath(gpa, account_id, "operations", args.operation_id, error.MissingCloudflareZeroTrustOperationId),
+        .locations => try zeroTrustGatewayPath(gpa, account_id, "locations"),
+        .location => try zeroTrustGatewayResourcePath(gpa, account_id, "locations", args.location_id, error.MissingCloudflareZeroTrustLocationId),
+        .proxy_endpoints => try zeroTrustGatewayPath(gpa, account_id, "proxy_endpoints"),
+        .proxy_endpoint => try zeroTrustGatewayResourcePath(gpa, account_id, "proxy_endpoints", args.proxy_endpoint_id, error.MissingCloudflareZeroTrustProxyEndpointId),
+        .rules => try zeroTrustGatewayPath(gpa, account_id, "rules"),
+        .tenant_rules => try zeroTrustGatewayPath(gpa, account_id, "rules/tenant"),
+        .rule => try zeroTrustGatewayResourcePath(gpa, account_id, "rules", args.rule_id, error.MissingCloudflareZeroTrustRuleId),
+        .ssh_settings => try zeroTrustGatewayPath(gpa, account_id, "audit_ssh_settings"),
+        .applications_review_status => try zeroTrustGatewayPath(gpa, account_id, "apps/review_status"),
+        .certificates => try zeroTrustGatewayPath(gpa, account_id, "certificates"),
+        .certificate => try zeroTrustGatewayResourcePath(gpa, account_id, "certificates", args.certificate_id, error.MissingCloudflareZeroTrustCertificateId),
+        .pacfiles => try zeroTrustGatewayPath(gpa, account_id, "pacfiles"),
+        .pacfile => try zeroTrustGatewayResourcePath(gpa, account_id, "pacfiles", args.pacfile_id, error.MissingCloudflareZeroTrustPacfileId),
+        .lists => blk: {
+            const base_path = try zeroTrustGatewayPath(gpa, account_id, "lists");
+            defer gpa.free(base_path);
+            break :blk try appendQuery(gpa, base_path, &[_]QueryParam{.{ .name = "type", .value = args.list_type }});
+        },
+        .list => try zeroTrustGatewayResourcePath(gpa, account_id, "lists", args.list_id, error.MissingCloudflareZeroTrustListId),
+        .list_items => blk: {
+            const list_path = try zeroTrustGatewayResourcePath(gpa, account_id, "lists", args.list_id, error.MissingCloudflareZeroTrustListId);
+            defer gpa.free(list_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/items", .{list_path});
+        },
+        .organization => try zeroTrustAccountPath(gpa, account_id, "access/organizations"),
+        .organization_doh => try zeroTrustAccountPath(gpa, account_id, "access/organizations/doh"),
+        .users => blk: {
+            const base_path = try zeroTrustAccountPath(gpa, account_id, "access/users");
+            defer gpa.free(base_path);
+            break :blk try appendQuery(gpa, base_path, &[_]QueryParam{
+                .{ .name = "email", .value = args.email },
+                .{ .name = "name", .value = args.name },
+                .{ .name = "page", .value = args.page },
+                .{ .name = "per_page", .value = args.per_page },
+                .{ .name = "search", .value = args.search },
+            });
+        },
+        .user => try zeroTrustUserPath(gpa, account_id, args.user_id),
+        .user_active_sessions => try zeroTrustUserSuffixPath(gpa, account_id, args.user_id, "active_sessions"),
+        .user_active_session => blk: {
+            const sessions_path = try zeroTrustUserSuffixPath(gpa, account_id, args.user_id, "active_sessions");
+            defer gpa.free(sessions_path);
+            const nonce = args.nonce orelse return error.MissingCloudflareZeroTrustUserSessionNonce;
+            const escaped_nonce = try pathEscape(gpa, nonce);
+            defer gpa.free(escaped_nonce);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/{s}", .{ sessions_path, escaped_nonce });
+        },
+        .user_failed_logins => try zeroTrustUserSuffixPath(gpa, account_id, args.user_id, "failed_logins"),
+        .user_last_seen_identity => try zeroTrustUserSuffixPath(gpa, account_id, args.user_id, "last_seen_identity"),
+    };
+}
+
+fn zeroTrustAccountPath(gpa: Allocator, account_id: []const u8, suffix: []const u8) ![]u8 {
+    const escaped_account_id = try pathEscape(gpa, account_id);
+    defer gpa.free(escaped_account_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ accounts_path, escaped_account_id, suffix });
+}
+
+fn zeroTrustGatewayPath(gpa: Allocator, account_id: []const u8, suffix: []const u8) ![]u8 {
+    const gateway_suffix = try std.fmt.allocPrint(gpa, "gateway/{s}", .{suffix});
+    defer gpa.free(gateway_suffix);
+    return try zeroTrustAccountPath(gpa, account_id, gateway_suffix);
+}
+
+fn zeroTrustGatewayResourcePath(gpa: Allocator, account_id: []const u8, collection: []const u8, maybe_resource_id: ?[]const u8, missing_error: anyerror) ![]u8 {
+    const collection_path = try zeroTrustGatewayPath(gpa, account_id, collection);
+    defer gpa.free(collection_path);
+    const resource_id = maybe_resource_id orelse return missing_error;
+    const escaped_resource_id = try pathEscape(gpa, resource_id);
+    defer gpa.free(escaped_resource_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_resource_id });
+}
+
+fn zeroTrustUserPath(gpa: Allocator, account_id: []const u8, maybe_user_id: ?[]const u8) ![]u8 {
+    const users_path = try zeroTrustAccountPath(gpa, account_id, "access/users");
+    defer gpa.free(users_path);
+    const user_id = maybe_user_id orelse return error.MissingCloudflareZeroTrustUserId;
+    const escaped_user_id = try pathEscape(gpa, user_id);
+    defer gpa.free(escaped_user_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ users_path, escaped_user_id });
+}
+
+fn zeroTrustUserSuffixPath(gpa: Allocator, account_id: []const u8, maybe_user_id: ?[]const u8, suffix: []const u8) ![]u8 {
+    const account_user_path = try zeroTrustUserPath(gpa, account_id, maybe_user_id);
+    defer gpa.free(account_user_path);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_user_path, suffix });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -9485,6 +9915,71 @@ test "builds Cloudflare tunnel and zero trust network paths" {
     try std.testing.expectError(error.MissingCloudflareTunnelRouteIp, tunnelReadPath(allocator, "acct/1", .tunnel_route_by_ip, .{}));
     try std.testing.expectError(error.MissingCloudflareHostnameRouteId, tunnelReadPath(allocator, "acct/1", .hostname_route, .{}));
     try std.testing.expectError(error.MissingCloudflareSubnetId, tunnelReadPath(allocator, "acct/1", .subnet, .{}));
+}
+
+test "cloudflare zero trust gateway endpoints parse commands" {
+    try std.testing.expectEqual(ZeroTrustReadEndpoint.device_settings, ZeroTrustReadEndpoint.parse("device-settings").?);
+    try std.testing.expectEqual(ZeroTrustReadEndpoint.gateway_account, ZeroTrustReadEndpoint.parse("gateway").?);
+    try std.testing.expectEqual(ZeroTrustReadEndpoint.gateway_configuration, ZeroTrustReadEndpoint.parse("gateway-config").?);
+    try std.testing.expectEqual(ZeroTrustReadEndpoint.dns_destination_ips, ZeroTrustReadEndpoint.parse("dns-destination-ips").?);
+    try std.testing.expectEqual(ZeroTrustReadEndpoint.proxy_endpoint, ZeroTrustReadEndpoint.parse("proxy-endpoint").?);
+    try std.testing.expectEqual(ZeroTrustReadEndpoint.applications_review_status, ZeroTrustReadEndpoint.parse("review-status").?);
+    try std.testing.expectEqual(ZeroTrustReadEndpoint.pacfiles, ZeroTrustReadEndpoint.parse("pac-files").?);
+    try std.testing.expectEqual(ZeroTrustReadEndpoint.organization_doh, ZeroTrustReadEndpoint.parse("org-doh").?);
+    try std.testing.expectEqual(ZeroTrustReadEndpoint.user_active_session, ZeroTrustReadEndpoint.parse("active-session").?);
+    try std.testing.expect(ZeroTrustReadEndpoint.operation.requiresOperationId());
+    try std.testing.expect(ZeroTrustReadEndpoint.location.requiresLocationId());
+    try std.testing.expect(ZeroTrustReadEndpoint.proxy_endpoint.requiresProxyEndpointId());
+    try std.testing.expect(ZeroTrustReadEndpoint.rule.requiresRuleId());
+    try std.testing.expect(ZeroTrustReadEndpoint.pacfile.requiresPacfileId());
+    try std.testing.expect(ZeroTrustReadEndpoint.certificate.requiresCertificateId());
+    try std.testing.expect(ZeroTrustReadEndpoint.list_items.requiresListId());
+    try std.testing.expect(ZeroTrustReadEndpoint.user_failed_logins.requiresUserId());
+    try std.testing.expect(ZeroTrustReadEndpoint.user_active_session.requiresNonce());
+    try std.testing.expectEqualStrings("Zero Trust Gateway rules", ZeroTrustReadEndpoint.tenant_rules.group());
+    try std.testing.expectEqualStrings("zero-trust-users-get-active-session", ZeroTrustReadEndpoint.user_active_session.operationId());
+}
+
+test "builds Cloudflare zero trust gateway paths" {
+    const allocator = std.testing.allocator;
+
+    const gateway = try zeroTrustReadUrl(allocator, base_url, "acct/1", .gateway_account, .{});
+    defer allocator.free(gateway);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/gateway", gateway);
+
+    const config = try zeroTrustReadPath(allocator, "acct/1", .gateway_configuration, .{});
+    defer allocator.free(config);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/gateway/configuration", config);
+
+    const location = try zeroTrustReadPath(allocator, "acct/1", .location, .{ .location_id = "loc/1" });
+    defer allocator.free(location);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/gateway/locations/loc%2F1", location);
+
+    const tenant_rules = try zeroTrustReadPath(allocator, "acct/1", .tenant_rules, .{});
+    defer allocator.free(tenant_rules);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/gateway/rules/tenant", tenant_rules);
+
+    const lists = try zeroTrustReadPath(allocator, "acct/1", .lists, .{ .list_type = "SERIAL" });
+    defer allocator.free(lists);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/gateway/lists?type=SERIAL", lists);
+
+    const list_items = try zeroTrustReadPath(allocator, "acct/1", .list_items, .{ .list_id = "list/1" });
+    defer allocator.free(list_items);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/gateway/lists/list%2F1/items", list_items);
+
+    const users = try zeroTrustReadPath(allocator, "acct/1", .users, .{ .email = "admin@example.test", .search = "admin user" });
+    defer allocator.free(users);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/access/users?email=admin%40example.test&search=admin%20user", users);
+
+    const active_session = try zeroTrustReadPath(allocator, "acct/1", .user_active_session, .{ .user_id = "user/1", .nonce = "nonce/1" });
+    defer allocator.free(active_session);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/access/users/user%2F1/active_sessions/nonce%2F1", active_session);
+
+    try std.testing.expectError(error.MissingCloudflareZeroTrustOperationId, zeroTrustReadPath(allocator, "acct/1", .operation, .{}));
+    try std.testing.expectError(error.MissingCloudflareZeroTrustProxyEndpointId, zeroTrustReadPath(allocator, "acct/1", .proxy_endpoint, .{}));
+    try std.testing.expectError(error.MissingCloudflareZeroTrustListId, zeroTrustReadPath(allocator, "acct/1", .list_items, .{}));
+    try std.testing.expectError(error.MissingCloudflareZeroTrustUserId, zeroTrustReadPath(allocator, "acct/1", .user_failed_logins, .{}));
+    try std.testing.expectError(error.MissingCloudflareZeroTrustUserSessionNonce, zeroTrustReadPath(allocator, "acct/1", .user_active_session, .{ .user_id = "user/1" }));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

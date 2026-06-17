@@ -70,6 +70,8 @@ pub const AccessReadEndpoint = provider_cloudflare.AccessReadEndpoint;
 pub const AccessScope = provider_cloudflare.AccessScope;
 pub const TunnelReadArgs = provider_cloudflare.TunnelReadArgs;
 pub const TunnelReadEndpoint = provider_cloudflare.TunnelReadEndpoint;
+pub const ZeroTrustReadArgs = provider_cloudflare.ZeroTrustReadArgs;
+pub const ZeroTrustReadEndpoint = provider_cloudflare.ZeroTrustReadEndpoint;
 pub const LoadBalancingAccountReadEndpoint = provider_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = provider_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = provider_cloudflare.LoadBalancingMutationEndpoint;
@@ -177,6 +179,7 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     try collectAccessCustomPagesForAccounts(gpa, io, client, db, redacted);
     try collectAccessForAccounts(gpa, io, client, db, redacted);
     try collectTunnelsForAccounts(gpa, io, client, db, redacted);
+    try collectZeroTrustForAccounts(gpa, io, client, db, redacted);
     try collectAccountTokenEndpointsForAccounts(gpa, io, auth, client, db, redacted);
     try collectAccountDnsSettings(gpa, io, client, db, redacted);
     try collectAccountDnsRecordUsageForAccounts(gpa, io, client, db, redacted);
@@ -925,6 +928,30 @@ pub fn collectTunnelEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, accoun
     const body = try client.getTunnelEndpoint(io, gpa, account_id, endpoint, args);
     defer body.deinit(gpa);
     const endpoint_path = try provider_cloudflare.tunnelReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectZeroTrustEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, endpoint: ZeroTrustReadEndpoint, args: ZeroTrustReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = try zeroTrustTarget(gpa, account_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getZeroTrustEndpoint(io, gpa, account_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.zeroTrustReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(endpoint_path);
     const redacted = try collector_capture.storeResponse(gpa, db, .{
         .provider = "cloudflare",
@@ -2626,6 +2653,104 @@ fn collectTunnelSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Cli
     });
 }
 
+fn collectZeroTrustForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const endpoints = [_]ZeroTrustReadEndpoint{
+        .device_settings,
+        .gateway_account,
+        .gateway_configuration,
+        .gateway_egress_cidr_pairs,
+        .gateway_logging,
+        .dns_destination_ips,
+        .app_types,
+        .categories,
+        .operations,
+        .locations,
+        .proxy_endpoints,
+        .rules,
+        .tenant_rules,
+        .ssh_settings,
+        .applications_review_status,
+        .certificates,
+        .pacfiles,
+        .lists,
+        .organization,
+        .organization_doh,
+        .users,
+    };
+    for (rows.items) |row| {
+        for (endpoints) |endpoint| {
+            try collectZeroTrustReadForAccount(gpa, io, client, db, row.id, endpoint, .{});
+        }
+    }
+}
+
+fn collectZeroTrustReadForAccount(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, endpoint: ZeroTrustReadEndpoint, args: ZeroTrustReadArgs) anyerror!void {
+    const redacted = collectZeroTrustSnapshot(gpa, io, client, db, account_id, endpoint, args) catch |err| {
+        const target = zeroTrustTarget(gpa, account_id, endpoint, args) catch try gpa.dupe(u8, account_id);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    try collectZeroTrustDetailsForList(gpa, io, client, db, account_id, endpoint, redacted);
+}
+
+fn collectZeroTrustDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, list_endpoint: ZeroTrustReadEndpoint, list_body: []const u8) anyerror!void {
+    const detail_endpoints: []const ZeroTrustReadEndpoint = switch (list_endpoint) {
+        .operations => &[_]ZeroTrustReadEndpoint{.operation},
+        .locations => &[_]ZeroTrustReadEndpoint{.location},
+        .proxy_endpoints => &[_]ZeroTrustReadEndpoint{.proxy_endpoint},
+        .rules => &[_]ZeroTrustReadEndpoint{.rule},
+        .certificates => &[_]ZeroTrustReadEndpoint{.certificate},
+        .pacfiles => &[_]ZeroTrustReadEndpoint{.pacfile},
+        .lists => &[_]ZeroTrustReadEndpoint{ .list, .list_items },
+        .users => &[_]ZeroTrustReadEndpoint{ .user, .user_active_sessions, .user_failed_logins, .user_last_seen_identity },
+        else => &[_]ZeroTrustReadEndpoint{},
+    };
+    if (detail_endpoints.len == 0) return;
+
+    var rows = try provider_cloudflare_models.parseResourceIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        for (detail_endpoints) |endpoint| {
+            const args: ZeroTrustReadArgs = switch (endpoint) {
+                .operation => .{ .operation_id = row.id },
+                .location => .{ .location_id = row.id },
+                .proxy_endpoint => .{ .proxy_endpoint_id = row.id },
+                .rule => .{ .rule_id = row.id },
+                .certificate => .{ .certificate_id = row.id },
+                .pacfile => .{ .pacfile_id = row.id },
+                .list, .list_items => .{ .list_id = row.id },
+                .user, .user_active_sessions, .user_failed_logins, .user_last_seen_identity => .{ .user_id = row.id },
+                else => .{},
+            };
+            try collectZeroTrustReadForAccount(gpa, io, client, db, account_id, endpoint, args);
+        }
+    }
+}
+
+fn collectZeroTrustSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, endpoint: ZeroTrustReadEndpoint, args: ZeroTrustReadArgs) ![]u8 {
+    const body = try client.getZeroTrustEndpoint(io, gpa, account_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.zeroTrustReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try zeroTrustTarget(gpa, account_id, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
 fn collectRulesetSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: RulesetScope, scope_id: []const u8, target_label: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
     const body = try client.getRulesetEndpoint(io, gpa, scope, scope_id, endpoint, args);
     defer body.deinit(gpa);
@@ -3043,6 +3168,46 @@ fn tunnelTarget(gpa: Allocator, account_id: []const u8, endpoint: TunnelReadEndp
     if (endpoint.requiresSubnetId()) {
         const subnet_id = args.subnet_id orelse return try gpa.dupe(u8, account_id);
         return try std.fmt.allocPrint(gpa, "{s}/subnet:{s}", .{ account_id, subnet_id });
+    }
+    return try gpa.dupe(u8, account_id);
+}
+
+fn zeroTrustTarget(gpa: Allocator, account_id: []const u8, endpoint: ZeroTrustReadEndpoint, args: ZeroTrustReadArgs) ![]u8 {
+    if (endpoint.requiresOperationId()) {
+        const operation_id = args.operation_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/operation:{s}", .{ account_id, operation_id });
+    }
+    if (endpoint.requiresLocationId()) {
+        const location_id = args.location_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/location:{s}", .{ account_id, location_id });
+    }
+    if (endpoint.requiresProxyEndpointId()) {
+        const proxy_endpoint_id = args.proxy_endpoint_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/proxy-endpoint:{s}", .{ account_id, proxy_endpoint_id });
+    }
+    if (endpoint.requiresRuleId()) {
+        const rule_id = args.rule_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/rule:{s}", .{ account_id, rule_id });
+    }
+    if (endpoint.requiresPacfileId()) {
+        const pacfile_id = args.pacfile_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/pacfile:{s}", .{ account_id, pacfile_id });
+    }
+    if (endpoint.requiresCertificateId()) {
+        const certificate_id = args.certificate_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/certificate:{s}", .{ account_id, certificate_id });
+    }
+    if (endpoint.requiresListId()) {
+        const list_id = args.list_id orelse return try gpa.dupe(u8, account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/list:{s}", .{ account_id, list_id });
+    }
+    if (endpoint.requiresUserId()) {
+        const user_id = args.user_id orelse return try gpa.dupe(u8, account_id);
+        if (endpoint.requiresNonce()) {
+            const nonce = args.nonce orelse return try std.fmt.allocPrint(gpa, "{s}/user:{s}", .{ account_id, user_id });
+            return try std.fmt.allocPrint(gpa, "{s}/user:{s}/session:{s}", .{ account_id, user_id, nonce });
+        }
+        return try std.fmt.allocPrint(gpa, "{s}/user:{s}", .{ account_id, user_id });
     }
     return try gpa.dupe(u8, account_id);
 }
