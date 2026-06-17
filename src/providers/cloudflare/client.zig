@@ -238,6 +238,12 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getApiShieldEndpoint(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, endpoint: ApiShieldReadEndpoint, args: ApiShieldReadArgs) !net_http.Response {
+        const url = try apiShieldReadUrl(gpa, self.base_url_override, zone_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getCustomPageEndpoint(self: Client, io: Io, gpa: Allocator, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) !net_http.Response {
         const url = try customPageReadUrl(gpa, self.base_url_override, scope, scope_id, resource, endpoint, args);
         defer gpa.free(url);
@@ -3267,6 +3273,134 @@ pub const PageShieldReadArgs = struct {
     type_filter: ?[]const u8 = null,
     path_filter: ?[]const u8 = null,
     domain: ?[]const u8 = null,
+};
+
+pub const ApiShieldReadEndpoint = enum {
+    discovery_openapi,
+    discovery_operations,
+    discovery_operation,
+    operations,
+    operation,
+    schemas,
+    labels,
+    managed_label,
+    user_label,
+    configuration,
+    client_certificates,
+    client_certificate,
+    hostname_associations,
+
+    pub fn parse(value: []const u8) ?ApiShieldReadEndpoint {
+        if (std.mem.eql(u8, value, "discovery") or std.mem.eql(u8, value, "discovery-openapi") or std.mem.eql(u8, value, "openapi")) return .discovery_openapi;
+        if (std.mem.eql(u8, value, "discovery-operations") or std.mem.eql(u8, value, "discovered-operations")) return .discovery_operations;
+        if (std.mem.eql(u8, value, "discovery-operation") or std.mem.eql(u8, value, "discovered-operation")) return .discovery_operation;
+        if (std.mem.eql(u8, value, "operations") or std.mem.eql(u8, value, "endpoint-operations")) return .operations;
+        if (std.mem.eql(u8, value, "operation") or std.mem.eql(u8, value, "endpoint-operation")) return .operation;
+        if (std.mem.eql(u8, value, "schemas") or std.mem.eql(u8, value, "openapi-schemas")) return .schemas;
+        if (std.mem.eql(u8, value, "labels")) return .labels;
+        if (std.mem.eql(u8, value, "managed-label")) return .managed_label;
+        if (std.mem.eql(u8, value, "user-label")) return .user_label;
+        if (std.mem.eql(u8, value, "configuration") or std.mem.eql(u8, value, "config") or std.mem.eql(u8, value, "settings")) return .configuration;
+        if (std.mem.eql(u8, value, "client-certificates") or std.mem.eql(u8, value, "certificates")) return .client_certificates;
+        if (std.mem.eql(u8, value, "client-certificate") or std.mem.eql(u8, value, "certificate")) return .client_certificate;
+        if (std.mem.eql(u8, value, "hostname-associations") or std.mem.eql(u8, value, "hostname-certificate-associations")) return .hostname_associations;
+        return null;
+    }
+
+    pub fn commandName(self: ApiShieldReadEndpoint) []const u8 {
+        return switch (self) {
+            .discovery_openapi => "discovery-openapi",
+            .discovery_operations => "discovery-operations",
+            .discovery_operation => "discovery-operation",
+            .operations => "operations",
+            .operation => "operation",
+            .schemas => "schemas",
+            .labels => "labels",
+            .managed_label => "managed-label",
+            .user_label => "user-label",
+            .configuration => "configuration",
+            .client_certificates => "client-certificates",
+            .client_certificate => "client-certificate",
+            .hostname_associations => "hostname-associations",
+        };
+    }
+
+    pub fn label(self: ApiShieldReadEndpoint) []const u8 {
+        return switch (self) {
+            .discovery_openapi => "zone-api-shield-discovery-openapi",
+            .discovery_operations => "zone-api-shield-discovery-operations",
+            .discovery_operation => "zone-api-shield-discovery-operation",
+            .operations => "zone-api-shield-operations",
+            .operation => "zone-api-shield-operation",
+            .schemas => "zone-api-shield-schemas",
+            .labels => "zone-api-shield-labels",
+            .managed_label => "zone-api-shield-managed-label",
+            .user_label => "zone-api-shield-user-label",
+            .configuration => "zone-api-shield-configuration",
+            .client_certificates => "zone-api-shield-client-certificates",
+            .client_certificate => "zone-api-shield-client-certificate",
+            .hostname_associations => "zone-api-shield-hostname-associations",
+        };
+    }
+
+    pub fn operationId(self: ApiShieldReadEndpoint) []const u8 {
+        return switch (self) {
+            .discovery_openapi => "api-shield-api-discovery-retrieve-discovered-operations-on-a-zone-as-openapi",
+            .discovery_operations => "api-shield-api-discovery-retrieve-discovered-operations-on-a-zone",
+            .discovery_operation => "api-shield-api-discovery-retrieve-discovered-operation-by-id",
+            .operations => "api-shield-endpoint-management-retrieve-information-about-all-operations-on-a-zone",
+            .operation => "api-shield-endpoint-management-retrieve-information-about-an-operation",
+            .schemas => "api-shield-endpoint-management-retrieve-operations-and-features-as-open-api-schemas",
+            .labels => "api-shield-labels-get-labels",
+            .managed_label => "api-shield-labels-get-managed-label",
+            .user_label => "api-shield-labels-get-user-label",
+            .configuration => "api-shield-settings-retrieve-information-about-specific-configuration-properties",
+            .client_certificates => "client-certificate-for-a-zone-list-client-certificates",
+            .client_certificate => "client-certificate-for-a-zone-client-certificate-details",
+            .hostname_associations => "client-certificate-for-a-zone-list-hostname-associations",
+        };
+    }
+
+    pub fn summary(self: ApiShieldReadEndpoint) []const u8 {
+        return switch (self) {
+            .discovery_openapi => "Retrieve discovered API operations as OpenAPI",
+            .discovery_operations => "Retrieve discovered API operations",
+            .discovery_operation => "Retrieve a discovered API operation",
+            .operations => "Retrieve API Shield endpoint operations",
+            .operation => "Retrieve an API Shield endpoint operation",
+            .schemas => "Retrieve API Shield operations and features as OpenAPI schemas",
+            .labels => "Get API Shield labels",
+            .managed_label => "Get an API Shield managed label",
+            .user_label => "Get an API Shield user label",
+            .configuration => "Retrieve API Shield configuration properties",
+            .client_certificates => "List API Shield client certificates",
+            .client_certificate => "Retrieve an API Shield client certificate",
+            .hostname_associations => "List API Shield client certificate hostname associations",
+        };
+    }
+
+    pub fn requiresDiscoveryId(self: ApiShieldReadEndpoint) bool {
+        return self == .discovery_operation;
+    }
+
+    pub fn requiresOperationId(self: ApiShieldReadEndpoint) bool {
+        return self == .operation;
+    }
+
+    pub fn requiresLabelName(self: ApiShieldReadEndpoint) bool {
+        return self == .managed_label or self == .user_label;
+    }
+
+    pub fn requiresClientCertificateId(self: ApiShieldReadEndpoint) bool {
+        return self == .client_certificate;
+    }
+};
+
+pub const ApiShieldReadArgs = struct {
+    discovery_id: ?[]const u8 = null,
+    operation_id: ?[]const u8 = null,
+    label_name: ?[]const u8 = null,
+    client_certificate_id: ?[]const u8 = null,
 };
 
 pub const PageShieldMutationEndpoint = enum {
@@ -8377,6 +8511,57 @@ pub fn pageShieldReadPath(gpa: Allocator, zone_id: []const u8, endpoint: PageShi
     return try appendPageShieldFilters(gpa, collection_path, endpoint, args);
 }
 
+pub fn apiShieldReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, endpoint: ApiShieldReadEndpoint, args: ApiShieldReadArgs) ![]u8 {
+    const path = try apiShieldReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn apiShieldReadPath(gpa: Allocator, zone_id: []const u8, endpoint: ApiShieldReadEndpoint, args: ApiShieldReadArgs) ![]u8 {
+    const escaped_zone_id = try pathEscape(gpa, zone_id);
+    defer gpa.free(escaped_zone_id);
+    const zone_base = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zones_path, escaped_zone_id });
+    defer gpa.free(zone_base);
+    const api_gateway_base = try std.fmt.allocPrint(gpa, "{s}/api_gateway", .{zone_base});
+    defer gpa.free(api_gateway_base);
+
+    return switch (endpoint) {
+        .discovery_openapi => try std.fmt.allocPrint(gpa, "{s}/discovery", .{api_gateway_base}),
+        .discovery_operations => try std.fmt.allocPrint(gpa, "{s}/discovery/operations", .{api_gateway_base}),
+        .discovery_operation => blk: {
+            const discovery_id = args.discovery_id orelse return error.MissingCloudflareApiShieldDiscoveryId;
+            const escaped_id = try pathEscape(gpa, discovery_id);
+            defer gpa.free(escaped_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/discovery/operations/{s}", .{ api_gateway_base, escaped_id });
+        },
+        .operations => try std.fmt.allocPrint(gpa, "{s}/operations", .{api_gateway_base}),
+        .operation => blk: {
+            const operation_id = args.operation_id orelse return error.MissingCloudflareApiShieldOperationId;
+            const escaped_id = try pathEscape(gpa, operation_id);
+            defer gpa.free(escaped_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/operations/{s}", .{ api_gateway_base, escaped_id });
+        },
+        .schemas => try std.fmt.allocPrint(gpa, "{s}/schemas", .{api_gateway_base}),
+        .labels => try std.fmt.allocPrint(gpa, "{s}/labels", .{api_gateway_base}),
+        .managed_label, .user_label => blk: {
+            const label_name = args.label_name orelse return error.MissingCloudflareApiShieldLabelName;
+            const escaped_name = try pathEscape(gpa, label_name);
+            defer gpa.free(escaped_name);
+            const label_type: []const u8 = if (endpoint == .managed_label) "managed" else "user";
+            break :blk try std.fmt.allocPrint(gpa, "{s}/labels/{s}/{s}", .{ api_gateway_base, label_type, escaped_name });
+        },
+        .configuration => try std.fmt.allocPrint(gpa, "{s}/configuration", .{api_gateway_base}),
+        .client_certificates => try std.fmt.allocPrint(gpa, "{s}/client_certificates", .{zone_base}),
+        .client_certificate => blk: {
+            const certificate_id = args.client_certificate_id orelse return error.MissingCloudflareApiShieldClientCertificateId;
+            const escaped_id = try pathEscape(gpa, certificate_id);
+            defer gpa.free(escaped_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/client_certificates/{s}", .{ zone_base, escaped_id });
+        },
+        .hostname_associations => try std.fmt.allocPrint(gpa, "{s}/certificate_authorities/hostname_associations", .{zone_base}),
+    };
+}
+
 pub fn pageShieldMutationPath(gpa: Allocator, endpoint: PageShieldMutationEndpoint, args: PageShieldMutationArgs) ![]u8 {
     const base_path = try pageShieldBasePath(gpa, args.zone_id);
     defer gpa.free(base_path);
@@ -11212,6 +11397,50 @@ test "builds Page Shield paths and dry-run plans" {
 
     try std.testing.expectError(error.MissingCloudflarePageShieldResourceId, pageShieldReadPath(allocator, "zone/1", .policy, .{}));
     try std.testing.expectError(error.MissingCloudflarePageShieldPolicyId, pageShieldMutationPlanJson(allocator, .update_policy, .{ .zone_id = "zone/1" }));
+}
+
+test "api shield endpoints map to official operation metadata" {
+    try std.testing.expectEqual(ApiShieldReadEndpoint.discovery_openapi, ApiShieldReadEndpoint.parse("openapi").?);
+    try std.testing.expectEqual(ApiShieldReadEndpoint.discovery_operations, ApiShieldReadEndpoint.parse("discovered-operations").?);
+    try std.testing.expectEqual(ApiShieldReadEndpoint.operation, ApiShieldReadEndpoint.parse("endpoint-operation").?);
+    try std.testing.expectEqual(ApiShieldReadEndpoint.configuration, ApiShieldReadEndpoint.parse("settings").?);
+    try std.testing.expectEqualStrings("api-shield-api-discovery-retrieve-discovered-operations-on-a-zone-as-openapi", ApiShieldReadEndpoint.discovery_openapi.operationId());
+    try std.testing.expectEqualStrings("api-shield-endpoint-management-retrieve-information-about-an-operation", ApiShieldReadEndpoint.operation.operationId());
+    try std.testing.expectEqualStrings("client-certificate-for-a-zone-list-hostname-associations", ApiShieldReadEndpoint.hostname_associations.operationId());
+    try std.testing.expectEqualStrings("zone-api-shield-client-certificate", ApiShieldReadEndpoint.client_certificate.label());
+    try std.testing.expect(ApiShieldReadEndpoint.discovery_operation.requiresDiscoveryId());
+    try std.testing.expect(ApiShieldReadEndpoint.operation.requiresOperationId());
+    try std.testing.expect(ApiShieldReadEndpoint.managed_label.requiresLabelName());
+    try std.testing.expect(ApiShieldReadEndpoint.client_certificate.requiresClientCertificateId());
+}
+
+test "builds API Shield read paths" {
+    const allocator = std.testing.allocator;
+
+    const discovery = try apiShieldReadUrl(allocator, base_url, "zone/1", .discovery_openapi, .{});
+    defer allocator.free(discovery);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone%2F1/api_gateway/discovery", discovery);
+
+    const operation = try apiShieldReadPath(allocator, "zone/1", .operation, .{ .operation_id = "op/1" });
+    defer allocator.free(operation);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/api_gateway/operations/op%2F1", operation);
+
+    const managed_label = try apiShieldReadPath(allocator, "zone/1", .managed_label, .{ .label_name = "auth required" });
+    defer allocator.free(managed_label);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/api_gateway/labels/managed/auth%20required", managed_label);
+
+    const certificate = try apiShieldReadPath(allocator, "zone/1", .client_certificate, .{ .client_certificate_id = "cert/1" });
+    defer allocator.free(certificate);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/client_certificates/cert%2F1", certificate);
+
+    const hostname_associations = try apiShieldReadPath(allocator, "zone/1", .hostname_associations, .{});
+    defer allocator.free(hostname_associations);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/certificate_authorities/hostname_associations", hostname_associations);
+
+    try std.testing.expectError(error.MissingCloudflareApiShieldDiscoveryId, apiShieldReadPath(allocator, "zone/1", .discovery_operation, .{}));
+    try std.testing.expectError(error.MissingCloudflareApiShieldOperationId, apiShieldReadPath(allocator, "zone/1", .operation, .{}));
+    try std.testing.expectError(error.MissingCloudflareApiShieldLabelName, apiShieldReadPath(allocator, "zone/1", .user_label, .{}));
+    try std.testing.expectError(error.MissingCloudflareApiShieldClientCertificateId, apiShieldReadPath(allocator, "zone/1", .client_certificate, .{}));
 }
 
 test "custom page endpoints map to official operation metadata" {

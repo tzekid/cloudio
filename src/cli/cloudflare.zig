@@ -60,6 +60,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandZoneLegacyRules(ctx, args, resource);
     } else if (std.mem.eql(u8, sub, "page-shield")) {
         try commandPageShield(ctx, args);
+    } else if (std.mem.eql(u8, sub, "api-shield")) {
+        try commandApiShield(ctx, args);
     } else if (std.mem.eql(u8, sub, "custom-pages")) {
         try commandCustomPages(ctx, args);
     } else if (std.mem.eql(u8, sub, "access-custom-pages")) {
@@ -1188,6 +1190,57 @@ fn commandPageShield(ctx: Context, args: []const []const u8) !void {
         }
     }
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectPageShieldEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+}
+
+fn commandApiShield(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("api-shield discovery-openapi|discovery-operations|discovery-operation|operations|operation|schemas|labels|managed-label|user-label|configuration|client-certificates|client-certificate|hostname-associations command and zone id required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.ApiShieldReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown api-shield command: {s}\n", .{args[1]});
+        return;
+    };
+    const zone_id = args[2];
+    var read_args: app_cloudflare.ApiShieldReadArgs = .{};
+    var index: usize = 3;
+    if (endpoint.requiresDiscoveryId()) {
+        if (args.len <= index) {
+            std.debug.print("discovery id required for api-shield {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.discovery_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresOperationId()) {
+        if (args.len <= index) {
+            std.debug.print("operation id required for api-shield {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.operation_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresLabelName()) {
+        if (args.len <= index) {
+            std.debug.print("label name required for api-shield {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.label_name = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresClientCertificateId()) {
+        if (args.len <= index) {
+            std.debug.print("client certificate id required for api-shield {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.client_certificate_id = args[index];
+        index += 1;
+    }
+    if (index != args.len) {
+        std.debug.print("unexpected api-shield argument: {s}\n", .{args[index]});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectApiShieldEndpoint(appContext(ctx), zone_id, endpoint, read_args));
 }
 
 fn commandCustomPages(ctx: Context, args: []const []const u8) !void {

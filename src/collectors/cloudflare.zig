@@ -70,6 +70,8 @@ pub const AccessMutationEndpoint = provider_cloudflare.AccessMutationEndpoint;
 pub const AccessReadArgs = provider_cloudflare.AccessReadArgs;
 pub const AccessReadEndpoint = provider_cloudflare.AccessReadEndpoint;
 pub const AccessScope = provider_cloudflare.AccessScope;
+pub const ApiShieldReadArgs = provider_cloudflare.ApiShieldReadArgs;
+pub const ApiShieldReadEndpoint = provider_cloudflare.ApiShieldReadEndpoint;
 pub const TunnelReadArgs = provider_cloudflare.TunnelReadArgs;
 pub const TunnelReadEndpoint = provider_cloudflare.TunnelReadEndpoint;
 pub const ZeroTrustReadArgs = provider_cloudflare.ZeroTrustReadArgs;
@@ -868,6 +870,30 @@ pub fn collectPageShieldEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zo
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectApiShieldEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: ApiShieldReadEndpoint, args: ApiShieldReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = try apiShieldTarget(gpa, zone_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getApiShieldEndpoint(io, gpa, zone_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.apiShieldReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try storeCloudflareResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectCustomPageEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs, capture_output: bool) !Output {
     const endpoint_label = endpoint.label(scope, resource);
     const target = try customPageTarget(gpa, scope_id, endpoint, args);
@@ -1474,6 +1500,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
         }
 
         try collectPageShieldForZone(gpa, io, client, db, zone_id, domain);
+        try collectApiShieldForZone(gpa, io, client, db, zone_id, domain);
         try collectCustomPagesForZone(gpa, io, client, db, zone_id, domain);
         try collectAccessForZone(gpa, io, client, db, zone_id, domain);
         try collectSecurityCenterForZone(gpa, io, client, db, zone_id, domain);
@@ -2473,6 +2500,74 @@ fn collectPageShieldSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare
     const endpoint_path = try provider_cloudflare.pageShieldReadPath(gpa, zone_id, endpoint, args);
     defer gpa.free(endpoint_path);
     const target = try pageShieldTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try storeCloudflareResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
+fn collectApiShieldForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8) !void {
+    const endpoints = [_]ApiShieldReadEndpoint{
+        .discovery_openapi,
+        .discovery_operations,
+        .operations,
+        .schemas,
+        .labels,
+        .configuration,
+        .client_certificates,
+        .hostname_associations,
+    };
+    for (endpoints) |endpoint| {
+        try collectApiShieldReadForZone(gpa, io, client, db, zone_id, target_label, endpoint, .{});
+    }
+}
+
+fn collectApiShieldReadForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, endpoint: ApiShieldReadEndpoint, args: ApiShieldReadArgs) anyerror!void {
+    const redacted = collectApiShieldSnapshot(gpa, io, client, db, zone_id, target_label, endpoint, args) catch |err| {
+        const target = apiShieldTarget(gpa, target_label, endpoint, args) catch try gpa.dupe(u8, target_label);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    try collectApiShieldDetailsForList(gpa, io, client, db, zone_id, target_label, endpoint, redacted);
+}
+
+fn collectApiShieldDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, list_endpoint: ApiShieldReadEndpoint, list_body: []const u8) anyerror!void {
+    const detail_endpoint: ?ApiShieldReadEndpoint = switch (list_endpoint) {
+        .discovery_operations => .discovery_operation,
+        .operations => .operation,
+        .client_certificates => .client_certificate,
+        else => null,
+    };
+    const endpoint = detail_endpoint orelse return;
+    var rows = try provider_cloudflare_models.parseResourceIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const args: ApiShieldReadArgs = switch (endpoint) {
+            .discovery_operation => .{ .discovery_id = row.id },
+            .operation => .{ .operation_id = row.id },
+            .client_certificate => .{ .client_certificate_id = row.id },
+            else => .{},
+        };
+        try collectApiShieldReadForZone(gpa, io, client, db, zone_id, target_label, endpoint, args);
+    }
+}
+
+fn collectApiShieldSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, endpoint: ApiShieldReadEndpoint, args: ApiShieldReadArgs) ![]u8 {
+    const body = try client.getApiShieldEndpoint(io, gpa, zone_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.apiShieldReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try apiShieldTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
     return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
@@ -3699,6 +3794,26 @@ fn pageShieldTarget(gpa: Allocator, zone_label: []const u8, endpoint: PageShield
     if (endpoint.requiresResourceId()) {
         const resource_id = args.resource_id orelse return try gpa.dupe(u8, zone_label);
         return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zone_label, resource_id });
+    }
+    return try gpa.dupe(u8, zone_label);
+}
+
+fn apiShieldTarget(gpa: Allocator, zone_label: []const u8, endpoint: ApiShieldReadEndpoint, args: ApiShieldReadArgs) ![]u8 {
+    if (endpoint.requiresDiscoveryId()) {
+        const id = args.discovery_id orelse return try gpa.dupe(u8, zone_label);
+        return try std.fmt.allocPrint(gpa, "{s}/discovery:{s}", .{ zone_label, id });
+    }
+    if (endpoint.requiresOperationId()) {
+        const id = args.operation_id orelse return try gpa.dupe(u8, zone_label);
+        return try std.fmt.allocPrint(gpa, "{s}/operation:{s}", .{ zone_label, id });
+    }
+    if (endpoint.requiresLabelName()) {
+        const name = args.label_name orelse return try gpa.dupe(u8, zone_label);
+        return try std.fmt.allocPrint(gpa, "{s}/label:{s}", .{ zone_label, name });
+    }
+    if (endpoint.requiresClientCertificateId()) {
+        const id = args.client_certificate_id orelse return try gpa.dupe(u8, zone_label);
+        return try std.fmt.allocPrint(gpa, "{s}/client-certificate:{s}", .{ zone_label, id });
     }
     return try gpa.dupe(u8, zone_label);
 }
