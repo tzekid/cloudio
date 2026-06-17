@@ -34,11 +34,15 @@ pub const Client = struct {
     }
 
     pub fn callReadRoute(self: Client, io: Io, gpa: Allocator, route: provider_routes.Route, params: []const provider_routes.PathParam) !net_http.Response {
+        return try self.callReadRouteWithQuery(io, gpa, route, params, &.{});
+    }
+
+    pub fn callReadRouteWithQuery(self: Client, io: Io, gpa: Allocator, route: provider_routes.Route, path_params: []const provider_routes.PathParam, query_params: []const provider_routes.QueryParam) !net_http.Response {
         if (route.provider != self.provider()) return error.ProviderRouteAuthMismatch;
         if (!route.isRoutable()) return error.UnsupportedProviderRoute;
         if (route.method != .GET or route.mode != .read) return error.ProviderRouteRequiresDryRun;
 
-        const url = try route.renderUrl(gpa, self.baseUrl(route.provider), params);
+        const url = try route.renderUrlWithQuery(gpa, self.baseUrl(route.provider), path_params, query_params);
         defer gpa.free(url);
         return switch (self.auth) {
             .cloudflare => |auth| try (provider_cloudflare.Client{
@@ -53,8 +57,12 @@ pub const Client = struct {
     }
 
     pub fn dryRunRoute(self: Client, gpa: Allocator, route: provider_routes.Route, params: []const provider_routes.PathParam) ![]u8 {
+        return try self.dryRunRouteWithQuery(gpa, route, params, &.{});
+    }
+
+    pub fn dryRunRouteWithQuery(self: Client, gpa: Allocator, route: provider_routes.Route, path_params: []const provider_routes.PathParam, query_params: []const provider_routes.QueryParam) ![]u8 {
         if (route.provider != self.provider()) return error.ProviderRouteAuthMismatch;
-        return try dryRunPlanJson(gpa, route, params);
+        return try dryRunPlanJsonWithQuery(gpa, route, path_params, query_params);
     }
 
     fn baseUrl(self: Client, target_provider: provider_routes.Provider) ?[]const u8 {
@@ -66,10 +74,14 @@ pub const Client = struct {
 };
 
 pub fn dryRunPlanJson(gpa: Allocator, route: provider_routes.Route, params: []const provider_routes.PathParam) ![]u8 {
+    return try dryRunPlanJsonWithQuery(gpa, route, params, &.{});
+}
+
+pub fn dryRunPlanJsonWithQuery(gpa: Allocator, route: provider_routes.Route, path_params: []const provider_routes.PathParam, query_params: []const provider_routes.QueryParam) ![]u8 {
     if (!route.isRoutable()) return error.UnsupportedProviderRoute;
     if (route.mode != .dry_run or route.method == .GET) return error.ProviderRouteIsNotMutation;
 
-    const path = try route.renderPath(gpa, params);
+    const path = try route.renderPathWithQuery(gpa, path_params, query_params);
     defer gpa.free(path);
 
     var out = std.Io.Writer.Allocating.init(gpa);
@@ -118,6 +130,25 @@ test "generic dispatch renders dry-run plans without executing mutations" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 
+test "generic dispatch renders query-aware dry-run plans" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const client = Client.init(.{ .cloudflare = .{ .token = "test-token" } });
+    const plan = try client.dryRunRouteWithQuery(
+        allocator,
+        route,
+        &.{.{ .name = "account_id", .value = "acct/1" }},
+        &.{.{ .name = "base64", .value = "true" }},
+    );
+    defer allocator.free(plan);
+
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"worker-assets-upload\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct%2F1/workers/assets/upload?base64=true\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+}
+
 test "generic dispatch rejects read routes as dry-run mutations" {
     const allocator = std.testing.allocator;
     const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getVirtualMachinesV1")) orelse return error.TestExpectedRoute;
@@ -136,6 +167,24 @@ test "generic dispatch validates auth provider and read safety before HTTP" {
 
     const cloudflare_client = Client.init(.{ .cloudflare = .{} });
     try std.testing.expectError(error.MissingCloudflareAuth, cloudflare_client.callReadRoute(std.testing.io, allocator, route, &.{.{ .name = "account_id", .value = "acct/1" }}));
+}
+
+test "generic dispatch validates required read query parameters before HTTP" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getMetricsV1")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const client = Client.init(.{ .hostinger = "test-token" });
+    try std.testing.expectError(
+        error.MissingRouteQueryParameter,
+        client.callReadRouteWithQuery(
+            std.testing.io,
+            allocator,
+            route,
+            &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+            &.{.{ .name = "date_from", .value = "2026-06-16T00:00:00Z" }},
+        ),
+    );
 }
 
 test "generic dispatch validates mutation safety before HTTP" {

@@ -99,6 +99,11 @@ pub const PathParam = struct {
     value: []const u8,
 };
 
+pub const QueryParam = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
 pub const RouteParam = struct {
     name: []u8,
     required: bool,
@@ -188,8 +193,18 @@ pub const Route = struct {
         return try renderTemplatePath(gpa, self.path_template, params);
     }
 
+    pub fn renderPathWithQuery(self: Route, gpa: Allocator, path_params: []const PathParam, query_params: []const QueryParam) ![]u8 {
+        const path = try self.renderPath(gpa, path_params);
+        defer gpa.free(path);
+        return try appendRouteQuery(gpa, path, self.query_params, query_params);
+    }
+
     pub fn renderUrl(self: Route, gpa: Allocator, base_url_override: ?[]const u8, params: []const PathParam) ![]u8 {
-        const path = try self.renderPath(gpa, params);
+        return try self.renderUrlWithQuery(gpa, base_url_override, params, &.{});
+    }
+
+    pub fn renderUrlWithQuery(self: Route, gpa: Allocator, base_url_override: ?[]const u8, path_params: []const PathParam, query_params: []const QueryParam) ![]u8 {
+        const path = try self.renderPathWithQuery(gpa, path_params, query_params);
         defer gpa.free(path);
         const base_url = base_url_override orelse self.provider.baseUrl();
         return try std.fmt.allocPrint(gpa, "{s}{s}", .{ base_url, path });
@@ -369,6 +384,39 @@ pub fn pathEscape(gpa: Allocator, value: []const u8) ![]u8 {
     return try out.toOwnedSlice();
 }
 
+pub fn queryEscape(gpa: Allocator, value: []const u8) ![]u8 {
+    return try pathEscape(gpa, value);
+}
+
+pub fn appendRouteQuery(gpa: Allocator, base: []const u8, allowed_params: []const RouteParam, params: []const QueryParam) ![]u8 {
+    for (params) |param| {
+        if (!containsRouteParamName(allowed_params, param.name)) return error.UnknownRouteQueryParameter;
+    }
+    for (allowed_params) |allowed| {
+        if (allowed.required and !containsQueryParam(params, allowed.name)) return error.MissingRouteQueryParameter;
+    }
+    if (params.len == 0) return try gpa.dupe(u8, base);
+
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    try out.writer.writeAll(base);
+    var wrote_any = std.mem.indexOfScalar(u8, base, '?') != null;
+    for (params) |param| {
+        try out.writer.writeByte(if (wrote_any) '&' else '?');
+        wrote_any = true;
+
+        const escaped_name = try queryEscape(gpa, param.name);
+        defer gpa.free(escaped_name);
+        const escaped_value = try queryEscape(gpa, param.value);
+        defer gpa.free(escaped_value);
+
+        try out.writer.writeAll(escaped_name);
+        try out.writer.writeByte('=');
+        try out.writer.writeAll(escaped_value);
+    }
+    return try out.toOwnedSlice();
+}
+
 fn appendProvider(gpa: Allocator, provider: Provider, text: []const u8, rows: *std.ArrayList(Route)) !void {
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |line_raw| {
@@ -430,6 +478,13 @@ fn containsParamName(names: []const []u8, candidate: []const u8) bool {
 }
 
 fn containsRouteParamName(params: []const RouteParam, candidate: []const u8) bool {
+    for (params) |param| {
+        if (std.mem.eql(u8, param.name, candidate)) return true;
+    }
+    return false;
+}
+
+fn containsQueryParam(params: []const QueryParam, candidate: []const u8) bool {
     for (params) |param| {
         if (std.mem.eql(u8, param.name, candidate)) return true;
     }
@@ -507,6 +562,64 @@ test "extracts required path parameters and renders escaped route paths" {
     });
     defer allocator.free(url);
     try std.testing.expectEqualStrings("https://example.test/accounts/acct%2F1/access/apps/app%201", url);
+}
+
+test "renders validated query parameters for route paths and urls" {
+    const allocator = std.testing.allocator;
+
+    const route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getMetricsV1")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const path = try route.renderPathWithQuery(
+        allocator,
+        &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+        &.{
+            .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
+            .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
+        },
+    );
+    defer allocator.free(path);
+    try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", path);
+
+    const url = try route.renderUrlWithQuery(
+        allocator,
+        "https://example.test",
+        &.{.{ .name = "virtualMachineId", .value = "vm/1" }},
+        &.{
+            .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
+            .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
+        },
+    );
+    defer allocator.free(url);
+    try std.testing.expectEqualStrings("https://example.test/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", url);
+}
+
+test "validates required and known query parameters" {
+    const allocator = std.testing.allocator;
+
+    const route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getMetricsV1")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    try std.testing.expectError(
+        error.MissingRouteQueryParameter,
+        route.renderPathWithQuery(
+            allocator,
+            &.{.{ .name = "virtualMachineId", .value = "vm" }},
+            &.{.{ .name = "date_from", .value = "2026-06-16T00:00:00Z" }},
+        ),
+    );
+    try std.testing.expectError(
+        error.UnknownRouteQueryParameter,
+        route.renderPathWithQuery(
+            allocator,
+            &.{.{ .name = "virtualMachineId", .value = "vm" }},
+            &.{
+                .{ .name = "date_from", .value = "2026-06-16T00:00:00Z" },
+                .{ .name = "date_to", .value = "2026-06-17T00:00:00Z" },
+                .{ .name = "extra", .value = "ignored" },
+            },
+        ),
+    );
 }
 
 test "reports missing parameters and invalid templates" {
