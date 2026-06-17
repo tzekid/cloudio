@@ -159,6 +159,11 @@ zig build run -- cloudflare api-shield discovery-operations <zone-id>
 zig build run -- cloudflare api-shield operations <zone-id>
 zig build run -- cloudflare api-shield configuration <zone-id>
 zig build run -- cloudflare api-shield client-certificates <zone-id>
+zig build run -- cloudflare email-routing account addresses <account-id>
+zig build run -- cloudflare email-routing zone settings <zone-id>
+zig build run -- cloudflare email-routing zone dns <zone-id>
+zig build run -- cloudflare email-routing zone rules <zone-id>
+zig build run -- cloudflare email-routing zone catch-all <zone-id>
 zig build run -- cloudflare security-posture ai-settings <zone-id>
 zig build run -- cloudflare security-posture bot-management <zone-id>
 zig build run -- cloudflare security-posture content-scanning-settings <zone-id>

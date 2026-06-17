@@ -64,6 +64,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandApiShield(ctx, args);
     } else if (std.mem.eql(u8, sub, "security-posture") or std.mem.eql(u8, sub, "zone-security")) {
         try commandZoneSecurityPosture(ctx, args);
+    } else if (std.mem.eql(u8, sub, "email-routing") or std.mem.eql(u8, sub, "email")) {
+        try commandEmailRouting(ctx, args);
     } else if (std.mem.eql(u8, sub, "custom-pages")) {
         try commandCustomPages(ctx, args);
     } else if (std.mem.eql(u8, sub, "access-custom-pages")) {
@@ -1272,6 +1274,72 @@ fn commandZoneSecurityPosture(ctx: Context, args: []const []const u8) !void {
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneSecurityPostureEndpoint(appContext(ctx), zone_id, endpoint, read_args));
 }
 
+fn commandEmailRouting(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("email-routing account addresses|address <account-id> [address-id] [key=value...] or email-routing zone settings|dns|rules|rule|catch-all <zone-id> [rule-id] [key=value...] required\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "account")) {
+        const endpoint = app_cloudflare.EmailRoutingAccountReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown email-routing account command: {s}\n", .{args[2]});
+            return;
+        };
+        const account_id = args[3];
+        var read_args: app_cloudflare.EmailRoutingAccountReadArgs = .{};
+        var index: usize = 4;
+        if (endpoint.requiresAddressId()) {
+            if (args.len <= index) {
+                std.debug.print("destination address id required for email-routing account {s}\n", .{endpoint.commandName()});
+                return;
+            }
+            read_args.destination_address_identifier = args[index];
+            index += 1;
+        }
+        while (index < args.len) : (index += 1) {
+            if (!endpoint.acceptsFilters()) {
+                std.debug.print("email-routing account {s} does not accept filters: {s}\n", .{ endpoint.commandName(), args[index] });
+                return;
+            }
+            if (!applyEmailRoutingAccountFilter(&read_args, args[index])) {
+                std.debug.print("unknown email-routing account filter: {s}\n", .{args[index]});
+                return;
+            }
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailRoutingAccountEndpoint(appContext(ctx), account_id, endpoint, read_args));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "zone")) {
+        const endpoint = app_cloudflare.EmailRoutingZoneReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown email-routing zone command: {s}\n", .{args[2]});
+            return;
+        };
+        const zone_id = args[3];
+        var read_args: app_cloudflare.EmailRoutingZoneReadArgs = .{};
+        var index: usize = 4;
+        if (endpoint.requiresRuleId()) {
+            if (args.len <= index) {
+                std.debug.print("rule id required for email-routing zone {s}\n", .{endpoint.commandName()});
+                return;
+            }
+            read_args.rule_identifier = args[index];
+            index += 1;
+        }
+        while (index < args.len) : (index += 1) {
+            if (!endpoint.acceptsFilters()) {
+                std.debug.print("email-routing zone {s} does not accept filters: {s}\n", .{ endpoint.commandName(), args[index] });
+                return;
+            }
+            if (!applyEmailRoutingZoneFilter(&read_args, args[index])) {
+                std.debug.print("unknown email-routing zone filter: {s}\n", .{args[index]});
+                return;
+            }
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailRoutingZoneEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+        return;
+    }
+    std.debug.print("unknown email-routing scope: {s}\n", .{args[1]});
+}
+
 fn commandCustomPages(ctx: Context, args: []const []const u8) !void {
     if (args.len < 5) {
         std.debug.print("custom-pages account|zone pages|assets list|show <scope-id> [resource-id] required\n", .{});
@@ -1965,6 +2033,42 @@ fn isKeyValue(value: []const u8) bool {
     return std.mem.indexOfScalar(u8, value, '=') != null;
 }
 
+fn applyEmailRoutingAccountFilter(args: *app_cloudflare.EmailRoutingAccountReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "direction")) {
+        args.direction = value;
+    } else if (std.mem.eql(u8, key, "page")) {
+        args.page = value;
+    } else if (std.mem.eql(u8, key, "per_page") or std.mem.eql(u8, key, "per-page")) {
+        args.per_page = value;
+    } else if (std.mem.eql(u8, key, "verified")) {
+        args.verified = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+fn applyEmailRoutingZoneFilter(args: *app_cloudflare.EmailRoutingZoneReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "subdomain")) {
+        args.subdomain = value;
+    } else if (std.mem.eql(u8, key, "enabled")) {
+        args.enabled = value;
+    } else if (std.mem.eql(u8, key, "page")) {
+        args.page = value;
+    } else if (std.mem.eql(u8, key, "per_page") or std.mem.eql(u8, key, "per-page")) {
+        args.per_page = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 fn applyZeroTrustReadFilter(args: *app_cloudflare.ZeroTrustReadArgs, raw: []const u8) bool {
     const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
     const key = raw[0..eq];
@@ -2288,6 +2392,28 @@ test "cloudforce one rule filters parse key value arguments" {
     try std.testing.expectEqualStrings("yara/workers", args.namespace.?);
     try std.testing.expectEqualStrings("malicious", args.search_filter.?);
     try std.testing.expectEqualStrings("proxy worker", args.query.?);
+}
+
+test "email routing filters parse key value arguments" {
+    var account_args: app_cloudflare.EmailRoutingAccountReadArgs = .{};
+    try std.testing.expect(applyEmailRoutingAccountFilter(&account_args, "direction=desc"));
+    try std.testing.expect(applyEmailRoutingAccountFilter(&account_args, "page=2"));
+    try std.testing.expect(applyEmailRoutingAccountFilter(&account_args, "per-page=50"));
+    try std.testing.expect(applyEmailRoutingAccountFilter(&account_args, "verified=true"));
+    try std.testing.expect(!applyEmailRoutingAccountFilter(&account_args, "unknown=value"));
+    try std.testing.expect(!applyEmailRoutingAccountFilter(&account_args, "verified"));
+    try std.testing.expectEqualStrings("desc", account_args.direction.?);
+    try std.testing.expectEqualStrings("50", account_args.per_page.?);
+
+    var zone_args: app_cloudflare.EmailRoutingZoneReadArgs = .{};
+    try std.testing.expect(applyEmailRoutingZoneFilter(&zone_args, "subdomain=mail.example.test"));
+    try std.testing.expect(applyEmailRoutingZoneFilter(&zone_args, "enabled=false"));
+    try std.testing.expect(applyEmailRoutingZoneFilter(&zone_args, "page=3"));
+    try std.testing.expect(applyEmailRoutingZoneFilter(&zone_args, "per_page=100"));
+    try std.testing.expect(!applyEmailRoutingZoneFilter(&zone_args, "unknown=value"));
+    try std.testing.expect(!applyEmailRoutingZoneFilter(&zone_args, "enabled"));
+    try std.testing.expectEqualStrings("mail.example.test", zone_args.subdomain.?);
+    try std.testing.expectEqualStrings("false", zone_args.enabled.?);
 }
 
 test "zero trust read filters parse key value arguments" {

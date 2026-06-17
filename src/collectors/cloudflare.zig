@@ -74,6 +74,10 @@ pub const ApiShieldReadArgs = provider_cloudflare.ApiShieldReadArgs;
 pub const ApiShieldReadEndpoint = provider_cloudflare.ApiShieldReadEndpoint;
 pub const ZoneSecurityPostureReadArgs = provider_cloudflare.ZoneSecurityPostureReadArgs;
 pub const ZoneSecurityPostureReadEndpoint = provider_cloudflare.ZoneSecurityPostureReadEndpoint;
+pub const EmailRoutingAccountReadArgs = provider_cloudflare.EmailRoutingAccountReadArgs;
+pub const EmailRoutingAccountReadEndpoint = provider_cloudflare.EmailRoutingAccountReadEndpoint;
+pub const EmailRoutingZoneReadArgs = provider_cloudflare.EmailRoutingZoneReadArgs;
+pub const EmailRoutingZoneReadEndpoint = provider_cloudflare.EmailRoutingZoneReadEndpoint;
 pub const TunnelReadArgs = provider_cloudflare.TunnelReadArgs;
 pub const TunnelReadEndpoint = provider_cloudflare.TunnelReadEndpoint;
 pub const ZeroTrustReadArgs = provider_cloudflare.ZeroTrustReadArgs;
@@ -199,6 +203,7 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     try collectCustomPagesForAccounts(gpa, io, client, db, redacted);
     try collectAccessCustomPagesForAccounts(gpa, io, client, db, redacted);
     try collectAccessForAccounts(gpa, io, client, db, redacted);
+    try collectEmailRoutingForAccounts(gpa, io, client, db, redacted);
     try collectTunnelsForAccounts(gpa, io, client, db, redacted);
     try collectZeroTrustForAccounts(gpa, io, client, db, redacted);
     try collectSecurityCenterForAccounts(gpa, io, client, db, redacted);
@@ -920,6 +925,54 @@ pub fn collectZoneSecurityPostureEndpoint(io: Io, gpa: Allocator, auth: Auth, db
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectEmailRoutingAccountEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, endpoint: EmailRoutingAccountReadEndpoint, args: EmailRoutingAccountReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = try emailRoutingAccountTarget(gpa, account_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getEmailRoutingAccountEndpoint(io, gpa, account_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.emailRoutingAccountReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try storeCloudflareResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectEmailRoutingZoneEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: EmailRoutingZoneReadEndpoint, args: EmailRoutingZoneReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = try emailRoutingZoneTarget(gpa, zone_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getEmailRoutingZoneEndpoint(io, gpa, zone_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.emailRoutingZoneReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try storeCloudflareResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectCustomPageEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs, capture_output: bool) !Output {
     const endpoint_label = endpoint.label(scope, resource);
     const target = try customPageTarget(gpa, scope_id, endpoint, args);
@@ -1528,6 +1581,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
         try collectPageShieldForZone(gpa, io, client, db, zone_id, domain);
         try collectApiShieldForZone(gpa, io, client, db, zone_id, domain);
         try collectZoneSecurityPostureForZone(gpa, io, client, db, zone_id, domain);
+        try collectEmailRoutingForZone(gpa, io, client, db, zone_id, domain);
         try collectCustomPagesForZone(gpa, io, client, db, zone_id, domain);
         try collectAccessForZone(gpa, io, client, db, zone_id, domain);
         try collectSecurityCenterForZone(gpa, io, client, db, zone_id, domain);
@@ -2661,6 +2715,108 @@ fn collectZoneSecurityPostureSnapshot(gpa: Allocator, io: Io, client: provider_c
     const endpoint_path = try provider_cloudflare.zoneSecurityPostureReadPath(gpa, zone_id, endpoint, args);
     defer gpa.free(endpoint_path);
     const target = try zoneSecurityPostureTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try storeCloudflareResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
+fn collectEmailRoutingForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try collectEmailRoutingAccountRead(gpa, io, client, db, row.id, row.name orelse row.id, .addresses, .{});
+    }
+}
+
+fn collectEmailRoutingAccountRead(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, target_label: []const u8, endpoint: EmailRoutingAccountReadEndpoint, args: EmailRoutingAccountReadArgs) anyerror!void {
+    const redacted = collectEmailRoutingAccountSnapshot(gpa, io, client, db, account_id, target_label, endpoint, args) catch |err| {
+        const target = emailRoutingAccountTarget(gpa, target_label, endpoint, args) catch try gpa.dupe(u8, target_label);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    if (endpoint == .addresses) {
+        try collectEmailRoutingAddressDetails(gpa, io, client, db, account_id, target_label, redacted);
+    }
+}
+
+fn collectEmailRoutingAddressDetails(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, target_label: []const u8, list_body: []const u8) anyerror!void {
+    var rows = try provider_cloudflare_models.parseResourceIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try collectEmailRoutingAccountRead(gpa, io, client, db, account_id, target_label, .address, .{ .destination_address_identifier = row.id });
+    }
+}
+
+fn collectEmailRoutingAccountSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, target_label: []const u8, endpoint: EmailRoutingAccountReadEndpoint, args: EmailRoutingAccountReadArgs) ![]u8 {
+    const body = try client.getEmailRoutingAccountEndpoint(io, gpa, account_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.emailRoutingAccountReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try emailRoutingAccountTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try storeCloudflareResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
+fn collectEmailRoutingForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8) !void {
+    const endpoints = [_]EmailRoutingZoneReadEndpoint{
+        .settings,
+        .dns,
+        .rules,
+        .catch_all,
+    };
+    for (endpoints) |endpoint| {
+        try collectEmailRoutingZoneRead(gpa, io, client, db, zone_id, target_label, endpoint, .{});
+    }
+}
+
+fn collectEmailRoutingZoneRead(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, endpoint: EmailRoutingZoneReadEndpoint, args: EmailRoutingZoneReadArgs) anyerror!void {
+    const redacted = collectEmailRoutingZoneSnapshot(gpa, io, client, db, zone_id, target_label, endpoint, args) catch |err| {
+        const target = emailRoutingZoneTarget(gpa, target_label, endpoint, args) catch try gpa.dupe(u8, target_label);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    if (endpoint == .rules) {
+        try collectEmailRoutingRuleDetails(gpa, io, client, db, zone_id, target_label, redacted);
+    }
+}
+
+fn collectEmailRoutingRuleDetails(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, list_body: []const u8) anyerror!void {
+    var rows = try provider_cloudflare_models.parseResourceIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try collectEmailRoutingZoneRead(gpa, io, client, db, zone_id, target_label, .rule, .{ .rule_identifier = row.id });
+    }
+}
+
+fn collectEmailRoutingZoneSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, endpoint: EmailRoutingZoneReadEndpoint, args: EmailRoutingZoneReadArgs) ![]u8 {
+    const body = try client.getEmailRoutingZoneEndpoint(io, gpa, zone_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.emailRoutingZoneReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try emailRoutingZoneTarget(gpa, target_label, endpoint, args);
     defer gpa.free(target);
     return try storeCloudflareResponse(gpa, db, .{
         .provider = "cloudflare",
@@ -3915,6 +4071,22 @@ fn zoneSecurityPostureTarget(gpa: Allocator, zone_label: []const u8, endpoint: Z
     if (endpoint.requiresDetectionId()) {
         const id = args.detection_id orelse return try gpa.dupe(u8, zone_label);
         return try std.fmt.allocPrint(gpa, "{s}/leaked-credential-detection:{s}", .{ zone_label, id });
+    }
+    return try gpa.dupe(u8, zone_label);
+}
+
+fn emailRoutingAccountTarget(gpa: Allocator, account_label: []const u8, endpoint: EmailRoutingAccountReadEndpoint, args: EmailRoutingAccountReadArgs) ![]u8 {
+    if (endpoint.requiresAddressId()) {
+        const id = args.destination_address_identifier orelse return try gpa.dupe(u8, account_label);
+        return try std.fmt.allocPrint(gpa, "{s}/email-routing-address:{s}", .{ account_label, id });
+    }
+    return try gpa.dupe(u8, account_label);
+}
+
+fn emailRoutingZoneTarget(gpa: Allocator, zone_label: []const u8, endpoint: EmailRoutingZoneReadEndpoint, args: EmailRoutingZoneReadArgs) ![]u8 {
+    if (endpoint.requiresRuleId()) {
+        const id = args.rule_identifier orelse return try gpa.dupe(u8, zone_label);
+        return try std.fmt.allocPrint(gpa, "{s}/email-routing-rule:{s}", .{ zone_label, id });
     }
     return try gpa.dupe(u8, zone_label);
 }

@@ -67,6 +67,10 @@ pub const ApiShieldReadArgs = collector_cloudflare.ApiShieldReadArgs;
 pub const ApiShieldReadEndpoint = collector_cloudflare.ApiShieldReadEndpoint;
 pub const ZoneSecurityPostureReadArgs = collector_cloudflare.ZoneSecurityPostureReadArgs;
 pub const ZoneSecurityPostureReadEndpoint = collector_cloudflare.ZoneSecurityPostureReadEndpoint;
+pub const EmailRoutingAccountReadArgs = collector_cloudflare.EmailRoutingAccountReadArgs;
+pub const EmailRoutingAccountReadEndpoint = collector_cloudflare.EmailRoutingAccountReadEndpoint;
+pub const EmailRoutingZoneReadArgs = collector_cloudflare.EmailRoutingZoneReadArgs;
+pub const EmailRoutingZoneReadEndpoint = collector_cloudflare.EmailRoutingZoneReadEndpoint;
 pub const TunnelReadArgs = collector_cloudflare.TunnelReadArgs;
 pub const TunnelReadEndpoint = collector_cloudflare.TunnelReadEndpoint;
 pub const ZeroTrustReadArgs = collector_cloudflare.ZeroTrustReadArgs;
@@ -268,6 +272,14 @@ pub fn collectApiShieldEndpoint(ctx: Context, zone_id: []const u8, endpoint: Api
 
 pub fn collectZoneSecurityPostureEndpoint(ctx: Context, zone_id: []const u8, endpoint: ZoneSecurityPostureReadEndpoint, args: ZoneSecurityPostureReadArgs) !Output {
     return try collector_cloudflare.collectZoneSecurityPostureEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, args, true);
+}
+
+pub fn collectEmailRoutingAccountEndpoint(ctx: Context, account_id: []const u8, endpoint: EmailRoutingAccountReadEndpoint, args: EmailRoutingAccountReadArgs) !Output {
+    return try collector_cloudflare.collectEmailRoutingAccountEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, args, true);
+}
+
+pub fn collectEmailRoutingZoneEndpoint(ctx: Context, zone_id: []const u8, endpoint: EmailRoutingZoneReadEndpoint, args: EmailRoutingZoneReadArgs) !Output {
+    return try collector_cloudflare.collectEmailRoutingZoneEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, args, true);
 }
 
 pub fn collectCustomPageEndpoint(ctx: Context, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) !Output {

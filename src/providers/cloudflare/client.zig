@@ -250,6 +250,18 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getEmailRoutingAccountEndpoint(self: Client, io: Io, gpa: Allocator, account_id: []const u8, endpoint: EmailRoutingAccountReadEndpoint, args: EmailRoutingAccountReadArgs) !net_http.Response {
+        const url = try emailRoutingAccountReadUrl(gpa, self.base_url_override, account_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getEmailRoutingZoneEndpoint(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, endpoint: EmailRoutingZoneReadEndpoint, args: EmailRoutingZoneReadArgs) !net_http.Response {
+        const url = try emailRoutingZoneReadUrl(gpa, self.base_url_override, zone_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getCustomPageEndpoint(self: Client, io: Io, gpa: Allocator, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) !net_http.Response {
         const url = try customPageReadUrl(gpa, self.base_url_override, scope, scope_id, resource, endpoint, args);
         defer gpa.free(url);
@@ -3508,6 +3520,134 @@ pub const ZoneSecurityPostureReadEndpoint = enum {
 
 pub const ZoneSecurityPostureReadArgs = struct {
     detection_id: ?[]const u8 = null,
+};
+
+pub const EmailRoutingAccountReadEndpoint = enum {
+    addresses,
+    address,
+
+    pub fn parse(value: []const u8) ?EmailRoutingAccountReadEndpoint {
+        if (std.mem.eql(u8, value, "addresses") or std.mem.eql(u8, value, "destination-addresses")) return .addresses;
+        if (std.mem.eql(u8, value, "address") or std.mem.eql(u8, value, "destination-address")) return .address;
+        return null;
+    }
+
+    pub fn commandName(self: EmailRoutingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .addresses => "addresses",
+            .address => "address",
+        };
+    }
+
+    pub fn label(self: EmailRoutingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .addresses => "account-email-routing-addresses",
+            .address => "account-email-routing-address",
+        };
+    }
+
+    pub fn operationId(self: EmailRoutingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .addresses => "email-routing-destination-addresses-list-destination-addresses",
+            .address => "email-routing-destination-addresses-get-a-destination-address",
+        };
+    }
+
+    pub fn summary(self: EmailRoutingAccountReadEndpoint) []const u8 {
+        return switch (self) {
+            .addresses => "List Email Routing destination addresses",
+            .address => "Get an Email Routing destination address",
+        };
+    }
+
+    pub fn requiresAddressId(self: EmailRoutingAccountReadEndpoint) bool {
+        return self == .address;
+    }
+
+    pub fn acceptsFilters(self: EmailRoutingAccountReadEndpoint) bool {
+        return self == .addresses;
+    }
+};
+
+pub const EmailRoutingAccountReadArgs = struct {
+    destination_address_identifier: ?[]const u8 = null,
+    direction: ?[]const u8 = null,
+    page: ?[]const u8 = null,
+    per_page: ?[]const u8 = null,
+    verified: ?[]const u8 = null,
+};
+
+pub const EmailRoutingZoneReadEndpoint = enum {
+    settings,
+    dns,
+    rules,
+    rule,
+    catch_all,
+
+    pub fn parse(value: []const u8) ?EmailRoutingZoneReadEndpoint {
+        if (std.mem.eql(u8, value, "settings") or std.mem.eql(u8, value, "routing-settings")) return .settings;
+        if (std.mem.eql(u8, value, "dns") or std.mem.eql(u8, value, "dns-settings")) return .dns;
+        if (std.mem.eql(u8, value, "rules") or std.mem.eql(u8, value, "routing-rules")) return .rules;
+        if (std.mem.eql(u8, value, "rule") or std.mem.eql(u8, value, "routing-rule")) return .rule;
+        if (std.mem.eql(u8, value, "catch-all") or std.mem.eql(u8, value, "catch_all")) return .catch_all;
+        return null;
+    }
+
+    pub fn commandName(self: EmailRoutingZoneReadEndpoint) []const u8 {
+        return switch (self) {
+            .settings => "settings",
+            .dns => "dns",
+            .rules => "rules",
+            .rule => "rule",
+            .catch_all => "catch-all",
+        };
+    }
+
+    pub fn label(self: EmailRoutingZoneReadEndpoint) []const u8 {
+        return switch (self) {
+            .settings => "zone-email-routing-settings",
+            .dns => "zone-email-routing-dns",
+            .rules => "zone-email-routing-rules",
+            .rule => "zone-email-routing-rule",
+            .catch_all => "zone-email-routing-catch-all",
+        };
+    }
+
+    pub fn operationId(self: EmailRoutingZoneReadEndpoint) []const u8 {
+        return switch (self) {
+            .settings => "email-routing-settings-get-email-routing-settings",
+            .dns => "email-routing-settings-email-routing-dns-settings",
+            .rules => "email-routing-routing-rules-list-routing-rules",
+            .rule => "email-routing-routing-rules-get-routing-rule",
+            .catch_all => "email-routing-routing-rules-get-catch-all-rule",
+        };
+    }
+
+    pub fn summary(self: EmailRoutingZoneReadEndpoint) []const u8 {
+        return switch (self) {
+            .settings => "Get Email Routing settings",
+            .dns => "Get Email Routing DNS settings",
+            .rules => "List Email Routing rules",
+            .rule => "Get an Email Routing rule",
+            .catch_all => "Get Email Routing catch-all rule",
+        };
+    }
+
+    pub fn requiresRuleId(self: EmailRoutingZoneReadEndpoint) bool {
+        return self == .rule;
+    }
+
+    pub fn acceptsFilters(self: EmailRoutingZoneReadEndpoint) bool {
+        return self == .dns or self == .rules;
+    }
+};
+
+pub const EmailRoutingZoneReadArgs = struct {
+    rule_identifier: ?[]const u8 = null,
+    subdomain: ?[]const u8 = null,
+    enabled: ?[]const u8 = null,
+    page: ?[]const u8 = null,
+    per_page: ?[]const u8 = null,
 };
 
 pub const PageShieldMutationEndpoint = enum {
@@ -8701,6 +8841,63 @@ pub fn zoneSecurityPostureReadPath(gpa: Allocator, zone_id: []const u8, endpoint
     };
 }
 
+pub fn emailRoutingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: EmailRoutingAccountReadEndpoint, args: EmailRoutingAccountReadArgs) ![]u8 {
+    const path = try emailRoutingAccountReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn emailRoutingAccountReadPath(gpa: Allocator, account_id: []const u8, endpoint: EmailRoutingAccountReadEndpoint, args: EmailRoutingAccountReadArgs) ![]u8 {
+    const escaped_account_id = try pathEscape(gpa, account_id);
+    defer gpa.free(escaped_account_id);
+    const addresses_path = try std.fmt.allocPrint(gpa, "{s}/{s}/email/routing/addresses", .{ accounts_path, escaped_account_id });
+    defer gpa.free(addresses_path);
+    return switch (endpoint) {
+        .addresses => try appendEmailRoutingAddressFilters(gpa, addresses_path, args),
+        .address => blk: {
+            const address_id = args.destination_address_identifier orelse return error.MissingCloudflareEmailRoutingAddressId;
+            const escaped_address_id = try pathEscape(gpa, address_id);
+            defer gpa.free(escaped_address_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/{s}", .{ addresses_path, escaped_address_id });
+        },
+    };
+}
+
+pub fn emailRoutingZoneReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, endpoint: EmailRoutingZoneReadEndpoint, args: EmailRoutingZoneReadArgs) ![]u8 {
+    const path = try emailRoutingZoneReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn emailRoutingZoneReadPath(gpa: Allocator, zone_id: []const u8, endpoint: EmailRoutingZoneReadEndpoint, args: EmailRoutingZoneReadArgs) ![]u8 {
+    const escaped_zone_id = try pathEscape(gpa, zone_id);
+    defer gpa.free(escaped_zone_id);
+    const routing_base = try std.fmt.allocPrint(gpa, "{s}/{s}/email/routing", .{ zones_path, escaped_zone_id });
+    defer gpa.free(routing_base);
+    return switch (endpoint) {
+        .settings => try gpa.dupe(u8, routing_base),
+        .dns => blk: {
+            const dns_path = try std.fmt.allocPrint(gpa, "{s}/dns", .{routing_base});
+            defer gpa.free(dns_path);
+            break :blk try appendQuery(gpa, dns_path, &[_]QueryParam{
+                .{ .name = "subdomain", .value = args.subdomain },
+            });
+        },
+        .rules => blk: {
+            const rules_path = try std.fmt.allocPrint(gpa, "{s}/rules", .{routing_base});
+            defer gpa.free(rules_path);
+            break :blk try appendEmailRoutingRulesFilters(gpa, rules_path, args);
+        },
+        .rule => blk: {
+            const rule_id = args.rule_identifier orelse return error.MissingCloudflareEmailRoutingRuleId;
+            const escaped_rule_id = try pathEscape(gpa, rule_id);
+            defer gpa.free(escaped_rule_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/rules/{s}", .{ routing_base, escaped_rule_id });
+        },
+        .catch_all => try std.fmt.allocPrint(gpa, "{s}/rules/catch_all", .{routing_base}),
+    };
+}
+
 pub fn pageShieldMutationPath(gpa: Allocator, endpoint: PageShieldMutationEndpoint, args: PageShieldMutationArgs) ![]u8 {
     const base_path = try pageShieldBasePath(gpa, args.zone_id);
     defer gpa.free(base_path);
@@ -10429,6 +10626,23 @@ fn appendPageShieldFilters(gpa: Allocator, base_path: []const u8, endpoint: Page
     };
 }
 
+fn appendEmailRoutingAddressFilters(gpa: Allocator, base_path: []const u8, args: EmailRoutingAccountReadArgs) ![]u8 {
+    return try appendQuery(gpa, base_path, &[_]QueryParam{
+        .{ .name = "direction", .value = args.direction },
+        .{ .name = "page", .value = args.page },
+        .{ .name = "per_page", .value = args.per_page },
+        .{ .name = "verified", .value = args.verified },
+    });
+}
+
+fn appendEmailRoutingRulesFilters(gpa: Allocator, base_path: []const u8, args: EmailRoutingZoneReadArgs) ![]u8 {
+    return try appendQuery(gpa, base_path, &[_]QueryParam{
+        .{ .name = "enabled", .value = args.enabled },
+        .{ .name = "page", .value = args.page },
+        .{ .name = "per_page", .value = args.per_page },
+    });
+}
+
 pub fn pathEscape(gpa: Allocator, value: []const u8) ![]u8 {
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
@@ -11622,6 +11836,61 @@ test "builds zone security posture read paths" {
     try std.testing.expectEqualStrings("/zones/zone%2F1/ct/alerting", ct);
 
     try std.testing.expectError(error.MissingCloudflareLeakedCredentialDetectionId, zoneSecurityPostureReadPath(allocator, "zone/1", .leaked_credential_detection, .{}));
+}
+
+test "email routing endpoints map to official operation metadata" {
+    try std.testing.expectEqual(EmailRoutingAccountReadEndpoint.addresses, EmailRoutingAccountReadEndpoint.parse("destination-addresses").?);
+    try std.testing.expectEqual(EmailRoutingAccountReadEndpoint.address, EmailRoutingAccountReadEndpoint.parse("destination-address").?);
+    try std.testing.expectEqualStrings("email-routing-destination-addresses-list-destination-addresses", EmailRoutingAccountReadEndpoint.addresses.operationId());
+    try std.testing.expectEqualStrings("email-routing-destination-addresses-get-a-destination-address", EmailRoutingAccountReadEndpoint.address.operationId());
+    try std.testing.expect(EmailRoutingAccountReadEndpoint.address.requiresAddressId());
+    try std.testing.expect(EmailRoutingAccountReadEndpoint.addresses.acceptsFilters());
+
+    try std.testing.expectEqual(EmailRoutingZoneReadEndpoint.settings, EmailRoutingZoneReadEndpoint.parse("routing-settings").?);
+    try std.testing.expectEqual(EmailRoutingZoneReadEndpoint.dns, EmailRoutingZoneReadEndpoint.parse("dns-settings").?);
+    try std.testing.expectEqual(EmailRoutingZoneReadEndpoint.rules, EmailRoutingZoneReadEndpoint.parse("routing-rules").?);
+    try std.testing.expectEqual(EmailRoutingZoneReadEndpoint.catch_all, EmailRoutingZoneReadEndpoint.parse("catch_all").?);
+    try std.testing.expectEqualStrings("email-routing-settings-get-email-routing-settings", EmailRoutingZoneReadEndpoint.settings.operationId());
+    try std.testing.expectEqualStrings("email-routing-settings-email-routing-dns-settings", EmailRoutingZoneReadEndpoint.dns.operationId());
+    try std.testing.expectEqualStrings("email-routing-routing-rules-list-routing-rules", EmailRoutingZoneReadEndpoint.rules.operationId());
+    try std.testing.expectEqualStrings("email-routing-routing-rules-get-catch-all-rule", EmailRoutingZoneReadEndpoint.catch_all.operationId());
+    try std.testing.expect(EmailRoutingZoneReadEndpoint.rule.requiresRuleId());
+    try std.testing.expect(EmailRoutingZoneReadEndpoint.rules.acceptsFilters());
+}
+
+test "builds email routing read paths" {
+    const allocator = std.testing.allocator;
+
+    const addresses = try emailRoutingAccountReadUrl(allocator, base_url, "acct/1", .addresses, .{ .direction = "desc", .verified = "true" });
+    defer allocator.free(addresses);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/email/routing/addresses?direction=desc&verified=true", addresses);
+
+    const address = try emailRoutingAccountReadPath(allocator, "acct/1", .address, .{ .destination_address_identifier = "addr/1" });
+    defer allocator.free(address);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/email/routing/addresses/addr%2F1", address);
+
+    const settings = try emailRoutingZoneReadUrl(allocator, base_url, "zone/1", .settings, .{});
+    defer allocator.free(settings);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone%2F1/email/routing", settings);
+
+    const dns = try emailRoutingZoneReadPath(allocator, "zone/1", .dns, .{ .subdomain = "mail.example.test" });
+    defer allocator.free(dns);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/email/routing/dns?subdomain=mail.example.test", dns);
+
+    const rules = try emailRoutingZoneReadPath(allocator, "zone/1", .rules, .{ .enabled = "false", .per_page = "100" });
+    defer allocator.free(rules);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/email/routing/rules?enabled=false&per_page=100", rules);
+
+    const rule = try emailRoutingZoneReadPath(allocator, "zone/1", .rule, .{ .rule_identifier = "rule/1" });
+    defer allocator.free(rule);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/email/routing/rules/rule%2F1", rule);
+
+    const catch_all = try emailRoutingZoneReadPath(allocator, "zone/1", .catch_all, .{});
+    defer allocator.free(catch_all);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/email/routing/rules/catch_all", catch_all);
+
+    try std.testing.expectError(error.MissingCloudflareEmailRoutingAddressId, emailRoutingAccountReadPath(allocator, "acct/1", .address, .{}));
+    try std.testing.expectError(error.MissingCloudflareEmailRoutingRuleId, emailRoutingZoneReadPath(allocator, "zone/1", .rule, .{}));
 }
 
 test "custom page endpoints map to official operation metadata" {
