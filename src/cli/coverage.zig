@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_coverage = @import("app_coverage");
+const cli_render = @import("cli_render");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -248,27 +249,21 @@ fn commandSummary(ctx: Context) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_coverage.writeTextFromFiles(ctx.io, ctx.gpa, ctx.paths, &out.writer);
-    const text = try out.toOwnedSlice();
-    defer ctx.gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandTags(ctx: Context, filter: app_coverage.ProviderFilter) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_coverage.writeTagsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, filter, &out.writer);
-    const text = try out.toOwnedSlice();
-    defer ctx.gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandL1(ctx: Context, filter: app_coverage.ProviderFilter) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_coverage.writeL1AuditTextFromFiles(ctx.io, ctx.gpa, ctx.paths, filter, &out.writer);
-    const text = try out.toOwnedSlice();
-    defer ctx.gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandGaps(ctx: Context, command: GapCommand) !void {
@@ -278,9 +273,7 @@ fn commandGaps(ctx: Context, command: GapCommand) !void {
         .text => try app_coverage.writeGapsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
         .json => try app_coverage.writeGapsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
     }
-    const text = try out.toOwnedSlice();
-    defer ctx.gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandLevels(ctx: Context, command: LevelCommand) !void {
@@ -290,9 +283,7 @@ fn commandLevels(ctx: Context, command: LevelCommand) !void {
         .text => try app_coverage.writeLevelsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
         .json => try app_coverage.writeLevelsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
     }
-    const text = try out.toOwnedSlice();
-    defer ctx.gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandLevelTags(ctx: Context, command: LevelTagCommand) !void {
@@ -302,18 +293,14 @@ fn commandLevelTags(ctx: Context, command: LevelTagCommand) !void {
         .text => try app_coverage.writeLevelTagsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
         .json => try app_coverage.writeLevelTagsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
     }
-    const text = try out.toOwnedSlice();
-    defer ctx.gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandRoutes(ctx: Context, filter: app_coverage.RouteFilter) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_coverage.writeRoutesTextFromFiles(ctx.io, ctx.gpa, ctx.paths, filter, &out.writer);
-    const text = try out.toOwnedSlice();
-    defer ctx.gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandPlan(ctx: Context, args: []const []const u8) !void {
@@ -329,9 +316,7 @@ fn commandPlan(ctx: Context, args: []const []const u8) !void {
         std.debug.print("coverage plan failed: {s}\n", .{@errorName(err)});
         return;
     };
-    const text = try out.toOwnedSlice();
-    defer ctx.gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 pub const ParsedPlan = struct {

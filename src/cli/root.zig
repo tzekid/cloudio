@@ -13,6 +13,7 @@ const cli_coverage = @import("cli_coverage");
 const cli_hostinger = @import("cli_hostinger");
 const cli_inventory = @import("cli_inventory");
 const cli_projects = @import("cli_projects");
+const cli_render = @import("cli_render");
 const cli_route = @import("cli_route");
 const cli_system = @import("cli_system");
 const db_store = @import("db_store");
@@ -47,14 +48,15 @@ pub fn run(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, cmd, "refresh")) {
         try commandRefresh(init.io, init.gpa, cfg, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "overview")) {
-        try commandOverview(init.gpa, &db, args[2..]);
+        try commandOverview(init.io, init.gpa, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "inventory")) {
         try cli_inventory.run(.{
+            .io = init.io,
             .gpa = init.gpa,
             .db = &db,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "export")) {
-        try commandExport(init.gpa, &db);
+        try commandExport(init.io, init.gpa, &db);
     } else if (std.mem.eql(u8, cmd, "coverage")) {
         try cli_coverage.run(.{
             .io = init.io,
@@ -324,9 +326,7 @@ fn commandInit(io: Io, gpa: Allocator, cfg: Config, db: *Db) !void {
         .gpa = gpa,
         .config = cfg,
     }, &out.writer);
-    const text = try out.toOwnedSlice();
-    defer gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(io, gpa, &out);
 }
 
 fn commandDoctor(io: Io, gpa: Allocator, cfg: Config, db: *Db) !void {
@@ -339,9 +339,7 @@ fn commandDoctor(io: Io, gpa: Allocator, cfg: Config, db: *Db) !void {
         .config = cfg,
         .db = db,
     }, &out.writer);
-    const text = try out.toOwnedSlice();
-    defer gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(io, gpa, &out);
 }
 
 fn commandRefresh(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []const u8) !void {
@@ -365,7 +363,7 @@ fn commandRefresh(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []
             .hostinger_auth = cfg.hasHostingerAuth(),
         },
     }, refreshSelectionFromArgs(args));
-    std.debug.print("refresh complete\n", .{});
+    try cli_render.writeAll(io, "refresh complete\n");
 }
 
 fn commandLog(io: Io, gpa: Allocator, cfg: Config) !void {
@@ -376,18 +374,14 @@ fn commandLog(io: Io, gpa: Allocator, cfg: Config) !void {
         .gpa = gpa,
         .path = cfg.log_path,
     }, &out.writer);
-    const text = try out.toOwnedSlice();
-    defer gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(io, gpa, &out);
 }
 
-fn commandExport(gpa: Allocator, db: *Db) !void {
+fn commandExport(io: Io, gpa: Allocator, db: *Db) !void {
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
     try app_export.writeRecentSnapshotsJson(gpa, db, &out.writer);
-    const text = try out.toOwnedSlice();
-    defer gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(io, gpa, &out);
 }
 
 fn refreshSelectionFromArgs(args: []const []const u8) app_refresh.Selection {
@@ -409,7 +403,7 @@ const OverviewFormat = enum {
     json,
 };
 
-fn commandOverview(gpa: Allocator, db: *Db, args: []const []const u8) !void {
+fn commandOverview(io: Io, gpa: Allocator, db: *Db, args: []const []const u8) !void {
     const format = parseOverviewFormat(args) catch |err| {
         std.debug.print("invalid overview command: {s}\n", .{@errorName(err)});
         return err;
@@ -420,9 +414,7 @@ fn commandOverview(gpa: Allocator, db: *Db, args: []const []const u8) !void {
         .text => try app_overview.writeText(gpa, db, &out.writer),
         .json => try app_overview.writeJson(gpa, db, &out.writer),
     }
-    const text = try out.toOwnedSlice();
-    defer gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(io, gpa, &out);
 }
 
 fn parseOverviewFormat(args: []const []const u8) !OverviewFormat {

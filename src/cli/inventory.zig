@@ -1,11 +1,14 @@
 const std = @import("std");
 const app_inventory = @import("app_inventory");
+const cli_render = @import("cli_render");
 const db_store = @import("db_store");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
+const Io = std.Io;
 
 pub const Context = struct {
+    io: Io,
     gpa: Allocator,
     db: *Db,
 };
@@ -41,9 +44,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
             .json => try app_inventory.writeSummaryJson(app_ctx, parsed.options, &out.writer),
         },
     }
-    const text = try out.toOwnedSlice();
-    defer ctx.gpa.free(text);
-    std.debug.print("{s}", .{text});
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 pub const Command = union(enum) {

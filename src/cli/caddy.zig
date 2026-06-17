@@ -18,9 +18,9 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     switch (parseCommand(args)) {
         .sites => try commandSites(ctx),
         .upstreams => try commandUpstreams(ctx),
-        .render => cli_render.printOutput(ctx.gpa, try app_caddy.render(appContext(ctx))),
-        .diff => cli_render.printOutput(ctx.gpa, try app_caddy.diff(appContext(ctx))),
-        .validate => cli_render.printOutput(ctx.gpa, try app_caddy.validate(appContext(ctx))),
+        .render => try cli_render.printOutput(ctx.io, ctx.gpa, try app_caddy.render(appContext(ctx))),
+        .diff => try cli_render.printOutput(ctx.io, ctx.gpa, try app_caddy.diff(appContext(ctx))),
+        .validate => try cli_render.printOutput(ctx.io, ctx.gpa, try app_caddy.validate(appContext(ctx))),
         .unknown => |name| std.debug.print("unknown caddy command: {s}\n", .{name}),
     }
 }
@@ -47,14 +47,14 @@ fn commandSites(ctx: Context) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_caddy.writeSites(appContext(ctx), &out.writer);
-    try printOwned(ctx.gpa, &out);
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandUpstreams(ctx: Context) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_caddy.collectAndWriteUpstreams(appContext(ctx), &out.writer);
-    try printOwned(ctx.gpa, &out);
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn appContext(ctx: Context) app_caddy.Context {
@@ -64,12 +64,6 @@ fn appContext(ctx: Context) app_caddy.Context {
         .paths = ctx.paths,
         .db = ctx.db,
     };
-}
-
-fn printOwned(gpa: Allocator, out: *std.Io.Writer.Allocating) !void {
-    const text = try out.toOwnedSlice();
-    defer gpa.free(text);
-    std.debug.print("{s}", .{text});
 }
 
 test "caddy command parser defaults to sites and recognizes dry-run commands" {

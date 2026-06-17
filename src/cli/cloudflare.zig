@@ -26,16 +26,16 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     } else if (std.mem.eql(u8, sub, "dry-run")) {
         try commandDryRun(ctx, args);
     } else if (std.mem.eql(u8, sub, "inventory")) {
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.listInventoryItems(appContext(ctx)));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.listInventoryItems(appContext(ctx)));
     } else if (std.mem.eql(u8, sub, "resources")) {
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.listResources(appContext(ctx)));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.listResources(appContext(ctx)));
     } else if (std.mem.eql(u8, sub, "ips")) {
         const networks: ?[]const u8 = if (args.len > 1) args[1] else null;
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectIps(appContext(ctx), networks));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectIps(appContext(ctx), networks));
     } else if (std.mem.eql(u8, sub, "membership")) {
         try commandMembership(ctx, args);
     } else if (app_cloudflare.IdentityEndpoint.parse(sub)) |endpoint| {
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectIdentityEndpoint(appContext(ctx), endpoint));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectIdentityEndpoint(appContext(ctx), endpoint));
     } else if (std.mem.eql(u8, sub, "token")) {
         try commandToken(ctx, args);
     } else if (std.mem.eql(u8, sub, "zone")) {
@@ -162,7 +162,7 @@ fn commandDryRunDns(ctx: Context, args: []const []const u8) !void {
         .zone_id = args[3],
         .dns_record_id = if (endpoint.requiresRecordId()) args[4] else null,
     };
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planDnsRecordMutation(appContext(ctx), endpoint, plan_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planDnsRecordMutation(appContext(ctx), endpoint, plan_args));
 }
 
 fn commandDryRunDnssec(ctx: Context, args: []const []const u8) !void {
@@ -174,7 +174,7 @@ fn commandDryRunDnssec(ctx: Context, args: []const []const u8) !void {
         std.debug.print("zone id required for dry-run dnssec {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planDnssecMutation(appContext(ctx), endpoint, .{ .zone_id = args[3] }));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planDnssecMutation(appContext(ctx), endpoint, .{ .zone_id = args[3] }));
 }
 
 fn commandDryRunZone(ctx: Context, args: []const []const u8) !void {
@@ -190,7 +190,7 @@ fn commandDryRunZone(ctx: Context, args: []const []const u8) !void {
         std.debug.print("environment id required for dry-run zone {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planZoneMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planZoneMutation(appContext(ctx), endpoint, .{
         .zone_id = if (endpoint.requiresZoneId()) args[3] else null,
         .environment_id = if (endpoint.requiresEnvironmentId()) args[4] else null,
     }));
@@ -209,7 +209,7 @@ fn commandDryRunZoneLifecycle(ctx: Context, args: []const []const u8) !void {
         std.debug.print("environment id required for dry-run zone-lifecycle {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planZoneLifecycleMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planZoneLifecycleMutation(appContext(ctx), endpoint, .{
         .zone_id = args[3],
         .environment_id = if (endpoint.requiresEnvironmentId()) args[4] else null,
     }));
@@ -224,7 +224,7 @@ fn commandDryRunToken(ctx: Context, args: []const []const u8) !void {
         std.debug.print("token id required for dry-run token {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planUserTokenMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planUserTokenMutation(appContext(ctx), endpoint, .{
         .token_id = if (endpoint.requiresTokenId()) args[3] else null,
     }));
 }
@@ -238,7 +238,7 @@ fn commandDryRunMembership(ctx: Context, args: []const []const u8) !void {
         std.debug.print("membership id required for dry-run membership {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planMembershipMutation(appContext(ctx), endpoint, .{ .membership_id = args[3] }));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planMembershipMutation(appContext(ctx), endpoint, .{ .membership_id = args[3] }));
 }
 
 fn commandDryRunAccount(ctx: Context, args: []const []const u8) !void {
@@ -250,7 +250,7 @@ fn commandDryRunAccount(ctx: Context, args: []const []const u8) !void {
         std.debug.print("account id required for dry-run account {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccountMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planAccountMutation(appContext(ctx), endpoint, .{
         .account_id = if (endpoint.requiresAccountId()) args[3] else null,
     }));
 }
@@ -268,7 +268,7 @@ fn commandDryRunAccountToken(ctx: Context, args: []const []const u8) !void {
         std.debug.print("token id required for dry-run account-token {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccountTokenMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planAccountTokenMutation(appContext(ctx), endpoint, .{
         .account_id = args[3],
         .token_id = if (endpoint.requiresTokenId()) args[4] else null,
     }));
@@ -287,7 +287,7 @@ fn commandDryRunAccountMember(ctx: Context, args: []const []const u8) !void {
         std.debug.print("member id required for dry-run account-member {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccountMemberMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planAccountMemberMutation(appContext(ctx), endpoint, .{
         .account_id = args[3],
         .member_id = if (endpoint.requiresMemberId()) args[4] else null,
     }));
@@ -306,7 +306,7 @@ fn commandDryRunAccountIamGroup(ctx: Context, args: []const []const u8, collecti
         std.debug.print("resource id required for dry-run {s} {s}\n", .{ collection.detailCommandName(), endpoint.commandName() });
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccountIamGroupMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planAccountIamGroupMutation(appContext(ctx), endpoint, .{
         .collection = collection,
         .account_id = args[3],
         .resource_id = if (endpoint.requiresResourceId()) args[4] else null,
@@ -326,7 +326,7 @@ fn commandDryRunAccountUserGroupMember(ctx: Context, args: []const []const u8) !
         std.debug.print("member id required for dry-run account-user-group-member {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccountUserGroupMemberMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planAccountUserGroupMemberMutation(appContext(ctx), endpoint, .{
         .account_id = args[3],
         .user_group_id = args[4],
         .member_id = if (endpoint.requiresMemberId()) args[5] else null,
@@ -350,7 +350,7 @@ fn commandDryRunSecondaryDnsAccount(ctx: Context, args: []const []const u8) !voi
         std.debug.print("resource id required for dry-run secondary-dns-account {s} {s}\n", .{ resource.detailCommandName(), endpoint.commandName() });
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planSecondaryDnsAccountMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planSecondaryDnsAccountMutation(appContext(ctx), endpoint, .{
         .resource = resource,
         .account_id = args[4],
         .resource_id = if (endpoint.requiresResourceId()) args[5] else null,
@@ -366,7 +366,7 @@ fn commandDryRunSecondaryDnsZone(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unknown secondary-dns-zone dry-run operation: {s}\n", .{args[2]});
         return;
     };
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planSecondaryDnsZoneMutation(appContext(ctx), endpoint, .{ .zone_id = args[3] }));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planSecondaryDnsZoneMutation(appContext(ctx), endpoint, .{ .zone_id = args[3] }));
 }
 
 fn commandDryRunDnsFirewall(ctx: Context, args: []const []const u8) !void {
@@ -382,7 +382,7 @@ fn commandDryRunDnsFirewall(ctx: Context, args: []const []const u8) !void {
         std.debug.print("dns firewall id required for dry-run dns-firewall {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planDnsFirewallMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planDnsFirewallMutation(appContext(ctx), endpoint, .{
         .account_id = args[3],
         .dns_firewall_id = if (endpoint.requiresFirewallId()) args[4] else null,
     }));
@@ -397,7 +397,7 @@ fn commandDryRunDnsSettings(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unknown dns-settings dry-run scope: {s}\n", .{args[2]});
         return;
     };
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planDnsSettingsMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planDnsSettingsMutation(appContext(ctx), endpoint, .{
         .account_id = if (endpoint == .account) args[3] else null,
         .zone_id = if (endpoint == .zone) args[3] else null,
     }));
@@ -444,7 +444,7 @@ fn commandDryRunLoadBalancing(ctx: Context, args: []const []const u8) !void {
         std.debug.print("{s} id required for dry-run load-balancing {s} {s}\n", .{ resource.resourceLabel(), resource.commandName(), endpoint.commandName() });
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planLoadBalancingMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planLoadBalancingMutation(appContext(ctx), endpoint, .{
         .resource = resource,
         .account_id = account_id,
         .zone_id = zone_id,
@@ -493,7 +493,7 @@ fn commandDryRunHealthChecks(ctx: Context, args: []const []const u8) !void {
         std.debug.print("{s} id required for dry-run health-checks {s} {s}\n", .{ resource.resourceLabel(), resource.commandName(), endpoint.commandName() });
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planHealthCheckMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planHealthCheckMutation(appContext(ctx), endpoint, .{
         .resource = resource,
         .account_id = account_id,
         .zone_id = zone_id,
@@ -514,7 +514,7 @@ fn commandDryRunResourceTags(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unknown resource-tags dry-run operation: {s}\n", .{args[3]});
         return;
     };
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planResourceTaggingMutation(appContext(ctx), endpoint, .{
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planResourceTaggingMutation(appContext(ctx), endpoint, .{
         .resource = resource,
         .account_id = if (resource.usesAccountId()) args[4] else null,
         .zone_id = if (resource.usesAccountId()) null else args[4],
@@ -573,7 +573,7 @@ fn commandDryRunRulesets(ctx: Context, args: []const []const u8) !void {
         mutation_args.version = args[index];
     }
 
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planRulesetMutation(appContext(ctx), endpoint, mutation_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planRulesetMutation(appContext(ctx), endpoint, mutation_args));
 }
 
 fn commandDryRunCloudforceOneRules(ctx: Context, args: []const []const u8) !void {
@@ -593,7 +593,7 @@ fn commandDryRunCloudforceOneRules(ctx: Context, args: []const []const u8) !void
         }
         mutation_args.rule_id = args[4];
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planCloudforceOneRuleMutation(appContext(ctx), endpoint, mutation_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planCloudforceOneRuleMutation(appContext(ctx), endpoint, mutation_args));
 }
 
 fn commandDryRunIpAccessRules(ctx: Context, args: []const []const u8) !void {
@@ -626,7 +626,7 @@ fn commandDryRunIpAccessRules(ctx: Context, args: []const []const u8) !void {
         }
         mutation_args.rule_id = args[index];
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planIpAccessRuleMutation(appContext(ctx), endpoint, mutation_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planIpAccessRuleMutation(appContext(ctx), endpoint, mutation_args));
 }
 
 fn commandDryRunZoneLegacyRules(ctx: Context, args: []const []const u8, resource: app_cloudflare.ZoneLegacyRuleResource) !void {
@@ -653,7 +653,7 @@ fn commandDryRunZoneLegacyRules(ctx: Context, args: []const []const u8, resource
         }
         mutation_args.rule_id = args[4];
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planZoneLegacyRuleMutation(appContext(ctx), endpoint, mutation_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planZoneLegacyRuleMutation(appContext(ctx), endpoint, mutation_args));
 }
 
 fn commandDryRunPageShield(ctx: Context, args: []const []const u8) !void {
@@ -673,7 +673,7 @@ fn commandDryRunPageShield(ctx: Context, args: []const []const u8) !void {
         }
         mutation_args.policy_id = args[4];
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planPageShieldMutation(appContext(ctx), endpoint, mutation_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planPageShieldMutation(appContext(ctx), endpoint, mutation_args));
 }
 
 fn commandDryRunCustomPages(ctx: Context, args: []const []const u8) !void {
@@ -700,7 +700,7 @@ fn commandDryRunCustomPages(ctx: Context, args: []const []const u8) !void {
         }
         mutation_args.resource_id = args[5];
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planCustomPageMutation(appContext(ctx), endpoint, mutation_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planCustomPageMutation(appContext(ctx), endpoint, mutation_args));
 }
 
 fn commandDryRunAccessCustomPages(ctx: Context, args: []const []const u8) !void {
@@ -720,7 +720,7 @@ fn commandDryRunAccessCustomPages(ctx: Context, args: []const []const u8) !void 
         }
         mutation_args.page_id = args[4];
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccessCustomPageMutation(appContext(ctx), endpoint, mutation_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planAccessCustomPageMutation(appContext(ctx), endpoint, mutation_args));
 }
 
 fn commandDryRunAccess(ctx: Context, args: []const []const u8) !void {
@@ -784,12 +784,12 @@ fn commandDryRunAccess(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unused access dry-run argument: {s}\n", .{args[index]});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccessMutation(appContext(ctx), endpoint, mutation_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.planAccessMutation(appContext(ctx), endpoint, mutation_args));
 }
 
 fn commandDns(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1) {
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
         return;
     }
     if (app_cloudflare.DnsRecordReadEndpoint.parse(args[1])) |endpoint| {
@@ -801,10 +801,10 @@ fn commandDns(ctx: Context, args: []const []const u8) !void {
         const domain = if (endpoint.requiresRecordId())
             if (args.len > 3) args[3] else ctx.domains[0]
         else if (args.len > 2) args[2] else ctx.domains[0];
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDnsRecordEndpoint(appContext(ctx), domain, endpoint, record_id));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectDnsRecordEndpoint(appContext(ctx), domain, endpoint, record_id));
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), args[1]));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), args[1]));
 }
 
 fn commandDnsAnalytics(ctx: Context, args: []const []const u8) !void {
@@ -816,7 +816,7 @@ fn commandDnsAnalytics(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unknown dns-analytics command: {s}\n", .{args[1]});
         return;
     };
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDnsAnalyticsEndpoint(appContext(ctx), args[2], endpoint));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectDnsAnalyticsEndpoint(appContext(ctx), args[2], endpoint));
 }
 
 fn commandDnsFirewall(ctx: Context, args: []const []const u8) !void {
@@ -833,7 +833,7 @@ fn commandDnsFirewall(ctx: Context, args: []const []const u8) !void {
             std.debug.print("unknown dns-firewall analytics command: {s}\n", .{args[2]});
             return;
         };
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDnsFirewallAnalyticsEndpoint(appContext(ctx), args[3], args[4], endpoint));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectDnsFirewallAnalyticsEndpoint(appContext(ctx), args[3], args[4], endpoint));
         return;
     }
     const endpoint = app_cloudflare.DnsFirewallReadEndpoint.parse(args[1]) orelse {
@@ -848,7 +848,7 @@ fn commandDnsFirewall(ctx: Context, args: []const []const u8) !void {
         std.debug.print("dns firewall id required for dns-firewall {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDnsFirewallReadEndpoint(appContext(ctx), args[2], endpoint, if (endpoint.requiresFirewallId()) args[3] else null));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectDnsFirewallReadEndpoint(appContext(ctx), args[2], endpoint, if (endpoint.requiresFirewallId()) args[3] else null));
 }
 
 fn commandLoadBalancing(ctx: Context, args: []const []const u8) !void {
@@ -871,7 +871,7 @@ fn commandLoadBalancing(ctx: Context, args: []const []const u8) !void {
             return;
         }
         const search_query: ?[]const u8 = if (endpoint == .search and args.len > resource_index) args[resource_index] else null;
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLoadBalancingAccountEndpoint(appContext(ctx), args[3], endpoint, if (endpoint.requiresResourceId()) args[resource_index] else null, search_query));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectLoadBalancingAccountEndpoint(appContext(ctx), args[3], endpoint, if (endpoint.requiresResourceId()) args[resource_index] else null, search_query));
         return;
     }
     if (std.mem.eql(u8, args[1], "user")) {
@@ -883,7 +883,7 @@ fn commandLoadBalancing(ctx: Context, args: []const []const u8) !void {
             std.debug.print("resource id required for load-balancing user {s}\n", .{endpoint.commandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLoadBalancingUserEndpoint(appContext(ctx), endpoint, if (endpoint.requiresResourceId()) args[3] else null));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectLoadBalancingUserEndpoint(appContext(ctx), endpoint, if (endpoint.requiresResourceId()) args[3] else null));
         return;
     }
     if (std.mem.eql(u8, args[1], "zone")) {
@@ -899,7 +899,7 @@ fn commandLoadBalancing(ctx: Context, args: []const []const u8) !void {
             std.debug.print("load balancer id required for load-balancing zone {s}\n", .{endpoint.commandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLoadBalancingZoneEndpoint(appContext(ctx), args[3], endpoint, if (endpoint.requiresLoadBalancerId()) args[4] else null));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectLoadBalancingZoneEndpoint(appContext(ctx), args[3], endpoint, if (endpoint.requiresLoadBalancerId()) args[4] else null));
         return;
     }
     std.debug.print("unknown load-balancing scope: {s}\n", .{args[1]});
@@ -923,7 +923,7 @@ fn commandHealthChecks(ctx: Context, args: []const []const u8) !void {
             std.debug.print("health check id required for health-checks endpoint {s}\n", .{endpoint.commandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEndpointHealthCheck(appContext(ctx), args[3], endpoint, if (endpoint.requiresHealthCheckId()) args[4] else null));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectEndpointHealthCheck(appContext(ctx), args[3], endpoint, if (endpoint.requiresHealthCheckId()) args[4] else null));
         return;
     }
     if (std.mem.eql(u8, args[1], "zone")) {
@@ -939,7 +939,7 @@ fn commandHealthChecks(ctx: Context, args: []const []const u8) !void {
             std.debug.print("health check id required for health-checks zone {s}\n", .{endpoint.commandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneHealthCheck(appContext(ctx), args[3], endpoint, if (endpoint.requiresHealthCheckId()) args[4] else null));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectZoneHealthCheck(appContext(ctx), args[3], endpoint, if (endpoint.requiresHealthCheckId()) args[4] else null));
         return;
     }
     if (std.mem.eql(u8, args[1], "smart-shield") or std.mem.eql(u8, args[1], "smartshield")) {
@@ -955,7 +955,7 @@ fn commandHealthChecks(ctx: Context, args: []const []const u8) !void {
             std.debug.print("health check id required for health-checks smart-shield {s}\n", .{endpoint.commandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectSmartShieldHealthCheck(appContext(ctx), args[3], endpoint, if (endpoint.requiresHealthCheckId()) args[4] else null));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectSmartShieldHealthCheck(appContext(ctx), args[3], endpoint, if (endpoint.requiresHealthCheckId()) args[4] else null));
         return;
     }
     std.debug.print("unknown health-checks scope: {s}\n", .{args[1]});
@@ -989,7 +989,7 @@ fn commandResourceTags(ctx: Context, args: []const []const u8) !void {
             .resources => .{ .type_filter = if (args.len > 4) args[4] else null },
             .values => .{ .tag_key = args[4] },
         };
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectResourceTaggingAccountEndpoint(appContext(ctx), args[3], endpoint, read_args));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectResourceTaggingAccountEndpoint(appContext(ctx), args[3], endpoint, read_args));
         return;
     }
     if (std.mem.eql(u8, args[1], "zone")) {
@@ -1001,7 +1001,7 @@ fn commandResourceTags(ctx: Context, args: []const []const u8) !void {
             std.debug.print("unknown resource-tags zone command: {s}\n", .{args[2]});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectResourceTaggingZoneTags(appContext(ctx), args[3], .{
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectResourceTaggingZoneTags(appContext(ctx), args[3], .{
             .resource_type = if (args.len > 4) args[4] else null,
             .resource_id = if (args.len > 5) args[5] else null,
             .access_application_id = if (args.len > 6) args[6] else null,
@@ -1060,7 +1060,7 @@ fn commandRulesets(ctx: Context, args: []const []const u8) !void {
         read_args.rule_tag = args[index];
     }
 
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectRulesetEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectRulesetEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
 }
 
 fn commandCloudforceOneRules(ctx: Context, args: []const []const u8) !void {
@@ -1100,7 +1100,7 @@ fn commandCloudforceOneRules(ctx: Context, args: []const []const u8) !void {
         return;
     }
 
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectCloudforceOneRuleEndpoint(appContext(ctx), account_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectCloudforceOneRuleEndpoint(appContext(ctx), account_id, endpoint, read_args));
 }
 
 fn commandIpAccessRules(ctx: Context, args: []const []const u8) !void {
@@ -1147,7 +1147,7 @@ fn commandIpAccessRules(ctx: Context, args: []const []const u8) !void {
         }
     }
 
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectIpAccessRuleEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectIpAccessRuleEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
 }
 
 fn commandZoneLegacyRules(ctx: Context, args: []const []const u8, resource: app_cloudflare.ZoneLegacyRuleResource) !void {
@@ -1168,7 +1168,7 @@ fn commandZoneLegacyRules(ctx: Context, args: []const []const u8, resource: app_
         }
         rule_id = args[3];
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneLegacyRuleEndpoint(appContext(ctx), zone_id, resource, endpoint, rule_id));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectZoneLegacyRuleEndpoint(appContext(ctx), zone_id, resource, endpoint, rule_id));
 }
 
 fn commandPageShield(ctx: Context, args: []const []const u8) !void {
@@ -1201,7 +1201,7 @@ fn commandPageShield(ctx: Context, args: []const []const u8) !void {
             return;
         }
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectPageShieldEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectPageShieldEndpoint(appContext(ctx), zone_id, endpoint, read_args));
 }
 
 fn commandApiShield(ctx: Context, args: []const []const u8) !void {
@@ -1252,7 +1252,7 @@ fn commandApiShield(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unexpected api-shield argument: {s}\n", .{args[index]});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectApiShieldEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectApiShieldEndpoint(appContext(ctx), zone_id, endpoint, read_args));
 }
 
 fn commandZoneSecurityPosture(ctx: Context, args: []const []const u8) !void {
@@ -1279,7 +1279,7 @@ fn commandZoneSecurityPosture(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unexpected security-posture argument: {s}\n", .{args[index]});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneSecurityPostureEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectZoneSecurityPostureEndpoint(appContext(ctx), zone_id, endpoint, read_args));
 }
 
 fn commandEmailSecurity(ctx: Context, args: []const []const u8) !void {
@@ -1312,7 +1312,7 @@ fn commandEmailSecurity(ctx: Context, args: []const []const u8) !void {
             return;
         }
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailSecuritySettingsEndpoint(appContext(ctx), account_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectEmailSecuritySettingsEndpoint(appContext(ctx), account_id, endpoint, read_args));
 }
 
 fn commandEmailRouting(ctx: Context, args: []const []const u8) !void {
@@ -1346,7 +1346,7 @@ fn commandEmailRouting(ctx: Context, args: []const []const u8) !void {
                 return;
             }
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailRoutingAccountEndpoint(appContext(ctx), account_id, endpoint, read_args));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectEmailRoutingAccountEndpoint(appContext(ctx), account_id, endpoint, read_args));
         return;
     }
     if (std.mem.eql(u8, args[1], "zone")) {
@@ -1375,7 +1375,7 @@ fn commandEmailRouting(ctx: Context, args: []const []const u8) !void {
                 return;
             }
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailRoutingZoneEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectEmailRoutingZoneEndpoint(appContext(ctx), zone_id, endpoint, read_args));
         return;
     }
     std.debug.print("unknown email-routing scope: {s}\n", .{args[1]});
@@ -1399,7 +1399,7 @@ fn commandEmailAuth(ctx: Context, args: []const []const u8) !void {
         }
         read_args.spf_record_id = args[3];
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailAuthEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectEmailAuthEndpoint(appContext(ctx), zone_id, endpoint, read_args));
 }
 
 fn commandEmailSending(ctx: Context, args: []const []const u8) !void {
@@ -1412,7 +1412,7 @@ fn commandEmailSending(ctx: Context, args: []const []const u8) !void {
             std.debug.print("unknown email-sending account command: {s}\n", .{args[2]});
             return;
         };
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailSendingAccountEndpoint(appContext(ctx), args[3], endpoint, .{}));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectEmailSendingAccountEndpoint(appContext(ctx), args[3], endpoint, .{}));
         return;
     }
     if (std.mem.eql(u8, args[1], "zone")) {
@@ -1429,7 +1429,7 @@ fn commandEmailSending(ctx: Context, args: []const []const u8) !void {
             }
             read_args.subdomain_id = args[4];
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailSendingZoneEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectEmailSendingZoneEndpoint(appContext(ctx), zone_id, endpoint, read_args));
         return;
     }
     std.debug.print("unknown email-sending scope: {s}\n", .{args[1]});
@@ -1461,7 +1461,7 @@ fn commandCustomPages(ctx: Context, args: []const []const u8) !void {
         }
         read_args.resource_id = args[5];
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectCustomPageEndpoint(appContext(ctx), scope, scope_id, resource, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectCustomPageEndpoint(appContext(ctx), scope, scope_id, resource, endpoint, read_args));
 }
 
 fn commandAccessCustomPages(ctx: Context, args: []const []const u8) !void {
@@ -1482,7 +1482,7 @@ fn commandAccessCustomPages(ctx: Context, args: []const []const u8) !void {
         }
         page_id = args[3];
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccessCustomPageEndpoint(appContext(ctx), account_id, endpoint, page_id));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccessCustomPageEndpoint(appContext(ctx), account_id, endpoint, page_id));
 }
 
 fn commandAccess(ctx: Context, args: []const []const u8) !void {
@@ -1549,7 +1549,7 @@ fn commandAccess(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unused access argument: {s}\n", .{args[index]});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccessEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccessEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
 }
 
 fn printMissingAccessReadArg(scope: app_cloudflare.AccessScope, endpoint: app_cloudflare.AccessReadEndpoint, label: []const u8) void {
@@ -1606,7 +1606,7 @@ fn commandTunnel(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unused tunnel argument: {s}\n", .{args[index]});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectTunnelEndpoint(appContext(ctx), account_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectTunnelEndpoint(appContext(ctx), account_id, endpoint, read_args));
 }
 
 fn printMissingTunnelReadArg(endpoint: app_cloudflare.TunnelReadEndpoint, label: []const u8) void {
@@ -1676,7 +1676,7 @@ fn commandZeroTrust(ctx: Context, args: []const []const u8) !void {
             return;
         }
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZeroTrustEndpoint(appContext(ctx), account_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectZeroTrustEndpoint(appContext(ctx), account_id, endpoint, read_args));
 }
 
 fn printMissingZeroTrustReadArg(endpoint: app_cloudflare.ZeroTrustReadEndpoint, label: []const u8) void {
@@ -1713,7 +1713,7 @@ fn commandSecurityCenter(ctx: Context, args: []const []const u8) !void {
             return;
         }
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectSecurityCenterEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectSecurityCenterEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
 }
 
 fn commandAuditLogs(ctx: Context, args: []const []const u8) !void {
@@ -1749,7 +1749,7 @@ fn commandAuditLogs(ctx: Context, args: []const []const u8) !void {
             return;
         }
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAuditLogEndpoint(appContext(ctx), endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAuditLogEndpoint(appContext(ctx), endpoint, read_args));
 }
 
 fn commandLogpush(ctx: Context, args: []const []const u8) !void {
@@ -1788,7 +1788,7 @@ fn commandLogpush(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unused logpush argument: {s}\n", .{args[index]});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLogpushEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectLogpushEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
 }
 
 fn commandLogExplorer(ctx: Context, args: []const []const u8) !void {
@@ -1821,7 +1821,7 @@ fn commandLogExplorer(ctx: Context, args: []const []const u8) !void {
             return;
         }
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLogExplorerEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectLogExplorerEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
 }
 
 fn commandLogsReceived(ctx: Context, args: []const []const u8) !void {
@@ -1854,7 +1854,7 @@ fn commandLogsReceived(ctx: Context, args: []const []const u8) !void {
         std.debug.print("end=<rfc3339> required for logs-received received\n", .{});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLogsReceivedEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectLogsReceivedEndpoint(appContext(ctx), zone_id, endpoint, read_args));
 }
 
 fn commandTls(ctx: Context, args: []const []const u8) !void {
@@ -1923,7 +1923,7 @@ fn commandTls(ctx: Context, args: []const []const u8) !void {
             return;
         }
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectTlsEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectTlsEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
 }
 
 fn printMissingTlsReadArg(scope: app_cloudflare.TlsScope, endpoint: app_cloudflare.TlsReadEndpoint, label: []const u8) void {
@@ -1933,19 +1933,19 @@ fn printMissingTlsReadArg(scope: app_cloudflare.TlsScope, endpoint: app_cloudfla
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
     if (args.len > 1 and std.mem.eql(u8, args[1], "zsk")) {
         const domain = if (args.len > 2) args[2] else ctx.domains[0];
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneEndpoint(appContext(ctx), domain, .dnssec_zsk));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectZoneEndpoint(appContext(ctx), domain, .dnssec_zsk));
         return;
     }
     const domain = app_cloudflare.selectedDomain(ctx.domains, args);
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneEndpoint(appContext(ctx), domain, .dnssec));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectZoneEndpoint(appContext(ctx), domain, .dnssec));
 }
 
 fn commandMembership(ctx: Context, args: []const []const u8) !void {
     if (args.len < 2) {
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectIdentityEndpoint(appContext(ctx), .memberships));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectIdentityEndpoint(appContext(ctx), .memberships));
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectMembership(appContext(ctx), args[1]));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectMembership(appContext(ctx), args[1]));
 }
 
 fn commandZone(ctx: Context, args: []const []const u8) !void {
@@ -1954,7 +1954,7 @@ fn commandZone(ctx: Context, args: []const []const u8) !void {
             std.debug.print("zone id required for zone {s}\n", .{args[1]});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneById(appContext(ctx), args[2]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectZoneById(appContext(ctx), args[2]));
         return;
     }
     if (args.len > 1) {
@@ -1967,12 +1967,12 @@ fn commandZone(ctx: Context, args: []const []const u8) !void {
                 std.debug.print("plan id required for zone {s}\n", .{endpoint.commandName()});
                 return;
             }
-            cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneLifecycleReadEndpoint(appContext(ctx), args[2], endpoint, if (endpoint.requiresPlanId()) args[3] else null));
+            try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectZoneLifecycleReadEndpoint(appContext(ctx), args[2], endpoint, if (endpoint.requiresPlanId()) args[3] else null));
             return;
         }
     }
     const domain = app_cloudflare.selectedDomain(ctx.domains, args);
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZone(appContext(ctx), domain));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectZone(appContext(ctx), domain));
 }
 
 fn commandSecondaryDns(ctx: Context, args: []const []const u8) !void {
@@ -1985,7 +1985,7 @@ fn commandSecondaryDns(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id required for secondary-dns {s}\n", .{resource.listCommandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectSecondaryDnsAccountCollection(appContext(ctx), args[2], resource));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectSecondaryDnsAccountCollection(appContext(ctx), args[2], resource));
         return;
     }
     if (app_cloudflare.SecondaryDnsAccountResource.parseDetailCommand(args[1])) |resource| {
@@ -1993,7 +1993,7 @@ fn commandSecondaryDns(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id and resource id required for secondary-dns {s}\n", .{resource.detailCommandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectSecondaryDnsAccountResource(appContext(ctx), args[2], resource, args[3]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectSecondaryDnsAccountResource(appContext(ctx), args[2], resource, args[3]));
         return;
     }
     if (app_cloudflare.SecondaryDnsZoneReadEndpoint.parse(args[1])) |endpoint| {
@@ -2001,7 +2001,7 @@ fn commandSecondaryDns(ctx: Context, args: []const []const u8) !void {
             std.debug.print("zone id required for secondary-dns {s}\n", .{endpoint.commandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectSecondaryDnsZoneEndpoint(appContext(ctx), args[2], endpoint));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectSecondaryDnsZoneEndpoint(appContext(ctx), args[2], endpoint));
         return;
     }
     std.debug.print("unknown secondary-dns command: {s}\n", .{args[1]});
@@ -2009,7 +2009,7 @@ fn commandSecondaryDns(ctx: Context, args: []const []const u8) !void {
 
 fn commandAccount(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1 or std.mem.eql(u8, args[1], "list")) {
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccounts(appContext(ctx)));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccounts(appContext(ctx)));
         return;
     }
     if (std.mem.eql(u8, args[1], "dns-record-usage") or std.mem.eql(u8, args[1], "dns-usage")) {
@@ -2017,7 +2017,7 @@ fn commandAccount(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id required for account dns-record-usage\n", .{});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountDnsRecordUsage(appContext(ctx), args[2]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccountDnsRecordUsage(appContext(ctx), args[2]));
         return;
     }
     if (app_cloudflare.AccountCollection.parseListCommand(args[1])) |collection| {
@@ -2025,7 +2025,7 @@ fn commandAccount(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id required for account {s}\n", .{collection.listCommandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountCollection(appContext(ctx), args[2], collection));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccountCollection(appContext(ctx), args[2], collection));
         return;
     }
     if (app_cloudflare.AccountCollection.parseDetailCommand(args[1])) |collection| {
@@ -2033,7 +2033,7 @@ fn commandAccount(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id and resource id required for account {s}\n", .{collection.detailCommandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountResource(appContext(ctx), args[2], collection, args[3]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccountResource(appContext(ctx), args[2], collection, args[3]));
         return;
     }
     if (app_cloudflare.AccountTokenEndpoint.parse(args[1])) |endpoint| {
@@ -2041,7 +2041,7 @@ fn commandAccount(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id required for account {s}\n", .{endpoint.commandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountTokenEndpoint(appContext(ctx), args[2], endpoint));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccountTokenEndpoint(appContext(ctx), args[2], endpoint));
         return;
     }
     if (std.mem.eql(u8, args[1], "token")) {
@@ -2049,7 +2049,7 @@ fn commandAccount(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id and token id required for account token\n", .{});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountToken(appContext(ctx), args[2], args[3]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccountToken(appContext(ctx), args[2], args[3]));
         return;
     }
     if (std.mem.eql(u8, args[1], "user-group-members")) {
@@ -2057,7 +2057,7 @@ fn commandAccount(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id and user group id required for account user-group-members\n", .{});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountUserGroupMembers(appContext(ctx), args[2], args[3]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccountUserGroupMembers(appContext(ctx), args[2], args[3]));
         return;
     }
     if (std.mem.eql(u8, args[1], "user-group-member")) {
@@ -2065,7 +2065,7 @@ fn commandAccount(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id, user group id, and member id required for account user-group-member\n", .{});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountUserGroupMember(appContext(ctx), args[2], args[3], args[4]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccountUserGroupMember(appContext(ctx), args[2], args[3], args[4]));
         return;
     }
     if (app_cloudflare.AccountIamCollection.parseListCommand(args[1])) |collection| {
@@ -2073,7 +2073,7 @@ fn commandAccount(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id required for account {s}\n", .{collection.listCommandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountIamCollection(appContext(ctx), args[2], collection));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccountIamCollection(appContext(ctx), args[2], collection));
         return;
     }
     if (app_cloudflare.AccountIamCollection.parseDetailCommand(args[1])) |collection| {
@@ -2081,7 +2081,7 @@ fn commandAccount(ctx: Context, args: []const []const u8) !void {
             std.debug.print("account id and resource id required for account {s}\n", .{collection.detailCommandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountIamResource(appContext(ctx), args[2], collection, args[3]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccountIamResource(appContext(ctx), args[2], collection, args[3]));
         return;
     }
     const endpoint = app_cloudflare.AccountEndpoint.parse(args[1]) orelse {
@@ -2092,12 +2092,12 @@ fn commandAccount(ctx: Context, args: []const []const u8) !void {
         std.debug.print("account id required for account {s}\n", .{endpoint.commandName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountEndpoint(appContext(ctx), args[2], endpoint));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectAccountEndpoint(appContext(ctx), args[2], endpoint));
 }
 
 fn commandToken(ctx: Context, args: []const []const u8) !void {
     if (args.len < 2) {
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectUserTokenEndpoint(appContext(ctx), .list));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectUserTokenEndpoint(appContext(ctx), .list));
         return;
     }
     const endpoint = app_cloudflare.UserTokenEndpoint.parse(args[1]) orelse {
@@ -2109,10 +2109,10 @@ fn commandToken(ctx: Context, args: []const []const u8) !void {
             std.debug.print("token id required for token {s}\n", .{endpoint.commandName()});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectUserToken(appContext(ctx), args[2]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectUserToken(appContext(ctx), args[2]));
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectUserTokenEndpoint(appContext(ctx), endpoint));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectUserTokenEndpoint(appContext(ctx), endpoint));
 }
 
 fn commandSetting(ctx: Context, args: []const []const u8) !void {
@@ -2121,7 +2121,7 @@ fn commandSetting(ctx: Context, args: []const []const u8) !void {
         return;
     }
     const domain = if (args.len > 2) args[2] else ctx.domains[0];
-    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneSetting(appContext(ctx), domain, args[1]));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectZoneSetting(appContext(ctx), domain, args[1]));
 }
 
 fn isKeyValue(value: []const u8) bool {

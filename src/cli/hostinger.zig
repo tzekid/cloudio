@@ -23,8 +23,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     const sub = args[0];
     if (std.mem.eql(u8, sub, "vps")) {
         switch (parseVpsSelection(args[1..])) {
-            .list => cli_render.printOutput(ctx.gpa, try app_hostinger.collectVps(appContext(ctx))),
-            .detail => |vm_id| cli_render.printOutput(ctx.gpa, try app_hostinger.collectVpsDetails(appContext(ctx), vm_id)),
+            .list => try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectVps(appContext(ctx))),
+            .detail => |vm_id| try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectVpsDetails(appContext(ctx), vm_id)),
             .missing_id => std.debug.print("vm id required\n", .{}),
         }
     } else if (std.mem.eql(u8, sub, "dry-run")) {
@@ -38,11 +38,11 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     } else if (std.mem.eql(u8, sub, "security")) {
         try commandVmEndpoint(ctx, args, .monarx);
     } else if (std.mem.eql(u8, sub, "inventory")) {
-        cli_render.printOutput(ctx.gpa, try app_hostinger.listInventoryItems(appContext(ctx)));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.listInventoryItems(appContext(ctx)));
     } else if (std.mem.eql(u8, sub, "resources")) {
-        cli_render.printOutput(ctx.gpa, try app_hostinger.listResources(appContext(ctx)));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.listResources(appContext(ctx)));
     } else if (app_hostinger.BillingEndpoint.parse(sub)) |endpoint| {
-        cli_render.printOutput(ctx.gpa, try app_hostinger.collectBillingEndpoint(appContext(ctx), endpoint));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectBillingEndpoint(appContext(ctx), endpoint));
     } else if (app_hostinger.DnsEndpoint.parse(sub)) |endpoint| {
         try commandDns(ctx, args, endpoint);
     } else if (app_hostinger.DomainEndpoint.parse(sub)) |endpoint| {
@@ -50,7 +50,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     } else if (app_hostinger.HostingEndpoint.parse(sub)) |endpoint| {
         try commandHosting(ctx, args, endpoint);
     } else if (app_hostinger.EcommerceEndpoint.parse(sub)) |endpoint| {
-        cli_render.printOutput(ctx.gpa, try app_hostinger.collectEcommerceEndpoint(appContext(ctx), endpoint));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectEcommerceEndpoint(appContext(ctx), endpoint));
     } else if (app_hostinger.HorizonsEndpoint.parse(sub)) |endpoint| {
         try commandHorizons(ctx, args, endpoint);
     } else if (app_hostinger.ReachEndpoint.parse(sub)) |endpoint| {
@@ -60,7 +60,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     } else if (app_hostinger.VpsInventoryDetailEndpoint.parse(sub)) |endpoint| {
         try commandInventoryDetail(ctx, args, endpoint);
     } else if (app_hostinger.VpsInventoryEndpoint.parse(sub)) |endpoint| {
-        cli_render.printOutput(ctx.gpa, try app_hostinger.collectVpsInventoryEndpoint(appContext(ctx), endpoint));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectVpsInventoryEndpoint(appContext(ctx), endpoint));
     } else {
         std.debug.print("unknown hostinger command: {s}\n", .{sub});
     }
@@ -87,7 +87,7 @@ fn commandVmEndpoint(ctx: Context, args: []const []const u8, endpoint: app_hosti
         std.debug.print("vm id required\n", .{});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_hostinger.collectVmEndpoint(appContext(ctx), args[1], endpoint));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectVmEndpoint(appContext(ctx), args[1], endpoint));
 }
 
 fn commandActionDetails(ctx: Context, args: []const []const u8) !void {
@@ -95,7 +95,7 @@ fn commandActionDetails(ctx: Context, args: []const []const u8) !void {
         std.debug.print("vm id and action id required\n", .{});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_hostinger.collectActionDetails(appContext(ctx), args[1], args[2]));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectActionDetails(appContext(ctx), args[1], args[2]));
 }
 
 fn commandDryRun(ctx: Context, args: []const []const u8) !void {
@@ -147,7 +147,7 @@ fn commandDryRunVps(ctx: Context, args: []const []const u8) !void {
         .ip_address_id = if (endpoint.requiresIpAddressId()) args[4] else null,
         .backup_id = if (endpoint.requiresBackupId()) args[4] else null,
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planVpsMutation(appContext(ctx), endpoint, plan_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planVpsMutation(appContext(ctx), endpoint, plan_args));
 }
 
 fn commandDryRunFirewall(ctx: Context, args: []const []const u8) !void {
@@ -172,7 +172,7 @@ fn commandDryRunFirewall(ctx: Context, args: []const []const u8) !void {
         .vm_id = if (endpoint.requiresVmId()) args[4] else null,
         .rule_id = if (endpoint.requiresRuleId()) args[4] else null,
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planFirewallMutation(appContext(ctx), endpoint, plan_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planFirewallMutation(appContext(ctx), endpoint, plan_args));
 }
 
 fn commandDryRunDocker(ctx: Context, args: []const []const u8) !void {
@@ -192,7 +192,7 @@ fn commandDryRunDocker(ctx: Context, args: []const []const u8) !void {
         .vm_id = args[3],
         .project_name = if (endpoint.requiresProject()) args[4] else null,
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planDockerMutation(appContext(ctx), endpoint, plan_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planDockerMutation(appContext(ctx), endpoint, plan_args));
 }
 
 fn commandDryRunVpsResource(ctx: Context, args: []const []const u8) !void {
@@ -217,7 +217,7 @@ fn commandDryRunVpsResource(ctx: Context, args: []const []const u8) !void {
         .post_install_script_id = if (endpoint.requiresPostInstallScriptId()) args[3] else null,
         .vm_id = if (endpoint.requiresVmId()) args[3] else null,
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planVpsResourceMutation(appContext(ctx), endpoint, plan_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planVpsResourceMutation(appContext(ctx), endpoint, plan_args));
 }
 
 fn commandDryRunDns(ctx: Context, args: []const []const u8) !void {
@@ -237,7 +237,7 @@ fn commandDryRunDns(ctx: Context, args: []const []const u8) !void {
         .domain = args[3],
         .snapshot_id = if (endpoint.requiresSnapshotId()) args[4] else null,
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planDnsMutation(appContext(ctx), endpoint, plan_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planDnsMutation(appContext(ctx), endpoint, plan_args));
 }
 
 fn commandDryRunBilling(ctx: Context, args: []const []const u8) !void {
@@ -257,7 +257,7 @@ fn commandDryRunBilling(ctx: Context, args: []const []const u8) !void {
         .payment_method_id = if (endpoint.requiresPaymentMethodId()) args[3] else null,
         .subscription_id = if (endpoint.requiresSubscriptionId()) args[3] else null,
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planBillingMutation(appContext(ctx), endpoint, plan_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planBillingMutation(appContext(ctx), endpoint, plan_args));
 }
 
 fn commandDryRunDomain(ctx: Context, args: []const []const u8) !void {
@@ -277,7 +277,7 @@ fn commandDryRunDomain(ctx: Context, args: []const []const u8) !void {
         .domain = if (endpoint.requiresDomain()) args[3] else null,
         .whois_id = if (endpoint.requiresWhoisId()) args[3] else null,
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planDomainMutation(appContext(ctx), endpoint, plan_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planDomainMutation(appContext(ctx), endpoint, plan_args));
 }
 
 fn commandDryRunHosting(ctx: Context, args: []const []const u8) !void {
@@ -312,7 +312,7 @@ fn commandDryRunHosting(ctx: Context, args: []const []const u8) !void {
         .parked_domain = if (endpoint.requiresParkedDomain()) args[5] else null,
         .subdomain = if (endpoint.requiresSubdomain()) args[5] else null,
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planHostingMutation(appContext(ctx), endpoint, plan_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planHostingMutation(appContext(ctx), endpoint, plan_args));
 }
 
 fn commandDryRunEcommerce(ctx: Context, args: []const []const u8) !void {
@@ -320,7 +320,7 @@ fn commandDryRunEcommerce(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unknown ecommerce dry-run operation: {s}\n", .{args[2]});
         return;
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planEcommerceMutation(appContext(ctx), endpoint));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planEcommerceMutation(appContext(ctx), endpoint));
 }
 
 fn commandDryRunHorizons(ctx: Context, args: []const []const u8) !void {
@@ -328,7 +328,7 @@ fn commandDryRunHorizons(ctx: Context, args: []const []const u8) !void {
         std.debug.print("unknown horizons dry-run operation: {s}\n", .{args[2]});
         return;
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planHorizonsMutation(appContext(ctx), endpoint));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planHorizonsMutation(appContext(ctx), endpoint));
 }
 
 fn commandDryRunReach(ctx: Context, args: []const []const u8) !void {
@@ -348,7 +348,7 @@ fn commandDryRunReach(ctx: Context, args: []const []const u8) !void {
         .contact_uuid = if (endpoint.requiresContactUuid()) args[3] else null,
         .profile_uuid = if (endpoint.requiresProfileUuid()) args[3] else null,
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.planReachMutation(appContext(ctx), endpoint, plan_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.planReachMutation(appContext(ctx), endpoint, plan_args));
 }
 
 fn commandInventoryDetail(ctx: Context, args: []const []const u8, endpoint: app_hostinger.VpsInventoryDetailEndpoint) !void {
@@ -356,7 +356,7 @@ fn commandInventoryDetail(ctx: Context, args: []const []const u8, endpoint: app_
         std.debug.print("{s} required\n", .{endpoint.idName()});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_hostinger.collectVpsInventoryDetail(appContext(ctx), endpoint, args[1]));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectVpsInventoryDetail(appContext(ctx), endpoint, args[1]));
 }
 
 fn commandDocker(ctx: Context, args: []const []const u8, endpoint: app_hostinger.DockerEndpoint) !void {
@@ -369,7 +369,7 @@ fn commandDocker(ctx: Context, args: []const []const u8, endpoint: app_hostinger
         return;
     }
     const project_name: ?[]const u8 = if (endpoint.requiresProject()) args[2] else null;
-    cli_render.printOutput(ctx.gpa, try app_hostinger.collectDockerEndpoint(appContext(ctx), args[1], endpoint, project_name));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectDockerEndpoint(appContext(ctx), args[1], endpoint, project_name));
 }
 
 fn commandDns(ctx: Context, args: []const []const u8, endpoint: app_hostinger.DnsEndpoint) !void {
@@ -378,30 +378,30 @@ fn commandDns(ctx: Context, args: []const []const u8, endpoint: app_hostinger.Dn
             std.debug.print("domain and snapshot id required\n", .{});
             return;
         }
-        cli_render.printOutput(ctx.gpa, try app_hostinger.collectDnsEndpoint(appContext(ctx), endpoint, args[1], args[2]));
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectDnsEndpoint(appContext(ctx), endpoint, args[1], args[2]));
         return;
     }
     const domain = if (args.len > 1) args[1] else ctx.domains[0];
-    cli_render.printOutput(ctx.gpa, try app_hostinger.collectDnsEndpoint(appContext(ctx), endpoint, domain, null));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectDnsEndpoint(appContext(ctx), endpoint, domain, null));
 }
 
 fn commandDomain(ctx: Context, args: []const []const u8, endpoint: app_hostinger.DomainEndpoint) !void {
     switch (endpoint) {
-        .portfolio => cli_render.printOutput(ctx.gpa, try app_hostinger.collectDomainEndpoint(appContext(ctx), endpoint, null, null)),
+        .portfolio => try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectDomainEndpoint(appContext(ctx), endpoint, null, null)),
         .portfolio_detail, .forwarding => {
             const domain = if (args.len > 1) args[1] else ctx.domains[0];
-            cli_render.printOutput(ctx.gpa, try app_hostinger.collectDomainEndpoint(appContext(ctx), endpoint, domain, null));
+            try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectDomainEndpoint(appContext(ctx), endpoint, domain, null));
         },
         .whois_profiles => {
             const tld: ?[]const u8 = if (args.len > 1) args[1] else null;
-            cli_render.printOutput(ctx.gpa, try app_hostinger.collectDomainEndpoint(appContext(ctx), endpoint, null, tld));
+            try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectDomainEndpoint(appContext(ctx), endpoint, null, tld));
         },
         .whois_profile, .whois_usage => {
             if (args.len < 2) {
                 std.debug.print("{s} required\n", .{endpoint.pathArgName() orelse "argument"});
                 return;
             }
-            cli_render.printOutput(ctx.gpa, try app_hostinger.collectDomainEndpoint(appContext(ctx), endpoint, args[1], null));
+            try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectDomainEndpoint(appContext(ctx), endpoint, args[1], null));
         },
     }
 }
@@ -445,7 +445,7 @@ fn commandHosting(ctx: Context, args: []const []const u8, endpoint: app_hostinge
             break :blk .{ .username = args[1], .domain = args[2], .uuid = args[3], .from_line = if (args.len > 4) args[4] else null };
         },
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.collectHostingEndpoint(appContext(ctx), endpoint, hosting_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectHostingEndpoint(appContext(ctx), endpoint, hosting_args));
 }
 
 fn commandHorizons(ctx: Context, args: []const []const u8, endpoint: app_hostinger.HorizonsEndpoint) !void {
@@ -453,7 +453,7 @@ fn commandHorizons(ctx: Context, args: []const []const u8, endpoint: app_hosting
         std.debug.print("website id required\n", .{});
         return;
     }
-    cli_render.printOutput(ctx.gpa, try app_hostinger.collectHorizonsEndpoint(appContext(ctx), endpoint, args[1]));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectHorizonsEndpoint(appContext(ctx), endpoint, args[1]));
 }
 
 fn commandReach(ctx: Context, args: []const []const u8, endpoint: app_hostinger.ReachEndpoint) !void {
@@ -474,7 +474,7 @@ fn commandReach(ctx: Context, args: []const []const u8, endpoint: app_hostinger.
             break :blk .{ .profile_uuid = args[1], .segment_uuid = args[2] };
         },
     };
-    cli_render.printOutput(ctx.gpa, try app_hostinger.collectReachEndpoint(appContext(ctx), endpoint, reach_args));
+    try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectReachEndpoint(appContext(ctx), endpoint, reach_args));
 }
 
 fn appContext(ctx: Context) app_hostinger.Context {

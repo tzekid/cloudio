@@ -437,6 +437,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_coverage", .module = app_coverage_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
         },
     });
     const cli_route_mod = b.createModule(.{
@@ -446,6 +447,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "app_coverage", .module = app_coverage_mod },
             .{ .name = "cli_coverage", .module = cli_coverage_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
         },
     });
     const cli_caddy_mod = b.createModule(.{
@@ -487,6 +489,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_inventory", .module = app_inventory_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
     });
@@ -497,6 +500,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_projects", .module = app_projects_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
     });
@@ -529,6 +533,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_hostinger", .module = cli_hostinger_mod },
             .{ .name = "cli_inventory", .module = cli_inventory_mod },
             .{ .name = "cli_projects", .module = cli_projects_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "cli_route", .module = cli_route_mod },
             .{ .name = "cli_system", .module = cli_system_mod },
             .{ .name = "cloudio", .module = cloudio_mod },

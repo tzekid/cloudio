@@ -20,7 +20,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .ports => try commandPorts(ctx),
         .containers => try commandContainers(ctx),
         .metrics => try commandMetrics(ctx),
-        .logs => |unit| cli_render.printOutput(ctx.gpa, try app_system.logs(appContext(ctx), unit)),
+        .logs => |unit| try cli_render.printOutput(ctx.io, ctx.gpa, try app_system.logs(appContext(ctx), unit)),
         .unknown => |name| std.debug.print("unknown system command: {s}\n", .{name}),
     }
 }
@@ -29,35 +29,35 @@ fn commandSummary(ctx: Context) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_system.collectAndWriteSummary(appContext(ctx), &out.writer);
-    try printOwned(ctx.gpa, &out);
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandServices(ctx: Context) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_system.collectAndWriteServices(appContext(ctx), &out.writer);
-    try printOwned(ctx.gpa, &out);
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandPorts(ctx: Context) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_system.collectAndWritePorts(appContext(ctx), &out.writer);
-    try printOwned(ctx.gpa, &out);
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandContainers(ctx: Context) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_system.collectAndWriteContainers(appContext(ctx), &out.writer);
-    try printOwned(ctx.gpa, &out);
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandMetrics(ctx: Context) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_system.collectAndWriteMetrics(appContext(ctx), &out.writer);
-    try printOwned(ctx.gpa, &out);
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn appContext(ctx: Context) app_system.Context {
@@ -66,12 +66,6 @@ fn appContext(ctx: Context) app_system.Context {
         .gpa = ctx.gpa,
         .db = ctx.db,
     };
-}
-
-fn printOwned(gpa: Allocator, out: *std.Io.Writer.Allocating) !void {
-    const text = try out.toOwnedSlice();
-    defer gpa.free(text);
-    std.debug.print("{s}", .{text});
 }
 
 const Command = union(enum) {

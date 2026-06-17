@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_projects = @import("app_projects");
+const cli_render = @import("cli_render");
 const db_store = @import("db_store");
 
 const Allocator = std.mem.Allocator;
@@ -26,14 +27,14 @@ fn commandList(ctx: Context) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_projects.writeList(appContext(ctx), &out.writer);
-    try printOwned(ctx.gpa, &out);
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn commandShow(ctx: Context, name: []const u8) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try app_projects.writeShow(ctx.gpa, ctx.db, name, &out.writer);
-    try printOwned(ctx.gpa, &out);
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 fn appContext(ctx: Context) app_projects.Context {
@@ -43,12 +44,6 @@ fn appContext(ctx: Context) app_projects.Context {
         .projects_root = ctx.projects_root,
         .db = ctx.db,
     };
-}
-
-fn printOwned(gpa: Allocator, out: *std.Io.Writer.Allocating) !void {
-    const text = try out.toOwnedSlice();
-    defer gpa.free(text);
-    std.debug.print("{s}", .{text});
 }
 
 const Command = union(enum) {

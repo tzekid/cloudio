@@ -1,6 +1,7 @@
 const std = @import("std");
 const app_coverage = @import("app_coverage");
 const cli_coverage = @import("cli_coverage");
+const cli_render = @import("cli_render");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -94,7 +95,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
             return;
         };
         defer ctx.gpa.free(json);
-        std.debug.print("{s}\n", .{json});
+        try cli_render.writeLine(ctx.io, json);
         return;
     }
 
@@ -120,7 +121,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         return;
     };
     defer ctx.gpa.free(json);
-    std.debug.print("{s}\n", .{json});
+    try cli_render.writeLine(ctx.io, json);
 }
 
 fn authFor(ctx: Context, provider: app_coverage.ProviderFilter) !app_coverage.Auth {
