@@ -141,6 +141,13 @@ zig build run -- cloudflare security-center account context <account-id> <issue-
 zig build run -- cloudflare audit-logs account <account-id> per-page=10
 zig build run -- cloudflare audit-logs account-v2 <account-id> since=2026-06-16T00:00:00Z before=2026-06-17T23:59:00Z limit=10
 zig build run -- cloudflare audit-logs user per-page=10
+zig build run -- cloudflare logpush account jobs <account-id>
+zig build run -- cloudflare logpush zone jobs <zone-id>
+zig build run -- cloudflare logpush account dataset-fields <account-id> <dataset-id>
+zig build run -- cloudflare log-explorer account datasets <account-id> include_zones=true
+zig build run -- cloudflare log-explorer zone available <zone-id>
+zig build run -- cloudflare logs-received fields <zone-id>
+zig build run -- cloudflare logs-received received <zone-id> start=2026-06-17T00:00:00Z end=2026-06-17T01:00:00Z count=true
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru

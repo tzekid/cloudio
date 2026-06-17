@@ -168,6 +168,9 @@ fn usage() void {
         \\  cloudio cloudflare security-center account|zone issue-types|insights|class|severity|type|audit-log <scope-id> [key=value...]
         \\  cloudio cloudflare security-center account|zone context|insight-audit-log <scope-id> <issue-id> [key=value...]
         \\  cloudio cloudflare audit-logs account <account-id> [key=value...]|account-v2 <account-id> since=<rfc3339> before=<rfc3339> [key=value...]|organization-v2 <organization-id> since=<rfc3339> before=<rfc3339> [key=value...]|user [key=value...]
+        \\  cloudio cloudflare logpush account|zone jobs <scope-id>|job <scope-id> <job-id>|dataset-jobs|dataset-fields <scope-id> <dataset-id>
+        \\  cloudio cloudflare log-explorer account|zone datasets|available <scope-id> [include_zones=true]|dataset <scope-id> <dataset-id>
+        \\  cloudio cloudflare logs-received retention-flag|fields <zone-id>|received <zone-id> end=<rfc3339> [start=<rfc3339> count=true fields=... sample=... timestamps=...]|rayid <zone-id> <ray-id> [fields=... timestamps=...]
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>

@@ -78,6 +78,13 @@ pub const SecurityCenterReadEndpoint = provider_cloudflare.SecurityCenterReadEnd
 pub const SecurityCenterScope = provider_cloudflare.SecurityCenterScope;
 pub const AuditLogReadArgs = provider_cloudflare.AuditLogReadArgs;
 pub const AuditLogReadEndpoint = provider_cloudflare.AuditLogReadEndpoint;
+pub const ObservabilityScope = provider_cloudflare.ObservabilityScope;
+pub const LogpushReadArgs = provider_cloudflare.LogpushReadArgs;
+pub const LogpushReadEndpoint = provider_cloudflare.LogpushReadEndpoint;
+pub const LogExplorerReadArgs = provider_cloudflare.LogExplorerReadArgs;
+pub const LogExplorerReadEndpoint = provider_cloudflare.LogExplorerReadEndpoint;
+pub const LogsReceivedReadArgs = provider_cloudflare.LogsReceivedReadArgs;
+pub const LogsReceivedReadEndpoint = provider_cloudflare.LogsReceivedReadEndpoint;
 pub const LoadBalancingAccountReadEndpoint = provider_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = provider_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = provider_cloudflare.LoadBalancingMutationEndpoint;
@@ -188,6 +195,8 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     try collectZeroTrustForAccounts(gpa, io, client, db, redacted);
     try collectSecurityCenterForAccounts(gpa, io, client, db, redacted);
     try collectAuditLogsForAccounts(gpa, io, client, db, redacted);
+    try collectLogpushForAccounts(gpa, io, client, db, redacted);
+    try collectLogExplorerForAccounts(gpa, io, client, db, redacted);
     try collectAccountTokenEndpointsForAccounts(gpa, io, auth, client, db, redacted);
     try collectAccountDnsSettings(gpa, io, client, db, redacted);
     try collectAccountDnsRecordUsageForAccounts(gpa, io, client, db, redacted);
@@ -1022,6 +1031,78 @@ pub fn collectAuditLogEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endp
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectLogpushEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope: ObservabilityScope, scope_id: []const u8, endpoint: LogpushReadEndpoint, args: LogpushReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label(scope);
+    const target = try logpushTarget(gpa, scope_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getLogpushEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.logpushReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectLogExplorerEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope: ObservabilityScope, scope_id: []const u8, endpoint: LogExplorerReadEndpoint, args: LogExplorerReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label(scope);
+    const target = try logExplorerTarget(gpa, scope_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getLogExplorerEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.logExplorerReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectLogsReceivedEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: LogsReceivedReadEndpoint, args: LogsReceivedReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = try logsReceivedTarget(gpa, zone_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getLogsReceivedEndpoint(io, gpa, zone_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.logsReceivedReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: IdentityEndpoint, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const client = clientFromAuth(auth) catch {
@@ -1358,6 +1439,9 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
         try collectCustomPagesForZone(gpa, io, client, db, zone_id, domain);
         try collectAccessForZone(gpa, io, client, db, zone_id, domain);
         try collectSecurityCenterForZone(gpa, io, client, db, zone_id, domain);
+        try collectLogpushForZone(gpa, io, client, db, zone_id, domain);
+        try collectLogExplorerForZone(gpa, io, client, db, zone_id, domain);
+        try collectLogsReceivedForZone(gpa, io, client, db, zone_id, domain);
 
         zone_tags_refresh: {
             const tag_body = client.getResourceTaggingZoneTags(io, gpa, zone_id, .{
@@ -2937,6 +3021,160 @@ fn collectAuditLogSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.C
     });
 }
 
+fn collectLogpushForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try collectLogpushReadForTarget(gpa, io, client, db, .account, row.id, row.id, .jobs, .{});
+    }
+}
+
+fn collectLogpushForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8) !void {
+    try collectLogpushReadForTarget(gpa, io, client, db, .zone, zone_id, target_label, .jobs, .{});
+}
+
+fn collectLogpushReadForTarget(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: ObservabilityScope, scope_id: []const u8, target_label: []const u8, endpoint: LogpushReadEndpoint, args: LogpushReadArgs) anyerror!void {
+    const redacted = collectLogpushSnapshot(gpa, io, client, db, scope, scope_id, target_label, endpoint, args) catch |err| {
+        const target = logpushTarget(gpa, target_label, endpoint, args) catch try gpa.dupe(u8, target_label);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(scope), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(scope), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    try collectLogpushDetailsForList(gpa, io, client, db, scope, scope_id, target_label, endpoint, redacted);
+}
+
+fn collectLogpushDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: ObservabilityScope, scope_id: []const u8, target_label: []const u8, list_endpoint: LogpushReadEndpoint, list_body: []const u8) anyerror!void {
+    if (list_endpoint != .jobs) return;
+    var rows = try provider_cloudflare_models.parseResourceIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try collectLogpushReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .job, .{ .job_id = row.id });
+    }
+}
+
+fn collectLogpushSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: ObservabilityScope, scope_id: []const u8, target_label: []const u8, endpoint: LogpushReadEndpoint, args: LogpushReadArgs) ![]u8 {
+    const body = try client.getLogpushEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.logpushReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try logpushTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(scope),
+        .target = target,
+        .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
+fn collectLogExplorerForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try collectLogExplorerReadForTarget(gpa, io, client, db, .account, row.id, row.id, .datasets, .{ .include_zones = "true" });
+        try collectLogExplorerReadForTarget(gpa, io, client, db, .account, row.id, row.id, .available, .{});
+    }
+}
+
+fn collectLogExplorerForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8) !void {
+    try collectLogExplorerReadForTarget(gpa, io, client, db, .zone, zone_id, target_label, .datasets, .{});
+    try collectLogExplorerReadForTarget(gpa, io, client, db, .zone, zone_id, target_label, .available, .{});
+}
+
+fn collectLogExplorerReadForTarget(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: ObservabilityScope, scope_id: []const u8, target_label: []const u8, endpoint: LogExplorerReadEndpoint, args: LogExplorerReadArgs) anyerror!void {
+    const redacted = collectLogExplorerSnapshot(gpa, io, client, db, scope, scope_id, target_label, endpoint, args) catch |err| {
+        const target = logExplorerTarget(gpa, target_label, endpoint, args) catch try gpa.dupe(u8, target_label);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(scope), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(scope), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    try collectLogExplorerDetailsForList(gpa, io, client, db, scope, scope_id, target_label, endpoint, redacted);
+}
+
+fn collectLogExplorerDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: ObservabilityScope, scope_id: []const u8, target_label: []const u8, list_endpoint: LogExplorerReadEndpoint, list_body: []const u8) anyerror!void {
+    if (list_endpoint != .datasets) return;
+    var rows = try provider_cloudflare_models.parseResourceIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try collectLogExplorerReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .dataset, .{ .dataset_id = row.id });
+    }
+}
+
+fn collectLogExplorerSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: ObservabilityScope, scope_id: []const u8, target_label: []const u8, endpoint: LogExplorerReadEndpoint, args: LogExplorerReadArgs) ![]u8 {
+    const body = try client.getLogExplorerEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.logExplorerReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try logExplorerTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(scope),
+        .target = target,
+        .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
+fn collectLogsReceivedForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8) !void {
+    try collectLogsReceivedReadForZone(gpa, io, client, db, zone_id, target_label, .retention_flag, .{});
+    try collectLogsReceivedReadForZone(gpa, io, client, db, zone_id, target_label, .received_fields, .{});
+
+    const now_seconds = core_time.currentEpochSeconds() catch 0;
+    const hour_seconds: u64 = 60 * 60;
+    const start_seconds = if (now_seconds > hour_seconds) now_seconds - hour_seconds else 0;
+    var start_buf: [20]u8 = undefined;
+    var end_buf: [20]u8 = undefined;
+    const start = try core_time.formatUtcSecond(&start_buf, start_seconds);
+    const end = try core_time.formatUtcSecond(&end_buf, now_seconds);
+    try collectLogsReceivedReadForZone(gpa, io, client, db, zone_id, target_label, .received, .{
+        .start = start,
+        .end = end,
+        .count = "true",
+    });
+}
+
+fn collectLogsReceivedReadForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, endpoint: LogsReceivedReadEndpoint, args: LogsReceivedReadArgs) anyerror!void {
+    const redacted = collectLogsReceivedSnapshot(gpa, io, client, db, zone_id, target_label, endpoint, args) catch |err| {
+        const target = logsReceivedTarget(gpa, target_label, endpoint, args) catch try gpa.dupe(u8, target_label);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+}
+
+fn collectLogsReceivedSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, endpoint: LogsReceivedReadEndpoint, args: LogsReceivedReadArgs) ![]u8 {
+    const body = try client.getLogsReceivedEndpoint(io, gpa, zone_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.logsReceivedReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try logsReceivedTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
 fn collectRulesetSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: RulesetScope, scope_id: []const u8, target_label: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
     const body = try client.getRulesetEndpoint(io, gpa, scope, scope_id, endpoint, args);
     defer body.deinit(gpa);
@@ -3412,6 +3650,34 @@ fn auditLogTarget(gpa: Allocator, endpoint: AuditLogReadEndpoint, args: AuditLog
         .organization_v2 => if (args.organization_id) |organization_id| try gpa.dupe(u8, organization_id) else try gpa.dupe(u8, endpoint.commandName()),
         .user_v1 => try gpa.dupe(u8, "user"),
     };
+}
+
+fn logpushTarget(gpa: Allocator, scope_label: []const u8, endpoint: LogpushReadEndpoint, args: LogpushReadArgs) ![]u8 {
+    if (endpoint.requiresJobId()) {
+        const job_id = args.job_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/logpush-job:{s}", .{ scope_label, job_id });
+    }
+    if (endpoint.requiresDatasetId()) {
+        const dataset_id = args.dataset_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/logpush-dataset:{s}", .{ scope_label, dataset_id });
+    }
+    return try gpa.dupe(u8, scope_label);
+}
+
+fn logExplorerTarget(gpa: Allocator, scope_label: []const u8, endpoint: LogExplorerReadEndpoint, args: LogExplorerReadArgs) ![]u8 {
+    if (endpoint.requiresDatasetId()) {
+        const dataset_id = args.dataset_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/log-explorer-dataset:{s}", .{ scope_label, dataset_id });
+    }
+    return try gpa.dupe(u8, scope_label);
+}
+
+fn logsReceivedTarget(gpa: Allocator, zone_label: []const u8, endpoint: LogsReceivedReadEndpoint, args: LogsReceivedReadArgs) ![]u8 {
+    if (endpoint.requiresRayId()) {
+        const ray_id = args.ray_id orelse return try gpa.dupe(u8, zone_label);
+        return try std.fmt.allocPrint(gpa, "{s}/logs-ray:{s}", .{ zone_label, ray_id });
+    }
+    return try gpa.dupe(u8, zone_label);
 }
 
 fn resourceTaggingAccountTarget(gpa: Allocator, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {

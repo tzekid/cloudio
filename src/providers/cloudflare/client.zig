@@ -280,6 +280,24 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getLogpushEndpoint(self: Client, io: Io, gpa: Allocator, scope: ObservabilityScope, scope_id: []const u8, endpoint: LogpushReadEndpoint, args: LogpushReadArgs) !net_http.Response {
+        const url = try logpushReadUrl(gpa, self.base_url_override, scope, scope_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getLogExplorerEndpoint(self: Client, io: Io, gpa: Allocator, scope: ObservabilityScope, scope_id: []const u8, endpoint: LogExplorerReadEndpoint, args: LogExplorerReadArgs) !net_http.Response {
+        const url = try logExplorerReadUrl(gpa, self.base_url_override, scope, scope_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getLogsReceivedEndpoint(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, endpoint: LogsReceivedReadEndpoint, args: LogsReceivedReadArgs) !net_http.Response {
+        const url = try logsReceivedReadUrl(gpa, self.base_url_override, zone_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -5228,6 +5246,277 @@ pub const AuditLogReadArgs = struct {
     export_format: ?[]const u8 = null,
 };
 
+pub const ObservabilityScope = enum {
+    account,
+    zone,
+
+    pub fn parse(value: []const u8) ?ObservabilityScope {
+        if (std.mem.eql(u8, value, "account") or std.mem.eql(u8, value, "accounts")) return .account;
+        if (std.mem.eql(u8, value, "zone") or std.mem.eql(u8, value, "zones")) return .zone;
+        return null;
+    }
+
+    pub fn commandName(self: ObservabilityScope) []const u8 {
+        return switch (self) {
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn collection(self: ObservabilityScope) []const u8 {
+        return switch (self) {
+            .account => accounts_path,
+            .zone => zones_path,
+        };
+    }
+};
+
+pub const LogpushReadEndpoint = enum {
+    jobs,
+    job,
+    dataset_jobs,
+    dataset_fields,
+
+    pub fn parse(value: []const u8) ?LogpushReadEndpoint {
+        if (std.mem.eql(u8, value, "jobs") or std.mem.eql(u8, value, "list")) return .jobs;
+        if (std.mem.eql(u8, value, "job") or std.mem.eql(u8, value, "details")) return .job;
+        if (std.mem.eql(u8, value, "dataset-jobs") or std.mem.eql(u8, value, "jobs-for-dataset")) return .dataset_jobs;
+        if (std.mem.eql(u8, value, "dataset-fields") or std.mem.eql(u8, value, "fields")) return .dataset_fields;
+        return null;
+    }
+
+    pub fn commandName(self: LogpushReadEndpoint) []const u8 {
+        return switch (self) {
+            .jobs => "jobs",
+            .job => "job",
+            .dataset_jobs => "dataset-jobs",
+            .dataset_fields => "dataset-fields",
+        };
+    }
+
+    pub fn label(self: LogpushReadEndpoint, scope: ObservabilityScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .jobs => "logpush-account-jobs",
+                .job => "logpush-account-job",
+                .dataset_jobs => "logpush-account-dataset-jobs",
+                .dataset_fields => "logpush-account-dataset-fields",
+            },
+            .zone => switch (self) {
+                .jobs => "logpush-zone-jobs",
+                .job => "logpush-zone-job",
+                .dataset_jobs => "logpush-zone-dataset-jobs",
+                .dataset_fields => "logpush-zone-dataset-fields",
+            },
+        };
+    }
+
+    pub fn group(self: LogpushReadEndpoint, scope: ObservabilityScope) []const u8 {
+        _ = self;
+        return switch (scope) {
+            .account => "Logpush jobs for an account",
+            .zone => "Logpush jobs for a zone",
+        };
+    }
+
+    pub fn operationId(self: LogpushReadEndpoint, scope: ObservabilityScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .jobs => "get-accounts-account_id-logpush-jobs",
+                .job => "get-accounts-account_id-logpush-jobs-job_id",
+                .dataset_jobs => "get-accounts-account_id-logpush-datasets-dataset_id-jobs",
+                .dataset_fields => "get-accounts-account_id-logpush-datasets-dataset_id-fields",
+            },
+            .zone => switch (self) {
+                .jobs => "get-zones-zone_id-logpush-jobs",
+                .job => "get-zones-zone_id-logpush-jobs-job_id",
+                .dataset_jobs => "get-zones-zone_id-logpush-datasets-dataset_id-jobs",
+                .dataset_fields => "get-zones-zone_id-logpush-datasets-dataset_id-fields",
+            },
+        };
+    }
+
+    pub fn summary(self: LogpushReadEndpoint, scope: ObservabilityScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .jobs => "Account Logpush jobs",
+                .job => "Account Logpush job details",
+                .dataset_jobs => "Account Logpush jobs for a dataset",
+                .dataset_fields => "Account Logpush dataset fields",
+            },
+            .zone => switch (self) {
+                .jobs => "Zone Logpush jobs",
+                .job => "Zone Logpush job details",
+                .dataset_jobs => "Zone Logpush jobs for a dataset",
+                .dataset_fields => "Zone Logpush dataset fields",
+            },
+        };
+    }
+
+    pub fn requiresJobId(self: LogpushReadEndpoint) bool {
+        return self == .job;
+    }
+
+    pub fn requiresDatasetId(self: LogpushReadEndpoint) bool {
+        return self == .dataset_jobs or self == .dataset_fields;
+    }
+};
+
+pub const LogpushReadArgs = struct {
+    job_id: ?[]const u8 = null,
+    dataset_id: ?[]const u8 = null,
+};
+
+pub const LogExplorerReadEndpoint = enum {
+    datasets,
+    available,
+    dataset,
+
+    pub fn parse(value: []const u8) ?LogExplorerReadEndpoint {
+        if (std.mem.eql(u8, value, "datasets") or std.mem.eql(u8, value, "list")) return .datasets;
+        if (std.mem.eql(u8, value, "available") or std.mem.eql(u8, value, "available-datasets")) return .available;
+        if (std.mem.eql(u8, value, "dataset") or std.mem.eql(u8, value, "details")) return .dataset;
+        return null;
+    }
+
+    pub fn commandName(self: LogExplorerReadEndpoint) []const u8 {
+        return switch (self) {
+            .datasets => "datasets",
+            .available => "available",
+            .dataset => "dataset",
+        };
+    }
+
+    pub fn label(self: LogExplorerReadEndpoint, scope: ObservabilityScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .datasets => "log-explorer-account-datasets",
+                .available => "log-explorer-account-available-datasets",
+                .dataset => "log-explorer-account-dataset",
+            },
+            .zone => switch (self) {
+                .datasets => "log-explorer-zone-datasets",
+                .available => "log-explorer-zone-available-datasets",
+                .dataset => "log-explorer-zone-dataset",
+            },
+        };
+    }
+
+    pub fn group(self: LogExplorerReadEndpoint) []const u8 {
+        _ = self;
+        return "Log Explorer Datasets";
+    }
+
+    pub fn operationId(self: LogExplorerReadEndpoint, scope: ObservabilityScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .datasets => "accounts-logs-explorer-datasets-list",
+                .available => "accounts-logs-explorer-datasets-available-list",
+                .dataset => "accounts-logs-explorer-datasets-get",
+            },
+            .zone => switch (self) {
+                .datasets => "zones-logs-explorer-datasets-list",
+                .available => "zones-logs-explorer-datasets-available-list",
+                .dataset => "zones-logs-explorer-datasets-get",
+            },
+        };
+    }
+
+    pub fn summary(self: LogExplorerReadEndpoint, scope: ObservabilityScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .datasets => "Account Log Explorer datasets",
+                .available => "Account Log Explorer available datasets",
+                .dataset => "Account Log Explorer dataset details",
+            },
+            .zone => switch (self) {
+                .datasets => "Zone Log Explorer datasets",
+                .available => "Zone Log Explorer available datasets",
+                .dataset => "Zone Log Explorer dataset details",
+            },
+        };
+    }
+
+    pub fn requiresDatasetId(self: LogExplorerReadEndpoint) bool {
+        return self == .dataset;
+    }
+};
+
+pub const LogExplorerReadArgs = struct {
+    dataset_id: ?[]const u8 = null,
+    include_zones: ?[]const u8 = null,
+};
+
+pub const LogsReceivedReadEndpoint = enum {
+    retention_flag,
+    received,
+    received_fields,
+    rayid,
+
+    pub fn parse(value: []const u8) ?LogsReceivedReadEndpoint {
+        if (std.mem.eql(u8, value, "retention-flag") or std.mem.eql(u8, value, "retention")) return .retention_flag;
+        if (std.mem.eql(u8, value, "received") or std.mem.eql(u8, value, "logs")) return .received;
+        if (std.mem.eql(u8, value, "fields") or std.mem.eql(u8, value, "received-fields")) return .received_fields;
+        if (std.mem.eql(u8, value, "rayid") or std.mem.eql(u8, value, "ray-id")) return .rayid;
+        return null;
+    }
+
+    pub fn commandName(self: LogsReceivedReadEndpoint) []const u8 {
+        return switch (self) {
+            .retention_flag => "retention-flag",
+            .received => "received",
+            .received_fields => "fields",
+            .rayid => "rayid",
+        };
+    }
+
+    pub fn label(self: LogsReceivedReadEndpoint) []const u8 {
+        return switch (self) {
+            .retention_flag => "logs-received-retention-flag",
+            .received => "logs-received",
+            .received_fields => "logs-received-fields",
+            .rayid => "logs-received-rayid",
+        };
+    }
+
+    pub fn group(self: LogsReceivedReadEndpoint) []const u8 {
+        _ = self;
+        return "Logs Received";
+    }
+
+    pub fn operationId(self: LogsReceivedReadEndpoint) []const u8 {
+        return switch (self) {
+            .retention_flag => "get-zones-zone_id-logs-control-retention-flag",
+            .received => "get-zones-zone_id-logs-received",
+            .received_fields => "get-zones-zone_id-logs-received-fields",
+            .rayid => "get-zones-zone_id-logs-rayids-ray_id",
+        };
+    }
+
+    pub fn summary(self: LogsReceivedReadEndpoint) []const u8 {
+        return switch (self) {
+            .retention_flag => "Zone Logs Received retention flag",
+            .received => "Zone Logs Received stream",
+            .received_fields => "Zone Logs Received fields",
+            .rayid => "Zone Logs Received Ray ID lookup",
+        };
+    }
+
+    pub fn requiresRayId(self: LogsReceivedReadEndpoint) bool {
+        return self == .rayid;
+    }
+};
+
+pub const LogsReceivedReadArgs = struct {
+    ray_id: ?[]const u8 = null,
+    start: ?[]const u8 = null,
+    end: ?[]const u8 = null,
+    count: ?[]const u8 = null,
+    fields: ?[]const u8 = null,
+    sample: ?[]const u8 = null,
+    timestamps: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -8388,6 +8677,113 @@ fn appendAuditLogV2Filters(gpa: Allocator, base_path: []const u8, args: AuditLog
     });
 }
 
+pub fn logpushReadUrl(gpa: Allocator, host: []const u8, scope: ObservabilityScope, scope_id: []const u8, endpoint: LogpushReadEndpoint, args: LogpushReadArgs) ![]u8 {
+    const path = try logpushReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn logpushReadPath(gpa: Allocator, scope: ObservabilityScope, scope_id: []const u8, endpoint: LogpushReadEndpoint, args: LogpushReadArgs) ![]u8 {
+    const base_path = try observabilityBasePath(gpa, scope, scope_id, "logpush");
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .jobs => try std.fmt.allocPrint(gpa, "{s}/jobs", .{base_path}),
+        .job => blk: {
+            const job_id = args.job_id orelse return error.MissingCloudflareLogpushJobId;
+            const escaped_job_id = try pathEscape(gpa, job_id);
+            defer gpa.free(escaped_job_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/jobs/{s}", .{ base_path, escaped_job_id });
+        },
+        .dataset_jobs => blk: {
+            const dataset_path = try logpushDatasetPath(gpa, base_path, args.dataset_id);
+            defer gpa.free(dataset_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/jobs", .{dataset_path});
+        },
+        .dataset_fields => blk: {
+            const dataset_path = try logpushDatasetPath(gpa, base_path, args.dataset_id);
+            defer gpa.free(dataset_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/fields", .{dataset_path});
+        },
+    };
+}
+
+fn logpushDatasetPath(gpa: Allocator, base_path: []const u8, maybe_dataset_id: ?[]const u8) ![]u8 {
+    const dataset_id = maybe_dataset_id orelse return error.MissingCloudflareLogpushDatasetId;
+    const escaped_dataset_id = try pathEscape(gpa, dataset_id);
+    defer gpa.free(escaped_dataset_id);
+    return try std.fmt.allocPrint(gpa, "{s}/datasets/{s}", .{ base_path, escaped_dataset_id });
+}
+
+pub fn logExplorerReadUrl(gpa: Allocator, host: []const u8, scope: ObservabilityScope, scope_id: []const u8, endpoint: LogExplorerReadEndpoint, args: LogExplorerReadArgs) ![]u8 {
+    const path = try logExplorerReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn logExplorerReadPath(gpa: Allocator, scope: ObservabilityScope, scope_id: []const u8, endpoint: LogExplorerReadEndpoint, args: LogExplorerReadArgs) ![]u8 {
+    const base_path = try observabilityBasePath(gpa, scope, scope_id, "logs/explorer/datasets");
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .datasets => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "include_zones", .value = if (scope == .account) args.include_zones else null },
+        }),
+        .available => try std.fmt.allocPrint(gpa, "{s}/available", .{base_path}),
+        .dataset => blk: {
+            const dataset_id = args.dataset_id orelse return error.MissingCloudflareLogExplorerDatasetId;
+            const escaped_dataset_id = try pathEscape(gpa, dataset_id);
+            defer gpa.free(escaped_dataset_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, escaped_dataset_id });
+        },
+    };
+}
+
+pub fn logsReceivedReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, endpoint: LogsReceivedReadEndpoint, args: LogsReceivedReadArgs) ![]u8 {
+    const path = try logsReceivedReadPath(gpa, zone_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn logsReceivedReadPath(gpa: Allocator, zone_id: []const u8, endpoint: LogsReceivedReadEndpoint, args: LogsReceivedReadArgs) ![]u8 {
+    const escaped_zone_id = try pathEscape(gpa, zone_id);
+    defer gpa.free(escaped_zone_id);
+    const zone_base = try std.fmt.allocPrint(gpa, "{s}/{s}/logs", .{ zones_path, escaped_zone_id });
+    defer gpa.free(zone_base);
+    return switch (endpoint) {
+        .retention_flag => try std.fmt.allocPrint(gpa, "{s}/control/retention/flag", .{zone_base}),
+        .received => blk: {
+            if (args.end == null) return error.MissingCloudflareLogsReceivedEnd;
+            const base_path = try std.fmt.allocPrint(gpa, "{s}/received", .{zone_base});
+            defer gpa.free(base_path);
+            break :blk try appendQuery(gpa, base_path, &[_]QueryParam{
+                .{ .name = "count", .value = args.count },
+                .{ .name = "end", .value = args.end },
+                .{ .name = "fields", .value = args.fields },
+                .{ .name = "sample", .value = args.sample },
+                .{ .name = "start", .value = args.start },
+                .{ .name = "timestamps", .value = args.timestamps },
+            });
+        },
+        .received_fields => try std.fmt.allocPrint(gpa, "{s}/received/fields", .{zone_base}),
+        .rayid => blk: {
+            const ray_id = args.ray_id orelse return error.MissingCloudflareLogsReceivedRayId;
+            const escaped_ray_id = try pathEscape(gpa, ray_id);
+            defer gpa.free(escaped_ray_id);
+            const base_path = try std.fmt.allocPrint(gpa, "{s}/rayids/{s}", .{ zone_base, escaped_ray_id });
+            defer gpa.free(base_path);
+            break :blk try appendQuery(gpa, base_path, &[_]QueryParam{
+                .{ .name = "fields", .value = args.fields },
+                .{ .name = "timestamps", .value = args.timestamps },
+            });
+        },
+    };
+}
+
+fn observabilityBasePath(gpa: Allocator, scope: ObservabilityScope, scope_id: []const u8, suffix: []const u8) ![]u8 {
+    const escaped_scope_id = try pathEscape(gpa, scope_id);
+    defer gpa.free(escaped_scope_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ scope.collection(), escaped_scope_id, suffix });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -10498,6 +10894,74 @@ test "builds Cloudflare security center and audit log paths" {
     try std.testing.expectError(error.MissingCloudflareAuditLogBefore, auditLogReadPath(allocator, .account_v2, .{ .account_id = "acct/1", .since = "2026-06-01T00:00:00Z" }));
     try std.testing.expectError(error.MissingCloudflareAuditLogAccountId, auditLogReadPath(allocator, .account_v2, .{ .since = "2026-06-01T00:00:00Z", .before = "2026-06-17T00:00:00Z" }));
     try std.testing.expectError(error.MissingCloudflareAuditLogOrganizationId, auditLogReadPath(allocator, .organization_v2, .{ .since = "2026-06-01T00:00:00Z", .before = "2026-06-17T00:00:00Z" }));
+}
+
+test "cloudflare logging endpoints parse commands" {
+    try std.testing.expectEqual(ObservabilityScope.account, ObservabilityScope.parse("accounts").?);
+    try std.testing.expectEqual(ObservabilityScope.zone, ObservabilityScope.parse("zone").?);
+    try std.testing.expectEqual(LogpushReadEndpoint.jobs, LogpushReadEndpoint.parse("jobs").?);
+    try std.testing.expectEqual(LogpushReadEndpoint.job, LogpushReadEndpoint.parse("details").?);
+    try std.testing.expectEqual(LogpushReadEndpoint.dataset_jobs, LogpushReadEndpoint.parse("dataset-jobs").?);
+    try std.testing.expectEqual(LogpushReadEndpoint.dataset_fields, LogpushReadEndpoint.parse("fields").?);
+    try std.testing.expect(LogpushReadEndpoint.job.requiresJobId());
+    try std.testing.expect(LogpushReadEndpoint.dataset_fields.requiresDatasetId());
+    try std.testing.expectEqualStrings("get-accounts-account_id-logpush-datasets-dataset_id-fields", LogpushReadEndpoint.dataset_fields.operationId(.account));
+
+    try std.testing.expectEqual(LogExplorerReadEndpoint.datasets, LogExplorerReadEndpoint.parse("list").?);
+    try std.testing.expectEqual(LogExplorerReadEndpoint.available, LogExplorerReadEndpoint.parse("available-datasets").?);
+    try std.testing.expectEqual(LogExplorerReadEndpoint.dataset, LogExplorerReadEndpoint.parse("details").?);
+    try std.testing.expect(LogExplorerReadEndpoint.dataset.requiresDatasetId());
+    try std.testing.expectEqualStrings("zones-logs-explorer-datasets-get", LogExplorerReadEndpoint.dataset.operationId(.zone));
+
+    try std.testing.expectEqual(LogsReceivedReadEndpoint.retention_flag, LogsReceivedReadEndpoint.parse("retention").?);
+    try std.testing.expectEqual(LogsReceivedReadEndpoint.received, LogsReceivedReadEndpoint.parse("logs").?);
+    try std.testing.expectEqual(LogsReceivedReadEndpoint.received_fields, LogsReceivedReadEndpoint.parse("received-fields").?);
+    try std.testing.expectEqual(LogsReceivedReadEndpoint.rayid, LogsReceivedReadEndpoint.parse("ray-id").?);
+    try std.testing.expect(LogsReceivedReadEndpoint.rayid.requiresRayId());
+    try std.testing.expectEqualStrings("get-zones-zone_id-logs-received", LogsReceivedReadEndpoint.received.operationId());
+}
+
+test "builds Cloudflare logging observability paths" {
+    const allocator = std.testing.allocator;
+
+    const account_jobs = try logpushReadUrl(allocator, base_url, .account, "acct/1", .jobs, .{});
+    defer allocator.free(account_jobs);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/logpush/jobs", account_jobs);
+
+    const zone_job = try logpushReadPath(allocator, .zone, "zone/1", .job, .{ .job_id = "job/1" });
+    defer allocator.free(zone_job);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/logpush/jobs/job%2F1", zone_job);
+
+    const account_dataset_fields = try logpushReadPath(allocator, .account, "acct/1", .dataset_fields, .{ .dataset_id = "http_requests" });
+    defer allocator.free(account_dataset_fields);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/logpush/datasets/http_requests/fields", account_dataset_fields);
+
+    const account_datasets = try logExplorerReadPath(allocator, .account, "acct/1", .datasets, .{ .include_zones = "true" });
+    defer allocator.free(account_datasets);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/logs/explorer/datasets?include_zones=true", account_datasets);
+
+    const zone_dataset = try logExplorerReadPath(allocator, .zone, "zone/1", .dataset, .{ .dataset_id = "http_requests" });
+    defer allocator.free(zone_dataset);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/logs/explorer/datasets/http_requests", zone_dataset);
+
+    const received = try logsReceivedReadPath(allocator, "zone/1", .received, .{
+        .start = "2026-06-17T00:00:00Z",
+        .end = "2026-06-17T01:00:00Z",
+        .count = "true",
+        .timestamps = "rfc3339",
+    });
+    defer allocator.free(received);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/logs/received?count=true&end=2026-06-17T01%3A00%3A00Z&start=2026-06-17T00%3A00%3A00Z&timestamps=rfc3339", received);
+
+    const rayid = try logsReceivedReadPath(allocator, "zone/1", .rayid, .{ .ray_id = "ray/1", .fields = "ClientIP" });
+    defer allocator.free(rayid);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/logs/rayids/ray%2F1?fields=ClientIP", rayid);
+
+    try std.testing.expectError(error.MissingCloudflareLogpushJobId, logpushReadPath(allocator, .account, "acct/1", .job, .{}));
+    try std.testing.expectError(error.MissingCloudflareLogpushDatasetId, logpushReadPath(allocator, .zone, "zone/1", .dataset_jobs, .{}));
+    try std.testing.expectError(error.MissingCloudflareLogExplorerDatasetId, logExplorerReadPath(allocator, .account, "acct/1", .dataset, .{}));
+    try std.testing.expectError(error.MissingCloudflareLogsReceivedEnd, logsReceivedReadPath(allocator, "zone/1", .received, .{}));
+    try std.testing.expectError(error.MissingCloudflareLogsReceivedRayId, logsReceivedReadPath(allocator, "zone/1", .rayid, .{}));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

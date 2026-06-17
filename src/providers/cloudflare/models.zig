@@ -201,13 +201,7 @@ pub fn parseResourceIdRows(gpa: Allocator, body: []const u8) !IdRows {
     errdefer deinitPartial(IdRow, &rows, gpa);
 
     for (items.items) |item| {
-        const id_value = core_json.fieldString(item, "id") orelse
-            core_json.fieldString(item, "uid") orelse
-            core_json.fieldString(item, "issue_id") orelse
-            core_json.fieldString(item, "uuid") orelse
-            core_json.fieldString(item, "name") orelse
-            continue;
-        const id = try dupeRequired(gpa, id_value);
+        const id = try resourceIdValue(gpa, item) orelse continue;
         errdefer gpa.free(id);
         try rows.append(gpa, .{ .id = id });
     }
@@ -224,15 +218,32 @@ pub fn parseResourceIdRowsMatchingString(gpa: Allocator, body: []const u8, field
     for (items.items) |item| {
         const actual = core_json.fieldString(item, field_name) orelse continue;
         if (!std.mem.eql(u8, actual, expected_value)) continue;
-        const id_value = core_json.fieldString(item, "id") orelse
-            core_json.fieldString(item, "uid") orelse
-            core_json.fieldString(item, "name") orelse
-            continue;
-        const id = try dupeRequired(gpa, id_value);
+        const id = try resourceIdValue(gpa, item) orelse continue;
         errdefer gpa.free(id);
         try rows.append(gpa, .{ .id = id });
     }
     return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
+fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    const fields = [_][]const u8{
+        "id",
+        "uid",
+        "issue_id",
+        "uuid",
+        "dataset_id",
+        "dataset",
+        "name",
+    };
+    for (fields) |field_name| {
+        const value = core_json.field(item, field_name) orelse continue;
+        return switch (value) {
+            .string => |text| try gpa.dupe(u8, text),
+            .integer => |number| try std.fmt.allocPrint(gpa, "{d}", .{number}),
+            else => continue,
+        };
+    }
+    return null;
 }
 
 pub fn zoneIdFromResponse(gpa: Allocator, body: []const u8) !?[]u8 {
@@ -323,19 +334,22 @@ test "parses generic Cloudflare result ids" {
     try std.testing.expectEqualStrings("second", rows.items[1].id);
 }
 
-test "parses generic Cloudflare resource ids from id uid or name" {
+test "parses generic Cloudflare resource ids from common id fields" {
     const allocator = std.testing.allocator;
     var rows = try parseResourceIdRows(allocator,
-        \\{"result":[{"id":"page-id"},{"uid":"access-uid"},{"issue_id":"insight-issue"},{"uuid":"audit-uuid"},{"name":"asset-name"},{"description":"missing"}]}
+        \\{"result":[{"id":"page-id"},{"id":42},{"uid":"access-uid"},{"issue_id":"insight-issue"},{"uuid":"audit-uuid"},{"dataset_id":"dataset-id"},{"dataset":"dataset-name"},{"name":"asset-name"},{"description":"missing"}]}
     );
     defer rows.deinit(allocator);
 
-    try std.testing.expectEqual(@as(usize, 5), rows.items.len);
+    try std.testing.expectEqual(@as(usize, 8), rows.items.len);
     try std.testing.expectEqualStrings("page-id", rows.items[0].id);
-    try std.testing.expectEqualStrings("access-uid", rows.items[1].id);
-    try std.testing.expectEqualStrings("insight-issue", rows.items[2].id);
-    try std.testing.expectEqualStrings("audit-uuid", rows.items[3].id);
-    try std.testing.expectEqualStrings("asset-name", rows.items[4].id);
+    try std.testing.expectEqualStrings("42", rows.items[1].id);
+    try std.testing.expectEqualStrings("access-uid", rows.items[2].id);
+    try std.testing.expectEqualStrings("insight-issue", rows.items[3].id);
+    try std.testing.expectEqualStrings("audit-uuid", rows.items[4].id);
+    try std.testing.expectEqualStrings("dataset-id", rows.items[5].id);
+    try std.testing.expectEqualStrings("dataset-name", rows.items[6].id);
+    try std.testing.expectEqualStrings("asset-name", rows.items[7].id);
 }
 
 test "parses generic Cloudflare resource ids matching a string field" {

@@ -72,6 +72,12 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandSecurityCenter(ctx, args);
     } else if (std.mem.eql(u8, sub, "audit-logs") or std.mem.eql(u8, sub, "audit")) {
         try commandAuditLogs(ctx, args);
+    } else if (std.mem.eql(u8, sub, "logpush")) {
+        try commandLogpush(ctx, args);
+    } else if (std.mem.eql(u8, sub, "log-explorer") or std.mem.eql(u8, sub, "logs-explorer")) {
+        try commandLogExplorer(ctx, args);
+    } else if (std.mem.eql(u8, sub, "logs-received") or std.mem.eql(u8, sub, "received-logs")) {
+        try commandLogsReceived(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -1497,6 +1503,111 @@ fn commandAuditLogs(ctx: Context, args: []const []const u8) !void {
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAuditLogEndpoint(appContext(ctx), endpoint, read_args));
 }
 
+fn commandLogpush(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("logpush account|zone jobs|job|dataset-jobs|dataset-fields <scope-id> [job-id|dataset-id] required\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.ObservabilityScope.parse(args[1]) orelse {
+        std.debug.print("unknown logpush scope: {s}\n", .{args[1]});
+        return;
+    };
+    const endpoint = app_cloudflare.LogpushReadEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown logpush route: {s}\n", .{args[2]});
+        return;
+    };
+    const scope_id = args[3];
+    var read_args: app_cloudflare.LogpushReadArgs = .{};
+    var index: usize = 4;
+    if (endpoint.requiresJobId()) {
+        if (index >= args.len) {
+            std.debug.print("job id required for logpush {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        read_args.job_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresDatasetId()) {
+        if (index >= args.len) {
+            std.debug.print("dataset id required for logpush {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        read_args.dataset_id = args[index];
+        index += 1;
+    }
+    if (index < args.len) {
+        std.debug.print("unused logpush argument: {s}\n", .{args[index]});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLogpushEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+}
+
+fn commandLogExplorer(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("log-explorer account|zone datasets|available|dataset <scope-id> [dataset-id] [key=value...] required\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.ObservabilityScope.parse(args[1]) orelse {
+        std.debug.print("unknown log-explorer scope: {s}\n", .{args[1]});
+        return;
+    };
+    const endpoint = app_cloudflare.LogExplorerReadEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown log-explorer route: {s}\n", .{args[2]});
+        return;
+    };
+    const scope_id = args[3];
+    var read_args: app_cloudflare.LogExplorerReadArgs = .{};
+    var index: usize = 4;
+    if (endpoint.requiresDatasetId()) {
+        if (index >= args.len) {
+            std.debug.print("dataset id required for log-explorer {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        read_args.dataset_id = args[index];
+        index += 1;
+    }
+    while (index < args.len) : (index += 1) {
+        if (!applyLogExplorerReadFilter(&read_args, args[index])) {
+            std.debug.print("unused log-explorer argument: {s}\n", .{args[index]});
+            return;
+        }
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLogExplorerEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+}
+
+fn commandLogsReceived(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("logs-received retention-flag|received|fields|rayid <zone-id> [ray-id] [key=value...] required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.LogsReceivedReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown logs-received route: {s}\n", .{args[1]});
+        return;
+    };
+    const zone_id = args[2];
+    var read_args: app_cloudflare.LogsReceivedReadArgs = .{};
+    var index: usize = 3;
+    if (endpoint.requiresRayId()) {
+        if (index >= args.len) {
+            std.debug.print("ray id required for logs-received {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.ray_id = args[index];
+        index += 1;
+    }
+    while (index < args.len) : (index += 1) {
+        if (!applyLogsReceivedReadFilter(&read_args, args[index])) {
+            std.debug.print("unused logs-received argument: {s}\n", .{args[index]});
+            return;
+        }
+    }
+    if (endpoint == .received and read_args.end == null) {
+        std.debug.print("end=<rfc3339> required for logs-received received\n", .{});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLogsReceivedEndpoint(appContext(ctx), zone_id, endpoint, read_args));
+}
+
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
     if (args.len > 1 and std.mem.eql(u8, args[1], "zsk")) {
         const domain = if (args.len > 2) args[2] else ctx.domains[0];
@@ -1817,6 +1928,40 @@ fn applyAuditLogReadFilter(args: *app_cloudflare.AuditLogReadArgs, raw: []const 
     return true;
 }
 
+fn applyLogExplorerReadFilter(args: *app_cloudflare.LogExplorerReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "include_zones") or std.mem.eql(u8, key, "include-zones")) {
+        args.include_zones = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+fn applyLogsReceivedReadFilter(args: *app_cloudflare.LogsReceivedReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "start")) {
+        args.start = value;
+    } else if (std.mem.eql(u8, key, "end")) {
+        args.end = value;
+    } else if (std.mem.eql(u8, key, "count")) {
+        args.count = value;
+    } else if (std.mem.eql(u8, key, "fields")) {
+        args.fields = value;
+    } else if (std.mem.eql(u8, key, "sample")) {
+        args.sample = value;
+    } else if (std.mem.eql(u8, key, "timestamps")) {
+        args.timestamps = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 fn applyCloudforceOneRuleFilter(args: *app_cloudflare.CloudforceOneRuleReadArgs, raw: []const u8) bool {
     const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
     const key = raw[0..eq];
@@ -2016,6 +2161,29 @@ test "audit log read filters parse key value arguments" {
     try std.testing.expectEqualStrings("edit", args.action_type.?);
     try std.testing.expectEqualStrings("zone/1", args.resource_id.?);
     try std.testing.expectEqualStrings("true", args.hide_user_logs.?);
+}
+
+test "log explorer and logs received filters parse key value arguments" {
+    var explorer_args: app_cloudflare.LogExplorerReadArgs = .{};
+    try std.testing.expect(applyLogExplorerReadFilter(&explorer_args, "include-zones=true"));
+    try std.testing.expect(!applyLogExplorerReadFilter(&explorer_args, "unknown=value"));
+    try std.testing.expect(!applyLogExplorerReadFilter(&explorer_args, "include-zones"));
+    try std.testing.expectEqualStrings("true", explorer_args.include_zones.?);
+
+    var received_args: app_cloudflare.LogsReceivedReadArgs = .{};
+    try std.testing.expect(applyLogsReceivedReadFilter(&received_args, "start=2026-06-17T00:00:00Z"));
+    try std.testing.expect(applyLogsReceivedReadFilter(&received_args, "end=2026-06-17T01:00:00Z"));
+    try std.testing.expect(applyLogsReceivedReadFilter(&received_args, "count=true"));
+    try std.testing.expect(applyLogsReceivedReadFilter(&received_args, "fields=ClientIP,EdgeStartTimestamp"));
+    try std.testing.expect(applyLogsReceivedReadFilter(&received_args, "sample=0.1"));
+    try std.testing.expect(applyLogsReceivedReadFilter(&received_args, "timestamps=rfc3339"));
+    try std.testing.expect(!applyLogsReceivedReadFilter(&received_args, "unknown=value"));
+    try std.testing.expect(!applyLogsReceivedReadFilter(&received_args, "start"));
+    try std.testing.expectEqualStrings("2026-06-17T00:00:00Z", received_args.start.?);
+    try std.testing.expectEqualStrings("2026-06-17T01:00:00Z", received_args.end.?);
+    try std.testing.expectEqualStrings("true", received_args.count.?);
+    try std.testing.expectEqualStrings("ClientIP,EdgeStartTimestamp", received_args.fields.?);
+    try std.testing.expectEqualStrings("rfc3339", received_args.timestamps.?);
 }
 
 test "ip access rule filters parse key value arguments" {
