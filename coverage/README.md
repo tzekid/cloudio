@@ -21,6 +21,7 @@ zig build coverage-check
 The manifest is intentionally conservative:
 
 - upstream `GET` operations default to `planned` / `read`
+- upstream `GET` operations with `requestBody.required=true` default to `not_applicable` / `none` because generic read dispatch only sends bodyless GET requests
 - upstream non-`GET` operations default to `unsafe_mutation` / `dry_run`
 - upstream deprecated operations default to `deprecated` / `none`
 - known POC routes are overlaid from `coverage/overrides/*.jsonl` as `partial`, `blocked_permission`, `not_applicable`, or another explicit support status

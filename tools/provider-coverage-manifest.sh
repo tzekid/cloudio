@@ -126,13 +126,20 @@ generate_manifest() {
             }
         end;
 
-    def default_coverage($method; $deprecated):
+    def default_coverage($method; $deprecated; $body):
       if $deprecated then
         {
           support: "deprecated",
           mode: "none",
           tests: "missing",
           notes: "Upstream marks this operation deprecated."
+        }
+      elif $method == "get" and ($body.required // false) then
+        {
+          support: "not_applicable",
+          mode: "none",
+          tests: "official_spec_contract_review",
+          notes: "Official spec marks this GET operation requestBody.required=true; Cloudio generic read dispatch only sends bodyless GET requests, so this transport contract is not modeled."
         }
       elif $method == "get" then
         {
@@ -165,7 +172,8 @@ generate_manifest() {
     | .key as $method
     | .value as $operation
     | (.value.deprecated // false) as $deprecated
-    | (override_coverage($method; $path) // default_coverage($method; $deprecated)) as $coverage
+    | operation_body($root; $operation) as $body
+    | (override_coverage($method; $path) // default_coverage($method; $deprecated; $body)) as $coverage
     | {
         provider: $provider,
         tag: ($operation.tags[0] // "untagged"),
@@ -174,7 +182,7 @@ generate_manifest() {
         operation_id: ($operation.operationId // null),
         path_params: operation_params($root; $path_item; $operation; "path"),
         query_params: operation_params($root; $path_item; $operation; "query"),
-        request_body: operation_body($root; $operation),
+        request_body: $body,
         support: $coverage.support,
         mode: $coverage.mode,
         tests: $coverage.tests,

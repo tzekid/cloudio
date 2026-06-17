@@ -588,6 +588,31 @@ test "loads generated route metadata for both providers" {
     try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines", hostinger_vps.path_template);
 }
 
+test "body-required GET routes are not generic read-routable" {
+    const allocator = std.testing.allocator;
+    var routes = try loadAll(std.testing.io, allocator, .{});
+    defer routes.deinit(allocator);
+
+    for (routes.items) |route| {
+        if (route.method == .GET and route.request_body.required) {
+            try std.testing.expectEqual(Support.not_applicable, route.support);
+            try std.testing.expectEqual(Mode.none, route.mode);
+            try std.testing.expect(!route.isRoutable());
+        }
+        if (route.mode == .read) {
+            try std.testing.expect(!route.request_body.required);
+        }
+    }
+
+    const cloudflare_route = routes.findByOperationId("tunnel-virtual-network-get") orelse return error.TestExpectedRoute;
+    try std.testing.expect(cloudflare_route.request_body.required);
+    try std.testing.expectEqual(Support.not_applicable, cloudflare_route.support);
+
+    const hostinger_route = routes.findByOperationId("v2_getDomainVerificationsDIRECT") orelse return error.TestExpectedRoute;
+    try std.testing.expect(hostinger_route.request_body.required);
+    try std.testing.expectEqual(Support.not_applicable, hostinger_route.support);
+}
+
 test "finds routes by operation id and template without loading full tables" {
     const allocator = std.testing.allocator;
 
