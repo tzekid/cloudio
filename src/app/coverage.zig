@@ -3,7 +3,9 @@ const collector_capture = @import("collector_capture");
 const core_json = @import("core_json");
 const db_store = @import("db_store");
 const net_pagination = @import("net_pagination");
+const provider_cloudflare_models = @import("provider_cloudflare_models");
 const provider_dispatch = @import("provider_dispatch");
+const provider_hostinger_models = @import("provider_hostinger_models");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -51,6 +53,7 @@ const CapturedRoutePage = struct {
     http_status: u16,
     status_text: []const u8,
     body_bytes: usize,
+    normalized_resources: usize,
     pagination_envelope: ?net_pagination.Envelope,
     data_len: ?usize,
     has_next: bool,
@@ -485,7 +488,7 @@ pub fn routePlanJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostin
 pub fn captureRouteReadResultJson(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, result: provider_dispatch.ReadRouteResult, options: CaptureOptions) ![]u8 {
     const captured = try captureRouteReadPageResult(gpa, db, route, request, result, options, null);
     defer captured.deinit(gpa);
-    return try routeCaptureMetadataJson(gpa, route, result, captured.snapshot_id, captured.endpoint, options.kind orelse route.operation_id orelse route.path_template, options.target orelse captured.endpoint);
+    return try routeCaptureMetadataJson(gpa, route, result, captured.snapshot_id, captured.endpoint, options.kind orelse route.operation_id orelse route.path_template, options.target orelse captured.endpoint, captured.normalized_resources);
 }
 
 fn capturePaginatedRouteReadMetadataJson(io: Io, gpa: Allocator, db: *Db, client: provider_dispatch.Client, route: provider_routes.Route, request: Request, options: CaptureOptions) ![]u8 {
@@ -577,6 +580,7 @@ fn captureRouteReadPageResult(gpa: Allocator, db: *Db, route: provider_routes.Ro
         .body = result.response.body,
     });
     defer stored.deinit(gpa);
+    const normalized_resources = try normalizeRouteCaptureResources(gpa, db, route, request, kind, options.target, result, stored.redacted);
     const audit_detail = try std.fmt.allocPrint(gpa, "{s}/{s} {s}", .{ route.provider.name(), operation, endpoint });
     defer gpa.free(audit_detail);
     try db.insertAudit("route.capture", result.statusText(), audit_detail);
@@ -590,10 +594,71 @@ fn captureRouteReadPageResult(gpa: Allocator, db: *Db, route: provider_routes.Ro
         .http_status = result.statusCode(),
         .status_text = result.statusText(),
         .body_bytes = result.response.body.len,
+        .normalized_resources = normalized_resources,
         .pagination_envelope = if (pagination) |info| info.envelope else if (cursor_info) |info| info.envelope else null,
         .data_len = if (pagination) |info| info.data_len else if (cursor_info) |info| info.data_len else null,
         .has_next = if (pagination) |info| info.hasNext() else if (cursor_info) |info| info.hasNext() else false,
     };
+}
+
+fn normalizeRouteCaptureResources(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, kind: []const u8, explicit_target: ?[]const u8, result: provider_dispatch.ReadRouteResult, redacted_body: []const u8) !usize {
+    const status = result.statusCode();
+    if (status < 200 or status >= 300) return 0;
+    return switch (route.provider) {
+        .cloudflare => try normalizeCloudflareRouteResources(gpa, db, route, request, kind, redacted_body),
+        .hostinger => try normalizeHostingerRouteResources(gpa, db, route, request, kind, explicit_target, redacted_body),
+    };
+}
+
+fn normalizeCloudflareRouteResources(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, kind: []const u8, redacted_body: []const u8) !usize {
+    const scope = cloudflareRouteScope(route, request);
+    var rows = try provider_cloudflare_models.parseResourceRows(gpa, kind, scope.name, scope.id, redacted_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertCloudflareResource(row.key, row.kind, row.resource_id, row.scope, row.scope_id, row.name, row.status, row.resource_type, row.raw_json);
+    }
+    return rows.items.len;
+}
+
+fn normalizeHostingerRouteResources(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, kind: []const u8, explicit_target: ?[]const u8, redacted_body: []const u8) !usize {
+    const target = explicit_target orelse firstPathParamValue(request) orelse route.operation_id orelse route.path_template;
+    var rows = try provider_hostinger_models.parseResourceRows(gpa, kind, target, redacted_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertHostingerResource(row.key, row.kind, row.resource_id, row.target, row.name, row.status, row.domain, row.raw_json);
+    }
+    return rows.items.len;
+}
+
+const CloudflareRouteScope = struct {
+    name: ?[]const u8,
+    id: ?[]const u8,
+};
+
+fn cloudflareRouteScope(route: provider_routes.Route, request: Request) CloudflareRouteScope {
+    if (pathParamValue(request, "account_id")) |id| return .{ .name = "account", .id = id };
+    if (pathParamValue(request, "accounts_id")) |id| return .{ .name = "account", .id = id };
+    if (pathParamValue(request, "account_identifier")) |id| return .{ .name = "account", .id = id };
+    if (pathParamValue(request, "zone_id")) |id| return .{ .name = "zone", .id = id };
+    if (pathParamValue(request, "zones_id")) |id| return .{ .name = "zone", .id = id };
+    if (pathParamValue(request, "zone_identifier")) |id| return .{ .name = "zone", .id = id };
+    if (std.mem.startsWith(u8, route.path_template, "/user") or std.mem.indexOf(u8, route.path_template, "/memberships") != null) {
+        return .{ .name = "user", .id = null };
+    }
+    if (std.mem.startsWith(u8, route.path_template, "/ips")) return .{ .name = "global", .id = null };
+    return .{ .name = null, .id = null };
+}
+
+fn pathParamValue(request: Request, name: []const u8) ?[]const u8 {
+    for (request.path_params) |param| {
+        if (std.mem.eql(u8, param.name, name)) return param.value;
+    }
+    return null;
+}
+
+fn firstPathParamValue(request: Request) ?[]const u8 {
+    if (request.path_params.len == 0) return null;
+    return request.path_params[0].value;
 }
 
 pub fn writeRoutePlanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, writer: anytype) !void {
@@ -614,7 +679,7 @@ fn selectSingleRoute(routes: []const CoverageRoute) !CoverageRoute {
     return routes[0];
 }
 
-fn routeCaptureMetadataJson(gpa: Allocator, route: provider_routes.Route, result: provider_dispatch.ReadRouteResult, snapshot_id: i64, endpoint: []const u8, kind: []const u8, target: []const u8) ![]u8 {
+fn routeCaptureMetadataJson(gpa: Allocator, route: provider_routes.Route, result: provider_dispatch.ReadRouteResult, snapshot_id: i64, endpoint: []const u8, kind: []const u8, target: []const u8, normalized_resources: usize) ![]u8 {
     const read_json = try provider_dispatch.readRouteResultMetadataJson(gpa, route, result);
     defer gpa.free(read_json);
     var out = std.Io.Writer.Allocating.init(gpa);
@@ -635,6 +700,9 @@ fn routeCaptureMetadataJson(gpa: Allocator, route: provider_routes.Route, result
     try writer.writeByte(',');
     try writer.writeAll("\"captured\":true,");
     try writer.writeAll("\"provider_raw\":true,");
+    try writer.writeAll("\"normalized_resources\":");
+    try writer.print("{d}", .{normalized_resources});
+    try writer.writeByte(',');
     try writer.writeAll("\"snapshot\":{");
     try writeJsonField(writer, "source", route.provider.name(), true);
     try writeJsonField(writer, "kind", kind, true);
@@ -669,6 +737,9 @@ fn routePaginatedCaptureMetadataJson(gpa: Allocator, route: provider_routes.Rout
     try writer.writeAll("\"truncated\":");
     try writer.writeAll(if (pages.len >= max_pages and pages.len != 0 and pages[pages.len - 1].has_next) "true" else "false");
     try writer.writeByte(',');
+    try writer.writeAll("\"normalized_resources\":");
+    try writer.print("{d}", .{normalizedResourceTotal(pages)});
+    try writer.writeByte(',');
     try writer.writeAll("\"body_included\":false,");
     try writer.writeAll("\"snapshots\":[");
     for (pages, 0..) |page, index| {
@@ -699,6 +770,9 @@ fn writeCapturedPageJson(writer: anytype, page: CapturedRoutePage) !void {
     try writer.writeAll("\"body_bytes\":");
     try writer.print("{d}", .{page.body_bytes});
     try writer.writeByte(',');
+    try writer.writeAll("\"normalized_resources\":");
+    try writer.print("{d}", .{page.normalized_resources});
+    try writer.writeByte(',');
     if (page.pagination_envelope) |envelope| {
         try writeJsonField(writer, "pagination_envelope", envelope.name(), true);
     } else {
@@ -714,6 +788,12 @@ fn writeCapturedPageJson(writer: anytype, page: CapturedRoutePage) !void {
     try writer.writeAll("\"has_next\":");
     try writer.writeAll(if (page.has_next) "true" else "false");
     try writer.writeByte('}');
+}
+
+fn normalizedResourceTotal(pages: []const CapturedRoutePage) usize {
+    var total: usize = 0;
+    for (pages) |page| total += page.normalized_resources;
+    return total;
 }
 
 fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
@@ -1357,7 +1437,7 @@ test "captures generic route read results into snapshots and provider raw" {
     var routes = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .operation_id = "VPS_getVirtualMachinesV1" });
     defer routes.deinit(allocator);
     const route = try selectSingleRoute(routes.items);
-    const body = try allocator.dupe(u8, "{\"password\":\"super-secret-password\",\"data\":[]}");
+    const body = try allocator.dupe(u8, "{\"password\":\"super-secret-password\",\"data\":[{\"id\":1307809,\"hostname\":\"srv1307809.hstgr.cloud\",\"state\":\"running\"}]}");
     const result = provider_dispatch.matchReadRouteResponse(route.route, .{ .status = .ok, .body = body });
     defer result.deinit(allocator);
 
@@ -1373,6 +1453,7 @@ test "captures generic route read results into snapshots and provider raw" {
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"captured\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"provider_raw\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"normalized_resources\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"snapshot_id\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"route-vps-inventory\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"target\":\"test-vps-list\"") != null);
@@ -1381,6 +1462,12 @@ test "captures generic route read results into snapshots and provider raw" {
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("provider_raw"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("audit_events"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("hostinger_resources"));
+    var resource_rows = try db.hostingerResourceList(allocator);
+    defer resource_rows.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), resource_rows.items.len);
+    try std.testing.expectEqualStrings("route-vps-inventory/1307809", resource_rows.items[0].name);
+    try std.testing.expect(std.mem.indexOf(u8, resource_rows.items[0].value, "running srv1307809.hstgr.cloud") != null);
 }
 
 test "captures paginated generic route pages into snapshots and metadata" {
@@ -1461,6 +1548,7 @@ test "captures paginated generic route pages into snapshots and metadata" {
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"paginated\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"captured_pages\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"normalized_resources\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"snapshots\":[1,2]") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"pagination_envelope\":\"data_meta\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"data_len\":1") != null);
@@ -1470,6 +1558,7 @@ test "captures paginated generic route pages into snapshots and metadata" {
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("snapshots"));
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("provider_raw"));
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("audit_events"));
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("hostinger_resources"));
 }
 
 test "captures Cloudflare result_info paginated generic route pages" {
@@ -1550,6 +1639,7 @@ test "captures Cloudflare result_info paginated generic route pages" {
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"paginated\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"captured_pages\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"normalized_resources\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"snapshots\":[1,2]") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"pagination_envelope\":\"result_info\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"data_len\":1") != null);
@@ -1559,6 +1649,7 @@ test "captures Cloudflare result_info paginated generic route pages" {
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("snapshots"));
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("provider_raw"));
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("audit_events"));
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("cloudflare_resources"));
 }
 
 test "captures Cloudflare cursor paginated generic route pages without leaking cursors" {
@@ -1639,6 +1730,7 @@ test "captures Cloudflare cursor paginated generic route pages without leaking c
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"paginated\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"captured_pages\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"normalized_resources\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"pagination_envelope\":\"cursor_result_info\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cursor=<redacted-cursor>") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "opaque-next-cursor") == null);
@@ -1647,4 +1739,5 @@ test "captures Cloudflare cursor paginated generic route pages without leaking c
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("snapshots"));
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("provider_raw"));
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("audit_events"));
+    try std.testing.expectEqual(@as(i64, 2), try db.countTable("cloudflare_resources"));
 }

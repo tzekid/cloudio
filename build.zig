@@ -260,7 +260,9 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "net_pagination", .module = net_pagination_mod },
+            .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
             .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
+            .{ .name = "provider_hostinger_models", .module = provider_hostinger_models_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
