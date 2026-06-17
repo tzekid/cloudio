@@ -230,6 +230,21 @@ pub const TagSummaries = struct {
             try writer.writeByte('\n');
         }
     }
+
+    pub fn writeJson(self: TagSummaries, writer: anytype, filter: ProviderFilter) !void {
+        try writer.writeByte('{');
+        try writeJsonField(writer, "kind", "coverage_tags", true);
+        try writeJsonField(writer, "filter", filter.name(), true);
+        try writeJsonCountField(writer, "count", self.items.len, true);
+        try writer.writeAll("\"tags\":[");
+        var first = true;
+        for (self.items) |row| {
+            try writeMaybeJsonComma(writer, &first);
+            try writeTagSummaryJson(row, writer);
+        }
+        try writer.writeAll("]}");
+        try writer.writeByte('\n');
+    }
 };
 
 pub const GapOptions = struct {
@@ -673,6 +688,18 @@ pub const Summary = struct {
         try writer.writeByte('\n');
         try writeProvider(self.hostinger, writer);
     }
+
+    pub fn writeJson(self: Summary, writer: anytype) !void {
+        try writer.writeByte('{');
+        try writeJsonField(writer, "kind", "coverage_summary", true);
+        try writeJsonCountField(writer, "total_operations", self.total(), true);
+        try writer.writeAll("\"providers\":[");
+        try writeProviderSummaryJson(self.cloudflare, writer);
+        try writer.writeByte(',');
+        try writeProviderSummaryJson(self.hostinger, writer);
+        try writer.writeAll("]}");
+        try writer.writeByte('\n');
+    }
 };
 
 pub const L1AuditFailures = struct {
@@ -803,6 +830,11 @@ pub fn writeTextFromFiles(io: Io, gpa: Allocator, paths: Paths, writer: anytype)
     try summary.writeText(writer);
 }
 
+pub fn writeJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, writer: anytype) !void {
+    const summary = try load(io, gpa, paths);
+    try summary.writeJson(writer);
+}
+
 pub fn loadTags(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !TagSummaries {
     var rows = std.ArrayList(TagSummary).empty;
     errdefer deinitTagList(&rows, gpa);
@@ -833,6 +865,12 @@ pub fn writeTagsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: Prov
     var rows = try loadTags(io, gpa, paths, filter);
     defer rows.deinit(gpa);
     try rows.writeText(writer);
+}
+
+pub fn writeTagsJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter, writer: anytype) !void {
+    var rows = try loadTags(io, gpa, paths, filter);
+    defer rows.deinit(gpa);
+    try rows.writeJson(writer, filter);
 }
 
 pub fn loadGaps(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !GapReport {
@@ -1814,6 +1852,43 @@ fn writeProvider(summary: ProviderSummary, writer: anytype) !void {
     try writer.print("\n  upstream deprecated flags={d}\n", .{summary.deprecated});
 }
 
+fn writeProviderSummaryJson(summary: ProviderSummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "name", summary.name, true);
+    try writeJsonCountField(writer, "total", summary.total, true);
+    try writeJsonCountField(writer, "deprecated", summary.deprecated, true);
+    try writer.writeAll("\"support\":");
+    try writeNamedCountMap(writer, support_names[0..], summary.support_counts[0..]);
+    try writer.writeByte(',');
+    try writer.writeAll("\"mode\":");
+    try writeNamedCountMap(writer, mode_names[0..], summary.mode_counts[0..]);
+    try writer.writeByte('}');
+}
+
+fn writeTagSummaryJson(row: TagSummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", row.provider, true);
+    try writeJsonField(writer, "tag", row.tag, true);
+    try writeJsonCountField(writer, "total", row.total, true);
+    try writeJsonCountField(writer, "deprecated", row.deprecated, true);
+    try writer.writeAll("\"support\":");
+    try writeNamedCountMap(writer, support_names[0..], row.support_counts[0..]);
+    try writer.writeByte(',');
+    try writer.writeAll("\"mode\":");
+    try writeNamedCountMap(writer, mode_names[0..], row.mode_counts[0..]);
+    try writer.writeByte('}');
+}
+
+fn writeNamedCountMap(writer: anytype, names: []const []const u8, counts: []const usize) !void {
+    try writer.writeByte('{');
+    for (names, 0..) |name, index| {
+        if (index != 0) try writer.writeByte(',');
+        try core_json.writeString(writer, name);
+        try writer.print(":{d}", .{counts[index]});
+    }
+    try writer.writeByte('}');
+}
+
 fn writeL1ProviderAudit(audit: L1ProviderAudit, writer: anytype) !void {
     try writer.print("\n{s}: {s}\n", .{ audit.name, if (audit.passed()) "pass" else "fail" });
     try writer.print("  total={d} non_deprecated={d} deprecated={d} not_applicable={d} routable={d}\n", .{
@@ -2466,6 +2541,17 @@ test "summarizes provider coverage jsonl by status and mode" {
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare: 2 operations\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "unsafe_mutation=1") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try summary.writeJson(&json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_summary\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"total_operations\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"name\":\"cloudflare\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"deprecated\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"unsafe_mutation\":1") != null);
 }
 
 test "summarizes provider coverage by tag with provider filters" {
@@ -2498,6 +2584,18 @@ test "summarizes provider coverage by tag with provider filters" {
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage by tag\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Accounts: total=2 support: partial=1 unsafe_mutation=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger") == null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try rows.writeJson(&json_out.writer, .cloudflare);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_tags\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"filter\":\"cloudflare\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"count\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Accounts\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"unsafe_mutation\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"provider\":\"hostinger\"") == null);
 }
 
 test "ranks provider coverage gaps by broad unresolved tag groups" {

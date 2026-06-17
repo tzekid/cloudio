@@ -126,7 +126,8 @@ fn usage() void {
         \\  cloudio overview [--json|--format json]
         \\  cloudio inventory [summary|facets] [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>] [--json|--format json]
         \\  cloudio export
-        \\  cloudio coverage summary|tags [all|cloudflare|hostinger]
+        \\  cloudio coverage summary [--json|--format json]
+        \\  cloudio coverage tags [all|cloudflare|hostinger] [--json|--format json]
         \\  cloudio coverage l1 [all|cloudflare|hostinger] [--json|--format json]
         \\  cloudio coverage routes [all|cloudflare|hostinger] [tag-query] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>] [--json|--format json]
         \\  cloudio coverage gaps|levels|level-tags [all|cloudflare|hostinger] [--limit <n>] [--json|--format json]

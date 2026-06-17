@@ -16,6 +16,15 @@ pub const RenderFormat = enum {
     json,
 };
 
+const SummaryCommand = struct {
+    format: RenderFormat = .text,
+};
+
+const TagCommand = struct {
+    provider: app_coverage.ProviderFilter = .all,
+    format: RenderFormat = .text,
+};
+
 const GapCommand = struct {
     options: app_coverage.GapOptions = .{},
     format: RenderFormat = .text,
@@ -43,8 +52,8 @@ const RouteCommand = struct {
 
 pub fn run(ctx: Context, args: []const []const u8) !void {
     switch (parseCommand(args)) {
-        .summary => try commandSummary(ctx),
-        .tags => |filter| try commandTags(ctx, filter),
+        .summary => |command| try commandSummary(ctx, command),
+        .tags => |command| try commandTags(ctx, command),
         .l1 => |filter| try commandL1(ctx, filter),
         .gaps => |command| try commandGaps(ctx, command),
         .levels => |command| try commandLevels(ctx, command),
@@ -56,8 +65,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
 }
 
 const Command = union(enum) {
-    summary,
-    tags: app_coverage.ProviderFilter,
+    summary: SummaryCommand,
+    tags: TagCommand,
     l1: L1Command,
     gaps: GapCommand,
     levels: LevelCommand,
@@ -68,11 +77,11 @@ const Command = union(enum) {
 };
 
 fn parseCommand(args: []const []const u8) Command {
-    if (args.len == 0 or std.mem.eql(u8, args[0], "summary")) return .summary;
+    if (args.len == 0) return .{ .summary = .{} };
+    if (std.mem.eql(u8, args[0], "summary")) return parseSummary(args[1..]);
+    if (std.mem.eql(u8, args[0], "--json") or std.mem.eql(u8, args[0], "--format") or std.mem.startsWith(u8, args[0], "--format=")) return parseSummary(args);
     if (std.mem.eql(u8, args[0], "tags")) {
-        if (args.len < 2) return .{ .tags = .all };
-        const filter = app_coverage.ProviderFilter.parse(args[1]) orelse return .{ .unknown = args[1] };
-        return .{ .tags = filter };
+        return parseTags(args[1..]);
     }
     if (std.mem.eql(u8, args[0], "l1") or std.mem.eql(u8, args[0], "audit-l1")) {
         return parseL1(args[1..]);
@@ -93,6 +102,52 @@ fn parseCommand(args: []const []const u8) Command {
         return .{ .plan = args[1..] };
     }
     return .{ .unknown = args[0] };
+}
+
+fn parseSummary(args: []const []const u8) Command {
+    var command = SummaryCommand{};
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--json")) {
+            command.format = .json;
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--format" };
+            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            const value = arg["--format=".len..];
+            command.format = parseFormat(value) orelse return .{ .unknown = value };
+        } else {
+            return .{ .unknown = arg };
+        }
+    }
+    return .{ .summary = command };
+}
+
+fn parseTags(args: []const []const u8) Command {
+    var command = TagCommand{};
+    var provider_set = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--json")) {
+            command.format = .json;
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--format" };
+            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            const value = arg["--format=".len..];
+            command.format = parseFormat(value) orelse return .{ .unknown = value };
+        } else if (!provider_set) {
+            command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
+            provider_set = true;
+        } else {
+            return .{ .unknown = arg };
+        }
+    }
+    return .{ .tags = command };
 }
 
 fn parseL1(args: []const []const u8) Command {
@@ -287,17 +342,23 @@ fn parseRoutes(args: []const []const u8) Command {
     return .{ .routes = command };
 }
 
-fn commandSummary(ctx: Context) !void {
+fn commandSummary(ctx: Context, command: SummaryCommand) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
-    try app_coverage.writeTextFromFiles(ctx.io, ctx.gpa, ctx.paths, &out.writer);
+    switch (command.format) {
+        .text => try app_coverage.writeTextFromFiles(ctx.io, ctx.gpa, ctx.paths, &out.writer),
+        .json => try app_coverage.writeJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, &out.writer),
+    }
     try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
-fn commandTags(ctx: Context, filter: app_coverage.ProviderFilter) !void {
+fn commandTags(ctx: Context, command: TagCommand) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
-    try app_coverage.writeTagsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, filter, &out.writer);
+    switch (command.format) {
+        .text => try app_coverage.writeTagsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
+        .json => try app_coverage.writeTagsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
+    }
     try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
@@ -507,16 +568,25 @@ pub fn parsePlan(gpa: Allocator, args: []const []const u8) !ParsedPlan {
 
 test "coverage command parser defaults to summary" {
     const no_args = [_][]const u8{};
-    try std.testing.expectEqual(Command.summary, parseCommand(no_args[0..]));
+    try std.testing.expectEqual(Command{ .summary = .{} }, parseCommand(no_args[0..]));
 
     const summary_args = [_][]const u8{"summary"};
-    try std.testing.expectEqual(Command.summary, parseCommand(summary_args[0..]));
+    try std.testing.expectEqual(Command{ .summary = .{} }, parseCommand(summary_args[0..]));
+
+    const summary_json_args = [_][]const u8{ "summary", "--json" };
+    try std.testing.expectEqual(Command{ .summary = .{ .format = .json } }, parseCommand(summary_json_args[0..]));
+
+    const default_summary_json_args = [_][]const u8{"--format=json"};
+    try std.testing.expectEqual(Command{ .summary = .{ .format = .json } }, parseCommand(default_summary_json_args[0..]));
 
     const tags_args = [_][]const u8{"tags"};
-    try std.testing.expectEqual(Command{ .tags = .all }, parseCommand(tags_args[0..]));
+    try std.testing.expectEqual(Command{ .tags = .{} }, parseCommand(tags_args[0..]));
 
     const hostinger_tags_args = [_][]const u8{ "tags", "hostinger" };
-    try std.testing.expectEqual(Command{ .tags = .hostinger }, parseCommand(hostinger_tags_args[0..]));
+    try std.testing.expectEqual(Command{ .tags = .{ .provider = .hostinger } }, parseCommand(hostinger_tags_args[0..]));
+
+    const cloudflare_tags_json_args = [_][]const u8{ "tags", "cloudflare", "--json" };
+    try std.testing.expectEqual(Command{ .tags = .{ .provider = .cloudflare, .format = .json } }, parseCommand(cloudflare_tags_json_args[0..]));
 
     const l1_args = [_][]const u8{ "l1", "cloudflare" };
     try std.testing.expectEqual(Command{ .l1 = .{ .provider = .cloudflare } }, parseCommand(l1_args[0..]));
