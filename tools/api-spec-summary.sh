@@ -95,6 +95,67 @@ auth_dispatch_counts() {
   '
 }
 
+route_dispatch_counts() {
+  provider="$1"
+  jq -r --arg provider "$provider" '
+    def pointer_token:
+      gsub("~1"; "/") | gsub("~0"; "~");
+    def deref($root):
+      if (type == "object") and has("$ref") then
+        (."$ref" | sub("^#/"; "") | split("/") | reduce .[] as $part ($root; .[$part | pointer_token]))
+      else
+        .
+      end;
+    def sorted_keys: keys | sort;
+    def has_cf_token_or_legacy_bundle($schemes):
+      ($schemes == ["api_email", "api_key", "api_token"]);
+    def cf_requirement_supported($requirement):
+      ($requirement | sorted_keys) as $schemes
+      | ($schemes | length) == 0 or
+        ($schemes == ["api_token"]) or
+        ($schemes == ["bearerAuth"]) or
+        ($schemes == ["api_email", "api_key"]) or
+        has_cf_token_or_legacy_bundle($schemes);
+    def hostinger_requirement_supported($requirement):
+      ($requirement | sorted_keys) as $schemes
+      | ($schemes | length) == 0 or ($schemes == ["apiToken"]);
+    def requirement_supported($provider; $requirement):
+      if $provider == "cloudflare" then
+        cf_requirement_supported($requirement)
+      else
+        hostinger_requirement_supported($requirement)
+      end;
+    def auth_supported($provider; $root; $operation):
+      ($operation.security // $root.security // []) as $security
+      | ($security | length) == 0 or any($security[]; requirement_supported($provider; .));
+    def body_required($root; $operation):
+      (($operation.requestBody // {} | deref($root) | .required) == true);
+    . as $root
+    | [
+        .paths
+        | to_entries[]
+        | .value
+        | to_entries[]
+        | select(.value | type == "object")
+        | .key as $method
+        | .value as $operation
+        | if ($operation.deprecated // false) then
+            "deprecated"
+          elif ($method == "get" and body_required($root; $operation)) then
+            "not_applicable"
+          elif ($method == "get") then
+            if auth_supported($provider; $root; $operation) then "live_read_supported" else "live_read_unsupported" end
+          else
+            "dry_run_supported"
+          end
+      ]
+    | group_by(.)
+    | map({support: .[0], count: length})
+    | sort_by(.support)[]
+    | "\(.support)=\(.count)"
+  '
+}
+
 parameter_shape_summary() {
   jq -r '
     def pointer_token:
@@ -166,6 +227,12 @@ printf 'cloudflare\n'
 auth_dispatch_counts cloudflare < "$cloudflare_spec"
 printf 'hostinger\n'
 auth_dispatch_counts hostinger < "$hostinger_spec"
+
+printf '\nprovider_l1_dispatch\n'
+printf 'cloudflare\n'
+route_dispatch_counts cloudflare < "$cloudflare_spec"
+printf 'hostinger\n'
+route_dispatch_counts hostinger < "$hostinger_spec"
 
 printf '\nprovider_parameter_shapes\n'
 printf 'cloudflare\n'

@@ -198,6 +198,7 @@ pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, reques
     try writeJsonField(writer, "url", url, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
     try writeSecurityField(writer, "security", route, true);
+    try writeDispatchField(writer, "dispatch", route, true);
     try writeRouteParamShapeField(writer, "path_param_shapes", route.path_params, true);
     try writeRouteParamShapeField(writer, "query_param_shapes", route.query_params, true);
     try writeRouteParamShapeField(writer, "header_param_shapes", route.header_params, true);
@@ -245,6 +246,7 @@ fn dryRunPlanJsonRequestWithBase(gpa: Allocator, route: provider_routes.Route, r
     try writeJsonField(writer, "url", url, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
     try writeSecurityField(writer, "security", route, true);
+    try writeDispatchField(writer, "dispatch", route, true);
     try writeRouteParamShapeField(writer, "path_param_shapes", route.path_params, true);
     try writeRouteParamShapeField(writer, "query_param_shapes", route.query_params, true);
     try writeRouteParamShapeField(writer, "header_param_shapes", route.header_params, true);
@@ -314,6 +316,18 @@ fn writeSecurityField(writer: anytype, name: []const u8, route: provider_routes.
         try writer.writeByte(']');
     }
     try writer.writeAll("]}");
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeDispatchField(writer: anytype, name: []const u8, route: provider_routes.Route, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeAll(":{");
+    try writer.writeAll("\"live_call_supported\":");
+    try writer.writeAll(if (routeLiveCallSupported(route)) "true" else "false");
+    try writer.writeByte(',');
+    try writer.writeAll("\"dry_run_supported\":");
+    try writer.writeAll(if (routeDryRunSupported(route)) "true" else "false");
+    try writer.writeByte('}');
     if (trailing_comma) try writer.writeByte(',');
 }
 
@@ -415,6 +429,14 @@ fn cloudioSupportsRouteAuth(route: provider_routes.Route) bool {
         .cloudflare => cloudflareSecurityAcceptsApiToken(route.security) or cloudflareSecurityAcceptsLegacyAuth(route.security),
         .hostinger => route.security.acceptsSchemeSet(&.{"apiToken"}),
     };
+}
+
+fn routeLiveCallSupported(route: provider_routes.Route) bool {
+    return route.isRoutable() and route.mode == .read and route.method == .GET and !route.request_body.required and cloudioSupportsRouteAuth(route);
+}
+
+fn routeDryRunSupported(route: provider_routes.Route) bool {
+    return route.isRoutable() and route.isDryRunMutation();
 }
 
 fn cloudflareSecurityAcceptsApiToken(security: provider_routes.Security) bool {
@@ -539,6 +561,7 @@ test "generic dispatch plans bodyless read routes without executing HTTP" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"apiToken\"]]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dispatch\":{\"live_call_supported\":true,\"dry_run_supported\":false}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path_param_shapes\":[{\"name\":\"virtualMachineId\",\"required\":true,\"style\":null,\"explode\":null,\"schema\":{\"schema_refs\":[],\"types\":[\"integer\"],\"formats\":[],\"enum_values\":[]}}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"query_param_shapes\":[{\"name\":\"date_from\",\"required\":true,\"style\":null,\"explode\":null,\"schema\":{\"schema_refs\":[],\"types\":[\"string\"],\"formats\":[\"date-time\"],\"enum_values\":[]}}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"read\"") != null);
@@ -564,6 +587,7 @@ test "generic dispatch route planner keeps mutation plans dry-run only" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"worker-assets-upload\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"dry_run\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":true,\"cloudio_supported\":false,\"alternatives\":[[\"assets_jwt\"]]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dispatch\":{\"live_call_supported\":false,\"dry_run_supported\":true}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 
@@ -843,6 +867,7 @@ test "generic dispatch validates Cloudflare auth scheme compatibility before HTT
     );
     defer allocator.free(bearer_plan);
     try std.testing.expect(std.mem.indexOf(u8, bearer_plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"bearerAuth\"]]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bearer_plan, "\"dispatch\":{\"live_call_supported\":true,\"dry_run_supported\":false}") != null);
 
     const assets_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
     defer assets_route.deinit(allocator);
