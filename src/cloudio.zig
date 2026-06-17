@@ -82,6 +82,7 @@ test "facade exposes stable integration modules" {
     _ = net.http.Response;
     _ = net.pagination.PageInfo;
     _ = providers.dispatch.Client;
+    _ = providers.dispatch.ReadRouteResult;
     _ = providers.routes.Route;
     _ = providers.cloudflare.client.Client;
     _ = providers.hostinger.client.Client;
