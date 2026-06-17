@@ -1,4 +1,5 @@
 const std = @import("std");
+const core_json = @import("core_json");
 const db_store = @import("db_store");
 
 const Allocator = std.mem.Allocator;
@@ -74,12 +75,44 @@ pub const Overview = struct {
             });
         }
     }
+
+    pub fn writeJson(self: Overview, writer: anytype) !void {
+        try writer.writeAll("{\"counts\":{");
+        try writeJsonCountField(writer, "snapshots", self.counts.snapshots, true);
+        try writeJsonCountField(writer, "cloudflare_accounts", self.counts.cloudflare_accounts, true);
+        try writeJsonCountField(writer, "cloudflare_zones", self.counts.cloudflare_zones, true);
+        try writeJsonCountField(writer, "cloudflare_dns_records", self.counts.cloudflare_dns_records, true);
+        try writeJsonCountField(writer, "cloudflare_resources", self.counts.cloudflare_resources, true);
+        try writeJsonCountField(writer, "cloudflare_inventory_items", self.counts.cloudflare_inventory_items, true);
+        try writeJsonCountField(writer, "hostinger_vps", self.counts.hostinger_vps, true);
+        try writeJsonCountField(writer, "hostinger_resources", self.counts.hostinger_resources, true);
+        try writeJsonCountField(writer, "hostinger_inventory_items", self.counts.hostinger_inventory_items, true);
+        try writeJsonCountField(writer, "caddy_sites", self.counts.caddy_sites, true);
+        try writeJsonCountField(writer, "caddy_upstreams", self.counts.caddy_upstreams, true);
+        try writeJsonCountField(writer, "projects", self.counts.projects, true);
+        try writeJsonCountField(writer, "services", self.counts.services, true);
+        try writeJsonCountField(writer, "sockets", self.counts.sockets, true);
+        try writeJsonCountField(writer, "containers", self.counts.containers, false);
+        try writer.writeAll("},\"recent_snapshots\":[");
+        for (self.snapshots.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeSnapshotJson(row, writer);
+        }
+        try writer.writeAll("]}");
+        try writer.writeByte('\n');
+    }
 };
 
 pub fn writeText(gpa: Allocator, db: *Db, writer: anytype) !void {
     var overview = try Overview.load(gpa, db, default_snapshot_limit);
     defer overview.deinit(gpa);
     try overview.writeText(writer);
+}
+
+pub fn writeJson(gpa: Allocator, db: *Db, writer: anytype) !void {
+    var overview = try Overview.load(gpa, db, default_snapshot_limit);
+    defer overview.deinit(gpa);
+    try overview.writeJson(writer);
 }
 
 fn writeCounts(writer: anytype, counts: Counts) !void {
@@ -98,6 +131,31 @@ fn writeCounts(writer: anytype, counts: Counts) !void {
     try writer.print("services: {d}\n", .{counts.services});
     try writer.print("sockets: {d}\n", .{counts.sockets});
     try writer.print("containers: {d}\n", .{counts.containers});
+}
+
+fn writeSnapshotJson(row: db_store.SnapshotSummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonStringField(writer, "source", row.source, true);
+    try writeJsonStringField(writer, "kind", row.kind, true);
+    try writeJsonStringField(writer, "target", row.target, true);
+    try writeJsonStringField(writer, "status", row.status, true);
+    try writeJsonStringField(writer, "summary", row.summary, true);
+    try writeJsonStringField(writer, "captured_at", row.captured_at, false);
+    try writer.writeByte('}');
+}
+
+fn writeJsonCountField(writer: anytype, name: []const u8, value: i64, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    try writer.print("{d}", .{value});
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeJsonStringField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    try core_json.writeString(writer, value);
+    if (trailing_comma) try writer.writeByte(',');
 }
 
 test "overview loads typed counts and renders recent snapshots" {
@@ -124,4 +182,15 @@ test "overview loads typed counts and renders recent snapshots" {
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio overview\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "snapshots: 1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "system/uptime  [ok] up 1 minute") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try overview.writeJson(&json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"counts\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"snapshots\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"recent_snapshots\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"system\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"summary\":\"up 1 minute\"") != null);
 }

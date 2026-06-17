@@ -247,6 +247,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
     });

@@ -13,6 +13,7 @@ zig build run -- init
 zig build run -- doctor
 zig build run -- refresh --all
 zig build run -- overview
+zig build run -- overview --json
 zig build run -- inventory
 zig build run -- log
 ```

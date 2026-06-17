@@ -47,7 +47,7 @@ pub fn run(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, cmd, "refresh")) {
         try commandRefresh(init.io, init.gpa, cfg, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "overview")) {
-        try commandOverview(init.gpa, &db);
+        try commandOverview(init.gpa, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "inventory")) {
         try cli_inventory.run(.{
             .gpa = init.gpa,
@@ -121,7 +121,7 @@ fn usage() void {
         \\  cloudio init
         \\  cloudio doctor
         \\  cloudio refresh [--all|--cloudflare|--hostinger|--caddy|--system|--projects]
-        \\  cloudio overview
+        \\  cloudio overview [--json|--format json]
         \\  cloudio inventory [summary|facets] [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>] [--json|--format json]
         \\  cloudio export
         \\  cloudio coverage summary|tags|l1|gaps|levels|level-tags|routes [all|cloudflare|hostinger] [tag-query] [--limit <n>] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>]
@@ -403,13 +403,51 @@ fn refreshSelectionFromArgs(args: []const []const u8) app_refresh.Selection {
     return out;
 }
 
-fn commandOverview(gpa: Allocator, db: *Db) !void {
+const OverviewFormat = enum {
+    text,
+    json,
+};
+
+fn commandOverview(gpa: Allocator, db: *Db, args: []const []const u8) !void {
+    const format = parseOverviewFormat(args) catch |err| {
+        std.debug.print("invalid overview command: {s}\n", .{@errorName(err)});
+        return err;
+    };
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
-    try app_overview.writeText(gpa, db, &out.writer);
+    switch (format) {
+        .text => try app_overview.writeText(gpa, db, &out.writer),
+        .json => try app_overview.writeJson(gpa, db, &out.writer),
+    }
     const text = try out.toOwnedSlice();
     defer gpa.free(text);
     std.debug.print("{s}", .{text});
+}
+
+fn parseOverviewFormat(args: []const []const u8) !OverviewFormat {
+    var format: OverviewFormat = .text;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--json")) {
+            format = .json;
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            index += 1;
+            if (index >= args.len) return error.MissingFormat;
+            format = try parseOverviewFormatValue(args[index]);
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            format = try parseOverviewFormatValue(arg["--format=".len..]);
+        } else {
+            return error.UnexpectedOverviewArgument;
+        }
+    }
+    return format;
+}
+
+fn parseOverviewFormatValue(value: []const u8) !OverviewFormat {
+    if (std.mem.eql(u8, value, "text")) return .text;
+    if (std.mem.eql(u8, value, "json")) return .json;
+    return error.InvalidFormat;
 }
 
 fn cloudflareAuth(cfg: Config) cloudio.app.cloudflare.Auth {
@@ -426,6 +464,26 @@ fn caddyPaths(cfg: Config) cloudio.app.caddy.Paths {
         .caddy_sites_path = cfg.caddy_sites_path,
         .caddy_admin_socket = cfg.caddy_admin_socket,
     };
+}
+
+test "overview parser supports text and json formats" {
+    const no_args = [_][]const u8{};
+    try std.testing.expectEqual(OverviewFormat.text, try parseOverviewFormat(no_args[0..]));
+
+    const json_args = [_][]const u8{"--json"};
+    try std.testing.expectEqual(OverviewFormat.json, try parseOverviewFormat(json_args[0..]));
+
+    const format_args = [_][]const u8{ "--format", "json" };
+    try std.testing.expectEqual(OverviewFormat.json, try parseOverviewFormat(format_args[0..]));
+
+    const inline_format_args = [_][]const u8{"--format=text"};
+    try std.testing.expectEqual(OverviewFormat.text, try parseOverviewFormat(inline_format_args[0..]));
+
+    const invalid_args = [_][]const u8{ "--format", "yaml" };
+    try std.testing.expectError(error.InvalidFormat, parseOverviewFormat(invalid_args[0..]));
+
+    const unexpected_args = [_][]const u8{"json"};
+    try std.testing.expectError(error.UnexpectedOverviewArgument, parseOverviewFormat(unexpected_args[0..]));
 }
 
 test "sqlite schema initializes" {
