@@ -60,6 +60,7 @@ auth_dispatch_counts() {
       ($requirement | sorted_keys) as $schemes
       | ($schemes | length) == 0 or
         ($schemes == ["api_token"]) or
+        ($schemes == ["bearerAuth"]) or
         ($schemes == ["api_email", "api_key"]) or
         has_cf_token_or_legacy_bundle($schemes);
     def hostinger_requirement_supported($requirement):

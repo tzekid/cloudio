@@ -1195,6 +1195,13 @@ test "loads generated security metadata" {
     try std.testing.expect(!combined_route.security.acceptsSchemeSet(&.{ "api_email", "api_key" }));
     try std.testing.expect(combined_route.security.hasAlternativeContainingSchemes(&.{ "api_email", "api_key", "api_token" }));
 
+    const bearer_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "get_publicListSuppressionRouting")) orelse return error.TestExpectedRoute;
+    defer bearer_route.deinit(allocator);
+    try std.testing.expect(bearer_route.security.required);
+    try expectString(bearer_route.security.alternatives[0].schemes, "bearerAuth");
+    try std.testing.expect(bearer_route.security.acceptsSchemeSet(&.{"bearerAuth"}));
+    try std.testing.expect(!bearer_route.security.acceptsSchemeSet(&.{"api_token"}));
+
     const public_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "cloudflare-ips-cloudflare-ip-details")) orelse return error.TestExpectedRoute;
     defer public_route.deinit(allocator);
     try std.testing.expect(!public_route.security.required);

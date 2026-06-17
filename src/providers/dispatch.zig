@@ -418,7 +418,7 @@ fn cloudioSupportsRouteAuth(route: provider_routes.Route) bool {
 }
 
 fn cloudflareSecurityAcceptsApiToken(security: provider_routes.Security) bool {
-    return security.acceptsSchemeSet(&.{"api_token"}) or cloudflareSecurityHasTokenOrLegacyBundle(security);
+    return security.acceptsSchemeSet(&.{"api_token"}) or security.acceptsSchemeSet(&.{"bearerAuth"}) or cloudflareSecurityHasTokenOrLegacyBundle(security);
 }
 
 fn cloudflareSecurityAcceptsLegacyAuth(security: provider_routes.Security) bool {
@@ -823,7 +823,7 @@ test "generic dispatch validates auth provider and read safety before HTTP" {
     try std.testing.expectError(error.MissingCloudflareAuth, cloudflare_client.callReadRoute(std.testing.io, allocator, route, &.{.{ .name = "account_id", .value = "acct/1" }}));
 }
 
-test "generic dispatch rejects unsupported official auth schemes before HTTP" {
+test "generic dispatch validates Cloudflare auth scheme compatibility before HTTP" {
     const allocator = std.testing.allocator;
 
     const legacy_only_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "accounts-list-accounts")) orelse return error.TestExpectedRoute;
@@ -833,7 +833,20 @@ test "generic dispatch rejects unsupported official auth schemes before HTTP" {
 
     const bearer_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "get_publicListSuppressionRouting")) orelse return error.TestExpectedRoute;
     defer bearer_route.deinit(allocator);
-    try std.testing.expectError(error.UnsupportedRouteAuthScheme, token_client.callReadRoute(std.testing.io, allocator, bearer_route, &.{.{ .name = "account_id", .value = "acct/1" }}));
+    try validateCloudflareRouteAuth(bearer_route.security, .{ .token = "test-token" });
+    try std.testing.expectError(error.UnsupportedRouteAuthScheme, validateCloudflareRouteAuth(bearer_route.security, .{ .email = "ops@example.test", .key = "global-key" }));
+
+    const bearer_plan = try planRouteJsonRequest(
+        allocator,
+        bearer_route,
+        .{ .path_params = &.{.{ .name = "account_id", .value = "acct/1" }} },
+    );
+    defer allocator.free(bearer_plan);
+    try std.testing.expect(std.mem.indexOf(u8, bearer_plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"bearerAuth\"]]}") != null);
+
+    const assets_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
+    defer assets_route.deinit(allocator);
+    try std.testing.expectError(error.UnsupportedRouteAuthScheme, validateCloudflareRouteAuth(assets_route.security, .{ .token = "test-token" }));
 }
 
 test "generic dispatch validates required read query parameters before HTTP" {
