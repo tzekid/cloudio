@@ -54,6 +54,29 @@ fn parseRoutes(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--support=")) {
             const value = arg["--support=".len..];
             filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--operation") or std.mem.eql(u8, arg, "--operation-id")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--operation" };
+            filter.operation_id = args[index];
+        } else if (std.mem.startsWith(u8, arg, "--operation=")) {
+            filter.operation_id = arg["--operation=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--operation-id=")) {
+            filter.operation_id = arg["--operation-id=".len..];
+        } else if (std.mem.eql(u8, arg, "--method")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--method" };
+            filter.method = app_coverage.parseRouteMethod(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--method=")) {
+            const value = arg["--method=".len..];
+            filter.method = app_coverage.parseRouteMethod(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--path") or std.mem.eql(u8, arg, "--path-template")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--path" };
+            filter.path_template = args[index];
+        } else if (std.mem.startsWith(u8, arg, "--path=")) {
+            filter.path_template = arg["--path=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--path-template=")) {
+            filter.path_template = arg["--path-template=".len..];
         } else if (std.mem.eql(u8, arg, "--mode")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--mode" };
@@ -139,6 +162,9 @@ test "coverage command parser defaults to summary" {
             try std.testing.expectEqual(app_coverage.SupportFilter.partial, filter.support.?);
             try std.testing.expectEqual(app_coverage.ModeFilter.read, filter.mode.?);
             try std.testing.expect(filter.detail);
+            try std.testing.expect(filter.operation_id == null);
+            try std.testing.expect(filter.method == null);
+            try std.testing.expect(filter.path_template == null);
         },
         else => return error.ExpectedCoverageRoutes,
     }
@@ -162,6 +188,27 @@ test "coverage command parser defaults to summary" {
         else => return error.ExpectedCoverageRoutes,
     }
 
+    const exact_operation_args = [_][]const u8{ "routes", "cloudflare", "--operation", "accounts-list-accounts", "--method=GET", "--path=/accounts" };
+    switch (parseCommand(exact_operation_args[0..])) {
+        .routes => |filter| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, filter.provider);
+            try std.testing.expectEqualStrings("accounts-list-accounts", filter.operation_id orelse "");
+            try std.testing.expectEqual(app_coverage.parseRouteMethod("GET").?, filter.method.?);
+            try std.testing.expectEqualStrings("/accounts", filter.path_template orelse "");
+        },
+        else => return error.ExpectedCoverageRoutes,
+    }
+
+    const alias_args = [_][]const u8{ "routes", "hostinger", "--operation-id=VPS_getVirtualMachinesV1", "--path-template", "/api/vps/v1/virtual-machines" };
+    switch (parseCommand(alias_args[0..])) {
+        .routes => |filter| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, filter.provider);
+            try std.testing.expectEqualStrings("VPS_getVirtualMachinesV1", filter.operation_id orelse "");
+            try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines", filter.path_template orelse "");
+        },
+        else => return error.ExpectedCoverageRoutes,
+    }
+
     const unknown_args = [_][]const u8{"refresh"};
     switch (parseCommand(unknown_args[0..])) {
         .unknown => |name| try std.testing.expectEqualStrings("refresh", name),
@@ -177,6 +224,12 @@ test "coverage command parser defaults to summary" {
     const unknown_support_args = [_][]const u8{ "routes", "--support", "maybe" };
     switch (parseCommand(unknown_support_args[0..])) {
         .unknown => |name| try std.testing.expectEqualStrings("maybe", name),
+        else => return error.ExpectedUnknownCoverageCommand,
+    }
+
+    const unknown_method_args = [_][]const u8{ "routes", "--method", "FETCH" };
+    switch (parseCommand(unknown_method_args[0..])) {
+        .unknown => |name| try std.testing.expectEqualStrings("FETCH", name),
         else => return error.ExpectedUnknownCoverageCommand,
     }
 }

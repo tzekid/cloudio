@@ -108,7 +108,7 @@ fn usage() void {
         \\  cloudio refresh [--all|--cloudflare|--hostinger|--caddy|--system|--projects]
         \\  cloudio overview
         \\  cloudio export
-        \\  cloudio coverage summary|tags|routes [all|cloudflare|hostinger] [tag-query] [--support <status>] [--mode <mode>]
+        \\  cloudio coverage summary|tags|routes [all|cloudflare|hostinger] [tag-query] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>]
         \\  cloudio log
         \\  cloudio cloudflare account [list]|account show <account-id>|account profile <account-id>|account organizations <account-id>
         \\  cloudio cloudflare account dns-record-usage <account-id>

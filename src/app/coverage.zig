@@ -180,10 +180,17 @@ pub const TagSummaries = struct {
 pub const RouteFilter = struct {
     provider: ProviderFilter = .all,
     tag_query: ?[]const u8 = null,
+    operation_id: ?[]const u8 = null,
+    method: ?provider_routes.Method = null,
+    path_template: ?[]const u8 = null,
     support: ?SupportFilter = null,
     mode: ?ModeFilter = null,
     detail: bool = false,
 };
+
+pub fn parseRouteMethod(value: []const u8) ?provider_routes.Method {
+    return provider_routes.Method.parse(value);
+}
 
 pub const CoverageRoute = struct {
     route: provider_routes.Route,
@@ -419,10 +426,24 @@ fn appendProviderRoutes(gpa: Allocator, provider: []const u8, text: []const u8, 
         const row_provider = core_json.fieldString(parsed.value, "provider") orelse return error.InvalidCoverageRow;
         if (!std.mem.eql(u8, row_provider, provider)) return error.InvalidCoverageProvider;
         const tag = core_json.fieldString(parsed.value, "tag") orelse return error.InvalidCoverageRow;
+        const operation_id = core_json.fieldString(parsed.value, "operation_id");
+        const method_text = core_json.fieldString(parsed.value, "method") orelse return error.InvalidCoverageRow;
+        const path_template = core_json.fieldString(parsed.value, "path") orelse return error.InvalidCoverageRow;
         const support = core_json.fieldString(parsed.value, "support") orelse return error.InvalidCoverageRow;
         const mode = core_json.fieldString(parsed.value, "mode") orelse return error.InvalidCoverageRow;
         if (filter.tag_query) |query| {
             if (!containsIgnoreCase(tag, query)) continue;
+        }
+        if (filter.operation_id) |expected| {
+            const actual = operation_id orelse continue;
+            if (!std.mem.eql(u8, actual, expected)) continue;
+        }
+        if (filter.method) |expected| {
+            const method = provider_routes.Method.parse(method_text) orelse return error.InvalidCoverageMethod;
+            if (method != expected) continue;
+        }
+        if (filter.path_template) |expected| {
+            if (!std.mem.eql(u8, path_template, expected)) continue;
         }
         if (filter.support) |expected| {
             if (!expected.matches(support)) continue;
@@ -653,4 +674,18 @@ test "lists provider coverage routes by provider and tag query" {
     defer mutations.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), mutations.items.len);
     try std.testing.expectEqual(provider_routes.Method.POST, mutations.items[0].route.method);
+
+    var exact_operation = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .operation_id = "VPS_getMetricsV1" });
+    defer exact_operation.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), exact_operation.items.len);
+    try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines/{virtualMachineId}/metrics", exact_operation.items[0].route.path_template);
+
+    var exact_method_path = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .method = .GET, .path_template = "/api/billing/v1/catalog" });
+    defer exact_method_path.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), exact_method_path.items.len);
+    try std.testing.expectEqualStrings("billing_getCatalogItemListV1", exact_method_path.items[0].route.operation_id.?);
+
+    var mismatched_method = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .method = .POST, .path_template = "/api/billing/v1/catalog" });
+    defer mismatched_method.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), mismatched_method.items.len);
 }
