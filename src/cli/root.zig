@@ -171,6 +171,11 @@ fn usage() void {
         \\  cloudio cloudflare logpush account|zone jobs <scope-id>|job <scope-id> <job-id>|dataset-jobs|dataset-fields <scope-id> <dataset-id>
         \\  cloudio cloudflare log-explorer account|zone datasets|available <scope-id> [include_zones=true]|dataset <scope-id> <dataset-id>
         \\  cloudio cloudflare logs-received retention-flag|fields <zone-id>|received <zone-id> end=<rfc3339> [start=<rfc3339> count=true fields=... sample=... timestamps=...]|rayid <zone-id> <ray-id> [fields=... timestamps=...]
+        \\  cloudio cloudflare tls zone automatic-ssl|certificate-packs|certificate-pack-quota|custom-csrs|custom-origin-trust-store|custom-ssl|keyless-ssl|hostname-aop|hostname-aop-certificates|ssl-verification|total-tls|universal-ssl|zone-aop-certificates|zone-aop-settings <zone-id> [key=value...]
+        \\  cloudio cloudflare tls zone certificate-pack|custom-csr|custom-origin-trust-store-detail|custom-ssl-certificate|keyless-ssl-certificate|hostname-aop-certificate|zone-aop-certificate <zone-id> <resource-id>
+        \\  cloudio cloudflare tls zone per-hostname-tls <zone-id> <setting-id>|per-hostname-tls-setting <zone-id> <setting-id> <hostname>|hostname-aop-status <zone-id> <hostname>
+        \\  cloudio cloudflare tls account custom-csrs <account-id>|custom-csr <account-id> <custom-csr-id>
+        \\  cloudio cloudflare tls origin-ca certificates <zone-id>|certificate <zone-id> <certificate-id>
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>

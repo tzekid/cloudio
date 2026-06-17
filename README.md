@@ -35,7 +35,7 @@ api_token = "hapi_..."
 
 Cloudio also auto-loads ignored `.env` and `.env.fish` files before reading process environment. Supported credential names are `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, `HOSTINGER_API_TOKEN`, and `HAPI_API_TOKEN`.
 
-Each `refresh` writes a redacted `.cloudio/latest-run.log` with collector selection, credential presence, table counts, and the snapshots captured during that refresh.
+Each `refresh` writes a redacted `.cloudio/latest-run.log` with collector selection, credential presence, table counts, and the snapshots captured during that refresh. Empty provider response bodies are stored as structured diagnostic JSON with the HTTP status and endpoint so failed reads do not disappear as blank logs.
 
 Useful read-only Cloudflare checks:
 
@@ -148,6 +148,12 @@ zig build run -- cloudflare log-explorer account datasets <account-id> include_z
 zig build run -- cloudflare log-explorer zone available <zone-id>
 zig build run -- cloudflare logs-received fields <zone-id>
 zig build run -- cloudflare logs-received received <zone-id> start=2026-06-17T00:00:00Z end=2026-06-17T01:00:00Z count=true
+zig build run -- cloudflare tls zone certificate-packs <zone-id>
+zig build run -- cloudflare tls zone universal-ssl <zone-id>
+zig build run -- cloudflare tls zone ssl-verification <zone-id> retry=false
+zig build run -- cloudflare tls zone total-tls <zone-id>
+zig build run -- cloudflare tls zone custom-ssl <zone-id> status=active
+zig build run -- cloudflare tls origin-ca certificates <zone-id>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru

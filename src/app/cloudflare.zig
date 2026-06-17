@@ -79,6 +79,9 @@ pub const LogExplorerReadArgs = collector_cloudflare.LogExplorerReadArgs;
 pub const LogExplorerReadEndpoint = collector_cloudflare.LogExplorerReadEndpoint;
 pub const LogsReceivedReadArgs = collector_cloudflare.LogsReceivedReadArgs;
 pub const LogsReceivedReadEndpoint = collector_cloudflare.LogsReceivedReadEndpoint;
+pub const TlsReadArgs = collector_cloudflare.TlsReadArgs;
+pub const TlsReadEndpoint = collector_cloudflare.TlsReadEndpoint;
+pub const TlsScope = collector_cloudflare.TlsScope;
 pub const LoadBalancingAccountReadEndpoint = collector_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = collector_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = collector_cloudflare.LoadBalancingMutationEndpoint;
@@ -293,6 +296,10 @@ pub fn collectLogExplorerEndpoint(ctx: Context, scope: ObservabilityScope, scope
 
 pub fn collectLogsReceivedEndpoint(ctx: Context, zone_id: []const u8, endpoint: LogsReceivedReadEndpoint, args: LogsReceivedReadArgs) !Output {
     return try collector_cloudflare.collectLogsReceivedEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, args, true);
+}
+
+pub fn collectTlsEndpoint(ctx: Context, scope: TlsScope, scope_id: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs) !Output {
+    return try collector_cloudflare.collectTlsEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, scope, scope_id, endpoint, args, true);
 }
 
 pub fn collectIdentityEndpoint(ctx: Context, endpoint: IdentityEndpoint) !Output {

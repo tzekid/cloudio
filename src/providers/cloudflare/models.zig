@@ -233,6 +233,7 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "uuid",
         "dataset_id",
         "dataset",
+        "hostname",
         "name",
     };
     for (fields) |field_name| {
@@ -337,11 +338,11 @@ test "parses generic Cloudflare result ids" {
 test "parses generic Cloudflare resource ids from common id fields" {
     const allocator = std.testing.allocator;
     var rows = try parseResourceIdRows(allocator,
-        \\{"result":[{"id":"page-id"},{"id":42},{"uid":"access-uid"},{"issue_id":"insight-issue"},{"uuid":"audit-uuid"},{"dataset_id":"dataset-id"},{"dataset":"dataset-name"},{"name":"asset-name"},{"description":"missing"}]}
+        \\{"result":[{"id":"page-id"},{"id":42},{"uid":"access-uid"},{"issue_id":"insight-issue"},{"uuid":"audit-uuid"},{"dataset_id":"dataset-id"},{"dataset":"dataset-name"},{"hostname":"www.example.test"},{"name":"asset-name"},{"description":"missing"}]}
     );
     defer rows.deinit(allocator);
 
-    try std.testing.expectEqual(@as(usize, 8), rows.items.len);
+    try std.testing.expectEqual(@as(usize, 9), rows.items.len);
     try std.testing.expectEqualStrings("page-id", rows.items[0].id);
     try std.testing.expectEqualStrings("42", rows.items[1].id);
     try std.testing.expectEqualStrings("access-uid", rows.items[2].id);
@@ -349,7 +350,8 @@ test "parses generic Cloudflare resource ids from common id fields" {
     try std.testing.expectEqualStrings("audit-uuid", rows.items[4].id);
     try std.testing.expectEqualStrings("dataset-id", rows.items[5].id);
     try std.testing.expectEqualStrings("dataset-name", rows.items[6].id);
-    try std.testing.expectEqualStrings("asset-name", rows.items[7].id);
+    try std.testing.expectEqualStrings("www.example.test", rows.items[7].id);
+    try std.testing.expectEqualStrings("asset-name", rows.items[8].id);
 }
 
 test "parses generic Cloudflare resource ids matching a string field" {

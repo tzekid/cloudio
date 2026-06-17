@@ -298,6 +298,12 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getTlsEndpoint(self: Client, io: Io, gpa: Allocator, scope: TlsScope, scope_id: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs) !net_http.Response {
+        const url = try tlsReadUrl(gpa, self.base_url_override, scope, scope_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -5517,6 +5523,337 @@ pub const LogsReceivedReadArgs = struct {
     timestamps: ?[]const u8 = null,
 };
 
+pub const TlsScope = enum {
+    account,
+    zone,
+    origin_ca,
+
+    pub fn parse(value: []const u8) ?TlsScope {
+        if (std.mem.eql(u8, value, "account") or std.mem.eql(u8, value, "accounts")) return .account;
+        if (std.mem.eql(u8, value, "zone") or std.mem.eql(u8, value, "zones")) return .zone;
+        if (std.mem.eql(u8, value, "origin-ca") or std.mem.eql(u8, value, "origin_ca")) return .origin_ca;
+        return null;
+    }
+
+    pub fn commandName(self: TlsScope) []const u8 {
+        return switch (self) {
+            .account => "account",
+            .zone => "zone",
+            .origin_ca => "origin-ca",
+        };
+    }
+
+    pub fn collection(self: TlsScope) []const u8 {
+        return switch (self) {
+            .account => accounts_path,
+            .zone => zones_path,
+            .origin_ca => "",
+        };
+    }
+};
+
+pub const TlsReadEndpoint = enum {
+    automatic_ssl,
+    certificate_packs,
+    certificate_pack,
+    certificate_pack_quota,
+    custom_csrs,
+    custom_csr,
+    custom_origin_trust_store,
+    custom_origin_trust_store_detail,
+    custom_ssl,
+    custom_ssl_certificate,
+    keyless_ssl,
+    keyless_ssl_certificate,
+    origin_ca_certificates,
+    origin_ca_certificate,
+    per_hostname_tls_settings,
+    per_hostname_tls_setting,
+    per_hostname_aop_associations,
+    per_hostname_aop_certificates,
+    per_hostname_aop_certificate,
+    per_hostname_aop_status,
+    ssl_verification,
+    total_tls,
+    universal_ssl_settings,
+    zone_aop_certificates,
+    zone_aop_settings,
+    zone_aop_certificate,
+
+    pub fn parse(value: []const u8) ?TlsReadEndpoint {
+        if (std.mem.eql(u8, value, "automatic-ssl") or std.mem.eql(u8, value, "ssl-automatic-mode")) return .automatic_ssl;
+        if (std.mem.eql(u8, value, "certificate-packs") or std.mem.eql(u8, value, "cert-packs")) return .certificate_packs;
+        if (std.mem.eql(u8, value, "certificate-pack") or std.mem.eql(u8, value, "cert-pack")) return .certificate_pack;
+        if (std.mem.eql(u8, value, "certificate-pack-quota") or std.mem.eql(u8, value, "cert-pack-quota")) return .certificate_pack_quota;
+        if (std.mem.eql(u8, value, "custom-csrs")) return .custom_csrs;
+        if (std.mem.eql(u8, value, "custom-csr")) return .custom_csr;
+        if (std.mem.eql(u8, value, "custom-origin-trust-store") or std.mem.eql(u8, value, "trust-store")) return .custom_origin_trust_store;
+        if (std.mem.eql(u8, value, "custom-origin-trust-store-detail") or std.mem.eql(u8, value, "trust-store-detail")) return .custom_origin_trust_store_detail;
+        if (std.mem.eql(u8, value, "custom-ssl") or std.mem.eql(u8, value, "custom-certificates")) return .custom_ssl;
+        if (std.mem.eql(u8, value, "custom-ssl-certificate") or std.mem.eql(u8, value, "custom-certificate")) return .custom_ssl_certificate;
+        if (std.mem.eql(u8, value, "keyless-ssl") or std.mem.eql(u8, value, "keyless-certificates")) return .keyless_ssl;
+        if (std.mem.eql(u8, value, "keyless-ssl-certificate") or std.mem.eql(u8, value, "keyless-certificate")) return .keyless_ssl_certificate;
+        if (std.mem.eql(u8, value, "origin-ca-certificates") or std.mem.eql(u8, value, "origin-ca-certs") or std.mem.eql(u8, value, "certificates")) return .origin_ca_certificates;
+        if (std.mem.eql(u8, value, "origin-ca-certificate") or std.mem.eql(u8, value, "origin-ca-cert") or std.mem.eql(u8, value, "certificate")) return .origin_ca_certificate;
+        if (std.mem.eql(u8, value, "per-hostname-tls") or std.mem.eql(u8, value, "hostname-tls-settings")) return .per_hostname_tls_settings;
+        if (std.mem.eql(u8, value, "per-hostname-tls-setting") or std.mem.eql(u8, value, "hostname-tls-setting")) return .per_hostname_tls_setting;
+        if (std.mem.eql(u8, value, "hostname-aop") or std.mem.eql(u8, value, "hostname-aop-associations")) return .per_hostname_aop_associations;
+        if (std.mem.eql(u8, value, "hostname-aop-certificates") or std.mem.eql(u8, value, "hostname-aop-certs")) return .per_hostname_aop_certificates;
+        if (std.mem.eql(u8, value, "hostname-aop-certificate") or std.mem.eql(u8, value, "hostname-aop-cert")) return .per_hostname_aop_certificate;
+        if (std.mem.eql(u8, value, "hostname-aop-status")) return .per_hostname_aop_status;
+        if (std.mem.eql(u8, value, "ssl-verification") or std.mem.eql(u8, value, "verification")) return .ssl_verification;
+        if (std.mem.eql(u8, value, "total-tls")) return .total_tls;
+        if (std.mem.eql(u8, value, "universal-ssl") or std.mem.eql(u8, value, "universal-ssl-settings")) return .universal_ssl_settings;
+        if (std.mem.eql(u8, value, "zone-aop-certificates") or std.mem.eql(u8, value, "zone-aop-certs") or std.mem.eql(u8, value, "aop-certificates")) return .zone_aop_certificates;
+        if (std.mem.eql(u8, value, "zone-aop-settings") or std.mem.eql(u8, value, "aop-settings")) return .zone_aop_settings;
+        if (std.mem.eql(u8, value, "zone-aop-certificate") or std.mem.eql(u8, value, "zone-aop-cert") or std.mem.eql(u8, value, "aop-certificate")) return .zone_aop_certificate;
+        return null;
+    }
+
+    pub fn commandName(self: TlsReadEndpoint) []const u8 {
+        return switch (self) {
+            .automatic_ssl => "automatic-ssl",
+            .certificate_packs => "certificate-packs",
+            .certificate_pack => "certificate-pack",
+            .certificate_pack_quota => "certificate-pack-quota",
+            .custom_csrs => "custom-csrs",
+            .custom_csr => "custom-csr",
+            .custom_origin_trust_store => "custom-origin-trust-store",
+            .custom_origin_trust_store_detail => "custom-origin-trust-store-detail",
+            .custom_ssl => "custom-ssl",
+            .custom_ssl_certificate => "custom-ssl-certificate",
+            .keyless_ssl => "keyless-ssl",
+            .keyless_ssl_certificate => "keyless-ssl-certificate",
+            .origin_ca_certificates => "origin-ca-certificates",
+            .origin_ca_certificate => "origin-ca-certificate",
+            .per_hostname_tls_settings => "per-hostname-tls",
+            .per_hostname_tls_setting => "per-hostname-tls-setting",
+            .per_hostname_aop_associations => "hostname-aop",
+            .per_hostname_aop_certificates => "hostname-aop-certificates",
+            .per_hostname_aop_certificate => "hostname-aop-certificate",
+            .per_hostname_aop_status => "hostname-aop-status",
+            .ssl_verification => "ssl-verification",
+            .total_tls => "total-tls",
+            .universal_ssl_settings => "universal-ssl",
+            .zone_aop_certificates => "zone-aop-certificates",
+            .zone_aop_settings => "zone-aop-settings",
+            .zone_aop_certificate => "zone-aop-certificate",
+        };
+    }
+
+    pub fn label(self: TlsReadEndpoint, scope: TlsScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .custom_csrs => "tls-account-custom-csrs",
+                .custom_csr => "tls-account-custom-csr",
+                else => "tls-account-unsupported",
+            },
+            .zone => switch (self) {
+                .automatic_ssl => "tls-zone-automatic-ssl",
+                .certificate_packs => "tls-zone-certificate-packs",
+                .certificate_pack => "tls-zone-certificate-pack",
+                .certificate_pack_quota => "tls-zone-certificate-pack-quota",
+                .custom_csrs => "tls-zone-custom-csrs",
+                .custom_csr => "tls-zone-custom-csr",
+                .custom_origin_trust_store => "tls-zone-custom-origin-trust-store",
+                .custom_origin_trust_store_detail => "tls-zone-custom-origin-trust-store-detail",
+                .custom_ssl => "tls-zone-custom-ssl",
+                .custom_ssl_certificate => "tls-zone-custom-ssl-certificate",
+                .keyless_ssl => "tls-zone-keyless-ssl",
+                .keyless_ssl_certificate => "tls-zone-keyless-ssl-certificate",
+                .per_hostname_tls_settings => "tls-zone-per-hostname-tls-settings",
+                .per_hostname_tls_setting => "tls-zone-per-hostname-tls-setting",
+                .per_hostname_aop_associations => "tls-zone-hostname-aop-associations",
+                .per_hostname_aop_certificates => "tls-zone-hostname-aop-certificates",
+                .per_hostname_aop_certificate => "tls-zone-hostname-aop-certificate",
+                .per_hostname_aop_status => "tls-zone-hostname-aop-status",
+                .ssl_verification => "tls-zone-ssl-verification",
+                .total_tls => "tls-zone-total-tls",
+                .universal_ssl_settings => "tls-zone-universal-ssl",
+                .zone_aop_certificates => "tls-zone-aop-certificates",
+                .zone_aop_settings => "tls-zone-aop-settings",
+                .zone_aop_certificate => "tls-zone-aop-certificate",
+                else => "tls-zone-unsupported",
+            },
+            .origin_ca => switch (self) {
+                .origin_ca_certificates => "tls-origin-ca-certificates",
+                .origin_ca_certificate => "tls-origin-ca-certificate",
+                else => "tls-origin-ca-unsupported",
+            },
+        };
+    }
+
+    pub fn group(self: TlsReadEndpoint, scope: TlsScope) []const u8 {
+        return switch (scope) {
+            .account => "Custom CSRs for an Account",
+            .origin_ca => "Origin CA",
+            .zone => switch (self) {
+                .automatic_ssl => "Automatic SSL/TLS",
+                .certificate_packs, .certificate_pack, .certificate_pack_quota => "Certificate Packs",
+                .custom_csrs, .custom_csr => "Custom CSRs for a Zone",
+                .custom_origin_trust_store, .custom_origin_trust_store_detail => "Custom Origin Trust Store",
+                .custom_ssl, .custom_ssl_certificate => "Custom SSL for a Zone",
+                .keyless_ssl, .keyless_ssl_certificate => "Keyless SSL for a Zone",
+                .per_hostname_tls_settings, .per_hostname_tls_setting => "Per-Hostname TLS Settings",
+                .per_hostname_aop_associations, .per_hostname_aop_certificates, .per_hostname_aop_certificate, .per_hostname_aop_status => "Per-hostname Authenticated Origin Pull",
+                .ssl_verification => "SSL Verification",
+                .total_tls => "Total TLS",
+                .universal_ssl_settings => "Universal SSL Settings for a Zone",
+                .zone_aop_certificates, .zone_aop_settings, .zone_aop_certificate => "Zone-Level Authenticated Origin Pulls",
+                else => "TLS unsupported",
+            },
+        };
+    }
+
+    pub fn supports(self: TlsReadEndpoint, scope: TlsScope) bool {
+        return switch (scope) {
+            .account => self == .custom_csrs or self == .custom_csr,
+            .origin_ca => self == .origin_ca_certificates or self == .origin_ca_certificate,
+            .zone => switch (self) {
+                .origin_ca_certificates,
+                .origin_ca_certificate,
+                => false,
+                else => true,
+            },
+        };
+    }
+
+    pub fn operationId(self: TlsReadEndpoint, scope: TlsScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .custom_csrs => "custom-csrs-for-an-account-list-custom-csrs",
+                .custom_csr => "custom-csrs-for-an-account-custom-csr-details",
+                else => "unsupported-account-tls-endpoint",
+            },
+            .origin_ca => switch (self) {
+                .origin_ca_certificates => "origin-ca-list-certificates",
+                .origin_ca_certificate => "origin-ca-get-certificate",
+                else => "unsupported-origin-ca-tls-endpoint",
+            },
+            .zone => switch (self) {
+                .automatic_ssl => "ssl-detector-automatic-mode-get-enrollment",
+                .certificate_packs => "certificate-packs-list-certificate-packs",
+                .certificate_pack => "certificate-packs-get-certificate-pack",
+                .certificate_pack_quota => "certificate-packs-get-certificate-pack-quotas",
+                .custom_csrs => "custom-csrs-for-a-zone-list-custom-csrs",
+                .custom_csr => "custom-csrs-for-a-zone-custom-csr-details",
+                .custom_origin_trust_store => "custom-origin-trust-store-list-details",
+                .custom_origin_trust_store_detail => "custom-origin-trust-store-details",
+                .custom_ssl => "custom-ssl-for-a-zone-list-ssl-configurations",
+                .custom_ssl_certificate => "custom-ssl-for-a-zone-ssl-configuration-details",
+                .keyless_ssl => "keyless-ssl-for-a-zone-list-keyless-ssl-configurations",
+                .keyless_ssl_certificate => "keyless-ssl-for-a-zone-get-keyless-ssl-configuration",
+                .per_hostname_tls_settings => "per-hostname-tls-settings-list",
+                .per_hostname_tls_setting => "per-hostname-tls-settings-get",
+                .per_hostname_aop_associations => "per-hostname-authenticated-origin-pull-list-hostname-associations",
+                .per_hostname_aop_certificates => "per-hostname-authenticated-origin-pull-list-certificates",
+                .per_hostname_aop_certificate => "per-hostname-authenticated-origin-pull-get-the-hostname-client-certificate",
+                .per_hostname_aop_status => "per-hostname-authenticated-origin-pull-get-the-hostname-status-for-client-authentication",
+                .ssl_verification => "ssl-verification-ssl-verification-details",
+                .total_tls => "total-tls-total-tls-settings-details",
+                .universal_ssl_settings => "universal-ssl-settings-for-a-zone-universal-ssl-settings-details",
+                .zone_aop_certificates => "zone-level-authenticated-origin-pulls-list-certificates",
+                .zone_aop_settings => "zone-level-authenticated-origin-pulls-get-enablement-setting-for-zone",
+                .zone_aop_certificate => "zone-level-authenticated-origin-pulls-get-certificate-details",
+                else => "unsupported-zone-tls-endpoint",
+            },
+        };
+    }
+
+    pub fn summary(self: TlsReadEndpoint, scope: TlsScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .custom_csrs => "Account custom CSRs",
+                .custom_csr => "Account custom CSR details",
+                else => "Unsupported account TLS endpoint",
+            },
+            .origin_ca => switch (self) {
+                .origin_ca_certificates => "Origin CA certificates",
+                .origin_ca_certificate => "Origin CA certificate details",
+                else => "Unsupported Origin CA endpoint",
+            },
+            .zone => switch (self) {
+                .automatic_ssl => "Automatic SSL/TLS enrollment status",
+                .certificate_packs => "Zone certificate packs",
+                .certificate_pack => "Zone certificate pack details",
+                .certificate_pack_quota => "Zone certificate pack quota",
+                .custom_csrs => "Zone custom CSRs",
+                .custom_csr => "Zone custom CSR details",
+                .custom_origin_trust_store => "Zone custom origin trust store",
+                .custom_origin_trust_store_detail => "Zone custom origin trust store details",
+                .custom_ssl => "Zone custom SSL certificates",
+                .custom_ssl_certificate => "Zone custom SSL certificate details",
+                .keyless_ssl => "Zone Keyless SSL certificates",
+                .keyless_ssl_certificate => "Zone Keyless SSL certificate details",
+                .per_hostname_tls_settings => "Zone per-hostname TLS settings",
+                .per_hostname_tls_setting => "Zone per-hostname TLS setting details",
+                .per_hostname_aop_associations => "Zone per-hostname authenticated origin pull associations",
+                .per_hostname_aop_certificates => "Zone per-hostname authenticated origin pull certificates",
+                .per_hostname_aop_certificate => "Zone per-hostname authenticated origin pull certificate details",
+                .per_hostname_aop_status => "Zone per-hostname authenticated origin pull status",
+                .ssl_verification => "Zone SSL verification details",
+                .total_tls => "Zone Total TLS settings",
+                .universal_ssl_settings => "Zone Universal SSL settings",
+                .zone_aop_certificates => "Zone authenticated origin pull certificates",
+                .zone_aop_settings => "Zone authenticated origin pull setting",
+                .zone_aop_certificate => "Zone authenticated origin pull certificate details",
+                else => "Unsupported zone TLS endpoint",
+            },
+        };
+    }
+
+    pub fn requiresCertificatePackId(self: TlsReadEndpoint) bool {
+        return self == .certificate_pack;
+    }
+
+    pub fn requiresCustomCsrId(self: TlsReadEndpoint) bool {
+        return self == .custom_csr;
+    }
+
+    pub fn requiresCustomOriginTrustStoreId(self: TlsReadEndpoint) bool {
+        return self == .custom_origin_trust_store_detail;
+    }
+
+    pub fn requiresCustomCertificateId(self: TlsReadEndpoint) bool {
+        return self == .custom_ssl_certificate;
+    }
+
+    pub fn requiresKeylessCertificateId(self: TlsReadEndpoint) bool {
+        return self == .keyless_ssl_certificate;
+    }
+
+    pub fn requiresCertificateId(self: TlsReadEndpoint) bool {
+        return self == .origin_ca_certificate or self == .per_hostname_aop_certificate or self == .zone_aop_certificate;
+    }
+
+    pub fn requiresSettingId(self: TlsReadEndpoint) bool {
+        return self == .per_hostname_tls_settings or self == .per_hostname_tls_setting;
+    }
+
+    pub fn requiresHostname(self: TlsReadEndpoint) bool {
+        return self == .per_hostname_tls_setting or self == .per_hostname_aop_status;
+    }
+};
+
+pub const TlsReadArgs = struct {
+    certificate_pack_id: ?[]const u8 = null,
+    custom_csr_id: ?[]const u8 = null,
+    custom_origin_trust_store_id: ?[]const u8 = null,
+    custom_certificate_id: ?[]const u8 = null,
+    keyless_certificate_id: ?[]const u8 = null,
+    certificate_id: ?[]const u8 = null,
+    setting_id: ?[]const u8 = null,
+    hostname: ?[]const u8 = null,
+    deploy: ?[]const u8 = null,
+    match: ?[]const u8 = null,
+    status: ?[]const u8 = null,
+    limit: ?[]const u8 = null,
+    offset: ?[]const u8 = null,
+    page: ?[]const u8 = null,
+    per_page: ?[]const u8 = null,
+    retry: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -8784,6 +9121,194 @@ fn observabilityBasePath(gpa: Allocator, scope: ObservabilityScope, scope_id: []
     return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ scope.collection(), escaped_scope_id, suffix });
 }
 
+pub fn tlsReadUrl(gpa: Allocator, host: []const u8, scope: TlsScope, scope_id: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs) ![]u8 {
+    const path = try tlsReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn tlsReadPath(gpa: Allocator, scope: TlsScope, scope_id: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs) ![]u8 {
+    if (!endpoint.supports(scope)) return error.UnsupportedCloudflareTlsEndpoint;
+    return switch (scope) {
+        .account => try tlsAccountReadPath(gpa, scope_id, endpoint, args),
+        .zone => try tlsZoneReadPath(gpa, scope_id, endpoint, args),
+        .origin_ca => try tlsOriginCaReadPath(gpa, scope_id, endpoint, args),
+    };
+}
+
+fn tlsAccountReadPath(gpa: Allocator, account_id: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs) ![]u8 {
+    const base_path = try tlsScopedCollectionPath(gpa, .account, account_id, "custom_csrs");
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .custom_csrs => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "page", .value = args.page },
+            .{ .name = "per_page", .value = args.per_page },
+        }),
+        .custom_csr => blk: {
+            const custom_csr_id = args.custom_csr_id orelse return error.MissingCloudflareTlsCustomCsrId;
+            break :blk try appendEscapedPathSegment(gpa, base_path, custom_csr_id);
+        },
+        else => unreachable,
+    };
+}
+
+fn tlsZoneReadPath(gpa: Allocator, zone_id: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs) ![]u8 {
+    return switch (endpoint) {
+        .automatic_ssl => try tlsScopedCollectionPath(gpa, .zone, zone_id, "settings/ssl_automatic_mode"),
+        .certificate_packs => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "ssl/certificate_packs");
+            defer gpa.free(base_path);
+            break :blk try appendQuery(gpa, base_path, &[_]QueryParam{
+                .{ .name = "deploy", .value = args.deploy },
+                .{ .name = "page", .value = args.page },
+                .{ .name = "per_page", .value = args.per_page },
+                .{ .name = "status", .value = args.status },
+            });
+        },
+        .certificate_pack => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "ssl/certificate_packs");
+            defer gpa.free(base_path);
+            const certificate_pack_id = args.certificate_pack_id orelse return error.MissingCloudflareTlsCertificatePackId;
+            break :blk try appendEscapedPathSegment(gpa, base_path, certificate_pack_id);
+        },
+        .certificate_pack_quota => try tlsScopedCollectionPath(gpa, .zone, zone_id, "ssl/certificate_packs/quota"),
+        .custom_csrs => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "custom_csrs");
+            defer gpa.free(base_path);
+            break :blk try appendQuery(gpa, base_path, &[_]QueryParam{
+                .{ .name = "page", .value = args.page },
+                .{ .name = "per_page", .value = args.per_page },
+            });
+        },
+        .custom_csr => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "custom_csrs");
+            defer gpa.free(base_path);
+            const custom_csr_id = args.custom_csr_id orelse return error.MissingCloudflareTlsCustomCsrId;
+            break :blk try appendEscapedPathSegment(gpa, base_path, custom_csr_id);
+        },
+        .custom_origin_trust_store => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "acm/custom_trust_store");
+            defer gpa.free(base_path);
+            break :blk try appendQuery(gpa, base_path, &[_]QueryParam{
+                .{ .name = "limit", .value = args.limit },
+                .{ .name = "offset", .value = args.offset },
+                .{ .name = "page", .value = args.page },
+                .{ .name = "per_page", .value = args.per_page },
+            });
+        },
+        .custom_origin_trust_store_detail => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "acm/custom_trust_store");
+            defer gpa.free(base_path);
+            const trust_store_id = args.custom_origin_trust_store_id orelse return error.MissingCloudflareTlsCustomOriginTrustStoreId;
+            break :blk try appendEscapedPathSegment(gpa, base_path, trust_store_id);
+        },
+        .custom_ssl => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "custom_certificates");
+            defer gpa.free(base_path);
+            break :blk try appendQuery(gpa, base_path, &[_]QueryParam{
+                .{ .name = "match", .value = args.match },
+                .{ .name = "page", .value = args.page },
+                .{ .name = "per_page", .value = args.per_page },
+                .{ .name = "status", .value = args.status },
+            });
+        },
+        .custom_ssl_certificate => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "custom_certificates");
+            defer gpa.free(base_path);
+            const certificate_id = args.custom_certificate_id orelse return error.MissingCloudflareTlsCustomCertificateId;
+            break :blk try appendEscapedPathSegment(gpa, base_path, certificate_id);
+        },
+        .keyless_ssl => try tlsScopedCollectionPath(gpa, .zone, zone_id, "keyless_certificates"),
+        .keyless_ssl_certificate => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "keyless_certificates");
+            defer gpa.free(base_path);
+            const certificate_id = args.keyless_certificate_id orelse return error.MissingCloudflareTlsKeylessCertificateId;
+            break :blk try appendEscapedPathSegment(gpa, base_path, certificate_id);
+        },
+        .per_hostname_tls_settings => blk: {
+            const setting_id = args.setting_id orelse return error.MissingCloudflareTlsSettingId;
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "hostnames/settings");
+            defer gpa.free(base_path);
+            break :blk try appendEscapedPathSegment(gpa, base_path, setting_id);
+        },
+        .per_hostname_tls_setting => blk: {
+            const settings_path = try tlsZoneReadPath(gpa, zone_id, .per_hostname_tls_settings, args);
+            defer gpa.free(settings_path);
+            const hostname = args.hostname orelse return error.MissingCloudflareTlsHostname;
+            break :blk try appendEscapedPathSegment(gpa, settings_path, hostname);
+        },
+        .per_hostname_aop_associations => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "origin_tls_client_auth/hostnames");
+            defer gpa.free(base_path);
+            break :blk try appendQuery(gpa, base_path, &[_]QueryParam{
+                .{ .name = "page", .value = args.page },
+                .{ .name = "per_page", .value = args.per_page },
+                .{ .name = "status", .value = args.status },
+            });
+        },
+        .per_hostname_aop_certificates => try tlsScopedCollectionPath(gpa, .zone, zone_id, "origin_tls_client_auth/hostnames/certificates"),
+        .per_hostname_aop_certificate => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "origin_tls_client_auth/hostnames/certificates");
+            defer gpa.free(base_path);
+            const certificate_id = args.certificate_id orelse return error.MissingCloudflareTlsCertificateId;
+            break :blk try appendEscapedPathSegment(gpa, base_path, certificate_id);
+        },
+        .per_hostname_aop_status => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "origin_tls_client_auth/hostnames");
+            defer gpa.free(base_path);
+            const hostname = args.hostname orelse return error.MissingCloudflareTlsHostname;
+            break :blk try appendEscapedPathSegment(gpa, base_path, hostname);
+        },
+        .ssl_verification => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "ssl/verification");
+            defer gpa.free(base_path);
+            break :blk try appendQuery(gpa, base_path, &[_]QueryParam{.{ .name = "retry", .value = args.retry }});
+        },
+        .total_tls => try tlsScopedCollectionPath(gpa, .zone, zone_id, "acm/total_tls"),
+        .universal_ssl_settings => try tlsScopedCollectionPath(gpa, .zone, zone_id, "ssl/universal/settings"),
+        .zone_aop_certificates => try tlsScopedCollectionPath(gpa, .zone, zone_id, "origin_tls_client_auth"),
+        .zone_aop_settings => try tlsScopedCollectionPath(gpa, .zone, zone_id, "origin_tls_client_auth/settings"),
+        .zone_aop_certificate => blk: {
+            const base_path = try tlsScopedCollectionPath(gpa, .zone, zone_id, "origin_tls_client_auth");
+            defer gpa.free(base_path);
+            const certificate_id = args.certificate_id orelse return error.MissingCloudflareTlsCertificateId;
+            break :blk try appendEscapedPathSegment(gpa, base_path, certificate_id);
+        },
+        else => unreachable,
+    };
+}
+
+fn tlsOriginCaReadPath(gpa: Allocator, zone_id: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs) ![]u8 {
+    return switch (endpoint) {
+        .origin_ca_certificates => try appendQuery(gpa, "/certificates", &[_]QueryParam{
+            .{ .name = "limit", .value = args.limit },
+            .{ .name = "offset", .value = args.offset },
+            .{ .name = "page", .value = args.page },
+            .{ .name = "per_page", .value = args.per_page },
+            .{ .name = "zone_id", .value = zone_id },
+        }),
+        .origin_ca_certificate => blk: {
+            const certificate_id = args.certificate_id orelse return error.MissingCloudflareTlsCertificateId;
+            const escaped_certificate_id = try pathEscape(gpa, certificate_id);
+            defer gpa.free(escaped_certificate_id);
+            break :blk try std.fmt.allocPrint(gpa, "/certificates/{s}", .{escaped_certificate_id});
+        },
+        else => unreachable,
+    };
+}
+
+fn tlsScopedCollectionPath(gpa: Allocator, scope: TlsScope, scope_id: []const u8, suffix: []const u8) ![]u8 {
+    const escaped_scope_id = try pathEscape(gpa, scope_id);
+    defer gpa.free(escaped_scope_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ scope.collection(), escaped_scope_id, suffix });
+}
+
+fn appendEscapedPathSegment(gpa: Allocator, base_path: []const u8, segment: []const u8) ![]u8 {
+    const escaped_segment = try pathEscape(gpa, segment);
+    defer gpa.free(escaped_segment);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, escaped_segment });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -10962,6 +11487,81 @@ test "builds Cloudflare logging observability paths" {
     try std.testing.expectError(error.MissingCloudflareLogExplorerDatasetId, logExplorerReadPath(allocator, .account, "acct/1", .dataset, .{}));
     try std.testing.expectError(error.MissingCloudflareLogsReceivedEnd, logsReceivedReadPath(allocator, "zone/1", .received, .{}));
     try std.testing.expectError(error.MissingCloudflareLogsReceivedRayId, logsReceivedReadPath(allocator, "zone/1", .rayid, .{}));
+}
+
+test "cloudflare tls endpoints parse commands" {
+    try std.testing.expectEqual(TlsScope.account, TlsScope.parse("accounts").?);
+    try std.testing.expectEqual(TlsScope.zone, TlsScope.parse("zone").?);
+    try std.testing.expectEqual(TlsScope.origin_ca, TlsScope.parse("origin-ca").?);
+    try std.testing.expectEqual(TlsReadEndpoint.automatic_ssl, TlsReadEndpoint.parse("ssl-automatic-mode").?);
+    try std.testing.expectEqual(TlsReadEndpoint.certificate_packs, TlsReadEndpoint.parse("cert-packs").?);
+    try std.testing.expectEqual(TlsReadEndpoint.custom_ssl_certificate, TlsReadEndpoint.parse("custom-certificate").?);
+    try std.testing.expectEqual(TlsReadEndpoint.keyless_ssl_certificate, TlsReadEndpoint.parse("keyless-certificate").?);
+    try std.testing.expectEqual(TlsReadEndpoint.origin_ca_certificates, TlsReadEndpoint.parse("origin-ca-certs").?);
+    try std.testing.expectEqual(TlsReadEndpoint.per_hostname_aop_status, TlsReadEndpoint.parse("hostname-aop-status").?);
+    try std.testing.expectEqual(TlsReadEndpoint.zone_aop_settings, TlsReadEndpoint.parse("aop-settings").?);
+    try std.testing.expect(TlsReadEndpoint.custom_csr.supports(.account));
+    try std.testing.expect(!TlsReadEndpoint.certificate_packs.supports(.account));
+    try std.testing.expect(TlsReadEndpoint.origin_ca_certificate.supports(.origin_ca));
+    try std.testing.expect(!TlsReadEndpoint.origin_ca_certificate.supports(.zone));
+    try std.testing.expect(TlsReadEndpoint.per_hostname_tls_setting.requiresSettingId());
+    try std.testing.expect(TlsReadEndpoint.per_hostname_tls_setting.requiresHostname());
+    try std.testing.expectEqualStrings("certificate-packs-list-certificate-packs", TlsReadEndpoint.certificate_packs.operationId(.zone));
+    try std.testing.expectEqualStrings("origin-ca-list-certificates", TlsReadEndpoint.origin_ca_certificates.operationId(.origin_ca));
+}
+
+test "builds Cloudflare tls posture paths" {
+    const allocator = std.testing.allocator;
+
+    const cert_packs = try tlsReadUrl(allocator, base_url, .zone, "zone/1", .certificate_packs, .{ .status = "active", .page = "2" });
+    defer allocator.free(cert_packs);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone%2F1/ssl/certificate_packs?page=2&status=active", cert_packs);
+
+    const cert_pack = try tlsReadPath(allocator, .zone, "zone/1", .certificate_pack, .{ .certificate_pack_id = "pack/1" });
+    defer allocator.free(cert_pack);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/ssl/certificate_packs/pack%2F1", cert_pack);
+
+    const account_csr = try tlsReadPath(allocator, .account, "acct/1", .custom_csrs, .{ .per_page = "50" });
+    defer allocator.free(account_csr);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/custom_csrs?per_page=50", account_csr);
+
+    const custom_ssl = try tlsReadPath(allocator, .zone, "zone/1", .custom_ssl, .{ .match = "plosca.ru", .status = "active" });
+    defer allocator.free(custom_ssl);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/custom_certificates?match=plosca.ru&status=active", custom_ssl);
+
+    const keyless = try tlsReadPath(allocator, .zone, "zone/1", .keyless_ssl_certificate, .{ .keyless_certificate_id = "keyless/1" });
+    defer allocator.free(keyless);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/keyless_certificates/keyless%2F1", keyless);
+
+    const trust_store = try tlsReadPath(allocator, .zone, "zone/1", .custom_origin_trust_store, .{ .limit = "10", .offset = "20" });
+    defer allocator.free(trust_store);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/acm/custom_trust_store?limit=10&offset=20", trust_store);
+
+    const origin_ca = try tlsReadPath(allocator, .origin_ca, "zone/1", .origin_ca_certificates, .{ .per_page = "25" });
+    defer allocator.free(origin_ca);
+    try std.testing.expectEqualStrings("/certificates?per_page=25&zone_id=zone%2F1", origin_ca);
+
+    const hostname_tls = try tlsReadPath(allocator, .zone, "zone/1", .per_hostname_tls_setting, .{ .setting_id = "min_tls_version", .hostname = "www.plosca.ru" });
+    defer allocator.free(hostname_tls);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/hostnames/settings/min_tls_version/www.plosca.ru", hostname_tls);
+
+    const hostname_aop = try tlsReadPath(allocator, .zone, "zone/1", .per_hostname_aop_status, .{ .hostname = "www.plosca.ru" });
+    defer allocator.free(hostname_aop);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/origin_tls_client_auth/hostnames/www.plosca.ru", hostname_aop);
+
+    const ssl_verification = try tlsReadPath(allocator, .zone, "zone/1", .ssl_verification, .{ .retry = "false" });
+    defer allocator.free(ssl_verification);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/ssl/verification?retry=false", ssl_verification);
+
+    const universal = try tlsReadPath(allocator, .zone, "zone/1", .universal_ssl_settings, .{});
+    defer allocator.free(universal);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/ssl/universal/settings", universal);
+
+    try std.testing.expectError(error.UnsupportedCloudflareTlsEndpoint, tlsReadPath(allocator, .account, "acct/1", .certificate_packs, .{}));
+    try std.testing.expectError(error.MissingCloudflareTlsCertificatePackId, tlsReadPath(allocator, .zone, "zone/1", .certificate_pack, .{}));
+    try std.testing.expectError(error.MissingCloudflareTlsCustomCsrId, tlsReadPath(allocator, .account, "acct/1", .custom_csr, .{}));
+    try std.testing.expectError(error.MissingCloudflareTlsCustomCertificateId, tlsReadPath(allocator, .zone, "zone/1", .custom_ssl_certificate, .{}));
+    try std.testing.expectError(error.MissingCloudflareTlsHostname, tlsReadPath(allocator, .zone, "zone/1", .per_hostname_aop_status, .{}));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

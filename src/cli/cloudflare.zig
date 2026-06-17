@@ -78,6 +78,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandLogExplorer(ctx, args);
     } else if (std.mem.eql(u8, sub, "logs-received") or std.mem.eql(u8, sub, "received-logs")) {
         try commandLogsReceived(ctx, args);
+    } else if (std.mem.eql(u8, sub, "tls") or std.mem.eql(u8, sub, "ssl")) {
+        try commandTls(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -1608,6 +1610,79 @@ fn commandLogsReceived(ctx: Context, args: []const []const u8) !void {
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLogsReceivedEndpoint(appContext(ctx), zone_id, endpoint, read_args));
 }
 
+fn commandTls(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("tls account|zone|origin-ca <route> <scope-id> [ids...] [key=value...] required\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.TlsScope.parse(args[1]) orelse {
+        std.debug.print("unknown tls scope: {s}\n", .{args[1]});
+        return;
+    };
+    const endpoint = app_cloudflare.TlsReadEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown tls route: {s}\n", .{args[2]});
+        return;
+    };
+    if (!endpoint.supports(scope)) {
+        std.debug.print("tls route {s} does not support scope {s}\n", .{ endpoint.commandName(), scope.commandName() });
+        return;
+    }
+    const scope_id = args[3];
+    var read_args: app_cloudflare.TlsReadArgs = .{};
+    var index: usize = 4;
+    if (endpoint.requiresCertificatePackId()) {
+        if (index >= args.len) return printMissingTlsReadArg(scope, endpoint, "certificate pack id");
+        read_args.certificate_pack_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresCustomCsrId()) {
+        if (index >= args.len) return printMissingTlsReadArg(scope, endpoint, "custom CSR id");
+        read_args.custom_csr_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresCustomOriginTrustStoreId()) {
+        if (index >= args.len) return printMissingTlsReadArg(scope, endpoint, "custom origin trust store id");
+        read_args.custom_origin_trust_store_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresCustomCertificateId()) {
+        if (index >= args.len) return printMissingTlsReadArg(scope, endpoint, "custom certificate id");
+        read_args.custom_certificate_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresKeylessCertificateId()) {
+        if (index >= args.len) return printMissingTlsReadArg(scope, endpoint, "keyless certificate id");
+        read_args.keyless_certificate_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresCertificateId()) {
+        if (index >= args.len) return printMissingTlsReadArg(scope, endpoint, "certificate id");
+        read_args.certificate_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresSettingId()) {
+        if (index >= args.len) return printMissingTlsReadArg(scope, endpoint, "setting id");
+        read_args.setting_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresHostname()) {
+        if (index >= args.len) return printMissingTlsReadArg(scope, endpoint, "hostname");
+        read_args.hostname = args[index];
+        index += 1;
+    }
+    while (index < args.len) : (index += 1) {
+        if (!applyTlsReadFilter(&read_args, args[index])) {
+            std.debug.print("unused tls argument: {s}\n", .{args[index]});
+            return;
+        }
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectTlsEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+}
+
+fn printMissingTlsReadArg(scope: app_cloudflare.TlsScope, endpoint: app_cloudflare.TlsReadEndpoint, label: []const u8) void {
+    std.debug.print("{s} required for tls {s} {s}\n", .{ label, scope.commandName(), endpoint.commandName() });
+}
+
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
     if (args.len > 1 and std.mem.eql(u8, args[1], "zsk")) {
         const domain = if (args.len > 2) args[2] else ctx.domains[0];
@@ -1962,6 +2037,32 @@ fn applyLogsReceivedReadFilter(args: *app_cloudflare.LogsReceivedReadArgs, raw: 
     return true;
 }
 
+fn applyTlsReadFilter(args: *app_cloudflare.TlsReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "deploy")) {
+        args.deploy = value;
+    } else if (std.mem.eql(u8, key, "match")) {
+        args.match = value;
+    } else if (std.mem.eql(u8, key, "status")) {
+        args.status = value;
+    } else if (std.mem.eql(u8, key, "limit")) {
+        args.limit = value;
+    } else if (std.mem.eql(u8, key, "offset")) {
+        args.offset = value;
+    } else if (std.mem.eql(u8, key, "page")) {
+        args.page = value;
+    } else if (std.mem.eql(u8, key, "per_page") or std.mem.eql(u8, key, "per-page")) {
+        args.per_page = value;
+    } else if (std.mem.eql(u8, key, "retry")) {
+        args.retry = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 fn applyCloudforceOneRuleFilter(args: *app_cloudflare.CloudforceOneRuleReadArgs, raw: []const u8) bool {
     const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
     const key = raw[0..eq];
@@ -2184,6 +2285,25 @@ test "log explorer and logs received filters parse key value arguments" {
     try std.testing.expectEqualStrings("true", received_args.count.?);
     try std.testing.expectEqualStrings("ClientIP,EdgeStartTimestamp", received_args.fields.?);
     try std.testing.expectEqualStrings("rfc3339", received_args.timestamps.?);
+}
+
+test "tls read filters parse key value arguments" {
+    var args: app_cloudflare.TlsReadArgs = .{};
+    try std.testing.expect(applyTlsReadFilter(&args, "deploy=true"));
+    try std.testing.expect(applyTlsReadFilter(&args, "match=plosca.ru"));
+    try std.testing.expect(applyTlsReadFilter(&args, "status=active"));
+    try std.testing.expect(applyTlsReadFilter(&args, "limit=10"));
+    try std.testing.expect(applyTlsReadFilter(&args, "offset=20"));
+    try std.testing.expect(applyTlsReadFilter(&args, "page=2"));
+    try std.testing.expect(applyTlsReadFilter(&args, "per-page=50"));
+    try std.testing.expect(applyTlsReadFilter(&args, "retry=false"));
+    try std.testing.expect(!applyTlsReadFilter(&args, "unknown=value"));
+    try std.testing.expect(!applyTlsReadFilter(&args, "status"));
+    try std.testing.expectEqualStrings("true", args.deploy.?);
+    try std.testing.expectEqualStrings("plosca.ru", args.match.?);
+    try std.testing.expectEqualStrings("active", args.status.?);
+    try std.testing.expectEqualStrings("50", args.per_page.?);
+    try std.testing.expectEqualStrings("false", args.retry.?);
 }
 
 test "ip access rule filters parse key value arguments" {

@@ -85,6 +85,9 @@ pub const LogExplorerReadArgs = provider_cloudflare.LogExplorerReadArgs;
 pub const LogExplorerReadEndpoint = provider_cloudflare.LogExplorerReadEndpoint;
 pub const LogsReceivedReadArgs = provider_cloudflare.LogsReceivedReadArgs;
 pub const LogsReceivedReadEndpoint = provider_cloudflare.LogsReceivedReadEndpoint;
+pub const TlsReadArgs = provider_cloudflare.TlsReadArgs;
+pub const TlsReadEndpoint = provider_cloudflare.TlsReadEndpoint;
+pub const TlsScope = provider_cloudflare.TlsScope;
 pub const LoadBalancingAccountReadEndpoint = provider_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = provider_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = provider_cloudflare.LoadBalancingMutationEndpoint;
@@ -197,6 +200,7 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     try collectAuditLogsForAccounts(gpa, io, client, db, redacted);
     try collectLogpushForAccounts(gpa, io, client, db, redacted);
     try collectLogExplorerForAccounts(gpa, io, client, db, redacted);
+    try collectTlsForAccounts(gpa, io, client, db, redacted);
     try collectAccountTokenEndpointsForAccounts(gpa, io, auth, client, db, redacted);
     try collectAccountDnsSettings(gpa, io, client, db, redacted);
     try collectAccountDnsRecordUsageForAccounts(gpa, io, client, db, redacted);
@@ -1103,6 +1107,30 @@ pub fn collectLogsReceivedEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, 
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectTlsEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope: TlsScope, scope_id: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label(scope);
+    const target = try tlsTarget(gpa, scope_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getTlsEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.tlsReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: IdentityEndpoint, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const client = clientFromAuth(auth) catch {
@@ -1442,6 +1470,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
         try collectLogpushForZone(gpa, io, client, db, zone_id, domain);
         try collectLogExplorerForZone(gpa, io, client, db, zone_id, domain);
         try collectLogsReceivedForZone(gpa, io, client, db, zone_id, domain);
+        try collectTlsForZone(gpa, io, client, db, zone_id, domain);
 
         zone_tags_refresh: {
             const tag_body = client.getResourceTaggingZoneTags(io, gpa, zone_id, .{
@@ -3175,6 +3204,100 @@ fn collectLogsReceivedSnapshot(gpa: Allocator, io: Io, client: provider_cloudfla
     });
 }
 
+fn collectTlsForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try collectTlsReadForTarget(gpa, io, client, db, .account, row.id, row.id, .custom_csrs, .{});
+    }
+}
+
+fn collectTlsForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8) !void {
+    const zone_endpoints = [_]TlsReadEndpoint{
+        .automatic_ssl,
+        .certificate_packs,
+        .certificate_pack_quota,
+        .custom_csrs,
+        .custom_origin_trust_store,
+        .custom_ssl,
+        .keyless_ssl,
+        .per_hostname_aop_associations,
+        .per_hostname_aop_certificates,
+        .ssl_verification,
+        .total_tls,
+        .universal_ssl_settings,
+        .zone_aop_certificates,
+        .zone_aop_settings,
+    };
+    for (zone_endpoints) |endpoint| {
+        try collectTlsReadForTarget(gpa, io, client, db, .zone, zone_id, target_label, endpoint, .{});
+    }
+    try collectTlsReadForTarget(gpa, io, client, db, .origin_ca, zone_id, target_label, .origin_ca_certificates, .{});
+}
+
+fn collectTlsReadForTarget(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: TlsScope, scope_id: []const u8, target_label: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs) anyerror!void {
+    const redacted = collectTlsSnapshot(gpa, io, client, db, scope, scope_id, target_label, endpoint, args) catch |err| {
+        const target = tlsTarget(gpa, target_label, endpoint, args) catch try gpa.dupe(u8, target_label);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(scope), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(scope), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    try collectTlsDetailsForList(gpa, io, client, db, scope, scope_id, target_label, endpoint, redacted);
+}
+
+fn collectTlsDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: TlsScope, scope_id: []const u8, target_label: []const u8, list_endpoint: TlsReadEndpoint, list_body: []const u8) anyerror!void {
+    const detail_endpoint: ?TlsReadEndpoint = switch (list_endpoint) {
+        .certificate_packs => .certificate_pack,
+        .custom_csrs => .custom_csr,
+        .custom_origin_trust_store => .custom_origin_trust_store_detail,
+        .custom_ssl => .custom_ssl_certificate,
+        .keyless_ssl => .keyless_ssl_certificate,
+        .origin_ca_certificates => .origin_ca_certificate,
+        .per_hostname_aop_associations => .per_hostname_aop_status,
+        .per_hostname_aop_certificates => .per_hostname_aop_certificate,
+        .zone_aop_certificates => .zone_aop_certificate,
+        else => null,
+    };
+    const endpoint = detail_endpoint orelse return;
+
+    var rows = try provider_cloudflare_models.parseResourceIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const detail_args: TlsReadArgs = switch (endpoint) {
+            .certificate_pack => .{ .certificate_pack_id = row.id },
+            .custom_csr => .{ .custom_csr_id = row.id },
+            .custom_origin_trust_store_detail => .{ .custom_origin_trust_store_id = row.id },
+            .custom_ssl_certificate => .{ .custom_certificate_id = row.id },
+            .keyless_ssl_certificate => .{ .keyless_certificate_id = row.id },
+            .origin_ca_certificate, .per_hostname_aop_certificate, .zone_aop_certificate => .{ .certificate_id = row.id },
+            .per_hostname_aop_status => .{ .hostname = row.id },
+            else => .{},
+        };
+        try collectTlsReadForTarget(gpa, io, client, db, scope, scope_id, target_label, endpoint, detail_args);
+    }
+}
+
+fn collectTlsSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: TlsScope, scope_id: []const u8, target_label: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs) ![]u8 {
+    const body = try client.getTlsEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.tlsReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try tlsTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(scope),
+        .target = target,
+        .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
 fn collectRulesetSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: RulesetScope, scope_id: []const u8, target_label: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
     const body = try client.getRulesetEndpoint(io, gpa, scope, scope_id, endpoint, args);
     defer body.deinit(gpa);
@@ -3678,6 +3801,46 @@ fn logsReceivedTarget(gpa: Allocator, zone_label: []const u8, endpoint: LogsRece
         return try std.fmt.allocPrint(gpa, "{s}/logs-ray:{s}", .{ zone_label, ray_id });
     }
     return try gpa.dupe(u8, zone_label);
+}
+
+fn tlsTarget(gpa: Allocator, scope_label: []const u8, endpoint: TlsReadEndpoint, args: TlsReadArgs) ![]u8 {
+    if (endpoint.requiresCertificatePackId()) {
+        const id = args.certificate_pack_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/certificate-pack:{s}", .{ scope_label, id });
+    }
+    if (endpoint.requiresCustomCsrId()) {
+        const id = args.custom_csr_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/custom-csr:{s}", .{ scope_label, id });
+    }
+    if (endpoint.requiresCustomOriginTrustStoreId()) {
+        const id = args.custom_origin_trust_store_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/custom-origin-trust-store:{s}", .{ scope_label, id });
+    }
+    if (endpoint.requiresCustomCertificateId()) {
+        const id = args.custom_certificate_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/custom-certificate:{s}", .{ scope_label, id });
+    }
+    if (endpoint.requiresKeylessCertificateId()) {
+        const id = args.keyless_certificate_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/keyless-certificate:{s}", .{ scope_label, id });
+    }
+    if (endpoint.requiresCertificateId()) {
+        const id = args.certificate_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/certificate:{s}", .{ scope_label, id });
+    }
+    if (endpoint.requiresSettingId()) {
+        const setting_id = args.setting_id orelse return try gpa.dupe(u8, scope_label);
+        if (endpoint.requiresHostname()) {
+            const hostname = args.hostname orelse return try std.fmt.allocPrint(gpa, "{s}/setting:{s}", .{ scope_label, setting_id });
+            return try std.fmt.allocPrint(gpa, "{s}/setting:{s}/hostname:{s}", .{ scope_label, setting_id, hostname });
+        }
+        return try std.fmt.allocPrint(gpa, "{s}/setting:{s}", .{ scope_label, setting_id });
+    }
+    if (endpoint.requiresHostname()) {
+        const hostname = args.hostname orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/hostname:{s}", .{ scope_label, hostname });
+    }
+    return try gpa.dupe(u8, scope_label);
 }
 
 fn resourceTaggingAccountTarget(gpa: Allocator, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
