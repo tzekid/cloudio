@@ -33,6 +33,10 @@ pub const DnsFirewallMutationEndpoint = provider_cloudflare.DnsFirewallMutationE
 pub const DnsFirewallReadEndpoint = provider_cloudflare.DnsFirewallReadEndpoint;
 pub const DnsSettingsMutationArgs = provider_cloudflare.DnsSettingsMutationArgs;
 pub const DnsSettingsMutationEndpoint = provider_cloudflare.DnsSettingsMutationEndpoint;
+pub const EndpointHealthCheckReadEndpoint = provider_cloudflare.EndpointHealthCheckReadEndpoint;
+pub const HealthCheckMutationArgs = provider_cloudflare.HealthCheckMutationArgs;
+pub const HealthCheckMutationEndpoint = provider_cloudflare.HealthCheckMutationEndpoint;
+pub const HealthCheckMutationResource = provider_cloudflare.HealthCheckMutationResource;
 pub const LoadBalancingAccountReadEndpoint = provider_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = provider_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = provider_cloudflare.LoadBalancingMutationEndpoint;
@@ -56,7 +60,9 @@ pub const MembershipMutationEndpoint = provider_cloudflare.MembershipMutationEnd
 pub const UserTokenEndpoint = provider_cloudflare.UserTokenEndpoint;
 pub const UserTokenMutationArgs = provider_cloudflare.UserTokenMutationArgs;
 pub const UserTokenMutationEndpoint = provider_cloudflare.UserTokenMutationEndpoint;
+pub const SmartShieldHealthCheckReadEndpoint = provider_cloudflare.SmartShieldHealthCheckReadEndpoint;
 pub const ZoneEndpoint = provider_cloudflare.ZoneEndpoint;
+pub const ZoneHealthCheckReadEndpoint = provider_cloudflare.ZoneHealthCheckReadEndpoint;
 pub const ZoneLifecycleMutationArgs = provider_cloudflare.ZoneLifecycleMutationArgs;
 pub const ZoneLifecycleMutationEndpoint = provider_cloudflare.ZoneLifecycleMutationEndpoint;
 pub const ZoneLifecycleReadEndpoint = provider_cloudflare.ZoneLifecycleReadEndpoint;
@@ -117,6 +123,7 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     try collectSecondaryDnsAccountCollectionsForAccounts(gpa, io, client, db, redacted);
     try collectDnsFirewallForAccounts(gpa, io, client, db, redacted);
     try collectLoadBalancingAccountForAccounts(gpa, io, client, db, redacted);
+    try collectEndpointHealthChecksForAccounts(gpa, io, client, db, redacted);
     try collectAccountTokenEndpointsForAccounts(gpa, io, auth, client, db, redacted);
     try collectAccountDnsSettings(gpa, io, client, db, redacted);
     try collectAccountDnsRecordUsageForAccounts(gpa, io, client, db, redacted);
@@ -544,6 +551,78 @@ pub fn collectLoadBalancingZoneEndpoint(io: Io, gpa: Allocator, auth: Auth, db: 
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectEndpointHealthCheck(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, endpoint: EndpointHealthCheckReadEndpoint, healthcheck_id: ?[]const u8, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = if (healthcheck_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, id }) else try gpa.dupe(u8, account_id);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getEndpointHealthCheck(io, gpa, account_id, endpoint, healthcheck_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.endpointHealthCheckReadPath(gpa, account_id, endpoint, healthcheck_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectZoneHealthCheck(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: ZoneHealthCheckReadEndpoint, healthcheck_id: ?[]const u8, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = if (healthcheck_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zone_id, id }) else try gpa.dupe(u8, zone_id);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getZoneHealthCheck(io, gpa, zone_id, endpoint, healthcheck_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.zoneHealthCheckReadPath(gpa, zone_id, endpoint, healthcheck_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectSmartShieldHealthCheck(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: SmartShieldHealthCheckReadEndpoint, healthcheck_id: ?[]const u8, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = if (healthcheck_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zone_id, id }) else try gpa.dupe(u8, zone_id);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getSmartShieldHealthCheck(io, gpa, zone_id, endpoint, healthcheck_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.smartShieldHealthCheckReadPath(gpa, zone_id, endpoint, healthcheck_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: IdentityEndpoint, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const client = clientFromAuth(auth) catch {
@@ -798,6 +877,54 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             });
             defer gpa.free(lb_redacted);
             try collectLoadBalancingZoneDetailsForList(gpa, io, client, db, zone_id, domain, lb_redacted);
+        }
+
+        health_checks_refresh: {
+            const endpoint: ZoneHealthCheckReadEndpoint = .list;
+            const health_body = client.getZoneHealthCheck(io, gpa, zone_id, endpoint, null) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint.label(), domain, "error", error_summary, null, null);
+                break :health_checks_refresh;
+            };
+            defer health_body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.zoneHealthCheckReadPath(gpa, zone_id, endpoint, null);
+            defer gpa.free(endpoint_path);
+            const health_redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint.label(),
+                .target = domain,
+                .summary_label = endpoint.summary(),
+                .endpoint = endpoint_path,
+                .status = health_body.status,
+                .body = health_body.body,
+            });
+            defer gpa.free(health_redacted);
+            try collectZoneHealthCheckDetailsForList(gpa, io, client, db, zone_id, domain, health_redacted);
+        }
+
+        smart_shield_refresh: {
+            const endpoint: SmartShieldHealthCheckReadEndpoint = .list;
+            const smart_body = client.getSmartShieldHealthCheck(io, gpa, zone_id, endpoint, null) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint.label(), domain, "error", error_summary, null, null);
+                break :smart_shield_refresh;
+            };
+            defer smart_body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.smartShieldHealthCheckReadPath(gpa, zone_id, endpoint, null);
+            defer gpa.free(endpoint_path);
+            const smart_redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint.label(),
+                .target = domain,
+                .summary_label = endpoint.summary(),
+                .endpoint = endpoint_path,
+                .status = smart_body.status,
+                .body = smart_body.body,
+            });
+            defer gpa.free(smart_redacted);
+            try collectSmartShieldHealthCheckDetailsForList(gpa, io, client, db, zone_id, domain, smart_redacted);
         }
     }
 
@@ -1435,6 +1562,115 @@ fn collectLoadBalancingZoneDetailsForList(gpa: Allocator, io: Io, client: provid
         };
         defer body.deinit(gpa);
         const endpoint_path = try provider_cloudflare.loadBalancingZoneReadPath(gpa, zone_id, endpoint, row.id);
+        defer gpa.free(endpoint_path);
+        const redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = endpoint.label(),
+            .target = target,
+            .summary_label = endpoint.summary(),
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer gpa.free(redacted);
+    }
+}
+
+fn collectEndpointHealthChecksForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const list_endpoint: EndpointHealthCheckReadEndpoint = .list;
+        const redacted = collectEndpointHealthCheckSnapshot(gpa, io, client, db, row.id, list_endpoint, null) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ list_endpoint.label(), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", list_endpoint.label(), row.id, "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(redacted);
+        try collectEndpointHealthCheckDetailsForList(gpa, io, client, db, row.id, redacted);
+    }
+}
+
+fn collectEndpointHealthCheckDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, list_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const endpoint: EndpointHealthCheckReadEndpoint = .details;
+        const redacted = collectEndpointHealthCheckSnapshot(gpa, io, client, db, account_id, endpoint, row.id) catch |err| {
+            const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, row.id });
+            defer gpa.free(target);
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(redacted);
+    }
+}
+
+fn collectEndpointHealthCheckSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, endpoint: EndpointHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) ![]u8 {
+    const body = try client.getEndpointHealthCheck(io, gpa, account_id, endpoint, healthcheck_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.endpointHealthCheckReadPath(gpa, account_id, endpoint, healthcheck_id);
+    defer gpa.free(endpoint_path);
+    const target = if (healthcheck_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, id }) else try gpa.dupe(u8, account_id);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
+fn collectZoneHealthCheckDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, list_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ target_label, row.id });
+        defer gpa.free(target);
+        const endpoint: ZoneHealthCheckReadEndpoint = .details;
+        const body = client.getZoneHealthCheck(io, gpa, zone_id, endpoint, row.id) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+            continue;
+        };
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.zoneHealthCheckReadPath(gpa, zone_id, endpoint, row.id);
+        defer gpa.free(endpoint_path);
+        const redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = endpoint.label(),
+            .target = target,
+            .summary_label = endpoint.summary(),
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer gpa.free(redacted);
+    }
+}
+
+fn collectSmartShieldHealthCheckDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, list_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ target_label, row.id });
+        defer gpa.free(target);
+        const endpoint: SmartShieldHealthCheckReadEndpoint = .details;
+        const body = client.getSmartShieldHealthCheck(io, gpa, zone_id, endpoint, row.id) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+            continue;
+        };
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.smartShieldHealthCheckReadPath(gpa, zone_id, endpoint, row.id);
         defer gpa.free(endpoint_path);
         const redacted = try collector_capture.storeResponse(gpa, db, .{
             .provider = "cloudflare",

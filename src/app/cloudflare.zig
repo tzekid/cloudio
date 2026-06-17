@@ -28,6 +28,10 @@ pub const DnsFirewallMutationEndpoint = collector_cloudflare.DnsFirewallMutation
 pub const DnsFirewallReadEndpoint = collector_cloudflare.DnsFirewallReadEndpoint;
 pub const DnsSettingsMutationArgs = collector_cloudflare.DnsSettingsMutationArgs;
 pub const DnsSettingsMutationEndpoint = collector_cloudflare.DnsSettingsMutationEndpoint;
+pub const EndpointHealthCheckReadEndpoint = collector_cloudflare.EndpointHealthCheckReadEndpoint;
+pub const HealthCheckMutationArgs = collector_cloudflare.HealthCheckMutationArgs;
+pub const HealthCheckMutationEndpoint = collector_cloudflare.HealthCheckMutationEndpoint;
+pub const HealthCheckMutationResource = collector_cloudflare.HealthCheckMutationResource;
 pub const LoadBalancingAccountReadEndpoint = collector_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = collector_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = collector_cloudflare.LoadBalancingMutationEndpoint;
@@ -49,10 +53,12 @@ pub const IdentityEndpoint = collector_cloudflare.IdentityEndpoint;
 pub const MembershipMutationArgs = collector_cloudflare.MembershipMutationArgs;
 pub const MembershipMutationEndpoint = collector_cloudflare.MembershipMutationEndpoint;
 pub const Output = collector_cloudflare.Output;
+pub const SmartShieldHealthCheckReadEndpoint = collector_cloudflare.SmartShieldHealthCheckReadEndpoint;
 pub const UserTokenEndpoint = collector_cloudflare.UserTokenEndpoint;
 pub const UserTokenMutationArgs = collector_cloudflare.UserTokenMutationArgs;
 pub const UserTokenMutationEndpoint = collector_cloudflare.UserTokenMutationEndpoint;
 pub const ZoneEndpoint = collector_cloudflare.ZoneEndpoint;
+pub const ZoneHealthCheckReadEndpoint = collector_cloudflare.ZoneHealthCheckReadEndpoint;
 pub const ZoneLifecycleMutationArgs = collector_cloudflare.ZoneLifecycleMutationArgs;
 pub const ZoneLifecycleMutationEndpoint = collector_cloudflare.ZoneLifecycleMutationEndpoint;
 pub const ZoneLifecycleReadEndpoint = collector_cloudflare.ZoneLifecycleReadEndpoint;
@@ -149,6 +155,18 @@ pub fn collectLoadBalancingUserEndpoint(ctx: Context, endpoint: LoadBalancingUse
 
 pub fn collectLoadBalancingZoneEndpoint(ctx: Context, zone_id: []const u8, endpoint: LoadBalancingZoneReadEndpoint, load_balancer_id: ?[]const u8) !Output {
     return try collector_cloudflare.collectLoadBalancingZoneEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, load_balancer_id, true);
+}
+
+pub fn collectEndpointHealthCheck(ctx: Context, account_id: []const u8, endpoint: EndpointHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) !Output {
+    return try collector_cloudflare.collectEndpointHealthCheck(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, healthcheck_id, true);
+}
+
+pub fn collectZoneHealthCheck(ctx: Context, zone_id: []const u8, endpoint: ZoneHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) !Output {
+    return try collector_cloudflare.collectZoneHealthCheck(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, healthcheck_id, true);
+}
+
+pub fn collectSmartShieldHealthCheck(ctx: Context, zone_id: []const u8, endpoint: SmartShieldHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) !Output {
+    return try collector_cloudflare.collectSmartShieldHealthCheck(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, healthcheck_id, true);
 }
 
 pub fn collectIdentityEndpoint(ctx: Context, endpoint: IdentityEndpoint) !Output {
@@ -261,6 +279,10 @@ pub fn planDnsSettingsMutation(ctx: Context, endpoint: DnsSettingsMutationEndpoi
 
 pub fn planLoadBalancingMutation(ctx: Context, endpoint: LoadBalancingMutationEndpoint, args: LoadBalancingMutationArgs) !Output {
     return .{ .text = try provider_cloudflare.loadBalancingMutationPlanJson(ctx.gpa, endpoint, args) };
+}
+
+pub fn planHealthCheckMutation(ctx: Context, endpoint: HealthCheckMutationEndpoint, args: HealthCheckMutationArgs) !Output {
+    return .{ .text = try provider_cloudflare.healthCheckMutationPlanJson(ctx.gpa, endpoint, args) };
 }
 
 pub fn collectZoneSetting(ctx: Context, domain: []const u8, setting_id: []const u8) !Output {

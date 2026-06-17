@@ -133,6 +133,9 @@ fn usage() void {
         \\  cloudio cloudflare load-balancing user monitors|pools|healthcheck-events
         \\  cloudio cloudflare load-balancing user monitor|monitor-references|preview-result|pool|pool-health|pool-references <resource-id>
         \\  cloudio cloudflare load-balancing zone load-balancers <zone-id>|zone load-balancer <zone-id> <load-balancer-id>
+        \\  cloudio cloudflare health-checks endpoint list <account-id>|endpoint show <account-id> <healthcheck-id>
+        \\  cloudio cloudflare health-checks zone list <zone-id>|zone show|preview <zone-id> <healthcheck-id>
+        \\  cloudio cloudflare health-checks smart-shield list <zone-id>|smart-shield show <zone-id> <healthcheck-id>
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>
@@ -157,6 +160,10 @@ fn usage() void {
         \\  cloudio cloudflare dry-run load-balancing user-monitor create|update|patch|delete|preview [monitor-id]
         \\  cloudio cloudflare dry-run load-balancing user-pool create|patch-all|update|patch|delete|preview [pool-id]
         \\  cloudio cloudflare dry-run load-balancing zone-load-balancer create <zone-id>|update|patch|delete <zone-id> <load-balancer-id>
+        \\  cloudio cloudflare dry-run health-checks endpoint create <account-id>|update|delete <account-id> <healthcheck-id>
+        \\  cloudio cloudflare dry-run health-checks zone create <zone-id>|update|patch|delete <zone-id> <healthcheck-id>
+        \\  cloudio cloudflare dry-run health-checks preview create <zone-id>|delete <zone-id> <preview-id>
+        \\  cloudio cloudflare dry-run health-checks smart-shield create <zone-id>|update|patch|delete <zone-id> <healthcheck-id>
         \\  cloudio cloudflare dry-run token create
         \\  cloudio cloudflare dry-run token delete|update|roll <token-id>
         \\  cloudio cloudflare dry-run account create|batch-move

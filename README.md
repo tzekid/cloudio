@@ -62,6 +62,11 @@ zig build run -- cloudflare load-balancing account monitors <account-id>
 zig build run -- cloudflare load-balancing account pool-health <account-id> <pool-id>
 zig build run -- cloudflare load-balancing user healthcheck-events
 zig build run -- cloudflare load-balancing zone load-balancers <zone-id>
+zig build run -- cloudflare health-checks endpoint list <account-id>
+zig build run -- cloudflare health-checks endpoint show <account-id> <healthcheck-id>
+zig build run -- cloudflare health-checks zone list <zone-id>
+zig build run -- cloudflare health-checks zone preview <zone-id> <preview-id>
+zig build run -- cloudflare health-checks smart-shield list <zone-id>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru
@@ -94,6 +99,10 @@ zig build run -- cloudflare dry-run load-balancing account-monitor create <accou
 zig build run -- cloudflare dry-run load-balancing account-pool patch-all <account-id>
 zig build run -- cloudflare dry-run load-balancing user-monitor preview <monitor-id>
 zig build run -- cloudflare dry-run load-balancing zone-load-balancer patch <zone-id> <load-balancer-id>
+zig build run -- cloudflare dry-run health-checks endpoint create <account-id>
+zig build run -- cloudflare dry-run health-checks zone patch <zone-id> <healthcheck-id>
+zig build run -- cloudflare dry-run health-checks preview delete <zone-id> <preview-id>
+zig build run -- cloudflare dry-run health-checks smart-shield update <zone-id> <healthcheck-id>
 zig build run -- cloudflare dry-run token create
 zig build run -- cloudflare dry-run token roll <token-id>
 zig build run -- cloudflare dry-run account create

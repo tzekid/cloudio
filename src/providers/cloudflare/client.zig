@@ -176,6 +176,24 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getEndpointHealthCheck(self: Client, io: Io, gpa: Allocator, account_id: []const u8, endpoint: EndpointHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) !net_http.Response {
+        const url = try endpointHealthCheckReadUrl(gpa, self.base_url_override, account_id, endpoint, healthcheck_id);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getZoneHealthCheck(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, endpoint: ZoneHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) !net_http.Response {
+        const url = try zoneHealthCheckReadUrl(gpa, self.base_url_override, zone_id, endpoint, healthcheck_id);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getSmartShieldHealthCheck(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, endpoint: SmartShieldHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) !net_http.Response {
+        const url = try smartShieldHealthCheckReadUrl(gpa, self.base_url_override, zone_id, endpoint, healthcheck_id);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -1714,6 +1732,340 @@ pub const LoadBalancingMutationArgs = struct {
     account_id: ?[]const u8 = null,
     zone_id: ?[]const u8 = null,
     resource_id: ?[]const u8 = null,
+};
+
+pub const EndpointHealthCheckReadEndpoint = enum {
+    list,
+    details,
+
+    pub fn parse(value: []const u8) ?EndpointHealthCheckReadEndpoint {
+        if (std.mem.eql(u8, value, "list") or std.mem.eql(u8, value, "endpoint-healthchecks")) return .list;
+        if (std.mem.eql(u8, value, "show") or std.mem.eql(u8, value, "detail") or std.mem.eql(u8, value, "details") or std.mem.eql(u8, value, "endpoint-healthcheck")) return .details;
+        return null;
+    }
+
+    pub fn commandName(self: EndpointHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "list",
+            .details => "show",
+        };
+    }
+
+    pub fn label(self: EndpointHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "endpoint-healthchecks",
+            .details => "endpoint-healthcheck",
+        };
+    }
+
+    pub fn group(self: EndpointHealthCheckReadEndpoint) []const u8 {
+        _ = self;
+        return "Endpoint Health Checks";
+    }
+
+    pub fn operationId(self: EndpointHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "diagnostics-endpoint-healthcheck-list",
+            .details => "diagnostics-endpoint-healthcheck-get",
+        };
+    }
+
+    pub fn summary(self: EndpointHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "List Endpoint Health Checks",
+            .details => "Get Endpoint Health Check",
+        };
+    }
+
+    pub fn requiresHealthCheckId(self: EndpointHealthCheckReadEndpoint) bool {
+        return self == .details;
+    }
+};
+
+pub const ZoneHealthCheckReadEndpoint = enum {
+    list,
+    details,
+    preview_details,
+
+    pub fn parse(value: []const u8) ?ZoneHealthCheckReadEndpoint {
+        if (std.mem.eql(u8, value, "list") or std.mem.eql(u8, value, "healthchecks")) return .list;
+        if (std.mem.eql(u8, value, "show") or std.mem.eql(u8, value, "detail") or std.mem.eql(u8, value, "details") or std.mem.eql(u8, value, "healthcheck")) return .details;
+        if (std.mem.eql(u8, value, "preview") or std.mem.eql(u8, value, "preview-details")) return .preview_details;
+        return null;
+    }
+
+    pub fn commandName(self: ZoneHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "list",
+            .details => "show",
+            .preview_details => "preview",
+        };
+    }
+
+    pub fn label(self: ZoneHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "healthchecks",
+            .details => "healthcheck",
+            .preview_details => "healthcheck-preview",
+        };
+    }
+
+    pub fn group(self: ZoneHealthCheckReadEndpoint) []const u8 {
+        _ = self;
+        return "Health Checks";
+    }
+
+    pub fn operationId(self: ZoneHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "health-checks-list-health-checks",
+            .details => "health-checks-health-check-details",
+            .preview_details => "health-checks-health-check-preview-details",
+        };
+    }
+
+    pub fn summary(self: ZoneHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "List Health Checks",
+            .details => "Health Check Details",
+            .preview_details => "Health Check Preview Details",
+        };
+    }
+
+    pub fn requiresHealthCheckId(self: ZoneHealthCheckReadEndpoint) bool {
+        return self != .list;
+    }
+};
+
+pub const SmartShieldHealthCheckReadEndpoint = enum {
+    list,
+    details,
+
+    pub fn parse(value: []const u8) ?SmartShieldHealthCheckReadEndpoint {
+        if (std.mem.eql(u8, value, "list") or std.mem.eql(u8, value, "healthchecks")) return .list;
+        if (std.mem.eql(u8, value, "show") or std.mem.eql(u8, value, "detail") or std.mem.eql(u8, value, "details") or std.mem.eql(u8, value, "healthcheck")) return .details;
+        return null;
+    }
+
+    pub fn commandName(self: SmartShieldHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "list",
+            .details => "show",
+        };
+    }
+
+    pub fn label(self: SmartShieldHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "smart-shield-healthchecks",
+            .details => "smart-shield-healthcheck",
+        };
+    }
+
+    pub fn group(self: SmartShieldHealthCheckReadEndpoint) []const u8 {
+        _ = self;
+        return "Health Checks";
+    }
+
+    pub fn operationId(self: SmartShieldHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "smart-shield-list-health-checks",
+            .details => "smart-shield-health-check-details",
+        };
+    }
+
+    pub fn summary(self: SmartShieldHealthCheckReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "List Health Checks",
+            .details => "Health Check Details",
+        };
+    }
+
+    pub fn requiresHealthCheckId(self: SmartShieldHealthCheckReadEndpoint) bool {
+        return self == .details;
+    }
+};
+
+pub const HealthCheckMutationResource = enum {
+    endpoint,
+    zone,
+    preview,
+    smart_shield,
+
+    pub fn parse(value: []const u8) ?HealthCheckMutationResource {
+        if (std.mem.eql(u8, value, "endpoint") or std.mem.eql(u8, value, "endpoint-healthcheck")) return .endpoint;
+        if (std.mem.eql(u8, value, "zone") or std.mem.eql(u8, value, "healthcheck")) return .zone;
+        if (std.mem.eql(u8, value, "preview") or std.mem.eql(u8, value, "healthcheck-preview")) return .preview;
+        if (std.mem.eql(u8, value, "smart-shield") or std.mem.eql(u8, value, "smartshield")) return .smart_shield;
+        return null;
+    }
+
+    pub fn commandName(self: HealthCheckMutationResource) []const u8 {
+        return switch (self) {
+            .endpoint => "endpoint",
+            .zone => "zone",
+            .preview => "preview",
+            .smart_shield => "smart-shield",
+        };
+    }
+
+    pub fn group(self: HealthCheckMutationResource) []const u8 {
+        return switch (self) {
+            .endpoint => "Endpoint Health Checks",
+            .zone, .preview, .smart_shield => "Health Checks",
+        };
+    }
+
+    pub fn resourceLabel(self: HealthCheckMutationResource) []const u8 {
+        return switch (self) {
+            .endpoint => "endpoint health check",
+            .zone => "health check",
+            .preview => "preview health check",
+            .smart_shield => "smart-shield health check",
+        };
+    }
+
+    pub fn usesAccountId(self: HealthCheckMutationResource) bool {
+        return self == .endpoint;
+    }
+
+    pub fn usesZoneId(self: HealthCheckMutationResource) bool {
+        return self != .endpoint;
+    }
+};
+
+pub const HealthCheckMutationEndpoint = enum {
+    create,
+    update,
+    patch,
+    delete_resource,
+
+    pub fn parse(value: []const u8) ?HealthCheckMutationEndpoint {
+        if (std.mem.eql(u8, value, "create")) return .create;
+        if (std.mem.eql(u8, value, "update")) return .update;
+        if (std.mem.eql(u8, value, "patch")) return .patch;
+        if (std.mem.eql(u8, value, "delete") or std.mem.eql(u8, value, "remove")) return .delete_resource;
+        return null;
+    }
+
+    pub fn commandName(self: HealthCheckMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "create",
+            .update => "update",
+            .patch => "patch",
+            .delete_resource => "delete",
+        };
+    }
+
+    pub fn method(self: HealthCheckMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "POST",
+            .update => "PUT",
+            .patch => "PATCH",
+            .delete_resource => "DELETE",
+        };
+    }
+
+    pub fn supports(self: HealthCheckMutationEndpoint, resource: HealthCheckMutationResource) bool {
+        return switch (resource) {
+            .endpoint => switch (self) {
+                .create, .update, .delete_resource => true,
+                .patch => false,
+            },
+            .zone, .smart_shield => true,
+            .preview => switch (self) {
+                .create, .delete_resource => true,
+                .update, .patch => false,
+            },
+        };
+    }
+
+    pub fn requiresHealthCheckId(self: HealthCheckMutationEndpoint) bool {
+        return self != .create;
+    }
+
+    pub fn operationId(self: HealthCheckMutationEndpoint, resource: HealthCheckMutationResource) ![]const u8 {
+        if (!self.supports(resource)) return error.UnsupportedCloudflareHealthCheckMutation;
+        return switch (resource) {
+            .endpoint => switch (self) {
+                .create => "diagnostics-endpoint-healthcheck-create",
+                .update => "diagnostics-endpoint-healthcheck-update",
+                .delete_resource => "diagnostics-endpoint-healthcheck-delete",
+                else => unreachable,
+            },
+            .zone => switch (self) {
+                .create => "health-checks-create-health-check",
+                .update => "health-checks-update-health-check",
+                .patch => "health-checks-patch-health-check",
+                .delete_resource => "health-checks-delete-health-check",
+            },
+            .preview => switch (self) {
+                .create => "health-checks-create-preview-health-check",
+                .delete_resource => "health-checks-delete-preview-health-check",
+                else => unreachable,
+            },
+            .smart_shield => switch (self) {
+                .create => "smart-shield-create-health-check",
+                .update => "smart-shield-update-health-check",
+                .patch => "smart-shield-patch-health-check",
+                .delete_resource => "smart-shield-delete-health-check",
+            },
+        };
+    }
+
+    pub fn summary(self: HealthCheckMutationEndpoint, resource: HealthCheckMutationResource) ![]const u8 {
+        if (!self.supports(resource)) return error.UnsupportedCloudflareHealthCheckMutation;
+        return switch (resource) {
+            .endpoint => switch (self) {
+                .create => "Endpoint Health Check",
+                .update => "Update Endpoint Health Check",
+                .delete_resource => "Delete Endpoint Health Check",
+                else => unreachable,
+            },
+            .zone => switch (self) {
+                .create => "Create Health Check",
+                .update => "Update Health Check",
+                .patch => "Patch Health Check",
+                .delete_resource => "Delete Health Check",
+            },
+            .preview => switch (self) {
+                .create => "Create Preview Health Check",
+                .delete_resource => "Delete Preview Health Check",
+                else => unreachable,
+            },
+            .smart_shield => switch (self) {
+                .create => "Create Health Check",
+                .update => "Update Health Check",
+                .patch => "Patch Health Check",
+                .delete_resource => "Delete Health Check",
+            },
+        };
+    }
+
+    pub fn requestBodySchemaRef(self: HealthCheckMutationEndpoint, resource: HealthCheckMutationResource) !?[]const u8 {
+        if (!self.supports(resource)) return error.UnsupportedCloudflareHealthCheckMutation;
+        return switch (resource) {
+            .endpoint => switch (self) {
+                .create, .update => "#/components/schemas/magic-transit_endpoint_health_check",
+                .delete_resource => null,
+                else => unreachable,
+            },
+            .zone, .preview => switch (self) {
+                .create, .update, .patch => "#/components/schemas/healthchecks_query_healthcheck",
+                .delete_resource => null,
+            },
+            .smart_shield => switch (self) {
+                .create, .patch => "#/components/schemas/smartshield_query_healthcheck",
+                .update => "#/components/schemas/smartshield_single_hc_response",
+                .delete_resource => null,
+            },
+        };
+    }
+};
+
+pub const HealthCheckMutationArgs = struct {
+    resource: HealthCheckMutationResource,
+    account_id: ?[]const u8 = null,
+    zone_id: ?[]const u8 = null,
+    healthcheck_id: ?[]const u8 = null,
 };
 
 pub const DnsRecordReadEndpoint = enum {
@@ -3444,6 +3796,156 @@ pub fn loadBalancingMutationPlanJson(gpa: Allocator, endpoint: LoadBalancingMuta
     });
 }
 
+pub fn endpointHealthCheckReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: EndpointHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) ![]u8 {
+    const path = try endpointHealthCheckReadPath(gpa, account_id, endpoint, healthcheck_id);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn endpointHealthCheckCollectionPath(gpa: Allocator, account_id: []const u8) ![]u8 {
+    const escaped_account_id = try pathEscape(gpa, account_id);
+    defer gpa.free(escaped_account_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/diagnostics/endpoint-healthchecks", .{ accounts_path, escaped_account_id });
+}
+
+pub fn endpointHealthCheckResourcePath(gpa: Allocator, account_id: []const u8, healthcheck_id: []const u8) ![]u8 {
+    const collection_path = try endpointHealthCheckCollectionPath(gpa, account_id);
+    defer gpa.free(collection_path);
+    const escaped_id = try pathEscape(gpa, healthcheck_id);
+    defer gpa.free(escaped_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_id });
+}
+
+pub fn endpointHealthCheckReadPath(gpa: Allocator, account_id: []const u8, endpoint: EndpointHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) ![]u8 {
+    return switch (endpoint) {
+        .list => try endpointHealthCheckCollectionPath(gpa, account_id),
+        .details => blk: {
+            const id = healthcheck_id orelse return error.MissingCloudflareHealthCheckId;
+            break :blk try endpointHealthCheckResourcePath(gpa, account_id, id);
+        },
+    };
+}
+
+pub fn zoneHealthCheckReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, endpoint: ZoneHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) ![]u8 {
+    const path = try zoneHealthCheckReadPath(gpa, zone_id, endpoint, healthcheck_id);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn zoneHealthCheckCollectionPath(gpa: Allocator, zone_id: []const u8) ![]u8 {
+    const base_path = try zonePath(gpa, zone_id);
+    defer gpa.free(base_path);
+    return try std.fmt.allocPrint(gpa, "{s}/healthchecks", .{base_path});
+}
+
+pub fn zoneHealthCheckResourcePath(gpa: Allocator, zone_id: []const u8, healthcheck_id: []const u8) ![]u8 {
+    const collection_path = try zoneHealthCheckCollectionPath(gpa, zone_id);
+    defer gpa.free(collection_path);
+    const escaped_id = try pathEscape(gpa, healthcheck_id);
+    defer gpa.free(escaped_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_id });
+}
+
+pub fn zoneHealthCheckPreviewCollectionPath(gpa: Allocator, zone_id: []const u8) ![]u8 {
+    const collection_path = try zoneHealthCheckCollectionPath(gpa, zone_id);
+    defer gpa.free(collection_path);
+    return try std.fmt.allocPrint(gpa, "{s}/preview", .{collection_path});
+}
+
+pub fn zoneHealthCheckPreviewResourcePath(gpa: Allocator, zone_id: []const u8, healthcheck_id: []const u8) ![]u8 {
+    const collection_path = try zoneHealthCheckPreviewCollectionPath(gpa, zone_id);
+    defer gpa.free(collection_path);
+    const escaped_id = try pathEscape(gpa, healthcheck_id);
+    defer gpa.free(escaped_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_id });
+}
+
+pub fn zoneHealthCheckReadPath(gpa: Allocator, zone_id: []const u8, endpoint: ZoneHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) ![]u8 {
+    return switch (endpoint) {
+        .list => try zoneHealthCheckCollectionPath(gpa, zone_id),
+        .details => blk: {
+            const id = healthcheck_id orelse return error.MissingCloudflareHealthCheckId;
+            break :blk try zoneHealthCheckResourcePath(gpa, zone_id, id);
+        },
+        .preview_details => blk: {
+            const id = healthcheck_id orelse return error.MissingCloudflareHealthCheckId;
+            break :blk try zoneHealthCheckPreviewResourcePath(gpa, zone_id, id);
+        },
+    };
+}
+
+pub fn smartShieldHealthCheckReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, endpoint: SmartShieldHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) ![]u8 {
+    const path = try smartShieldHealthCheckReadPath(gpa, zone_id, endpoint, healthcheck_id);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn smartShieldHealthCheckCollectionPath(gpa: Allocator, zone_id: []const u8) ![]u8 {
+    const base_path = try zonePath(gpa, zone_id);
+    defer gpa.free(base_path);
+    return try std.fmt.allocPrint(gpa, "{s}/smart_shield/healthchecks", .{base_path});
+}
+
+pub fn smartShieldHealthCheckResourcePath(gpa: Allocator, zone_id: []const u8, healthcheck_id: []const u8) ![]u8 {
+    const collection_path = try smartShieldHealthCheckCollectionPath(gpa, zone_id);
+    defer gpa.free(collection_path);
+    const escaped_id = try pathEscape(gpa, healthcheck_id);
+    defer gpa.free(escaped_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_id });
+}
+
+pub fn smartShieldHealthCheckReadPath(gpa: Allocator, zone_id: []const u8, endpoint: SmartShieldHealthCheckReadEndpoint, healthcheck_id: ?[]const u8) ![]u8 {
+    return switch (endpoint) {
+        .list => try smartShieldHealthCheckCollectionPath(gpa, zone_id),
+        .details => blk: {
+            const id = healthcheck_id orelse return error.MissingCloudflareHealthCheckId;
+            break :blk try smartShieldHealthCheckResourcePath(gpa, zone_id, id);
+        },
+    };
+}
+
+pub fn healthCheckMutationPath(gpa: Allocator, endpoint: HealthCheckMutationEndpoint, args: HealthCheckMutationArgs) ![]u8 {
+    if (!endpoint.supports(args.resource)) return error.UnsupportedCloudflareHealthCheckMutation;
+    const collection_path = switch (args.resource) {
+        .endpoint => blk: {
+            const account_id = args.account_id orelse return error.MissingCloudflareAccountId;
+            break :blk try endpointHealthCheckCollectionPath(gpa, account_id);
+        },
+        .zone => blk: {
+            const zone_id = args.zone_id orelse return error.MissingCloudflareZoneId;
+            break :blk try zoneHealthCheckCollectionPath(gpa, zone_id);
+        },
+        .preview => blk: {
+            const zone_id = args.zone_id orelse return error.MissingCloudflareZoneId;
+            break :blk try zoneHealthCheckPreviewCollectionPath(gpa, zone_id);
+        },
+        .smart_shield => blk: {
+            const zone_id = args.zone_id orelse return error.MissingCloudflareZoneId;
+            break :blk try smartShieldHealthCheckCollectionPath(gpa, zone_id);
+        },
+    };
+    defer gpa.free(collection_path);
+    if (!endpoint.requiresHealthCheckId()) return try gpa.dupe(u8, collection_path);
+    const id = args.healthcheck_id orelse return error.MissingCloudflareHealthCheckId;
+    const escaped_id = try pathEscape(gpa, id);
+    defer gpa.free(escaped_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_id });
+}
+
+pub fn healthCheckMutationPlanJson(gpa: Allocator, endpoint: HealthCheckMutationEndpoint, args: HealthCheckMutationArgs) ![]u8 {
+    const path = try healthCheckMutationPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try dryRunPlanJson(gpa, .{
+        .group = args.resource.group(),
+        .operation = endpoint.commandName(),
+        .operation_id = try endpoint.operationId(args.resource),
+        .summary = try endpoint.summary(args.resource),
+        .method = endpoint.method(),
+        .path = path,
+        .request_body_schema = try endpoint.requestBodySchemaRef(args.resource),
+    });
+}
+
 pub fn accountTokenEndpointUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: AccountTokenEndpoint) ![]u8 {
     const path = try accountTokenEndpointPath(gpa, account_id, endpoint);
     defer gpa.free(path);
@@ -4540,6 +5042,90 @@ test "builds Cloudflare load-balancing paths and dry-run plans" {
     try std.testing.expectError(error.MissingCloudflareAccountId, loadBalancingMutationPlanJson(allocator, .create, .{ .resource = .account_monitor }));
     try std.testing.expectError(error.MissingCloudflareLoadBalancingResourceId, loadBalancingMutationPlanJson(allocator, .patch, .{ .resource = .user_pool }));
     try std.testing.expectError(error.UnsupportedCloudflareLoadBalancingMutation, loadBalancingMutationPlanJson(allocator, .preview, .{ .resource = .account_monitor_group, .account_id = "acct/1", .resource_id = "monitor-group/1" }));
+}
+
+test "cloudflare health-check endpoints map to official operation metadata" {
+    try std.testing.expectEqual(EndpointHealthCheckReadEndpoint.list, EndpointHealthCheckReadEndpoint.parse("endpoint-healthchecks").?);
+    try std.testing.expectEqual(EndpointHealthCheckReadEndpoint.details, EndpointHealthCheckReadEndpoint.parse("endpoint-healthcheck").?);
+    try std.testing.expectEqualStrings("Endpoint Health Checks", EndpointHealthCheckReadEndpoint.list.group());
+    try std.testing.expectEqualStrings("diagnostics-endpoint-healthcheck-list", EndpointHealthCheckReadEndpoint.list.operationId());
+    try std.testing.expectEqualStrings("diagnostics-endpoint-healthcheck-get", EndpointHealthCheckReadEndpoint.details.operationId());
+    try std.testing.expect(EndpointHealthCheckReadEndpoint.details.requiresHealthCheckId());
+    try std.testing.expect(!EndpointHealthCheckReadEndpoint.list.requiresHealthCheckId());
+
+    try std.testing.expectEqual(ZoneHealthCheckReadEndpoint.list, ZoneHealthCheckReadEndpoint.parse("healthchecks").?);
+    try std.testing.expectEqual(ZoneHealthCheckReadEndpoint.details, ZoneHealthCheckReadEndpoint.parse("healthcheck").?);
+    try std.testing.expectEqual(ZoneHealthCheckReadEndpoint.preview_details, ZoneHealthCheckReadEndpoint.parse("preview").?);
+    try std.testing.expectEqualStrings("health-checks-list-health-checks", ZoneHealthCheckReadEndpoint.list.operationId());
+    try std.testing.expectEqualStrings("health-checks-health-check-details", ZoneHealthCheckReadEndpoint.details.operationId());
+    try std.testing.expectEqualStrings("health-checks-health-check-preview-details", ZoneHealthCheckReadEndpoint.preview_details.operationId());
+
+    try std.testing.expectEqual(SmartShieldHealthCheckReadEndpoint.list, SmartShieldHealthCheckReadEndpoint.parse("healthchecks").?);
+    try std.testing.expectEqual(SmartShieldHealthCheckReadEndpoint.details, SmartShieldHealthCheckReadEndpoint.parse("show").?);
+    try std.testing.expectEqualStrings("smart-shield-list-health-checks", SmartShieldHealthCheckReadEndpoint.list.operationId());
+    try std.testing.expectEqualStrings("smart-shield-health-check-details", SmartShieldHealthCheckReadEndpoint.details.operationId());
+
+    try std.testing.expectEqual(HealthCheckMutationResource.endpoint, HealthCheckMutationResource.parse("endpoint-healthcheck").?);
+    try std.testing.expectEqual(HealthCheckMutationResource.smart_shield, HealthCheckMutationResource.parse("smartshield").?);
+    try std.testing.expectEqual(HealthCheckMutationEndpoint.delete_resource, HealthCheckMutationEndpoint.parse("remove").?);
+    try std.testing.expect(HealthCheckMutationEndpoint.create.supports(.preview));
+    try std.testing.expect(!HealthCheckMutationEndpoint.patch.supports(.endpoint));
+    try std.testing.expect(!HealthCheckMutationEndpoint.update.supports(.preview));
+    try std.testing.expectEqualStrings("diagnostics-endpoint-healthcheck-create", try HealthCheckMutationEndpoint.create.operationId(.endpoint));
+    try std.testing.expectEqualStrings("health-checks-patch-health-check", try HealthCheckMutationEndpoint.patch.operationId(.zone));
+    try std.testing.expectEqualStrings("smart-shield-update-health-check", try HealthCheckMutationEndpoint.update.operationId(.smart_shield));
+    try std.testing.expectEqualStrings("#/components/schemas/healthchecks_query_healthcheck", (try HealthCheckMutationEndpoint.create.requestBodySchemaRef(.zone)).?);
+    try std.testing.expectEqualStrings("#/components/schemas/smartshield_single_hc_response", (try HealthCheckMutationEndpoint.update.requestBodySchemaRef(.smart_shield)).?);
+    try std.testing.expectError(error.UnsupportedCloudflareHealthCheckMutation, HealthCheckMutationEndpoint.patch.operationId(.endpoint));
+}
+
+test "builds Cloudflare health-check paths and dry-run plans" {
+    const allocator = std.testing.allocator;
+
+    const endpoint_list = try endpointHealthCheckReadUrl(allocator, base_url, "acct/1", .list, null);
+    defer allocator.free(endpoint_list);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/diagnostics/endpoint-healthchecks", endpoint_list);
+
+    const endpoint_detail = try endpointHealthCheckReadPath(allocator, "acct/1", .details, "check/1");
+    defer allocator.free(endpoint_detail);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/diagnostics/endpoint-healthchecks/check%2F1", endpoint_detail);
+
+    const zone_preview = try zoneHealthCheckReadPath(allocator, "zone/1", .preview_details, "preview/1");
+    defer allocator.free(zone_preview);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/healthchecks/preview/preview%2F1", zone_preview);
+
+    const smart_shield = try smartShieldHealthCheckReadPath(allocator, "zone/1", .details, "check/1");
+    defer allocator.free(smart_shield);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/smart_shield/healthchecks/check%2F1", smart_shield);
+
+    const endpoint_create = try healthCheckMutationPlanJson(allocator, .create, .{ .resource = .endpoint, .account_id = "acct/1" });
+    defer allocator.free(endpoint_create);
+    try std.testing.expect(std.mem.indexOf(u8, endpoint_create, "\"group\":\"Endpoint Health Checks\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, endpoint_create, "\"operation_id\":\"diagnostics-endpoint-healthcheck-create\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, endpoint_create, "\"method\":\"POST\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, endpoint_create, "\"path\":\"/accounts/acct%2F1/diagnostics/endpoint-healthchecks\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, endpoint_create, "\"request_body_schema\":\"#/components/schemas/magic-transit_endpoint_health_check\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, endpoint_create, "\"will_execute\":false") != null);
+
+    const zone_patch = try healthCheckMutationPlanJson(allocator, .patch, .{ .resource = .zone, .zone_id = "zone/1", .healthcheck_id = "check/1" });
+    defer allocator.free(zone_patch);
+    try std.testing.expect(std.mem.indexOf(u8, zone_patch, "\"operation_id\":\"health-checks-patch-health-check\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, zone_patch, "\"path\":\"/zones/zone%2F1/healthchecks/check%2F1\"") != null);
+
+    const preview_delete = try healthCheckMutationPlanJson(allocator, .delete_resource, .{ .resource = .preview, .zone_id = "zone/1", .healthcheck_id = "preview/1" });
+    defer allocator.free(preview_delete);
+    try std.testing.expect(std.mem.indexOf(u8, preview_delete, "\"operation_id\":\"health-checks-delete-preview-health-check\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, preview_delete, "\"request_body_schema\":null") != null);
+
+    const smart_update = try healthCheckMutationPlanJson(allocator, .update, .{ .resource = .smart_shield, .zone_id = "zone/1", .healthcheck_id = "check/1" });
+    defer allocator.free(smart_update);
+    try std.testing.expect(std.mem.indexOf(u8, smart_update, "\"operation_id\":\"smart-shield-update-health-check\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, smart_update, "\"path\":\"/zones/zone%2F1/smart_shield/healthchecks/check%2F1\"") != null);
+
+    try std.testing.expectError(error.MissingCloudflareAccountId, healthCheckMutationPlanJson(allocator, .create, .{ .resource = .endpoint }));
+    try std.testing.expectError(error.MissingCloudflareZoneId, healthCheckMutationPlanJson(allocator, .create, .{ .resource = .zone }));
+    try std.testing.expectError(error.MissingCloudflareHealthCheckId, healthCheckMutationPlanJson(allocator, .update, .{ .resource = .zone, .zone_id = "zone/1" }));
+    try std.testing.expectError(error.UnsupportedCloudflareHealthCheckMutation, healthCheckMutationPlanJson(allocator, .patch, .{ .resource = .endpoint, .account_id = "acct/1", .healthcheck_id = "check/1" }));
 }
 
 test "cloudflare dns record endpoints map to official operation metadata" {

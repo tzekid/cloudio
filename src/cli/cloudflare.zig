@@ -44,6 +44,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandDnsFirewall(ctx, args);
     } else if (std.mem.eql(u8, sub, "load-balancing") or std.mem.eql(u8, sub, "lb")) {
         try commandLoadBalancing(ctx, args);
+    } else if (std.mem.eql(u8, sub, "health-checks") or std.mem.eql(u8, sub, "health")) {
+        try commandHealthChecks(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -80,6 +82,7 @@ fn commandDryRun(ctx: Context, args: []const []const u8) !void {
     if (std.mem.eql(u8, args[1], "dns-firewall")) return try commandDryRunDnsFirewall(ctx, args);
     if (std.mem.eql(u8, args[1], "dns-settings")) return try commandDryRunDnsSettings(ctx, args);
     if (std.mem.eql(u8, args[1], "load-balancing") or std.mem.eql(u8, args[1], "lb")) return try commandDryRunLoadBalancing(ctx, args);
+    if (std.mem.eql(u8, args[1], "health-checks") or std.mem.eql(u8, args[1], "health")) return try commandDryRunHealthChecks(ctx, args);
     std.debug.print("unknown cloudflare dry-run target: {s}\n", .{args[1]});
 }
 
@@ -390,6 +393,55 @@ fn commandDryRunLoadBalancing(ctx: Context, args: []const []const u8) !void {
     }));
 }
 
+fn commandDryRunHealthChecks(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("resource and operation required for dry-run health-checks\n", .{});
+        return;
+    }
+    const resource = app_cloudflare.HealthCheckMutationResource.parse(args[2]) orelse {
+        std.debug.print("unknown health-checks dry-run resource: {s}\n", .{args[2]});
+        return;
+    };
+    const endpoint = app_cloudflare.HealthCheckMutationEndpoint.parse(args[3]) orelse {
+        std.debug.print("unknown health-checks dry-run operation: {s}\n", .{args[3]});
+        return;
+    };
+    if (!endpoint.supports(resource)) {
+        std.debug.print("unsupported health-checks dry-run operation: {s} {s}\n", .{ resource.commandName(), endpoint.commandName() });
+        return;
+    }
+
+    var index: usize = 4;
+    var account_id: ?[]const u8 = null;
+    var zone_id: ?[]const u8 = null;
+    if (resource.usesAccountId()) {
+        if (args.len <= index) {
+            std.debug.print("account id required for dry-run health-checks {s} {s}\n", .{ resource.commandName(), endpoint.commandName() });
+            return;
+        }
+        account_id = args[index];
+        index += 1;
+    } else if (resource.usesZoneId()) {
+        if (args.len <= index) {
+            std.debug.print("zone id required for dry-run health-checks {s} {s}\n", .{ resource.commandName(), endpoint.commandName() });
+            return;
+        }
+        zone_id = args[index];
+        index += 1;
+    }
+
+    if (endpoint.requiresHealthCheckId() and args.len <= index) {
+        std.debug.print("{s} id required for dry-run health-checks {s} {s}\n", .{ resource.resourceLabel(), resource.commandName(), endpoint.commandName() });
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planHealthCheckMutation(appContext(ctx), endpoint, .{
+        .resource = resource,
+        .account_id = account_id,
+        .zone_id = zone_id,
+        .healthcheck_id = if (endpoint.requiresHealthCheckId()) args[index] else null,
+    }));
+}
+
 fn commandDns(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1) {
         cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
@@ -506,6 +558,62 @@ fn commandLoadBalancing(ctx: Context, args: []const []const u8) !void {
         return;
     }
     std.debug.print("unknown load-balancing scope: {s}\n", .{args[1]});
+}
+
+fn commandHealthChecks(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("health-checks endpoint|zone|smart-shield command required\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "endpoint") or std.mem.eql(u8, args[1], "account")) {
+        const endpoint = app_cloudflare.EndpointHealthCheckReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown health-checks endpoint command: {s}\n", .{args[2]});
+            return;
+        };
+        if (args.len < 4) {
+            std.debug.print("account id required for health-checks endpoint {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        if (endpoint.requiresHealthCheckId() and args.len < 5) {
+            std.debug.print("health check id required for health-checks endpoint {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEndpointHealthCheck(appContext(ctx), args[3], endpoint, if (endpoint.requiresHealthCheckId()) args[4] else null));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "zone")) {
+        const endpoint = app_cloudflare.ZoneHealthCheckReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown health-checks zone command: {s}\n", .{args[2]});
+            return;
+        };
+        if (args.len < 4) {
+            std.debug.print("zone id required for health-checks zone {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        if (endpoint.requiresHealthCheckId() and args.len < 5) {
+            std.debug.print("health check id required for health-checks zone {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneHealthCheck(appContext(ctx), args[3], endpoint, if (endpoint.requiresHealthCheckId()) args[4] else null));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "smart-shield") or std.mem.eql(u8, args[1], "smartshield")) {
+        const endpoint = app_cloudflare.SmartShieldHealthCheckReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown health-checks smart-shield command: {s}\n", .{args[2]});
+            return;
+        };
+        if (args.len < 4) {
+            std.debug.print("zone id required for health-checks smart-shield {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        if (endpoint.requiresHealthCheckId() and args.len < 5) {
+            std.debug.print("health check id required for health-checks smart-shield {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectSmartShieldHealthCheck(appContext(ctx), args[3], endpoint, if (endpoint.requiresHealthCheckId()) args[4] else null));
+        return;
+    }
+    std.debug.print("unknown health-checks scope: {s}\n", .{args[1]});
 }
 
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
