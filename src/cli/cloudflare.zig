@@ -52,6 +52,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandRulesets(ctx, args);
     } else if (std.mem.eql(u8, sub, "cloudforce-one-rules") or std.mem.eql(u8, sub, "cf1-rules")) {
         try commandCloudforceOneRules(ctx, args);
+    } else if (std.mem.eql(u8, sub, "ip-access") or std.mem.eql(u8, sub, "access-rules")) {
+        try commandIpAccessRules(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -92,6 +94,7 @@ fn commandDryRun(ctx: Context, args: []const []const u8) !void {
     if (std.mem.eql(u8, args[1], "resource-tags") or std.mem.eql(u8, args[1], "tags")) return try commandDryRunResourceTags(ctx, args);
     if (std.mem.eql(u8, args[1], "rulesets") or std.mem.eql(u8, args[1], "ruleset")) return try commandDryRunRulesets(ctx, args);
     if (std.mem.eql(u8, args[1], "cloudforce-one-rules") or std.mem.eql(u8, args[1], "cf1-rules")) return try commandDryRunCloudforceOneRules(ctx, args);
+    if (std.mem.eql(u8, args[1], "ip-access") or std.mem.eql(u8, args[1], "access-rules")) return try commandDryRunIpAccessRules(ctx, args);
     std.debug.print("unknown cloudflare dry-run target: {s}\n", .{args[1]});
 }
 
@@ -546,6 +549,39 @@ fn commandDryRunCloudforceOneRules(ctx: Context, args: []const []const u8) !void
     cli_render.printOutput(ctx.gpa, try app_cloudflare.planCloudforceOneRuleMutation(appContext(ctx), endpoint, mutation_args));
 }
 
+fn commandDryRunIpAccessRules(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("scope and operation required for dry-run ip-access\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.IpAccessRuleScope.parse(args[2]) orelse {
+        std.debug.print("unknown ip-access dry-run scope: {s}\n", .{args[2]});
+        return;
+    };
+    const endpoint = app_cloudflare.IpAccessRuleMutationEndpoint.parse(args[3]) orelse {
+        std.debug.print("unknown ip-access dry-run operation: {s}\n", .{args[3]});
+        return;
+    };
+    var index: usize = 4;
+    var mutation_args: app_cloudflare.IpAccessRuleMutationArgs = .{ .scope = scope };
+    if (scope.usesScopeId()) {
+        if (args.len <= index) {
+            std.debug.print("{s} id required for dry-run ip-access {s} {s}\n", .{ scope.idLabel(), scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        mutation_args.scope_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresRuleId()) {
+        if (args.len <= index) {
+            std.debug.print("rule id required for dry-run ip-access {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        mutation_args.rule_id = args[index];
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planIpAccessRuleMutation(appContext(ctx), endpoint, mutation_args));
+}
+
 fn commandDns(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1) {
         cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
@@ -862,6 +898,53 @@ fn commandCloudforceOneRules(ctx: Context, args: []const []const u8) !void {
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectCloudforceOneRuleEndpoint(appContext(ctx), account_id, endpoint, read_args));
 }
 
+fn commandIpAccessRules(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("ip-access user|account|zone command required\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.IpAccessRuleScope.parse(args[1]) orelse {
+        std.debug.print("unknown ip-access scope: {s}\n", .{args[1]});
+        return;
+    };
+    const endpoint = app_cloudflare.IpAccessRuleReadEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown ip-access command: {s}\n", .{args[2]});
+        return;
+    };
+    if (!endpoint.supports(scope)) {
+        std.debug.print("ip-access {s} {s} is not present in the current Cloudflare API schema\n", .{ scope.commandName(), endpoint.commandName() });
+        return;
+    }
+    var index: usize = 3;
+    var scope_id: ?[]const u8 = null;
+    var read_args: app_cloudflare.IpAccessRuleListArgs = .{};
+
+    if (scope.usesScopeId()) {
+        if (args.len <= index) {
+            std.debug.print("{s} id required for ip-access {s} {s}\n", .{ scope.idLabel(), scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        scope_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresRuleId()) {
+        if (args.len <= index) {
+            std.debug.print("rule id required for ip-access {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        read_args.rule_id = args[index];
+        index += 1;
+    }
+    while (index < args.len) : (index += 1) {
+        if (!applyIpAccessRuleFilter(&read_args, args[index])) {
+            std.debug.print("unknown ip-access filter: {s}\n", .{args[index]});
+            return;
+        }
+    }
+
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectIpAccessRuleEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+}
+
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
     if (args.len > 1 and std.mem.eql(u8, args[1], "zsk")) {
         const domain = if (args.len > 2) args[2] else ctx.domains[0];
@@ -1088,6 +1171,34 @@ fn applyCloudforceOneRuleFilter(args: *app_cloudflare.CloudforceOneRuleReadArgs,
     return true;
 }
 
+fn applyIpAccessRuleFilter(args: *app_cloudflare.IpAccessRuleListArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "mode")) {
+        args.mode = value;
+    } else if (std.mem.eql(u8, key, "configuration.target") or std.mem.eql(u8, key, "target")) {
+        args.configuration_target = value;
+    } else if (std.mem.eql(u8, key, "configuration.value") or std.mem.eql(u8, key, "value")) {
+        args.configuration_value = value;
+    } else if (std.mem.eql(u8, key, "notes")) {
+        args.notes = value;
+    } else if (std.mem.eql(u8, key, "match")) {
+        args.match = value;
+    } else if (std.mem.eql(u8, key, "page")) {
+        args.page = value;
+    } else if (std.mem.eql(u8, key, "per_page") or std.mem.eql(u8, key, "per-page")) {
+        args.per_page = value;
+    } else if (std.mem.eql(u8, key, "order")) {
+        args.order = value;
+    } else if (std.mem.eql(u8, key, "direction")) {
+        args.direction = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 fn appContext(ctx: Context) app_cloudflare.Context {
     return .{
         .io = ctx.io,
@@ -1123,4 +1234,23 @@ test "cloudforce one rule filters parse key value arguments" {
     try std.testing.expectEqualStrings("yara/workers", args.namespace.?);
     try std.testing.expectEqualStrings("malicious", args.search_filter.?);
     try std.testing.expectEqualStrings("proxy worker", args.query.?);
+}
+
+test "ip access rule filters parse key value arguments" {
+    var args: app_cloudflare.IpAccessRuleListArgs = .{};
+    try std.testing.expect(applyIpAccessRuleFilter(&args, "mode=block"));
+    try std.testing.expect(applyIpAccessRuleFilter(&args, "target=ip"));
+    try std.testing.expect(applyIpAccessRuleFilter(&args, "value=198.51.100.4"));
+    try std.testing.expect(applyIpAccessRuleFilter(&args, "notes=attack"));
+    try std.testing.expect(applyIpAccessRuleFilter(&args, "match=all"));
+    try std.testing.expect(applyIpAccessRuleFilter(&args, "page=2"));
+    try std.testing.expect(applyIpAccessRuleFilter(&args, "per-page=50"));
+    try std.testing.expect(applyIpAccessRuleFilter(&args, "order=mode"));
+    try std.testing.expect(applyIpAccessRuleFilter(&args, "direction=desc"));
+    try std.testing.expect(!applyIpAccessRuleFilter(&args, "unknown=value"));
+    try std.testing.expect(!applyIpAccessRuleFilter(&args, "mode"));
+    try std.testing.expectEqualStrings("block", args.mode.?);
+    try std.testing.expectEqualStrings("ip", args.configuration_target.?);
+    try std.testing.expectEqualStrings("198.51.100.4", args.configuration_value.?);
+    try std.testing.expectEqualStrings("50", args.per_page.?);
 }

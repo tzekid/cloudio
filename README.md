@@ -81,6 +81,10 @@ zig build run -- cloudflare cloudforce-one-rules list <account-id> namespace=yar
 zig build run -- cloudflare cloudforce-one-rules search <account-id> "proxy worker" mode=hybrid language=yara
 zig build run -- cloudflare cloudforce-one-rules stats <account-id>
 zig build run -- cloudflare cloudforce-one-rules show <account-id> <rule-id>
+zig build run -- cloudflare ip-access user list mode=block target=ip value=198.51.100.4
+zig build run -- cloudflare ip-access account list <account-id> notes=attack match=any
+zig build run -- cloudflare ip-access account show <account-id> <rule-id>
+zig build run -- cloudflare ip-access zone list <zone-id> order=mode direction=desc
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru
@@ -126,6 +130,9 @@ zig build run -- cloudflare dry-run rulesets zone delete-version <zone-id> <rule
 zig build run -- cloudflare dry-run cloudforce-one-rules create <account-id>
 zig build run -- cloudflare dry-run cloudforce-one-rules update <account-id> <rule-id>
 zig build run -- cloudflare dry-run cloudforce-one-rules delete-all <account-id>
+zig build run -- cloudflare dry-run ip-access user create
+zig build run -- cloudflare dry-run ip-access account update <account-id> <rule-id>
+zig build run -- cloudflare dry-run ip-access zone delete <zone-id> <rule-id>
 zig build run -- cloudflare dry-run token create
 zig build run -- cloudflare dry-run token roll <token-id>
 zig build run -- cloudflare dry-run account create

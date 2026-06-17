@@ -143,6 +143,9 @@ fn usage() void {
         \\  cloudio cloudflare rulesets account|zone version <scope-id> <ruleset-id> <version>|rules-by-tag <scope-id> <ruleset-id> <version> <tag>
         \\  cloudio cloudflare cloudforce-one-rules list|managed|stats|tree <account-id> [key=value...]
         \\  cloudio cloudflare cloudforce-one-rules search <account-id> <query> [key=value...]|show <account-id> <rule-id>
+        \\  cloudio cloudflare ip-access user list [key=value...]|user show <rule-id>
+        \\  cloudio cloudflare ip-access account list <account-id> [key=value...]|account show <account-id> <rule-id>
+        \\  cloudio cloudflare ip-access zone list <zone-id> [key=value...]
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>
@@ -177,6 +180,9 @@ fn usage() void {
         \\  cloudio cloudflare dry-run rulesets account|zone create-rule <scope-id> <ruleset-id>|update-rule|delete-rule <scope-id> <ruleset-id> <rule-id>|delete-version <scope-id> <ruleset-id> <version>
         \\  cloudio cloudflare dry-run cloudforce-one-rules create|delete-all|validate <account-id>
         \\  cloudio cloudflare dry-run cloudforce-one-rules update|delete <account-id> <rule-id>
+        \\  cloudio cloudflare dry-run ip-access user create|user update|delete <rule-id>
+        \\  cloudio cloudflare dry-run ip-access account|zone create <scope-id>
+        \\  cloudio cloudflare dry-run ip-access account|zone update|delete <scope-id> <rule-id>
         \\  cloudio cloudflare dry-run token create
         \\  cloudio cloudflare dry-run token delete|update|roll <token-id>
         \\  cloudio cloudflare dry-run account create|batch-move

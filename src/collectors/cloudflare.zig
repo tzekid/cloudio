@@ -41,6 +41,11 @@ pub const EndpointHealthCheckReadEndpoint = provider_cloudflare.EndpointHealthCh
 pub const HealthCheckMutationArgs = provider_cloudflare.HealthCheckMutationArgs;
 pub const HealthCheckMutationEndpoint = provider_cloudflare.HealthCheckMutationEndpoint;
 pub const HealthCheckMutationResource = provider_cloudflare.HealthCheckMutationResource;
+pub const IpAccessRuleListArgs = provider_cloudflare.IpAccessRuleListArgs;
+pub const IpAccessRuleMutationArgs = provider_cloudflare.IpAccessRuleMutationArgs;
+pub const IpAccessRuleMutationEndpoint = provider_cloudflare.IpAccessRuleMutationEndpoint;
+pub const IpAccessRuleReadEndpoint = provider_cloudflare.IpAccessRuleReadEndpoint;
+pub const IpAccessRuleScope = provider_cloudflare.IpAccessRuleScope;
 pub const LoadBalancingAccountReadEndpoint = provider_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = provider_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = provider_cloudflare.LoadBalancingMutationEndpoint;
@@ -104,6 +109,7 @@ pub fn collectAll(io: Io, gpa: Allocator, auth: Auth, domains: []const []const u
     token_verify.deinit(gpa);
     var token_permission_groups = try collectUserTokenEndpoint(io, gpa, auth, db, .permission_groups, false);
     token_permission_groups.deinit(gpa);
+    try collectIpAccessRulesForUser(io, gpa, auth, db);
     try collectLoadBalancingUserForRefresh(io, gpa, auth, db);
     var account_output = try collectAccounts(io, gpa, auth, db, false);
     account_output.deinit(gpa);
@@ -141,6 +147,7 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     try collectEndpointHealthChecksForAccounts(gpa, io, client, db, redacted);
     try collectAccountRulesetsForAccounts(gpa, io, client, db, redacted);
     try collectCloudforceOneRulesForAccounts(gpa, io, client, db, redacted);
+    try collectIpAccessRulesForAccounts(gpa, io, client, db, redacted);
     try collectResourceTaggingForAccounts(gpa, io, client, db, redacted);
     try collectAccountTokenEndpointsForAccounts(gpa, io, auth, client, db, redacted);
     try collectAccountDnsSettings(gpa, io, client, db, redacted);
@@ -736,6 +743,30 @@ pub fn collectCloudforceOneRuleEndpoint(io: Io, gpa: Allocator, auth: Auth, db: 
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectIpAccessRuleEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope: IpAccessRuleScope, scope_id: ?[]const u8, endpoint: IpAccessRuleReadEndpoint, args: IpAccessRuleListArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label(scope);
+    const target = try ipAccessRuleTarget(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getIpAccessRuleEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.ipAccessRuleReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = try endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: IdentityEndpoint, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const client = clientFromAuth(auth) catch {
@@ -1050,6 +1081,17 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
             };
             defer gpa.free(redacted_rulesets);
             try collectRulesetDetailsForList(gpa, io, client, db, .zone, zone_id, domain, redacted_rulesets);
+        }
+
+        zone_ip_access_refresh: {
+            const endpoint: IpAccessRuleReadEndpoint = .list;
+            const redacted_ip_access = collectIpAccessRuleSnapshot(gpa, io, client, db, .zone, zone_id, endpoint, .{}) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(.zone), @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint.label(.zone), domain, "error", error_summary, null, null);
+                break :zone_ip_access_refresh;
+            };
+            defer gpa.free(redacted_ip_access);
         }
 
         zone_tags_refresh: {
@@ -1878,6 +1920,74 @@ fn collectCloudforceOneRuleSnapshot(gpa: Allocator, io: Io, client: provider_clo
     });
 }
 
+fn collectIpAccessRulesForUser(io: Io, gpa: Allocator, auth: Auth, db: *Db) !void {
+    const client = clientFromAuth(auth) catch {
+        _ = try collector_capture.skipped(gpa, db, "cloudflare", "user-ip-access-rules", "user", "missing Cloudflare credentials", "Cloudflare credentials missing", false);
+        return;
+    };
+    const endpoint: IpAccessRuleReadEndpoint = .list;
+    const redacted = collectIpAccessRuleSnapshot(gpa, io, client, db, .user, null, endpoint, .{}) catch |err| {
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(.user), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(.user), "user", "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    try collectIpAccessRuleDetailsForList(gpa, io, client, db, .user, null, "user", redacted);
+}
+
+fn collectIpAccessRulesForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const endpoint: IpAccessRuleReadEndpoint = .list;
+    for (rows.items) |row| {
+        const redacted = collectIpAccessRuleSnapshot(gpa, io, client, db, .account, row.id, endpoint, .{}) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(.account), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(.account), row.id, "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(redacted);
+        try collectIpAccessRuleDetailsForList(gpa, io, client, db, .account, row.id, row.id, redacted);
+    }
+}
+
+fn collectIpAccessRuleDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: IpAccessRuleScope, scope_id: ?[]const u8, target_label: []const u8, list_body: []const u8) !void {
+    const endpoint: IpAccessRuleReadEndpoint = .rule;
+    if (!endpoint.supports(scope)) return;
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const redacted = collectIpAccessRuleSnapshot(gpa, io, client, db, scope, scope_id, endpoint, .{ .rule_id = row.id }) catch |err| {
+            const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ target_label, row.id });
+            defer gpa.free(target);
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(scope), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(scope), target, "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(redacted);
+    }
+}
+
+fn collectIpAccessRuleSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: IpAccessRuleScope, scope_id: ?[]const u8, endpoint: IpAccessRuleReadEndpoint, args: IpAccessRuleListArgs) ![]u8 {
+    const body = try client.getIpAccessRuleEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.ipAccessRuleReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try ipAccessRuleTarget(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(scope),
+        .target = target,
+        .summary_label = try endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
 fn collectRulesetSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: RulesetScope, scope_id: []const u8, target_label: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
     const body = try client.getRulesetEndpoint(io, gpa, scope, scope_id, endpoint, args);
     defer body.deinit(gpa);
@@ -2187,6 +2297,15 @@ fn cloudforceOneRuleTarget(gpa: Allocator, account_id: []const u8, endpoint: Clo
         return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, query });
     }
     return try gpa.dupe(u8, account_id);
+}
+
+fn ipAccessRuleTarget(gpa: Allocator, scope: IpAccessRuleScope, scope_id: ?[]const u8, endpoint: IpAccessRuleReadEndpoint, args: IpAccessRuleListArgs) ![]u8 {
+    const scope_label = if (scope.usesScopeId()) scope_id orelse scope.idLabel() else scope.idLabel();
+    if (endpoint.requiresRuleId()) {
+        const rule_id = args.rule_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ scope_label, rule_id });
+    }
+    return try gpa.dupe(u8, scope_label);
 }
 
 fn resourceTaggingAccountTarget(gpa: Allocator, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {

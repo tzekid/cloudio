@@ -25,6 +25,7 @@ pub const user_tokens_path = "/user/tokens";
 pub const user_tokens_verify_path = "/user/tokens/verify";
 pub const user_token_permission_groups_path = "/user/tokens/permission_groups";
 pub const cloudforce_one_rules_base_path = "/cloudforce-one/rules";
+pub const firewall_access_rules_path = "/firewall/access_rules/rules";
 
 pub const Auth = struct {
     token: ?[]const u8 = null,
@@ -215,6 +216,12 @@ pub const Client = struct {
 
     pub fn getCloudforceOneRuleEndpoint(self: Client, io: Io, gpa: Allocator, account_id: []const u8, endpoint: CloudforceOneRuleReadEndpoint, args: CloudforceOneRuleReadArgs) !net_http.Response {
         const url = try cloudforceOneRuleReadUrl(gpa, self.base_url_override, account_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getIpAccessRuleEndpoint(self: Client, io: Io, gpa: Allocator, scope: IpAccessRuleScope, scope_id: ?[]const u8, endpoint: IpAccessRuleReadEndpoint, args: IpAccessRuleListArgs) !net_http.Response {
+        const url = try ipAccessRuleReadUrl(gpa, self.base_url_override, scope, scope_id, endpoint, args);
         defer gpa.free(url);
         return try self.get(io, gpa, url);
     }
@@ -2569,6 +2576,235 @@ pub const CloudforceOneRuleMutationArgs = struct {
     rule_id: ?[]const u8 = null,
 };
 
+pub const IpAccessRuleScope = enum {
+    user,
+    account,
+    zone,
+
+    pub fn parse(value: []const u8) ?IpAccessRuleScope {
+        if (std.mem.eql(u8, value, "user")) return .user;
+        if (std.mem.eql(u8, value, "account") or std.mem.eql(u8, value, "accounts")) return .account;
+        if (std.mem.eql(u8, value, "zone") or std.mem.eql(u8, value, "zones")) return .zone;
+        return null;
+    }
+
+    pub fn commandName(self: IpAccessRuleScope) []const u8 {
+        return switch (self) {
+            .user => "user",
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn group(self: IpAccessRuleScope) []const u8 {
+        return switch (self) {
+            .user => "IP Access rules for a user",
+            .account => "IP Access rules for an account",
+            .zone => "IP Access rules for a zone",
+        };
+    }
+
+    pub fn idLabel(self: IpAccessRuleScope) []const u8 {
+        return switch (self) {
+            .user => "user",
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn usesScopeId(self: IpAccessRuleScope) bool {
+        return self != .user;
+    }
+
+    pub fn basePath(self: IpAccessRuleScope) []const u8 {
+        return switch (self) {
+            .user => user_path,
+            .account => accounts_path,
+            .zone => zones_path,
+        };
+    }
+};
+
+pub const IpAccessRuleReadEndpoint = enum {
+    list,
+    rule,
+
+    pub fn parse(value: []const u8) ?IpAccessRuleReadEndpoint {
+        if (std.mem.eql(u8, value, "list") or std.mem.eql(u8, value, "rules")) return .list;
+        if (std.mem.eql(u8, value, "show") or std.mem.eql(u8, value, "rule") or std.mem.eql(u8, value, "detail") or std.mem.eql(u8, value, "details")) return .rule;
+        return null;
+    }
+
+    pub fn commandName(self: IpAccessRuleReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "list",
+            .rule => "show",
+        };
+    }
+
+    pub fn label(self: IpAccessRuleReadEndpoint, scope: IpAccessRuleScope) []const u8 {
+        return switch (scope) {
+            .user => switch (self) {
+                .list => "user-ip-access-rules",
+                .rule => "user-ip-access-rule",
+            },
+            .account => switch (self) {
+                .list => "account-ip-access-rules",
+                .rule => "account-ip-access-rule",
+            },
+            .zone => switch (self) {
+                .list => "zone-ip-access-rules",
+                .rule => "zone-ip-access-rule",
+            },
+        };
+    }
+
+    pub fn operationId(self: IpAccessRuleReadEndpoint, scope: IpAccessRuleScope) ![]const u8 {
+        return switch (scope) {
+            .user => switch (self) {
+                .list => "ip-access-rules-for-a-user-list-ip-access-rules",
+                .rule => "ip-access-rules-for-a-user-get-an-ip-access-rule",
+            },
+            .account => switch (self) {
+                .list => "ip-access-rules-for-an-account-list-ip-access-rules",
+                .rule => "ip-access-rules-for-an-account-get-an-ip-access-rule",
+            },
+            .zone => switch (self) {
+                .list => "ip-access-rules-for-a-zone-list-ip-access-rules",
+                .rule => return error.UnsupportedCloudflareIpAccessRuleEndpoint,
+            },
+        };
+    }
+
+    pub fn summary(self: IpAccessRuleReadEndpoint, scope: IpAccessRuleScope) ![]const u8 {
+        return switch (scope) {
+            .user => switch (self) {
+                .list => "List user IP Access rules",
+                .rule => "Get a user IP Access rule",
+            },
+            .account => switch (self) {
+                .list => "List account IP Access rules",
+                .rule => "Get an account IP Access rule",
+            },
+            .zone => switch (self) {
+                .list => "List zone IP Access rules",
+                .rule => return error.UnsupportedCloudflareIpAccessRuleEndpoint,
+            },
+        };
+    }
+
+    pub fn requiresRuleId(self: IpAccessRuleReadEndpoint) bool {
+        return self == .rule;
+    }
+
+    pub fn supports(self: IpAccessRuleReadEndpoint, scope: IpAccessRuleScope) bool {
+        return self == .list or scope != .zone;
+    }
+};
+
+pub const IpAccessRuleListArgs = struct {
+    rule_id: ?[]const u8 = null,
+    mode: ?[]const u8 = null,
+    configuration_target: ?[]const u8 = null,
+    configuration_value: ?[]const u8 = null,
+    notes: ?[]const u8 = null,
+    match: ?[]const u8 = null,
+    page: ?[]const u8 = null,
+    per_page: ?[]const u8 = null,
+    order: ?[]const u8 = null,
+    direction: ?[]const u8 = null,
+};
+
+pub const IpAccessRuleMutationEndpoint = enum {
+    create,
+    update,
+    delete_rule,
+
+    pub fn parse(value: []const u8) ?IpAccessRuleMutationEndpoint {
+        if (std.mem.eql(u8, value, "create") or std.mem.eql(u8, value, "add")) return .create;
+        if (std.mem.eql(u8, value, "update") or std.mem.eql(u8, value, "patch")) return .update;
+        if (std.mem.eql(u8, value, "delete") or std.mem.eql(u8, value, "delete-rule") or std.mem.eql(u8, value, "remove")) return .delete_rule;
+        return null;
+    }
+
+    pub fn commandName(self: IpAccessRuleMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "create",
+            .update => "update",
+            .delete_rule => "delete",
+        };
+    }
+
+    pub fn method(self: IpAccessRuleMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "POST",
+            .update => "PATCH",
+            .delete_rule => "DELETE",
+        };
+    }
+
+    pub fn operationId(self: IpAccessRuleMutationEndpoint, scope: IpAccessRuleScope) []const u8 {
+        return switch (scope) {
+            .user => switch (self) {
+                .create => "ip-access-rules-for-a-user-create-an-ip-access-rule",
+                .update => "ip-access-rules-for-a-user-update-an-ip-access-rule",
+                .delete_rule => "ip-access-rules-for-a-user-delete-an-ip-access-rule",
+            },
+            .account => switch (self) {
+                .create => "ip-access-rules-for-an-account-create-an-ip-access-rule",
+                .update => "ip-access-rules-for-an-account-update-an-ip-access-rule",
+                .delete_rule => "ip-access-rules-for-an-account-delete-an-ip-access-rule",
+            },
+            .zone => switch (self) {
+                .create => "ip-access-rules-for-a-zone-create-an-ip-access-rule",
+                .update => "ip-access-rules-for-a-zone-update-an-ip-access-rule",
+                .delete_rule => "ip-access-rules-for-a-zone-delete-an-ip-access-rule",
+            },
+        };
+    }
+
+    pub fn summary(self: IpAccessRuleMutationEndpoint, scope: IpAccessRuleScope) []const u8 {
+        return switch (self) {
+            .create => switch (scope) {
+                .user => "Create a user IP Access rule",
+                .account => "Create an account IP Access rule",
+                .zone => "Create a zone IP Access rule",
+            },
+            .update => switch (scope) {
+                .user => "Update a user IP Access rule",
+                .account => "Update an account IP Access rule",
+                .zone => "Update a zone IP Access rule",
+            },
+            .delete_rule => switch (scope) {
+                .user => "Delete a user IP Access rule",
+                .account => "Delete an account IP Access rule",
+                .zone => "Delete a zone IP Access rule",
+            },
+        };
+    }
+
+    pub fn requestBodySchemaRef(self: IpAccessRuleMutationEndpoint, scope: IpAccessRuleScope) ?[]const u8 {
+        return switch (self) {
+            .create => "object",
+            .update => switch (scope) {
+                .account => "#/components/schemas/firewall_schemas-rule",
+                .user, .zone => "object",
+            },
+            .delete_rule => if (scope == .zone) "object" else null,
+        };
+    }
+
+    pub fn requiresRuleId(self: IpAccessRuleMutationEndpoint) bool {
+        return self == .update or self == .delete_rule;
+    }
+};
+
+pub const IpAccessRuleMutationArgs = struct {
+    scope: IpAccessRuleScope,
+    scope_id: ?[]const u8 = null,
+    rule_id: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -4813,6 +5049,59 @@ pub fn cloudforceOneRuleMutationPlanJson(gpa: Allocator, endpoint: CloudforceOne
     });
 }
 
+pub fn ipAccessRuleReadUrl(gpa: Allocator, host: []const u8, scope: IpAccessRuleScope, scope_id: ?[]const u8, endpoint: IpAccessRuleReadEndpoint, args: IpAccessRuleListArgs) ![]u8 {
+    const path = try ipAccessRuleReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn ipAccessRuleCollectionPath(gpa: Allocator, scope: IpAccessRuleScope, scope_id: ?[]const u8) ![]u8 {
+    if (!scope.usesScopeId()) return try std.fmt.allocPrint(gpa, "{s}{s}", .{ user_path, firewall_access_rules_path });
+    const id = scope_id orelse return error.MissingCloudflareIpAccessRuleScopeId;
+    const escaped_id = try pathEscape(gpa, id);
+    defer gpa.free(escaped_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}{s}", .{ scope.basePath(), escaped_id, firewall_access_rules_path });
+}
+
+pub fn ipAccessRuleReadPath(gpa: Allocator, scope: IpAccessRuleScope, scope_id: ?[]const u8, endpoint: IpAccessRuleReadEndpoint, args: IpAccessRuleListArgs) ![]u8 {
+    if (!endpoint.supports(scope)) return error.UnsupportedCloudflareIpAccessRuleEndpoint;
+    const base_path = try ipAccessRuleCollectionPath(gpa, scope, scope_id);
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .list => try appendIpAccessRuleFilters(gpa, base_path, args),
+        .rule => blk: {
+            const rule_id = args.rule_id orelse return error.MissingCloudflareIpAccessRuleId;
+            const escaped_rule_id = try pathEscape(gpa, rule_id);
+            defer gpa.free(escaped_rule_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, escaped_rule_id });
+        },
+    };
+}
+
+pub fn ipAccessRuleMutationPath(gpa: Allocator, endpoint: IpAccessRuleMutationEndpoint, args: IpAccessRuleMutationArgs) ![]u8 {
+    const base_path = try ipAccessRuleCollectionPath(gpa, args.scope, args.scope_id);
+    defer gpa.free(base_path);
+    if (!endpoint.requiresRuleId()) return try gpa.dupe(u8, base_path);
+    const rule_id = args.rule_id orelse return error.MissingCloudflareIpAccessRuleId;
+    const escaped_rule_id = try pathEscape(gpa, rule_id);
+    defer gpa.free(escaped_rule_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, escaped_rule_id });
+}
+
+pub fn ipAccessRuleMutationPlanJson(gpa: Allocator, endpoint: IpAccessRuleMutationEndpoint, args: IpAccessRuleMutationArgs) ![]u8 {
+    const path = try ipAccessRuleMutationPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try dryRunPlanJson(gpa, .{
+        .group = args.scope.group(),
+        .operation = endpoint.commandName(),
+        .operation_id = endpoint.operationId(args.scope),
+        .summary = endpoint.summary(args.scope),
+        .method = endpoint.method(),
+        .path = path,
+        .request_body_schema = endpoint.requestBodySchemaRef(args.scope),
+    });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -5389,6 +5678,20 @@ fn appendCloudforceOneRuleFilters(gpa: Allocator, base_path: []const u8, args: C
         .{ .name = "query", .value = if (include_search_query) args.query else null },
         .{ .name = "mode", .value = if (include_search_query) args.mode else null },
         .{ .name = "language", .value = if (include_search_query) args.language else null },
+    });
+}
+
+fn appendIpAccessRuleFilters(gpa: Allocator, base_path: []const u8, args: IpAccessRuleListArgs) ![]u8 {
+    return try appendQuery(gpa, base_path, &[_]QueryParam{
+        .{ .name = "mode", .value = args.mode },
+        .{ .name = "configuration.target", .value = args.configuration_target },
+        .{ .name = "configuration.value", .value = args.configuration_value },
+        .{ .name = "notes", .value = args.notes },
+        .{ .name = "match", .value = args.match },
+        .{ .name = "page", .value = args.page },
+        .{ .name = "per_page", .value = args.per_page },
+        .{ .name = "order", .value = args.order },
+        .{ .name = "direction", .value = args.direction },
     });
 }
 
@@ -6281,6 +6584,77 @@ test "builds Cloudforce One rule paths and dry-run plans" {
     try std.testing.expectError(error.MissingCloudforceOneRuleSearchQuery, cloudforceOneRuleReadPath(allocator, "acct/1", .search, .{}));
     try std.testing.expectError(error.MissingCloudforceOneRuleId, cloudforceOneRuleReadPath(allocator, "acct/1", .rule, .{}));
     try std.testing.expectError(error.MissingCloudforceOneRuleId, cloudforceOneRuleMutationPlanJson(allocator, .delete_rule, .{ .account_id = "acct/1" }));
+}
+
+test "ip access rule endpoints map to official operation metadata" {
+    try std.testing.expectEqual(IpAccessRuleScope.user, IpAccessRuleScope.parse("user").?);
+    try std.testing.expectEqual(IpAccessRuleScope.account, IpAccessRuleScope.parse("accounts").?);
+    try std.testing.expectEqual(IpAccessRuleScope.zone, IpAccessRuleScope.parse("zone").?);
+    try std.testing.expectEqualStrings("IP Access rules for an account", IpAccessRuleScope.account.group());
+    try std.testing.expect(!IpAccessRuleScope.user.usesScopeId());
+    try std.testing.expect(IpAccessRuleScope.zone.usesScopeId());
+
+    try std.testing.expectEqual(IpAccessRuleReadEndpoint.list, IpAccessRuleReadEndpoint.parse("rules").?);
+    try std.testing.expectEqual(IpAccessRuleReadEndpoint.rule, IpAccessRuleReadEndpoint.parse("details").?);
+    try std.testing.expectEqualStrings("ip-access-rules-for-a-user-list-ip-access-rules", (try IpAccessRuleReadEndpoint.list.operationId(.user)));
+    try std.testing.expectEqualStrings("ip-access-rules-for-an-account-get-an-ip-access-rule", (try IpAccessRuleReadEndpoint.rule.operationId(.account)));
+    try std.testing.expect(!IpAccessRuleReadEndpoint.rule.supports(.zone));
+    try std.testing.expectError(error.UnsupportedCloudflareIpAccessRuleEndpoint, IpAccessRuleReadEndpoint.rule.operationId(.zone));
+
+    try std.testing.expectEqual(IpAccessRuleMutationEndpoint.delete_rule, IpAccessRuleMutationEndpoint.parse("remove").?);
+    try std.testing.expectEqualStrings("POST", IpAccessRuleMutationEndpoint.create.method());
+    try std.testing.expectEqualStrings("PATCH", IpAccessRuleMutationEndpoint.update.method());
+    try std.testing.expectEqualStrings("DELETE", IpAccessRuleMutationEndpoint.delete_rule.method());
+    try std.testing.expectEqualStrings("ip-access-rules-for-a-zone-delete-an-ip-access-rule", IpAccessRuleMutationEndpoint.delete_rule.operationId(.zone));
+    try std.testing.expectEqualStrings("#/components/schemas/firewall_schemas-rule", IpAccessRuleMutationEndpoint.update.requestBodySchemaRef(.account).?);
+    try std.testing.expectEqualStrings("object", IpAccessRuleMutationEndpoint.delete_rule.requestBodySchemaRef(.zone).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), IpAccessRuleMutationEndpoint.delete_rule.requestBodySchemaRef(.account));
+}
+
+test "builds IP Access Rule paths and dry-run plans" {
+    const allocator = std.testing.allocator;
+
+    const user_list = try ipAccessRuleReadUrl(allocator, base_url, .user, null, .list, .{
+        .mode = "block",
+        .configuration_target = "ip",
+        .configuration_value = "198.51.100.4",
+        .notes = "attack note",
+        .match = "all",
+        .per_page = "20",
+    });
+    defer allocator.free(user_list);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/user/firewall/access_rules/rules?mode=block&configuration.target=ip&configuration.value=198.51.100.4&notes=attack%20note&match=all&per_page=20", user_list);
+
+    const account_show = try ipAccessRuleReadPath(allocator, .account, "acct/1", .rule, .{ .rule_id = "rule/1" });
+    defer allocator.free(account_show);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/firewall/access_rules/rules/rule%2F1", account_show);
+
+    const zone_list = try ipAccessRuleReadPath(allocator, .zone, "zone/1", .list, .{ .order = "mode", .direction = "desc" });
+    defer allocator.free(zone_list);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/firewall/access_rules/rules?order=mode&direction=desc", zone_list);
+
+    const account_create = try ipAccessRuleMutationPlanJson(allocator, .create, .{ .scope = .account, .scope_id = "acct/1" });
+    defer allocator.free(account_create);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"group\":\"IP Access rules for an account\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"operation_id\":\"ip-access-rules-for-an-account-create-an-ip-access-rule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"path\":\"/accounts/acct%2F1/firewall/access_rules/rules\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"request_body_schema\":\"object\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_create, "\"will_execute\":false") != null);
+
+    const user_update = try ipAccessRuleMutationPlanJson(allocator, .update, .{ .scope = .user, .rule_id = "rule/1" });
+    defer allocator.free(user_update);
+    try std.testing.expect(std.mem.indexOf(u8, user_update, "\"operation_id\":\"ip-access-rules-for-a-user-update-an-ip-access-rule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, user_update, "\"path\":\"/user/firewall/access_rules/rules/rule%2F1\"") != null);
+
+    const zone_delete = try ipAccessRuleMutationPlanJson(allocator, .delete_rule, .{ .scope = .zone, .scope_id = "zone/1", .rule_id = "rule/1" });
+    defer allocator.free(zone_delete);
+    try std.testing.expect(std.mem.indexOf(u8, zone_delete, "\"operation_id\":\"ip-access-rules-for-a-zone-delete-an-ip-access-rule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, zone_delete, "\"request_body_schema\":\"object\"") != null);
+
+    try std.testing.expectError(error.UnsupportedCloudflareIpAccessRuleEndpoint, ipAccessRuleReadPath(allocator, .zone, "zone/1", .rule, .{ .rule_id = "rule/1" }));
+    try std.testing.expectError(error.MissingCloudflareIpAccessRuleScopeId, ipAccessRuleReadPath(allocator, .account, null, .list, .{}));
+    try std.testing.expectError(error.MissingCloudflareIpAccessRuleId, ipAccessRuleReadPath(allocator, .user, null, .rule, .{}));
+    try std.testing.expectError(error.MissingCloudflareIpAccessRuleId, ipAccessRuleMutationPlanJson(allocator, .update, .{ .scope = .account, .scope_id = "acct/1" }));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

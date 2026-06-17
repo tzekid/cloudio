@@ -36,6 +36,11 @@ pub const EndpointHealthCheckReadEndpoint = collector_cloudflare.EndpointHealthC
 pub const HealthCheckMutationArgs = collector_cloudflare.HealthCheckMutationArgs;
 pub const HealthCheckMutationEndpoint = collector_cloudflare.HealthCheckMutationEndpoint;
 pub const HealthCheckMutationResource = collector_cloudflare.HealthCheckMutationResource;
+pub const IpAccessRuleListArgs = collector_cloudflare.IpAccessRuleListArgs;
+pub const IpAccessRuleMutationArgs = collector_cloudflare.IpAccessRuleMutationArgs;
+pub const IpAccessRuleMutationEndpoint = collector_cloudflare.IpAccessRuleMutationEndpoint;
+pub const IpAccessRuleReadEndpoint = collector_cloudflare.IpAccessRuleReadEndpoint;
+pub const IpAccessRuleScope = collector_cloudflare.IpAccessRuleScope;
 pub const LoadBalancingAccountReadEndpoint = collector_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = collector_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = collector_cloudflare.LoadBalancingMutationEndpoint;
@@ -200,6 +205,10 @@ pub fn collectCloudforceOneRuleEndpoint(ctx: Context, account_id: []const u8, en
     return try collector_cloudflare.collectCloudforceOneRuleEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, args, true);
 }
 
+pub fn collectIpAccessRuleEndpoint(ctx: Context, scope: IpAccessRuleScope, scope_id: ?[]const u8, endpoint: IpAccessRuleReadEndpoint, args: IpAccessRuleListArgs) !Output {
+    return try collector_cloudflare.collectIpAccessRuleEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, scope, scope_id, endpoint, args, true);
+}
+
 pub fn collectIdentityEndpoint(ctx: Context, endpoint: IdentityEndpoint) !Output {
     return try collector_cloudflare.collectIdentityEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, endpoint, true);
 }
@@ -326,6 +335,10 @@ pub fn planRulesetMutation(ctx: Context, endpoint: RulesetMutationEndpoint, args
 
 pub fn planCloudforceOneRuleMutation(ctx: Context, endpoint: CloudforceOneRuleMutationEndpoint, args: CloudforceOneRuleMutationArgs) !Output {
     return .{ .text = try provider_cloudflare.cloudforceOneRuleMutationPlanJson(ctx.gpa, endpoint, args) };
+}
+
+pub fn planIpAccessRuleMutation(ctx: Context, endpoint: IpAccessRuleMutationEndpoint, args: IpAccessRuleMutationArgs) !Output {
+    return .{ .text = try provider_cloudflare.ipAccessRuleMutationPlanJson(ctx.gpa, endpoint, args) };
 }
 
 pub fn collectZoneSetting(ctx: Context, domain: []const u8, setting_id: []const u8) !Output {
