@@ -109,6 +109,17 @@ pub const RouteParam = struct {
     required: bool,
 };
 
+pub const RequestBody = struct {
+    required: bool,
+    content_types: [][]u8,
+    schema_refs: [][]u8,
+
+    pub fn primarySchemaRef(self: RequestBody) ?[]const u8 {
+        if (self.schema_refs.len == 0) return null;
+        return self.schema_refs[0];
+    }
+};
+
 pub const Route = struct {
     provider: Provider,
     tag: []u8,
@@ -117,6 +128,7 @@ pub const Route = struct {
     operation_id: ?[]u8,
     path_params: []RouteParam,
     query_params: []RouteParam,
+    request_body: RequestBody,
     support: Support,
     mode: Mode,
     deprecated: bool,
@@ -147,6 +159,8 @@ pub const Route = struct {
         errdefer freeRouteParams(gpa, path_params);
         const query_params = try parseRouteParams(gpa, value, "query_params");
         errdefer freeRouteParams(gpa, query_params);
+        const request_body = try parseRequestBody(gpa, value);
+        errdefer freeRequestBody(gpa, request_body);
 
         return .{
             .provider = provider,
@@ -156,6 +170,7 @@ pub const Route = struct {
             .operation_id = operation_id_owned,
             .path_params = path_params,
             .query_params = query_params,
+            .request_body = request_body,
             .support = support,
             .mode = mode,
             .deprecated = deprecated,
@@ -168,6 +183,7 @@ pub const Route = struct {
         if (self.operation_id) |id| gpa.free(id);
         freeRouteParams(gpa, self.path_params);
         freeRouteParams(gpa, self.query_params);
+        freeRequestBody(gpa, self.request_body);
     }
 
     pub fn isRoutable(self: Route) bool {
@@ -450,9 +466,59 @@ fn parseRouteParams(gpa: Allocator, value: std.json.Value, field_name: []const u
     return try rows.toOwnedSlice(gpa);
 }
 
+fn parseRequestBody(gpa: Allocator, value: std.json.Value) !RequestBody {
+    const field_value = core_json.field(value, "request_body") orelse {
+        const content_types = try gpa.alloc([]u8, 0);
+        errdefer gpa.free(content_types);
+        const schema_refs = try gpa.alloc([]u8, 0);
+        return .{
+            .required = false,
+            .content_types = content_types,
+            .schema_refs = schema_refs,
+        };
+    };
+    if (field_value != .object) return error.InvalidProviderRoute;
+    const required = core_json.fieldBool(field_value, "required") orelse return error.InvalidProviderRoute;
+    const content_types = try parseStringArray(gpa, field_value, "content_types");
+    errdefer freeStringArray(gpa, content_types);
+    const schema_refs = try parseStringArray(gpa, field_value, "schema_refs");
+    errdefer freeStringArray(gpa, schema_refs);
+    return .{
+        .required = required,
+        .content_types = content_types,
+        .schema_refs = schema_refs,
+    };
+}
+
+fn parseStringArray(gpa: Allocator, value: std.json.Value, field_name: []const u8) ![][]u8 {
+    const field_value = core_json.field(value, field_name) orelse return error.InvalidProviderRoute;
+    if (field_value != .array) return error.InvalidProviderRoute;
+
+    var rows = std.ArrayList([]u8).empty;
+    errdefer deinitStringList(&rows, gpa);
+    for (field_value.array.items) |item| {
+        if (item != .string) return error.InvalidProviderRoute;
+        if (containsParamName(rows.items, item.string)) continue;
+        const owned = try gpa.dupe(u8, item.string);
+        errdefer gpa.free(owned);
+        try rows.append(gpa, owned);
+    }
+    return try rows.toOwnedSlice(gpa);
+}
+
 fn freeRouteParams(gpa: Allocator, params: []RouteParam) void {
     for (params) |param| gpa.free(param.name);
     gpa.free(params);
+}
+
+fn freeRequestBody(gpa: Allocator, body: RequestBody) void {
+    freeStringArray(gpa, body.content_types);
+    freeStringArray(gpa, body.schema_refs);
+}
+
+fn freeStringArray(gpa: Allocator, items: [][]u8) void {
+    for (items) |item| gpa.free(item);
+    gpa.free(items);
 }
 
 fn deinitRouteList(rows: *std.ArrayList(Route), gpa: Allocator) void {
@@ -462,6 +528,11 @@ fn deinitRouteList(rows: *std.ArrayList(Route), gpa: Allocator) void {
 
 fn deinitRouteParamList(rows: *std.ArrayList(RouteParam), gpa: Allocator) void {
     for (rows.items) |param| gpa.free(param.name);
+    rows.deinit(gpa);
+}
+
+fn deinitStringList(rows: *std.ArrayList([]u8), gpa: Allocator) void {
+    for (rows.items) |item| gpa.free(item);
     rows.deinit(gpa);
 }
 
@@ -564,6 +635,29 @@ test "extracts required path parameters and renders escaped route paths" {
     try std.testing.expectEqualStrings("https://example.test/accounts/acct%2F1/access/apps/app%201", url);
 }
 
+test "loads request body metadata from generated manifests" {
+    const allocator = std.testing.allocator;
+
+    const cloudflare_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "access-applications-add-an-application")) orelse return error.TestExpectedRoute;
+    defer cloudflare_route.deinit(allocator);
+    try std.testing.expect(cloudflare_route.request_body.required);
+    try expectString(cloudflare_route.request_body.content_types, "application/json");
+    try expectString(cloudflare_route.request_body.schema_refs, "#/components/schemas/access_app_request");
+    try std.testing.expectEqualStrings("#/components/schemas/access_app_request", cloudflare_route.request_body.primarySchemaRef() orelse "");
+
+    const hostinger_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_purchaseNewVirtualMachineV1")) orelse return error.TestExpectedRoute;
+    defer hostinger_route.deinit(allocator);
+    try std.testing.expect(hostinger_route.request_body.required);
+    try expectString(hostinger_route.request_body.content_types, "application/json");
+    try expectString(hostinger_route.request_body.schema_refs, "#/components/schemas/VPS.V1.VirtualMachine.PurchaseRequest");
+
+    const multipart_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
+    defer multipart_route.deinit(allocator);
+    try std.testing.expect(multipart_route.request_body.required);
+    try expectString(multipart_route.request_body.content_types, "multipart/form-data");
+    try std.testing.expectEqual(@as(usize, 0), multipart_route.request_body.schema_refs.len);
+}
+
 test "renders validated query parameters for route paths and urls" {
     const allocator = std.testing.allocator;
 
@@ -637,4 +731,11 @@ fn expectRouteParam(params: []const RouteParam, name: []const u8, required: bool
         }
     }
     return error.TestExpectedRouteParam;
+}
+
+fn expectString(items: []const []u8, expected: []const u8) !void {
+    for (items) |item| {
+        if (std.mem.eql(u8, item, expected)) return;
+    }
+    return error.TestExpectedString;
 }

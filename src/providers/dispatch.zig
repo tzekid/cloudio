@@ -99,6 +99,7 @@ pub fn dryRunPlanJsonWithQuery(gpa: Allocator, route: provider_routes.Route, pat
     try writeJsonField(writer, "method", route.method.name(), true);
     try writeJsonField(writer, "path", path, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
+    try writeRequestBodyField(writer, "request_body", route.request_body, true);
     try writer.writeAll("\"mode\":\"dry_run\",");
     try writer.writeAll("\"will_execute\":false,");
     try writeJsonField(writer, "safety", "No provider API request is sent. This is a generic dry-run plan for a live mutation route.", false);
@@ -110,6 +111,29 @@ fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing
     try core_json.writeString(writer, name);
     try writer.writeByte(':');
     try core_json.writeString(writer, value);
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeRequestBodyField(writer: anytype, name: []const u8, body: provider_routes.RequestBody, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeAll(":{");
+    try writer.writeAll("\"required\":");
+    try writer.writeAll(if (body.required) "true" else "false");
+    try writer.writeByte(',');
+    try writeStringArrayField(writer, "content_types", body.content_types, true);
+    try writeStringArrayField(writer, "schema_refs", body.schema_refs, false);
+    try writer.writeByte('}');
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeStringArrayField(writer: anytype, name: []const u8, values: []const []const u8, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeAll(":[");
+    for (values, 0..) |value, index| {
+        if (index != 0) try writer.writeByte(',');
+        try core_json.writeString(writer, value);
+    }
+    try writer.writeByte(']');
     if (trailing_comma) try writer.writeByte(',');
 }
 
@@ -127,6 +151,7 @@ test "generic dispatch renders dry-run plans without executing mutations" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"access-idp-federation-grants-create\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"method\":\"POST\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct%2F1/access/idp_federation_grants\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 
@@ -146,6 +171,21 @@ test "generic dispatch renders query-aware dry-run plans" {
 
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"worker-assets-upload\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct%2F1/workers/assets/upload?base64=true\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true,\"content_types\":[\"multipart/form-data\"],\"schema_refs\":[]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+}
+
+test "generic dispatch reports request body schema refs in dry-run plans" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_purchaseNewVirtualMachineV1")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const client = Client.init(.{ .hostinger = "test-token" });
+    const plan = try client.dryRunRoute(allocator, route, &.{});
+    defer allocator.free(plan);
+
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"VPS_purchaseNewVirtualMachineV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true,\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/VPS.V1.VirtualMachine.PurchaseRequest\"]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 

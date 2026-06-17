@@ -92,6 +92,40 @@ generate_manifest() {
           required: (.required // false)
         });
 
+    def schema_refs:
+      if type != "object" then
+        []
+      elif has("$ref") then
+        [."$ref"]
+      else
+        (
+          ([.allOf[]? | schema_refs] | add // []) +
+          ([.anyOf[]? | schema_refs] | add // []) +
+          ([.oneOf[]? | schema_refs] | add // []) +
+          ((.not? | schema_refs) // []) +
+          ((.items? | schema_refs) // []) +
+          ((.additionalProperties? | schema_refs) // []) +
+          ([.properties[]? | schema_refs] | add // [])
+        )
+      end;
+
+    def operation_body($root; $operation):
+      ($operation.requestBody // null) as $body_raw
+      | if $body_raw == null then
+          {
+            required: false,
+            content_types: [],
+            schema_refs: []
+          }
+        else
+          ($body_raw | deref($root)) as $body
+          | {
+              required: ($body.required // false),
+              content_types: (($body.content // {}) | keys | sort),
+              schema_refs: ([($body.content // {}) | to_entries[] | (.value.schema // null) | schema_refs[]] | unique | sort)
+            }
+        end;
+
     def default_coverage($method; $deprecated):
       if $deprecated then
         {
@@ -140,6 +174,7 @@ generate_manifest() {
         operation_id: ($operation.operationId // null),
         path_params: operation_params($root; $path_item; $operation; "path"),
         query_params: operation_params($root; $path_item; $operation; "query"),
+        request_body: operation_body($root; $operation),
         support: $coverage.support,
         mode: $coverage.mode,
         tests: $coverage.tests,
@@ -168,6 +203,12 @@ validate_manifest() {
         (.name | type == "string") and
         (.required | type == "boolean")
       ))) and
+      ($row.request_body | type == "object") and
+      ($row.request_body.required | type == "boolean") and
+      ($row.request_body.content_types | type == "array") and
+      (all($row.request_body.content_types[]; type == "string")) and
+      ($row.request_body.schema_refs | type == "array") and
+      (all($row.request_body.schema_refs[]; type == "string")) and
       (["implemented", "partial", "planned", "blocked_permission", "unsafe_mutation", "deprecated", "not_applicable"] | index($row.support)) and
       (["read", "dry_run", "write", "none"] | index($row.mode)) and
       ($row.tests | type == "string") and
@@ -207,7 +248,7 @@ generate_all() {
     --argjson cloudflare_operations "$cloudflare_count" \
     --argjson hostinger_operations "$hostinger_count" \
     '{
-      schema_version: 1,
+      schema_version: 2,
       sources: {
         cloudflare: $cloudflare_url,
         hostinger: $hostinger_url

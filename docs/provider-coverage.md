@@ -11,7 +11,7 @@ Canonical sources:
 
 Use `cloudio coverage` to summarize the checked-in generated manifests locally, `cloudio coverage tags [all|cloudflare|hostinger]` to review support/mode counts by upstream tag group, and `cloudio coverage routes [all|cloudflare|hostinger] [tag-query] [--support <status>] [--mode <mode>]` to inspect the exact operations in a provider/tag/status group. Use `zig build api-summary` to fetch the current public OpenAPI files and print operation/tag counts. Use `zig build coverage-manifest` to regenerate `coverage/generated/*.jsonl`, and `zig build coverage-check` to compare checked-in coverage rows with the current official specs. The `zig build` coverage/spec commands are intentionally networked and are not part of normal `zig build test`.
 
-The same checked-in manifests now feed `src/providers/routes.zig`, a provider-neutral internal route metadata library. That module loads Cloudflare and Hostinger routes, exposes operation/path lookup, support/mode/deprecation state, official path/query parameter requirements, path-placeholder extraction, required-query validation, escaped path/query rendering, and provider-base URL rendering. `src/providers/dispatch.zig` builds on that route contract with provider auth handling, generic read calls for `GET`/`read` routes, and `will_execute:false` dry-run plans for mutation routes. This gives future generic dispatch and UI/API layers a broad L1 route contract while hand-written provider clients remain focused on high-value typed wrappers and collectors.
+The same checked-in manifests now feed `src/providers/routes.zig`, a provider-neutral internal route metadata library. That module loads Cloudflare and Hostinger routes, exposes operation/path lookup, support/mode/deprecation state, official path/query parameter requirements, request-body requirements, path-placeholder extraction, required-query validation, escaped path/query rendering, and provider-base URL rendering. `src/providers/dispatch.zig` builds on that route contract with provider auth handling, generic read calls for `GET`/`read` routes, and body-aware `will_execute:false` dry-run plans for mutation routes. This gives future generic dispatch and UI/API layers a broad L1 route contract while hand-written provider clients remain focused on high-value typed wrappers and collectors.
 
 ## Status Taxonomy
 
@@ -96,7 +96,7 @@ Current POC status:
 
 Hostinger metrics require `date_from` and `date_to` query parameters. Cloudio currently uses a read-only 24-hour UTC window for refresh and CLI metrics calls.
 
-Generated route rows include `path_params` and `query_params` arrays with `{name, required}` objects resolved from operation-level, path-level, and shared `components.parameters` OpenAPI definitions. This keeps L1 parameter requirements reviewable without hand-writing one route at a time.
+Generated route rows include `path_params` and `query_params` arrays with `{name, required}` objects resolved from operation-level, path-level, and shared `components.parameters` OpenAPI definitions. They also include a `request_body` object resolved from inline or shared OpenAPI request bodies, with required status, content types, and schema refs. This keeps L1 parameter and body requirements reviewable without hand-writing one route at a time.
 
 ## Coverage Review Gate
 
