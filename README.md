@@ -107,7 +107,13 @@ zig build run -- cloudflare access account applications <account-id>
 zig build run -- cloudflare access account application <account-id> <app-id>
 zig build run -- cloudflare access account application-policies <account-id> <app-id>
 zig build run -- cloudflare access account service-tokens <account-id>
+zig build run -- cloudflare access account authenticator-aaguids <account-id>
+zig build run -- cloudflare access account idp-federation-grants <account-id>
+zig build run -- cloudflare access account saml-certificates <account-id>
+zig build run -- cloudflare access account scim-update-logs <account-id>
 zig build run -- cloudflare access account keys <account-id>
+zig build run -- cloudflare access account mtls-certificates <account-id>
+zig build run -- cloudflare access account cas <account-id>
 zig build run -- cloudflare access zone applications <zone-id>
 zig build run -- cloudflare access zone mtls-certificates <zone-id>
 zig build run -- cloudflare access zone cas <zone-id>
@@ -172,6 +178,10 @@ zig build run -- cloudflare dry-run access-custom-pages update <account-id> <cus
 zig build run -- cloudflare dry-run access account create-application <account-id>
 zig build run -- cloudflare dry-run access account update-application-policy <account-id> <app-id> <policy-id>
 zig build run -- cloudflare dry-run access account rotate-keys <account-id>
+zig build run -- cloudflare dry-run access account create-idp-federation-grant <account-id>
+zig build run -- cloudflare dry-run access account rotate-saml-certificate <account-id> <saml-cert-set-id>
+zig build run -- cloudflare dry-run access account create-mtls-certificate <account-id>
+zig build run -- cloudflare dry-run access account create-ca <account-id> <app-id>
 zig build run -- cloudflare dry-run access zone create-mtls-certificate <zone-id>
 zig build run -- cloudflare dry-run access zone delete-ca <zone-id> <app-id>
 zig build run -- cloudflare dry-run token create

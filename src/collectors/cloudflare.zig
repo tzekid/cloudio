@@ -2377,8 +2377,15 @@ fn collectAccessForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.
         .service_tokens_list,
         .reusable_policies_list,
         .tags_list,
+        .authenticator_device_aaguids,
+        .idp_federation_grants_list,
+        .saml_certificate_sets_list,
+        .scim_update_logs,
         .keys,
         .authentication_logs,
+        .mtls_certificates_list,
+        .mtls_settings,
+        .ca_list,
     };
     for (rows.items) |row| {
         for (endpoints) |endpoint| {
@@ -2422,7 +2429,7 @@ fn collectAccessDetailsForList(gpa: Allocator, io: Io, client: provider_cloudfla
                 try collectAccessReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .application_details, .{ .app_id = row.id });
                 try collectAccessReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .application_policy_checks, .{ .app_id = row.id });
                 try collectAccessApplicationPoliciesForApp(gpa, io, client, db, scope, scope_id, target_label, row.id);
-                if (scope == .zone) try collectAccessReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .ca_details, .{ .app_id = row.id });
+                try collectAccessReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .ca_details, .{ .app_id = row.id });
             }
         },
         .groups_list => {
@@ -2457,6 +2464,17 @@ fn collectAccessDetailsForList(gpa: Allocator, io: Io, client: provider_cloudfla
         .mtls_certificates_list => {
             for (rows.items) |row| {
                 try collectAccessReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .mtls_certificate_details, .{ .certificate_id = row.id });
+            }
+        },
+        .idp_federation_grants_list => {
+            for (rows.items) |row| {
+                try collectAccessReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .idp_federation_grant_details, .{ .resource_id = row.id });
+            }
+        },
+        .saml_certificate_sets_list => {
+            for (rows.items) |row| {
+                try collectAccessReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .saml_certificate_set_details, .{ .resource_id = row.id });
+                try collectAccessReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .saml_certificate_pem, .{ .resource_id = row.id });
             }
         },
         else => {},

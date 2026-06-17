@@ -3656,6 +3656,13 @@ pub const AccessReadEndpoint = enum {
     reusable_policy_details,
     tags_list,
     tag_details,
+    authenticator_device_aaguids,
+    idp_federation_grants_list,
+    idp_federation_grant_details,
+    saml_certificate_sets_list,
+    saml_certificate_set_details,
+    saml_certificate_pem,
+    scim_update_logs,
     keys,
     authentication_logs,
     policy_test,
@@ -3684,6 +3691,13 @@ pub const AccessReadEndpoint = enum {
         if (std.mem.eql(u8, value, "reusable-policy")) return .reusable_policy_details;
         if (std.mem.eql(u8, value, "tags")) return .tags_list;
         if (std.mem.eql(u8, value, "tag")) return .tag_details;
+        if (std.mem.eql(u8, value, "authenticator-aaguids") or std.mem.eql(u8, value, "aaguids")) return .authenticator_device_aaguids;
+        if (std.mem.eql(u8, value, "idp-federation-grants") or std.mem.eql(u8, value, "federation-grants")) return .idp_federation_grants_list;
+        if (std.mem.eql(u8, value, "idp-federation-grant") or std.mem.eql(u8, value, "federation-grant")) return .idp_federation_grant_details;
+        if (std.mem.eql(u8, value, "saml-certificates") or std.mem.eql(u8, value, "saml-certificate-sets")) return .saml_certificate_sets_list;
+        if (std.mem.eql(u8, value, "saml-certificate") or std.mem.eql(u8, value, "saml-certificate-set")) return .saml_certificate_set_details;
+        if (std.mem.eql(u8, value, "saml-certificate-pem") or std.mem.eql(u8, value, "saml-pem")) return .saml_certificate_pem;
+        if (std.mem.eql(u8, value, "scim-update-logs") or std.mem.eql(u8, value, "scim-logs")) return .scim_update_logs;
         if (std.mem.eql(u8, value, "keys") or std.mem.eql(u8, value, "key-config")) return .keys;
         if (std.mem.eql(u8, value, "authentication-logs") or std.mem.eql(u8, value, "auth-logs") or std.mem.eql(u8, value, "logs")) return .authentication_logs;
         if (std.mem.eql(u8, value, "policy-test")) return .policy_test;
@@ -3715,6 +3729,13 @@ pub const AccessReadEndpoint = enum {
             .reusable_policy_details => "reusable-policy",
             .tags_list => "tags",
             .tag_details => "tag",
+            .authenticator_device_aaguids => "authenticator-aaguids",
+            .idp_federation_grants_list => "idp-federation-grants",
+            .idp_federation_grant_details => "idp-federation-grant",
+            .saml_certificate_sets_list => "saml-certificates",
+            .saml_certificate_set_details => "saml-certificate",
+            .saml_certificate_pem => "saml-certificate-pem",
+            .scim_update_logs => "scim-update-logs",
             .keys => "keys",
             .authentication_logs => "authentication-logs",
             .policy_test => "policy-test",
@@ -3739,13 +3760,20 @@ pub const AccessReadEndpoint = enum {
             .authentication_logs,
             .policy_test,
             .policy_test_users,
+            .authenticator_device_aaguids,
+            .idp_federation_grants_list,
+            .idp_federation_grant_details,
+            .saml_certificate_sets_list,
+            .saml_certificate_set_details,
+            .saml_certificate_pem,
+            .scim_update_logs,
             => scope == .account,
             .mtls_certificates_list,
             .mtls_certificate_details,
             .mtls_settings,
             .ca_list,
             .ca_details,
-            => scope == .zone,
+            => true,
             else => true,
         };
     }
@@ -3759,11 +3787,15 @@ pub const AccessReadEndpoint = enum {
             .service_tokens_list, .service_token_details => if (scope == .account) "Access service tokens" else "Zone-Level Access service tokens",
             .reusable_policies_list, .reusable_policy_details => "Access reusable policies",
             .tags_list, .tag_details => "Access tags",
+            .authenticator_device_aaguids => "Access Authenticator Device AAGUIDs",
+            .idp_federation_grants_list, .idp_federation_grant_details => "Access IdP federation grants",
+            .saml_certificate_sets_list, .saml_certificate_set_details, .saml_certificate_pem => "Access SAML encryption certificates",
+            .scim_update_logs => "Access SCIM update logs",
             .keys => "Access key configuration",
             .authentication_logs => "Access authentication logs",
             .policy_test, .policy_test_users => "Access policy tester",
-            .mtls_certificates_list, .mtls_certificate_details, .mtls_settings => "Zone-Level Access mTLS authentication",
-            .ca_list, .ca_details => "Zone-Level Access short-lived certificate CAs",
+            .mtls_certificates_list, .mtls_certificate_details, .mtls_settings => if (scope == .account) "Access mTLS authentication" else "Zone-Level Access mTLS authentication",
+            .ca_list, .ca_details => if (scope == .account) "Access short-lived certificate CAs" else "Zone-Level Access short-lived certificate CAs",
         };
     }
 
@@ -3787,11 +3819,22 @@ pub const AccessReadEndpoint = enum {
                 .reusable_policy_details => "access-account-reusable-policy",
                 .tags_list => "access-account-tags",
                 .tag_details => "access-account-tag",
+                .authenticator_device_aaguids => "access-account-authenticator-aaguids",
+                .idp_federation_grants_list => "access-account-idp-federation-grants",
+                .idp_federation_grant_details => "access-account-idp-federation-grant",
+                .saml_certificate_sets_list => "access-account-saml-certificates",
+                .saml_certificate_set_details => "access-account-saml-certificate",
+                .saml_certificate_pem => "access-account-saml-certificate-pem",
+                .scim_update_logs => "access-account-scim-update-logs",
                 .keys => "access-account-keys",
                 .authentication_logs => "access-account-authentication-logs",
                 .policy_test => "access-account-policy-test",
                 .policy_test_users => "access-account-policy-test-users",
-                else => "access-account-unsupported",
+                .mtls_certificates_list => "access-account-mtls-certificates",
+                .mtls_certificate_details => "access-account-mtls-certificate",
+                .mtls_settings => "access-account-mtls-settings",
+                .ca_list => "access-account-cas",
+                .ca_details => "access-account-ca",
             },
             .zone => switch (self) {
                 .applications_list => "access-zone-applications",
@@ -3835,11 +3878,22 @@ pub const AccessReadEndpoint = enum {
                 .reusable_policy_details => "access-policies-get-an-access-reusable-policy",
                 .tags_list => "access-tags-list-tags",
                 .tag_details => "access-tags-get-a-tag",
+                .authenticator_device_aaguids => "access-authenticator-device-aaguids-list",
+                .idp_federation_grants_list => "access-idp-federation-grants-list",
+                .idp_federation_grant_details => "access-idp-federation-grants-get",
+                .saml_certificate_sets_list => "access-saml-certificates-list-certificate-sets",
+                .saml_certificate_set_details => "access-saml-certificates-get-certificate-set",
+                .saml_certificate_pem => "access-saml-certificates-get-pem",
+                .scim_update_logs => "access-scim-update-logs-list-access-scim-update-logs",
                 .keys => "access-key-configuration-get-the-access-key-configuration",
                 .authentication_logs => "access-authentication-logs-get-access-authentication-logs",
                 .policy_test => "access-policy-tests-get-an-update",
                 .policy_test_users => "access-policy-tests-get-a-user-page",
-                else => "unsupported",
+                .mtls_certificates_list => "access-mtls-authentication-list-mtls-certificates",
+                .mtls_certificate_details => "access-mtls-authentication-get-an-mtls-certificate",
+                .mtls_settings => "access-mtls-authentication-list-mtls-certificates-hostname-settings",
+                .ca_list => "access-short-lived-certificate-c-as-list-short-lived-certificate-c-as",
+                .ca_details => "access-short-lived-certificate-c-as-get-a-short-lived-certificate-ca",
             },
             .zone => switch (self) {
                 .applications_list => "zone-level-access-applications-list-access-applications",
@@ -3882,15 +3936,22 @@ pub const AccessReadEndpoint = enum {
             .reusable_policy_details => "Get an account Access reusable policy",
             .tags_list => "List account Access tags",
             .tag_details => "Get an account Access tag",
+            .authenticator_device_aaguids => "List account Access authenticator device AAGUIDs",
+            .idp_federation_grants_list => "List account Access IdP federation grants",
+            .idp_federation_grant_details => "Get an account Access IdP federation grant",
+            .saml_certificate_sets_list => "List account Access SAML certificate sets",
+            .saml_certificate_set_details => "Get an account Access SAML certificate set",
+            .saml_certificate_pem => "Download an account Access SAML certificate PEM",
+            .scim_update_logs => "List account Access SCIM update logs",
             .keys => "Get account Access key configuration",
             .authentication_logs => "Get account Access authentication logs",
             .policy_test => "Get account Access policy test status",
             .policy_test_users => "Get account Access policy test users",
-            .mtls_certificates_list => "List zone Access mTLS certificates",
-            .mtls_certificate_details => "Get a zone Access mTLS certificate",
-            .mtls_settings => "List zone Access mTLS hostname settings",
-            .ca_list => "List zone Access short-lived certificate CAs",
-            .ca_details => "Get a zone Access short-lived certificate CA",
+            .mtls_certificates_list => if (scope == .account) "List account Access mTLS certificates" else "List zone Access mTLS certificates",
+            .mtls_certificate_details => if (scope == .account) "Get an account Access mTLS certificate" else "Get a zone Access mTLS certificate",
+            .mtls_settings => if (scope == .account) "List account Access mTLS hostname settings" else "List zone Access mTLS hostname settings",
+            .ca_list => if (scope == .account) "List account Access short-lived certificate CAs" else "List zone Access short-lived certificate CAs",
+            .ca_details => if (scope == .account) "Get an account Access short-lived certificate CA" else "Get a zone Access short-lived certificate CA",
         };
     }
 
@@ -3911,7 +3972,7 @@ pub const AccessReadEndpoint = enum {
     }
 
     pub fn requiresResourceId(self: AccessReadEndpoint) bool {
-        return self == .group_details;
+        return self == .group_details or self == .idp_federation_grant_details or self == .saml_certificate_set_details or self == .saml_certificate_pem;
     }
 
     pub fn requiresIdentityProviderId(self: AccessReadEndpoint) bool {
@@ -3984,6 +4045,9 @@ pub const AccessMutationEndpoint = enum {
     update_keys,
     rotate_keys,
     start_policy_test,
+    create_idp_federation_grant,
+    delete_idp_federation_grant,
+    rotate_saml_certificate,
     create_mtls_certificate,
     update_mtls_certificate,
     delete_mtls_certificate,
@@ -4023,6 +4087,9 @@ pub const AccessMutationEndpoint = enum {
         if (std.mem.eql(u8, value, "update-keys")) return .update_keys;
         if (std.mem.eql(u8, value, "rotate-keys")) return .rotate_keys;
         if (std.mem.eql(u8, value, "start-policy-test")) return .start_policy_test;
+        if (std.mem.eql(u8, value, "create-idp-federation-grant") or std.mem.eql(u8, value, "create-federation-grant")) return .create_idp_federation_grant;
+        if (std.mem.eql(u8, value, "delete-idp-federation-grant") or std.mem.eql(u8, value, "delete-federation-grant")) return .delete_idp_federation_grant;
+        if (std.mem.eql(u8, value, "rotate-saml-certificate") or std.mem.eql(u8, value, "rotate-saml-cert")) return .rotate_saml_certificate;
         if (std.mem.eql(u8, value, "create-mtls-certificate") or std.mem.eql(u8, value, "create-certificate")) return .create_mtls_certificate;
         if (std.mem.eql(u8, value, "update-mtls-certificate") or std.mem.eql(u8, value, "update-certificate")) return .update_mtls_certificate;
         if (std.mem.eql(u8, value, "delete-mtls-certificate") or std.mem.eql(u8, value, "delete-certificate")) return .delete_mtls_certificate;
@@ -4065,6 +4132,9 @@ pub const AccessMutationEndpoint = enum {
             .update_keys => "update-keys",
             .rotate_keys => "rotate-keys",
             .start_policy_test => "start-policy-test",
+            .create_idp_federation_grant => "create-idp-federation-grant",
+            .delete_idp_federation_grant => "delete-idp-federation-grant",
+            .rotate_saml_certificate => "rotate-saml-certificate",
             .create_mtls_certificate => "create-mtls-certificate",
             .update_mtls_certificate => "update-mtls-certificate",
             .delete_mtls_certificate => "delete-mtls-certificate",
@@ -4089,6 +4159,9 @@ pub const AccessMutationEndpoint = enum {
             .update_keys,
             .rotate_keys,
             .start_policy_test,
+            .create_idp_federation_grant,
+            .delete_idp_federation_grant,
+            .rotate_saml_certificate,
             => scope == .account,
             .create_mtls_certificate,
             .update_mtls_certificate,
@@ -4096,7 +4169,7 @@ pub const AccessMutationEndpoint = enum {
             .update_mtls_settings,
             .create_ca,
             .delete_ca,
-            => scope == .zone,
+            => true,
             else => true,
         };
     }
@@ -4110,6 +4183,7 @@ pub const AccessMutationEndpoint = enum {
             .delete_service_token,
             .delete_reusable_policy,
             .delete_tag,
+            .delete_idp_federation_grant,
             .delete_mtls_certificate,
             .delete_ca,
             => "DELETE",
@@ -4142,8 +4216,10 @@ pub const AccessMutationEndpoint = enum {
             .create_tag, .update_tag, .delete_tag => "Access tags",
             .update_keys, .rotate_keys => "Access key configuration",
             .start_policy_test => "Access policy tester",
-            .create_mtls_certificate, .update_mtls_certificate, .delete_mtls_certificate, .update_mtls_settings => "Zone-Level Access mTLS authentication",
-            .create_ca, .delete_ca => "Zone-Level Access short-lived certificate CAs",
+            .create_idp_federation_grant, .delete_idp_federation_grant => "Access IdP federation grants",
+            .rotate_saml_certificate => "Access SAML encryption certificates",
+            .create_mtls_certificate, .update_mtls_certificate, .delete_mtls_certificate, .update_mtls_settings => if (scope == .account) "Access mTLS authentication" else "Zone-Level Access mTLS authentication",
+            .create_ca, .delete_ca => if (scope == .account) "Access short-lived certificate CAs" else "Zone-Level Access short-lived certificate CAs",
         };
     }
 
@@ -4181,7 +4257,15 @@ pub const AccessMutationEndpoint = enum {
                 .update_keys => "access-key-configuration-update-the-access-key-configuration",
                 .rotate_keys => "access-key-configuration-rotate-access-keys",
                 .start_policy_test => "access-policy-tests",
-                else => "unsupported",
+                .create_idp_federation_grant => "access-idp-federation-grants-create",
+                .delete_idp_federation_grant => "access-idp-federation-grants-delete",
+                .rotate_saml_certificate => "access-saml-certificates-rotate-certificate",
+                .create_mtls_certificate => "access-mtls-authentication-add-an-mtls-certificate",
+                .update_mtls_certificate => "access-mtls-authentication-update-an-mtls-certificate",
+                .delete_mtls_certificate => "access-mtls-authentication-delete-an-mtls-certificate",
+                .update_mtls_settings => "access-mtls-authentication-update-an-mtls-certificate-settings",
+                .create_ca => "access-short-lived-certificate-c-as-create-a-short-lived-certificate-ca",
+                .delete_ca => "access-short-lived-certificate-c-as-delete-a-short-lived-certificate-ca",
             },
             .zone => switch (self) {
                 .create_application => "zone-level-access-applications-add-a-bookmark-application",
@@ -4246,12 +4330,15 @@ pub const AccessMutationEndpoint = enum {
             .update_keys => "Update account Access key configuration",
             .rotate_keys => "Rotate account Access keys",
             .start_policy_test => "Start an account Access policy test",
-            .create_mtls_certificate => "Add a zone Access mTLS certificate",
-            .update_mtls_certificate => "Update a zone Access mTLS certificate",
-            .delete_mtls_certificate => "Delete a zone Access mTLS certificate",
-            .update_mtls_settings => "Update zone Access mTLS certificate hostname settings",
-            .create_ca => "Create a zone Access short-lived certificate CA",
-            .delete_ca => "Delete a zone Access short-lived certificate CA",
+            .create_idp_federation_grant => "Create an account Access IdP federation grant",
+            .delete_idp_federation_grant => "Delete an account Access IdP federation grant",
+            .rotate_saml_certificate => "Rotate an account Access SAML certificate",
+            .create_mtls_certificate => if (scope == .account) "Add an account Access mTLS certificate" else "Add a zone Access mTLS certificate",
+            .update_mtls_certificate => if (scope == .account) "Update an account Access mTLS certificate" else "Update a zone Access mTLS certificate",
+            .delete_mtls_certificate => if (scope == .account) "Delete an account Access mTLS certificate" else "Delete a zone Access mTLS certificate",
+            .update_mtls_settings => if (scope == .account) "Update account Access mTLS certificate hostname settings" else "Update zone Access mTLS certificate hostname settings",
+            .create_ca => if (scope == .account) "Create an account Access short-lived certificate CA" else "Create a zone Access short-lived certificate CA",
+            .delete_ca => if (scope == .account) "Delete an account Access short-lived certificate CA" else "Delete a zone Access short-lived certificate CA",
         };
     }
 
@@ -4267,6 +4354,7 @@ pub const AccessMutationEndpoint = enum {
             .delete_reusable_policy,
             .delete_tag,
             .rotate_keys,
+            .delete_idp_federation_grant,
             .delete_mtls_certificate,
             .delete_ca,
             => null,
@@ -4305,7 +4393,7 @@ pub const AccessMutationEndpoint = enum {
     }
 
     pub fn requiresResourceId(self: AccessMutationEndpoint) bool {
-        return self == .update_group or self == .delete_group;
+        return self == .update_group or self == .delete_group or self == .delete_idp_federation_grant or self == .rotate_saml_certificate;
     }
 
     pub fn requiresIdentityProviderId(self: AccessMutationEndpoint) bool {
@@ -6938,6 +7026,25 @@ pub fn accessReadPath(gpa: Allocator, scope: AccessScope, scope_id: []const u8, 
             defer gpa.free(tags_path);
             break :blk try accessAppendEscaped(gpa, tags_path, tag_name);
         },
+        .authenticator_device_aaguids => try std.fmt.allocPrint(gpa, "{s}/authenticator_device_aaguids", .{base_path}),
+        .idp_federation_grants_list => try std.fmt.allocPrint(gpa, "{s}/idp_federation_grants", .{base_path}),
+        .idp_federation_grant_details => blk: {
+            const grant_id = args.resource_id orelse return error.MissingCloudflareAccessResourceId;
+            const grants_path = try std.fmt.allocPrint(gpa, "{s}/idp_federation_grants", .{base_path});
+            defer gpa.free(grants_path);
+            break :blk try accessAppendEscaped(gpa, grants_path, grant_id);
+        },
+        .saml_certificate_sets_list => try std.fmt.allocPrint(gpa, "{s}/saml_certificates", .{base_path}),
+        .saml_certificate_set_details, .saml_certificate_pem => blk: {
+            const cert_set_id = args.resource_id orelse return error.MissingCloudflareAccessResourceId;
+            const sets_path = try std.fmt.allocPrint(gpa, "{s}/saml_certificates", .{base_path});
+            defer gpa.free(sets_path);
+            const set_path = try accessAppendEscaped(gpa, sets_path, cert_set_id);
+            defer gpa.free(set_path);
+            if (endpoint == .saml_certificate_pem) break :blk try std.fmt.allocPrint(gpa, "{s}/pem", .{set_path});
+            break :blk try gpa.dupe(u8, set_path);
+        },
+        .scim_update_logs => try std.fmt.allocPrint(gpa, "{s}/logs/scim/updates", .{base_path}),
         .keys => try std.fmt.allocPrint(gpa, "{s}/keys", .{base_path}),
         .authentication_logs => try std.fmt.allocPrint(gpa, "{s}/logs/access_requests", .{base_path}),
         .policy_test => blk: {
@@ -7051,6 +7158,21 @@ pub fn accessMutationPath(gpa: Allocator, endpoint: AccessMutationEndpoint, args
         .update_keys => try std.fmt.allocPrint(gpa, "{s}/keys", .{base_path}),
         .rotate_keys => try std.fmt.allocPrint(gpa, "{s}/keys/rotate", .{base_path}),
         .start_policy_test => try std.fmt.allocPrint(gpa, "{s}/policy-tests", .{base_path}),
+        .create_idp_federation_grant => try std.fmt.allocPrint(gpa, "{s}/idp_federation_grants", .{base_path}),
+        .delete_idp_federation_grant => blk: {
+            const grant_id = args.resource_id orelse return error.MissingCloudflareAccessResourceId;
+            const grants_path = try std.fmt.allocPrint(gpa, "{s}/idp_federation_grants", .{base_path});
+            defer gpa.free(grants_path);
+            break :blk try accessAppendEscaped(gpa, grants_path, grant_id);
+        },
+        .rotate_saml_certificate => blk: {
+            const cert_set_id = args.resource_id orelse return error.MissingCloudflareAccessResourceId;
+            const sets_path = try std.fmt.allocPrint(gpa, "{s}/saml_certificates", .{base_path});
+            defer gpa.free(sets_path);
+            const set_path = try accessAppendEscaped(gpa, sets_path, cert_set_id);
+            defer gpa.free(set_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/rotate", .{set_path});
+        },
         .create_mtls_certificate => try std.fmt.allocPrint(gpa, "{s}/certificates", .{base_path}),
         .update_mtls_certificate, .delete_mtls_certificate => blk: {
             const certificate_id = args.certificate_id orelse return error.MissingCloudflareAccessCertificateId;
@@ -8902,24 +9024,36 @@ test "access endpoints map to official operation metadata" {
     try std.testing.expectEqual(AccessReadEndpoint.applications_list, AccessReadEndpoint.parse("apps").?);
     try std.testing.expectEqual(AccessReadEndpoint.application_policy_details, AccessReadEndpoint.parse("app-policy").?);
     try std.testing.expectEqual(AccessReadEndpoint.identity_provider_scim_users, AccessReadEndpoint.parse("scim-users").?);
+    try std.testing.expectEqual(AccessReadEndpoint.authenticator_device_aaguids, AccessReadEndpoint.parse("aaguids").?);
+    try std.testing.expectEqual(AccessReadEndpoint.idp_federation_grant_details, AccessReadEndpoint.parse("federation-grant").?);
+    try std.testing.expectEqual(AccessReadEndpoint.saml_certificate_pem, AccessReadEndpoint.parse("saml-pem").?);
     try std.testing.expectEqual(AccessReadEndpoint.mtls_settings, AccessReadEndpoint.parse("certificate-settings").?);
     try std.testing.expectEqualStrings("access-applications-list-access-applications", AccessReadEndpoint.applications_list.operationId(.account));
+    try std.testing.expectEqualStrings("access-authenticator-device-aaguids-list", AccessReadEndpoint.authenticator_device_aaguids.operationId(.account));
+    try std.testing.expectEqualStrings("access-mtls-authentication-list-mtls-certificates", AccessReadEndpoint.mtls_certificates_list.operationId(.account));
     try std.testing.expectEqualStrings("zone-level-access-service-tokens-get-a-service-token", AccessReadEndpoint.service_token_details.operationId(.zone));
     try std.testing.expectEqualStrings("Zone-Level Access mTLS authentication", AccessReadEndpoint.mtls_settings.group(.zone));
     try std.testing.expect(AccessReadEndpoint.identity_provider_scim_users.supports(.account));
     try std.testing.expect(!AccessReadEndpoint.identity_provider_scim_users.supports(.zone));
+    try std.testing.expect(AccessReadEndpoint.mtls_settings.supports(.account));
     try std.testing.expect(AccessReadEndpoint.ca_details.requiresAppId());
 
     try std.testing.expectEqual(AccessMutationEndpoint.create_application, AccessMutationEndpoint.parse("create-app").?);
     try std.testing.expectEqual(AccessMutationEndpoint.make_policy_reusable, AccessMutationEndpoint.parse("convert-reusable").?);
+    try std.testing.expectEqual(AccessMutationEndpoint.create_idp_federation_grant, AccessMutationEndpoint.parse("create-federation-grant").?);
+    try std.testing.expectEqual(AccessMutationEndpoint.rotate_saml_certificate, AccessMutationEndpoint.parse("rotate-saml-cert").?);
     try std.testing.expectEqual(AccessMutationEndpoint.create_mtls_certificate, AccessMutationEndpoint.parse("create-certificate").?);
     try std.testing.expectEqualStrings("zone-level-access-applications-add-a-bookmark-application", AccessMutationEndpoint.create_application.operationId(.zone));
     try std.testing.expectEqualStrings("access-service-tokens-rotate-a-service-token", AccessMutationEndpoint.rotate_service_token.operationId(.account));
+    try std.testing.expectEqualStrings("access-idp-federation-grants-create", AccessMutationEndpoint.create_idp_federation_grant.operationId(.account));
+    try std.testing.expectEqualStrings("access-mtls-authentication-add-an-mtls-certificate", AccessMutationEndpoint.create_mtls_certificate.operationId(.account));
     try std.testing.expectEqualStrings("DELETE", AccessMutationEndpoint.delete_tag.method());
     try std.testing.expectEqual(@as(?[]const u8, null), AccessMutationEndpoint.rotate_keys.requestBodySchemaRef());
     try std.testing.expect(AccessMutationEndpoint.rotate_service_token.supports(.account));
     try std.testing.expect(!AccessMutationEndpoint.rotate_service_token.supports(.zone));
+    try std.testing.expect(AccessMutationEndpoint.create_mtls_certificate.supports(.account));
     try std.testing.expect(AccessMutationEndpoint.update_group.requiresResourceId());
+    try std.testing.expect(AccessMutationEndpoint.rotate_saml_certificate.requiresResourceId());
 }
 
 test "builds Access account and zone paths and dry-run plans" {
@@ -8937,6 +9071,14 @@ test "builds Access account and zone paths and dry-run plans" {
     defer allocator.free(scim);
     try std.testing.expectEqualStrings("/accounts/acct%201/access/identity_providers/idp%201/scim/groups", scim);
 
+    const federation_grant = try accessReadPath(allocator, .account, "acct/1", .idp_federation_grant_details, .{ .resource_id = "grant/1" });
+    defer allocator.free(federation_grant);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/access/idp_federation_grants/grant%2F1", federation_grant);
+
+    const saml_pem = try accessReadPath(allocator, .account, "acct/1", .saml_certificate_pem, .{ .resource_id = "cert/1" });
+    defer allocator.free(saml_pem);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/access/saml_certificates/cert%2F1/pem", saml_pem);
+
     const ca = try accessReadPath(allocator, .zone, "zone/1", .ca_details, .{ .app_id = "app/1" });
     defer allocator.free(ca);
     try std.testing.expectEqualStrings("/zones/zone%2F1/access/apps/app%2F1/ca", ca);
@@ -8951,6 +9093,21 @@ test "builds Access account and zone paths and dry-run plans" {
     defer allocator.free(zone_mtls);
     try std.testing.expect(std.mem.indexOf(u8, zone_mtls, "\"operation_id\":\"zone-level-access-mtls-authentication-add-an-mtls-certificate\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, zone_mtls, "\"path\":\"/zones/zone%2F1/access/certificates\"") != null);
+
+    const account_mtls = try accessMutationPlanJson(allocator, .create_mtls_certificate, .{ .scope = .account, .scope_id = "acct/1" });
+    defer allocator.free(account_mtls);
+    try std.testing.expect(std.mem.indexOf(u8, account_mtls, "\"operation_id\":\"access-mtls-authentication-add-an-mtls-certificate\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_mtls, "\"path\":\"/accounts/acct%2F1/access/certificates\"") != null);
+
+    const rotate_saml = try accessMutationPlanJson(allocator, .rotate_saml_certificate, .{ .scope = .account, .scope_id = "acct/1", .resource_id = "cert/1" });
+    defer allocator.free(rotate_saml);
+    try std.testing.expect(std.mem.indexOf(u8, rotate_saml, "\"operation_id\":\"access-saml-certificates-rotate-certificate\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rotate_saml, "\"path\":\"/accounts/acct%2F1/access/saml_certificates/cert%2F1/rotate\"") != null);
+
+    const account_ca = try accessMutationPlanJson(allocator, .create_ca, .{ .scope = .account, .scope_id = "acct/1", .app_id = "app/1" });
+    defer allocator.free(account_ca);
+    try std.testing.expect(std.mem.indexOf(u8, account_ca, "\"operation_id\":\"access-short-lived-certificate-c-as-create-a-short-lived-certificate-ca\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, account_ca, "\"path\":\"/accounts/acct%2F1/access/apps/app%2F1/ca\"") != null);
 
     const delete_tag = try accessMutationPlanJson(allocator, .delete_tag, .{ .scope = .account, .scope_id = "acct/1", .tag_name = "prod tag" });
     defer allocator.free(delete_tag);

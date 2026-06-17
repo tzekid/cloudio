@@ -154,8 +154,9 @@ fn usage() void {
         \\  cloudio cloudflare custom-pages account|zone pages|assets show <scope-id> <resource-id>
         \\  cloudio cloudflare access-custom-pages list <account-id>|show <account-id> <custom-page-id>
         \\  cloudio cloudflare access account|zone applications|groups|identity-providers|service-tokens <scope-id>
-        \\  cloudio cloudflare access account|zone application|group|identity-provider|service-token <scope-id> <resource-id>
-        \\  cloudio cloudflare access account reusable-policies|tags|keys|authentication-logs <account-id>
+        \\  cloudio cloudflare access account|zone application|group|identity-provider|service-token|mtls-certificate|ca <scope-id> <resource-id>
+        \\  cloudio cloudflare access account idp-federation-grant|saml-certificate|saml-certificate-pem <account-id> <resource-id>
+        \\  cloudio cloudflare access account reusable-policies|tags|authenticator-aaguids|idp-federation-grants|saml-certificates|scim-update-logs|keys|authentication-logs|mtls-certificates|mtls-settings|cas <account-id>
         \\  cloudio cloudflare access zone mtls-certificates|mtls-settings|cas <zone-id>
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
@@ -204,7 +205,9 @@ fn usage() void {
         \\  cloudio cloudflare dry-run access-custom-pages create <account-id>|update|delete <account-id> <custom-page-id>
         \\  cloudio cloudflare dry-run access account|zone create-application|update-application|delete-application <scope-id> [application-id]
         \\  cloudio cloudflare dry-run access account|zone create-application-policy|update-application-policy|delete-application-policy <scope-id> <application-id> [policy-id]
-        \\  cloudio cloudflare dry-run access account create-reusable-policy|create-tag|update-keys|rotate-keys|start-policy-test <account-id>
+        \\  cloudio cloudflare dry-run access account create-reusable-policy|create-tag|update-keys|rotate-keys|start-policy-test|create-idp-federation-grant|create-mtls-certificate|update-mtls-settings <account-id>
+        \\  cloudio cloudflare dry-run access account delete-idp-federation-grant|rotate-saml-certificate <account-id> <resource-id>
+        \\  cloudio cloudflare dry-run access account create-ca|delete-ca <account-id> <application-id>
         \\  cloudio cloudflare dry-run access zone create-mtls-certificate|update-mtls-settings <zone-id>
         \\  cloudio cloudflare dry-run token create
         \\  cloudio cloudflare dry-run token delete|update|roll <token-id>
