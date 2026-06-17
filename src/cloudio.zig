@@ -54,6 +54,7 @@ pub const providers = struct {
 
 pub const collectors = struct {
     pub const capture = @import("collector_capture");
+    pub const capture_normalize = @import("collector_capture_normalize");
     pub const caddy = @import("collector_caddy");
     pub const cloudflare = @import("collector_cloudflare");
     pub const hostinger = @import("collector_hostinger");
@@ -88,6 +89,7 @@ test "facade exposes stable integration modules" {
     _ = providers.cloudflare.client.Client;
     _ = providers.hostinger.client.Client;
     _ = collectors.capture.Output;
+    _ = collectors.capture_normalize.Counts;
     _ = collectors.capture.StoredResponse;
     _ = collectors.caddy.Paths;
 }

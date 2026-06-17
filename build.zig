@@ -187,6 +187,18 @@ pub fn build(b: *std.Build) void {
             .{ .name = "net_pagination", .module = net_pagination_mod },
         },
     });
+    const collector_capture_normalize_mod = b.createModule(.{
+        .root_source_file = b.path("src/collectors/capture_normalize.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
+            .{ .name = "provider_hostinger_models", .module = provider_hostinger_models_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+    linkSqlite(collector_capture_normalize_mod);
     const provider_dispatch_mod = b.createModule(.{
         .root_source_file = b.path("src/providers/dispatch.zig"),
         .target = target,
@@ -257,12 +269,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "collector_capture", .module = collector_capture_mod },
+            .{ .name = "collector_capture_normalize", .module = collector_capture_normalize_mod },
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "net_pagination", .module = net_pagination_mod },
-            .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
             .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
-            .{ .name = "provider_hostinger_models", .module = provider_hostinger_models_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
@@ -375,6 +386,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_refresh", .module = app_refresh_mod },
             .{ .name = "app_system", .module = app_system_mod },
             .{ .name = "collector_capture", .module = collector_capture_mod },
+            .{ .name = "collector_capture_normalize", .module = collector_capture_normalize_mod },
             .{ .name = "collector_caddy", .module = collector_caddy_mod },
             .{ .name = "collector_cloudflare", .module = collector_cloudflare_mod },
             .{ .name = "collector_hostinger", .module = collector_hostinger_mod },
@@ -563,6 +575,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, db_schema_mod);
     addModuleTest(b, test_step, db_store_mod);
     addModuleTest(b, test_step, collector_capture_mod);
+    addModuleTest(b, test_step, collector_capture_normalize_mod);
     addModuleTest(b, test_step, collector_caddy_mod);
     addModuleTest(b, test_step, collector_projects_mod);
     addModuleTest(b, test_step, collector_system_mod);
