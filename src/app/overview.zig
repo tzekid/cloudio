@@ -12,6 +12,7 @@ pub const Counts = struct {
     cloudflare_zones: i64,
     cloudflare_dns_records: i64,
     cloudflare_resources: i64,
+    cloudflare_inventory_items: i64,
     hostinger_vps: i64,
     hostinger_resources: i64,
     hostinger_inventory_items: i64,
@@ -29,6 +30,7 @@ pub const Counts = struct {
             .cloudflare_zones = try db.countTable("cloudflare_zones"),
             .cloudflare_dns_records = try db.countTable("cloudflare_dns_records"),
             .cloudflare_resources = try db.countTable("cloudflare_resources"),
+            .cloudflare_inventory_items = try db.countTable("cloudflare_inventory_items"),
             .hostinger_vps = try db.countTable("hostinger_vps"),
             .hostinger_resources = try db.countTable("hostinger_resources"),
             .hostinger_inventory_items = try db.countTable("hostinger_inventory_items"),
@@ -86,6 +88,7 @@ fn writeCounts(writer: anytype, counts: Counts) !void {
     try writer.print("cloudflare zones: {d}\n", .{counts.cloudflare_zones});
     try writer.print("cloudflare dns records: {d}\n", .{counts.cloudflare_dns_records});
     try writer.print("cloudflare resources: {d}\n", .{counts.cloudflare_resources});
+    try writer.print("cloudflare inventory items: {d}\n", .{counts.cloudflare_inventory_items});
     try writer.print("hostinger vps: {d}\n", .{counts.hostinger_vps});
     try writer.print("hostinger resources: {d}\n", .{counts.hostinger_resources});
     try writer.print("hostinger inventory items: {d}\n", .{counts.hostinger_inventory_items});

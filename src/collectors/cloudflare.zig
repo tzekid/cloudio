@@ -4216,6 +4216,33 @@ fn persistResourceRows(gpa: Allocator, db: *Db, kind: []const u8, scope: ?[]cons
     for (rows.items) |row| {
         try db.upsertCloudflareResource(row.key, row.kind, row.resource_id, row.scope, row.scope_id, row.name, row.status, row.resource_type, row.raw_json);
     }
+    try persistInventoryRows(gpa, db, kind, scope, scope_id, body);
+}
+
+fn persistInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseInventoryRows(gpa, kind, scope, scope_id, body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertCloudflareInventoryItem(
+            row.key,
+            row.kind,
+            row.resource_id,
+            row.scope,
+            row.scope_id,
+            row.name,
+            row.status,
+            row.category,
+            row.domain,
+            row.account_id,
+            row.zone_id,
+            row.related_id,
+            row.flag,
+            row.created_at,
+            row.updated_at,
+            row.expires_at,
+            row.raw_json,
+        );
+    }
 }
 
 fn resourceScope(kind: []const u8) ?[]const u8 {
@@ -4253,11 +4280,18 @@ test "stores Cloudflare response resources through capture wrapper" {
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("provider_raw"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_resources"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_inventory_items"));
     var rows = try db.cloudflareResourceList(allocator);
     defer rows.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), rows.items.len);
     try std.testing.expectEqualStrings("account-members/member-1", rows.items[0].name);
     try std.testing.expect(std.mem.indexOf(u8, rows.items[0].value, "account acct-1 accepted") != null);
+
+    var inventory_rows = try db.cloudflareInventoryItemList(allocator);
+    defer inventory_rows.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), inventory_rows.items.len);
+    try std.testing.expectEqualStrings("account-members/member-1", inventory_rows.items[0].name);
+    try std.testing.expect(std.mem.indexOf(u8, inventory_rows.items[0].value, "account acct-1 accepted") != null);
 }
 
 fn clientFromAuth(auth: Auth) !provider_cloudflare.Client {

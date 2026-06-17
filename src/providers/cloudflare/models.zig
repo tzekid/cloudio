@@ -92,6 +92,46 @@ pub const ResourceRow = struct {
     }
 };
 
+pub const InventoryRow = struct {
+    key: []u8,
+    kind: []u8,
+    resource_id: []u8,
+    scope: ?[]u8,
+    scope_id: ?[]u8,
+    name: ?[]u8,
+    status: ?[]u8,
+    category: ?[]u8,
+    domain: ?[]u8,
+    account_id: ?[]u8,
+    zone_id: ?[]u8,
+    related_id: ?[]u8,
+    flag: ?[]u8,
+    created_at: ?[]u8,
+    updated_at: ?[]u8,
+    expires_at: ?[]u8,
+    raw_json: []u8,
+
+    pub fn deinit(self: InventoryRow, allocator: Allocator) void {
+        allocator.free(self.key);
+        allocator.free(self.kind);
+        allocator.free(self.resource_id);
+        if (self.scope) |value| allocator.free(value);
+        if (self.scope_id) |value| allocator.free(value);
+        if (self.name) |value| allocator.free(value);
+        if (self.status) |value| allocator.free(value);
+        if (self.category) |value| allocator.free(value);
+        if (self.domain) |value| allocator.free(value);
+        if (self.account_id) |value| allocator.free(value);
+        if (self.zone_id) |value| allocator.free(value);
+        if (self.related_id) |value| allocator.free(value);
+        if (self.flag) |value| allocator.free(value);
+        if (self.created_at) |value| allocator.free(value);
+        if (self.updated_at) |value| allocator.free(value);
+        if (self.expires_at) |value| allocator.free(value);
+        allocator.free(self.raw_json);
+    }
+};
+
 pub fn Rows(comptime T: type) type {
     return struct {
         items: []T,
@@ -109,6 +149,7 @@ pub const ZoneRows = Rows(ZoneRow);
 pub const DnsRecordRows = Rows(DnsRecordRow);
 pub const IdRows = Rows(IdRow);
 pub const ResourceRows = Rows(ResourceRow);
+pub const InventoryRows = Rows(InventoryRow);
 
 pub fn parseAccountRows(gpa: Allocator, body: []const u8) !AccountRows {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(AccountRow);
@@ -278,6 +319,16 @@ pub fn parseResourceRows(gpa: Allocator, kind: []const u8, scope: ?[]const u8, s
     return .{ .items = try rows.toOwnedSlice(gpa) };
 }
 
+pub fn parseInventoryRows(gpa: Allocator, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, body: []const u8) !InventoryRows {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(InventoryRow);
+    defer parsed.deinit();
+
+    var rows = std.ArrayList(InventoryRow).empty;
+    errdefer deinitPartial(InventoryRow, &rows, gpa);
+    try appendInventoryRowsFromValue(gpa, &rows, kind, scope, scope_id, parsed.value);
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
 fn appendResourceRowsFromValue(gpa: Allocator, rows: *std.ArrayList(ResourceRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, value: std.json.Value) !void {
     switch (value) {
         .array => |array| {
@@ -325,6 +376,82 @@ fn appendResourceRow(gpa: Allocator, rows: *std.ArrayList(ResourceRow), kind: []
         .name = name,
         .status = status,
         .resource_type = resource_type,
+        .raw_json = raw,
+    });
+}
+
+fn appendInventoryRowsFromValue(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, value: std.json.Value) !void {
+    switch (value) {
+        .array => |array| {
+            for (array.items) |item| try appendInventoryRow(gpa, rows, kind, scope, scope_id, item);
+        },
+        .object => |object| {
+            if (object.get("result")) |result| {
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, result);
+            } else if (object.get("data")) |data| {
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, data);
+            } else {
+                try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+            }
+        },
+        else => {},
+    }
+}
+
+fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, item: std.json.Value) !void {
+    if (item != .object) return;
+    const resource_id = try resourceIdValue(gpa, item) orelse return;
+    errdefer gpa.free(resource_id);
+    const key = try resourceKey(gpa, kind, scope, scope_id, resource_id);
+    errdefer gpa.free(key);
+    const kind_owned = try gpa.dupe(u8, kind);
+    errdefer gpa.free(kind_owned);
+    const scope_owned = try dupeOptional(gpa, scope);
+    errdefer if (scope_owned) |value| gpa.free(value);
+    const scope_id_owned = try dupeOptional(gpa, scope_id);
+    errdefer if (scope_id_owned) |value| gpa.free(value);
+    const name = try resourceName(gpa, item);
+    errdefer if (name) |value| gpa.free(value);
+    const status = try resourceStatus(gpa, item);
+    errdefer if (status) |value| gpa.free(value);
+    const category = try resourceType(gpa, item);
+    errdefer if (category) |value| gpa.free(value);
+    const domain = try resourceDomain(gpa, item, name, scope, scope_id);
+    errdefer if (domain) |value| gpa.free(value);
+    const account_id = resourceAccountId(gpa, item, scope, scope_id);
+    errdefer if (account_id) |value| gpa.free(value);
+    const zone_id = resourceZoneId(gpa, item, scope, scope_id);
+    errdefer if (zone_id) |value| gpa.free(value);
+    const related_id = resourceRelatedId(gpa, item);
+    errdefer if (related_id) |value| gpa.free(value);
+    const flag = try resourceFlag(gpa, item);
+    errdefer if (flag) |value| gpa.free(value);
+    const created_at = try dupeOptional(gpa, firstStringField(item, &.{ "created_at", "created_on", "created" }));
+    errdefer if (created_at) |value| gpa.free(value);
+    const updated_at = try dupeOptional(gpa, firstStringField(item, &.{ "updated_at", "modified_on", "modified", "last_updated", "last_seen" }));
+    errdefer if (updated_at) |value| gpa.free(value);
+    const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expiration", "not_after" }));
+    errdefer if (expires_at) |value| gpa.free(value);
+    const raw = try core_json.stringifyValue(gpa, item);
+    errdefer gpa.free(raw);
+
+    try rows.append(gpa, .{
+        .key = key,
+        .kind = kind_owned,
+        .resource_id = resource_id,
+        .scope = scope_owned,
+        .scope_id = scope_id_owned,
+        .name = name,
+        .status = status,
+        .category = category,
+        .domain = domain,
+        .account_id = account_id,
+        .zone_id = zone_id,
+        .related_id = related_id,
+        .flag = flag,
+        .created_at = created_at,
+        .updated_at = updated_at,
+        .expires_at = expires_at,
         .raw_json = raw,
     });
 }
@@ -380,6 +507,106 @@ fn resourceType(gpa: Allocator, item: std.json.Value) !?[]u8 {
         if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
     }
     return null;
+}
+
+fn resourceDomain(gpa: Allocator, item: std.json.Value, name: ?[]const u8, scope: ?[]const u8, scope_id: ?[]const u8) !?[]u8 {
+    const fields = [_][]const u8{ "domain", "hostname", "zone_name", "host", "address" };
+    for (fields) |field_name| {
+        if (core_json.fieldString(item, field_name)) |value| {
+            if (isDomainLike(value)) return try gpa.dupe(u8, value);
+        }
+    }
+    if (name) |value| {
+        if (isDomainLike(value)) return try gpa.dupe(u8, value);
+    }
+    if (scope) |scope_name| {
+        if (std.mem.eql(u8, scope_name, "zone")) {
+            if (scope_id) |value| {
+                if (isDomainLike(value)) return try gpa.dupe(u8, value);
+            }
+        }
+    }
+    return null;
+}
+
+fn resourceAccountId(gpa: Allocator, item: std.json.Value, scope: ?[]const u8, scope_id: ?[]const u8) ?[]u8 {
+    if (core_json.fieldAnyString(gpa, item, "account_id")) |value| return value;
+    if (core_json.field(item, "account")) |account| {
+        if (core_json.fieldAnyString(gpa, account, "id")) |value| return value;
+    }
+    if (scope) |scope_name| {
+        if (std.mem.eql(u8, scope_name, "account")) {
+            if (scope_id) |value| return gpa.dupe(u8, value) catch null;
+        }
+    }
+    return null;
+}
+
+fn resourceZoneId(gpa: Allocator, item: std.json.Value, scope: ?[]const u8, scope_id: ?[]const u8) ?[]u8 {
+    if (core_json.fieldAnyString(gpa, item, "zone_id")) |value| return value;
+    if (core_json.field(item, "zone")) |zone| {
+        if (core_json.fieldAnyString(gpa, zone, "id")) |value| return value;
+    }
+    if (scope) |scope_name| {
+        if (std.mem.eql(u8, scope_name, "zone")) {
+            if (scope_id) |value| return gpa.dupe(u8, value) catch null;
+        }
+    }
+    return null;
+}
+
+fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
+    const fields = [_][]const u8{
+        "ruleset_id",
+        "rule_id",
+        "policy_id",
+        "app_id",
+        "application_id",
+        "certificate_id",
+        "custom_page_id",
+        "identity_provider_id",
+        "service_token_id",
+        "pool_id",
+        "monitor_id",
+        "profile_id",
+        "dataset_id",
+        "ray_id",
+        "version",
+        "phase",
+        "target",
+        "content",
+    };
+    for (fields) |field_name| {
+        if (core_json.fieldAnyString(gpa, item, field_name)) |value| return value;
+    }
+    return null;
+}
+
+fn resourceFlag(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    if (core_json.fieldBool(item, "enabled")) |enabled| return try gpa.dupe(u8, if (enabled) "enabled" else "disabled");
+    if (core_json.fieldBool(item, "is_enabled")) |enabled| return try gpa.dupe(u8, if (enabled) "enabled" else "disabled");
+    if (core_json.fieldBool(item, "active")) |active| return try gpa.dupe(u8, if (active) "active" else "inactive");
+    if (core_json.fieldBool(item, "paused")) |paused| return try gpa.dupe(u8, if (paused) "paused" else "active");
+    if (core_json.fieldBool(item, "proxied")) |proxied| return try gpa.dupe(u8, if (proxied) "proxied" else "dns_only");
+    if (core_json.fieldBool(item, "default")) |default| return try gpa.dupe(u8, if (default) "default" else "not_default");
+    if (core_json.fieldBool(item, "is_default")) |default| return try gpa.dupe(u8, if (default) "default" else "not_default");
+    if (core_json.fieldBool(item, "verified")) |verified| return try gpa.dupe(u8, if (verified) "verified" else "unverified");
+    if (core_json.fieldBool(item, "healthy")) |healthy| return try gpa.dupe(u8, if (healthy) "healthy" else "unhealthy");
+    return null;
+}
+
+fn firstStringField(item: std.json.Value, fields: []const []const u8) ?[]const u8 {
+    for (fields) |field_name| {
+        if (core_json.fieldString(item, field_name)) |value| return value;
+    }
+    return null;
+}
+
+fn isDomainLike(value: []const u8) bool {
+    return std.mem.indexOfScalar(u8, value, '.') != null and
+        std.mem.indexOfScalar(u8, value, '/') == null and
+        std.mem.indexOfScalar(u8, value, '?') == null and
+        std.mem.indexOfScalar(u8, value, '=') == null;
 }
 
 fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
@@ -600,4 +827,32 @@ test "parses normalized Cloudflare resource rows from result objects" {
     try std.testing.expectEqualStrings("plosca.ru", rows.items[0].name orelse "");
     try std.testing.expectEqualStrings("active", rows.items[0].status orelse "");
     try std.testing.expectEqualStrings("full", rows.items[0].resource_type orelse "");
+}
+
+test "parses typed Cloudflare inventory rows from broad result shapes" {
+    const allocator = std.testing.allocator;
+    var rows = try parseInventoryRows(allocator, "cloudflare-inventory", "zone", "zone-1",
+        \\{"result":[
+        \\  {"id":"dns-1","zone_id":"zone-1","name":"plosca.ru","type":"A","content":"76.13.130.170","proxied":false,"modified_on":"2026-06-17T00:00:00Z"},
+        \\  {"id":"ruleset-1","phase":"http_request_firewall_custom","kind":"zone","name":"Custom rules","last_updated":"2026-06-17T01:00:00Z"},
+        \\  {"uid":"access-app-1","domain":"ssh.plosca.ru","type":"ssh","enabled":true,"account_id":"acct-1","created_at":"2026-06-16T00:00:00Z"}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), rows.items.len);
+    try std.testing.expectEqualStrings("cloudflare-inventory|zone|zone-1|dns-1", rows.items[0].key);
+    try std.testing.expectEqualStrings("dns-1", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("A", rows.items[0].category orelse "");
+    try std.testing.expectEqualStrings("plosca.ru", rows.items[0].domain orelse "");
+    try std.testing.expectEqualStrings("zone-1", rows.items[0].zone_id orelse "");
+    try std.testing.expectEqualStrings("76.13.130.170", rows.items[0].related_id orelse "");
+    try std.testing.expectEqualStrings("dns_only", rows.items[0].flag orelse "");
+    try std.testing.expectEqualStrings("ruleset-1", rows.items[1].resource_id);
+    try std.testing.expectEqualStrings("http_request_firewall_custom", rows.items[1].status orelse "");
+    try std.testing.expectEqualStrings("zone", rows.items[1].category orelse "");
+    try std.testing.expectEqualStrings("access-app-1", rows.items[2].resource_id);
+    try std.testing.expectEqualStrings("acct-1", rows.items[2].account_id orelse "");
+    try std.testing.expectEqualStrings("ssh.plosca.ru", rows.items[2].domain orelse "");
+    try std.testing.expectEqualStrings("enabled", rows.items[2].flag orelse "");
 }

@@ -36,9 +36,10 @@ fn normalizeCloudflareRouteModels(gpa: Allocator, db: *Db, route: provider_route
     for (rows.items) |row| {
         try db.upsertCloudflareResource(row.key, row.kind, row.resource_id, row.scope, row.scope_id, row.name, row.status, row.resource_type, row.raw_json);
     }
+    const inventory_rows = try normalizeCloudflareInventoryRows(gpa, db, kind, scope.name, scope.id, redacted_body);
     return .{
         .resources = rows.items.len,
-        .typed_rows = try normalizeCloudflareTypedRows(gpa, db, route, request, redacted_body),
+        .typed_rows = inventory_rows + try normalizeCloudflareTypedRows(gpa, db, route, request, redacted_body),
     };
 }
 
@@ -78,6 +79,33 @@ fn normalizeCloudflareTypedRows(gpa: Allocator, db: *Db, route: provider_routes.
         return rows.items.len;
     }
     return 0;
+}
+
+fn normalizeCloudflareInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, redacted_body: []const u8) !usize {
+    var rows = try provider_cloudflare_models.parseInventoryRows(gpa, kind, scope, scope_id, redacted_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertCloudflareInventoryItem(
+            row.key,
+            row.kind,
+            row.resource_id,
+            row.scope,
+            row.scope_id,
+            row.name,
+            row.status,
+            row.category,
+            row.domain,
+            row.account_id,
+            row.zone_id,
+            row.related_id,
+            row.flag,
+            row.created_at,
+            row.updated_at,
+            row.expires_at,
+            row.raw_json,
+        );
+    }
+    return rows.items.len;
 }
 
 fn normalizeHostingerTypedRows(gpa: Allocator, db: *Db, route: provider_routes.Route, redacted_body: []const u8) !usize {

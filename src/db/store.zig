@@ -304,6 +304,52 @@ pub const Db = struct {
         try stepDone(stmt);
     }
 
+    pub fn upsertCloudflareInventoryItem(
+        self: *Db,
+        key: []const u8,
+        kind: []const u8,
+        resource_id: []const u8,
+        scope: ?[]const u8,
+        scope_id: ?[]const u8,
+        display_name: ?[]const u8,
+        status: ?[]const u8,
+        category: ?[]const u8,
+        domain: ?[]const u8,
+        account_id: ?[]const u8,
+        zone_id: ?[]const u8,
+        related_id: ?[]const u8,
+        flag: ?[]const u8,
+        created_at_source: ?[]const u8,
+        updated_at_source: ?[]const u8,
+        expires_at_source: ?[]const u8,
+        raw: []const u8,
+    ) !void {
+        const stmt = try self.prepare(
+            \\INSERT INTO cloudflare_inventory_items(key, kind, resource_id, scope, scope_id, display_name, status, category, domain, account_id, zone_id, related_id, flag, created_at_source, updated_at_source, expires_at_source, raw_json, updated_at)
+            \\VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            \\ON CONFLICT(key) DO UPDATE SET kind=excluded.kind, resource_id=excluded.resource_id, scope=excluded.scope, scope_id=excluded.scope_id, display_name=excluded.display_name, status=excluded.status, category=excluded.category, domain=excluded.domain, account_id=excluded.account_id, zone_id=excluded.zone_id, related_id=excluded.related_id, flag=excluded.flag, created_at_source=excluded.created_at_source, updated_at_source=excluded.updated_at_source, expires_at_source=excluded.expires_at_source, raw_json=excluded.raw_json, updated_at=CURRENT_TIMESTAMP
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, key);
+        try bindText(stmt, 2, kind);
+        try bindText(stmt, 3, resource_id);
+        try bindTextOpt(stmt, 4, scope);
+        try bindTextOpt(stmt, 5, scope_id);
+        try bindTextOpt(stmt, 6, display_name);
+        try bindTextOpt(stmt, 7, status);
+        try bindTextOpt(stmt, 8, category);
+        try bindTextOpt(stmt, 9, domain);
+        try bindTextOpt(stmt, 10, account_id);
+        try bindTextOpt(stmt, 11, zone_id);
+        try bindTextOpt(stmt, 12, related_id);
+        try bindTextOpt(stmt, 13, flag);
+        try bindTextOpt(stmt, 14, created_at_source);
+        try bindTextOpt(stmt, 15, updated_at_source);
+        try bindTextOpt(stmt, 16, expires_at_source);
+        try bindText(stmt, 17, raw);
+        try stepDone(stmt);
+    }
+
     pub fn upsertHostingerVps(self: *Db, id: []const u8, name: ?[]const u8, status: ?[]const u8, ipv4: ?[]const u8, plan: ?[]const u8, raw: []const u8) !void {
         const stmt = try self.prepare(
             \\INSERT INTO hostinger_vps(id, name, status, ipv4, plan, raw_json, updated_at)
@@ -485,6 +531,7 @@ pub const Db = struct {
         try writer.print("cloudflare_zones={d}\n", .{try self.countTable("cloudflare_zones")});
         try writer.print("cloudflare_dns_records={d}\n", .{try self.countTable("cloudflare_dns_records")});
         try writer.print("cloudflare_resources={d}\n", .{try self.countTable("cloudflare_resources")});
+        try writer.print("cloudflare_inventory_items={d}\n", .{try self.countTable("cloudflare_inventory_items")});
         try writer.print("hostinger_vps={d}\n", .{try self.countTable("hostinger_vps")});
         try writer.print("hostinger_resources={d}\n", .{try self.countTable("hostinger_resources")});
         try writer.print("hostinger_inventory_items={d}\n", .{try self.countTable("hostinger_inventory_items")});
@@ -547,6 +594,16 @@ pub const Db = struct {
             \\SELECT kind || '/' || resource_id,
             \\       trim(COALESCE(scope,'') || ' ' || COALESCE(scope_id,'') || ' ' || COALESCE(status,'') || ' ' || COALESCE(resource_type,'') || ' ' || COALESCE(name,''))
             \\FROM cloudflare_resources
+            \\ORDER BY updated_at DESC, kind, resource_id
+            \\LIMIT 200
+        );
+    }
+
+    pub fn cloudflareInventoryItemList(self: *Db, gpa: Allocator) !NameValueRows {
+        return try self.nameValueRows(gpa,
+            \\SELECT kind || '/' || resource_id,
+            \\       trim(COALESCE(scope,'') || ' ' || COALESCE(scope_id,'') || ' ' || COALESCE(status,'') || ' ' || COALESCE(flag,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(domain,'') || ' ' || COALESCE(display_name,'') || ' ' || COALESCE(related_id,''))
+            \\FROM cloudflare_inventory_items
             \\ORDER BY updated_at DESC, kind, resource_id
             \\LIMIT 200
         );
@@ -831,10 +888,10 @@ pub fn columnText(stmt: *sqlite.sqlite3_stmt, idx: c_int) ?[]const u8 {
 
 fn isKnownTable(table: []const u8) bool {
     const known = [_][]const u8{
-        "snapshots",            "provider_raw",    "cloudflare_accounts", "cloudflare_zones",    "cloudflare_dns_records",
-        "cloudflare_resources", "hostinger_vps",   "hostinger_metrics",   "hostinger_resources", "hostinger_inventory_items",
-        "caddy_sites",          "caddy_upstreams", "projects",            "system_metrics",      "services",
-        "sockets",              "containers",      "audit_events",        "settings",
+        "snapshots",                 "provider_raw",               "cloudflare_accounts", "cloudflare_zones",  "cloudflare_dns_records",
+        "cloudflare_resources",      "cloudflare_inventory_items", "hostinger_vps",       "hostinger_metrics", "hostinger_resources",
+        "hostinger_inventory_items", "caddy_sites",                "caddy_upstreams",     "projects",          "system_metrics",
+        "services",                  "sockets",                    "containers",          "audit_events",      "settings",
     };
     for (known) |name| if (std.mem.eql(u8, table, name)) return true;
     return false;
