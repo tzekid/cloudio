@@ -222,6 +222,7 @@ pub const Route = struct {
     }
 
     pub fn renderPath(self: Route, gpa: Allocator, params: []const PathParam) ![]u8 {
+        try validatePathParams(self.path_params, params);
         return try renderTemplatePath(gpa, self.path_template, params);
     }
 
@@ -454,6 +455,15 @@ pub fn appendRouteQuery(gpa: Allocator, base: []const u8, allowed_params: []cons
         try out.writer.writeAll(escaped_value);
     }
     return try out.toOwnedSlice();
+}
+
+fn validatePathParams(allowed_params: []const RouteParam, params: []const PathParam) !void {
+    for (params) |param| {
+        if (!containsRouteParamName(allowed_params, param.name)) return error.UnknownRouteParameter;
+    }
+    for (allowed_params) |allowed| {
+        if (allowed.required and findParam(params, allowed.name) == null) return error.MissingRouteParameter;
+    }
 }
 
 fn appendProvider(gpa: Allocator, provider: Provider, text: []const u8, rows: *std.ArrayList(Route)) !void {
@@ -705,6 +715,32 @@ test "finds routes by operation id and template without loading full tables" {
     try std.testing.expect(hostinger_route.hasRequiredQueryParameters());
 }
 
+test "generated path parameter metadata matches route templates" {
+    const allocator = std.testing.allocator;
+    var routes = try loadAll(std.testing.io, allocator, .{});
+    defer routes.deinit(allocator);
+
+    for (routes.items) |route| {
+        const names = try route.parameterNames(allocator);
+        defer freeParameterNames(allocator, names);
+
+        for (route.path_params) |param| {
+            try std.testing.expect(param.required);
+            try std.testing.expect(containsParamName(names, param.name));
+        }
+        for (names) |name| {
+            try std.testing.expect(containsRouteParamName(route.path_params, name));
+        }
+    }
+
+    const cloudflare_route = routes.findByOperationId("access-applications-get-an-access-application") orelse return error.TestExpectedRoute;
+    try expectRouteParam(cloudflare_route.path_params, "account_id", true);
+    try expectRouteParam(cloudflare_route.path_params, "app_id", true);
+
+    const hostinger_route = routes.findByOperationId("VPS_getMetricsV1") orelse return error.TestExpectedRoute;
+    try expectRouteParam(hostinger_route.path_params, "virtualMachineId", true);
+}
+
 test "extracts required path parameters and renders escaped route paths" {
     const allocator = std.testing.allocator;
 
@@ -732,6 +768,29 @@ test "extracts required path parameters and renders escaped route paths" {
     });
     defer allocator.free(url);
     try std.testing.expectEqualStrings("https://example.test/accounts/acct%2F1/access/apps/app%201", url);
+}
+
+test "validates required and known route path parameters" {
+    const allocator = std.testing.allocator;
+
+    const route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "access-applications-get-an-access-application")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    try std.testing.expectError(
+        error.MissingRouteParameter,
+        route.renderPath(allocator, &.{.{ .name = "account_id", .value = "acct" }}),
+    );
+    try std.testing.expectError(
+        error.UnknownRouteParameter,
+        route.renderPath(
+            allocator,
+            &.{
+                .{ .name = "account_id", .value = "acct" },
+                .{ .name = "app_id", .value = "app" },
+                .{ .name = "extra", .value = "ignored" },
+            },
+        ),
+    );
 }
 
 test "loads request body metadata from generated manifests" {
