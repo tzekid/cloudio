@@ -142,6 +142,14 @@ pub const RouteParam = struct {
     style: ?[]u8,
     explode: ?bool,
     schema: ParamSchema,
+
+    pub fn isArray(self: RouteParam) bool {
+        return containsString(self.schema.types, "array");
+    }
+
+    pub fn queryExplodes(self: RouteParam) bool {
+        return self.explode orelse true;
+    }
 };
 
 pub const ParamSchema = struct {
@@ -567,13 +575,19 @@ pub fn appendRouteQuery(gpa: Allocator, base: []const u8, allowed_params: []cons
     defer out.deinit();
     try out.writer.writeAll(base);
     var wrote_any = std.mem.indexOfScalar(u8, base, '?') != null;
-    for (params) |param| {
+    for (params, 0..) |param, index| {
+        const route_param = findRouteParamConst(allowed_params, param.name) orelse return error.UnknownRouteQueryParameter;
+        if (route_param.isArray() and !route_param.queryExplodes() and firstQueryParamIndex(params, param.name) != index) continue;
+
         try out.writer.writeByte(if (wrote_any) '&' else '?');
         wrote_any = true;
 
         const escaped_name = try queryEscape(gpa, param.name);
         defer gpa.free(escaped_name);
-        const escaped_value = try queryEscape(gpa, param.value);
+        const escaped_value = if (route_param.isArray() and !route_param.queryExplodes())
+            try joinedEscapedQueryParamValues(gpa, params, param.name)
+        else
+            try queryEscape(gpa, param.value);
         defer gpa.free(escaped_value);
 
         try out.writer.writeAll(escaped_name);
@@ -581,6 +595,28 @@ pub fn appendRouteQuery(gpa: Allocator, base: []const u8, allowed_params: []cons
         try out.writer.writeAll(escaped_value);
     }
     return try out.toOwnedSlice();
+}
+
+fn joinedEscapedQueryParamValues(gpa: Allocator, params: []const QueryParam, name: []const u8) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    var wrote_any = false;
+    for (params) |param| {
+        if (!std.mem.eql(u8, param.name, name)) continue;
+        if (wrote_any) try out.writer.writeByte(',');
+        wrote_any = true;
+        const escaped = try queryEscape(gpa, param.value);
+        defer gpa.free(escaped);
+        try out.writer.writeAll(escaped);
+    }
+    return try out.toOwnedSlice();
+}
+
+fn firstQueryParamIndex(params: []const QueryParam, name: []const u8) usize {
+    for (params, 0..) |param, index| {
+        if (std.mem.eql(u8, param.name, name)) return index;
+    }
+    return params.len;
 }
 
 fn validatePathParams(allowed_params: []const RouteParam, params: []const PathParam) !void {
@@ -865,6 +901,13 @@ fn containsRouteParamName(params: []const RouteParam, candidate: []const u8) boo
     return false;
 }
 
+fn findRouteParamConst(params: []const RouteParam, candidate: []const u8) ?RouteParam {
+    for (params) |param| {
+        if (std.mem.eql(u8, param.name, candidate)) return param;
+    }
+    return null;
+}
+
 fn containsRouteParamNameIgnoreCase(params: []const RouteParam, candidate: []const u8) bool {
     for (params) |param| {
         if (std.ascii.eqlIgnoreCase(param.name, candidate)) return true;
@@ -903,6 +946,13 @@ fn alternativeAcceptsSchemeSet(alternative: SecurityAlternative, schemes: []cons
 fn containsScheme(schemes: []const []const u8, candidate: []const u8) bool {
     for (schemes) |scheme| {
         if (std.mem.eql(u8, scheme, candidate)) return true;
+    }
+    return false;
+}
+
+fn containsString(items: []const []u8, candidate: []const u8) bool {
+    for (items) |item| {
+        if (std.mem.eql(u8, item, candidate)) return true;
     }
     return false;
 }
@@ -1308,6 +1358,48 @@ test "renders validated query parameters for route paths and urls" {
     );
     defer allocator.free(url);
     try std.testing.expectEqualStrings("https://example.test/api/vps/v1/virtual-machines/vm%2F1/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z", url);
+}
+
+test "renders array query parameters according to OpenAPI explode metadata" {
+    const allocator = std.testing.allocator;
+
+    const comma_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "d1-get-database")) orelse return error.TestExpectedRoute;
+    defer comma_route.deinit(allocator);
+    const fields = findRouteParam(comma_route.query_params, "fields") orelse return error.TestExpectedRouteParam;
+    try std.testing.expect(fields.isArray());
+    try std.testing.expectEqual(false, fields.queryExplodes());
+
+    const comma_path = try comma_route.renderRequestPath(allocator, .{
+        .path_params = &.{
+            .{ .name = "account_id", .value = "acct" },
+            .{ .name = "database_id", .value = "db" },
+        },
+        .query_params = &.{
+            .{ .name = "fields", .value = "name" },
+            .{ .name = "fields", .value = "uuid" },
+        },
+    });
+    defer allocator.free(comma_path);
+    try std.testing.expectEqualStrings("/accounts/acct/d1/database/db?fields=name,uuid", comma_path);
+
+    const exploded_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "hosting_listNodeJSBuildsV1")) orelse return error.TestExpectedRoute;
+    defer exploded_route.deinit(allocator);
+    const states = findRouteParam(exploded_route.query_params, "states") orelse return error.TestExpectedRouteParam;
+    try std.testing.expect(states.isArray());
+    try std.testing.expect(states.queryExplodes());
+
+    const exploded_path = try exploded_route.renderRequestPath(allocator, .{
+        .path_params = &.{
+            .{ .name = "username", .value = "user" },
+            .{ .name = "domain", .value = "example.com" },
+        },
+        .query_params = &.{
+            .{ .name = "states", .value = "pending" },
+            .{ .name = "states", .value = "running" },
+        },
+    });
+    defer allocator.free(exploded_path);
+    try std.testing.expectEqualStrings("/api/hosting/v1/accounts/user/websites/example.com/nodejs/builds?states=pending&states=running", exploded_path);
 }
 
 test "parses route parameter assignments without allocation" {

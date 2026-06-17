@@ -559,6 +559,31 @@ test "generic dispatch route planner reports anonymous security metadata" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 
+test "generic dispatch route planner uses OpenAPI query array serialization" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "d1-get-database")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    const plan = try planRouteJsonRequest(
+        allocator,
+        route,
+        .{
+            .path_params = &.{
+                .{ .name = "account_id", .value = "acct" },
+                .{ .name = "database_id", .value = "db" },
+            },
+            .query_params = &.{
+                .{ .name = "fields", .value = "name" },
+                .{ .name = "fields", .value = "uuid" },
+            },
+        },
+    );
+    defer allocator.free(plan);
+
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct/d1/database/db?fields=name,uuid\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"query_param_shapes\":[{\"name\":\"fields\",\"required\":false,\"style\":\"form\",\"explode\":false") != null);
+}
+
 test "generic dispatch route planner validates read route request input" {
     const allocator = std.testing.allocator;
     const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getMetricsV1")) orelse return error.TestExpectedRoute;

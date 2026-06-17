@@ -171,7 +171,7 @@ generate_manifest() {
           name: .name,
           required: (.required // false),
           style: (.style // null),
-          explode: (.explode // null),
+          explode: (if has("explode") then .explode else null end),
           schema: parameter_schema($root; .)
         });
 
