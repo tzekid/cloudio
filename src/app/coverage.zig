@@ -1,5 +1,6 @@
 const std = @import("std");
 const core_json = @import("core_json");
+const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -181,71 +182,34 @@ pub const RouteFilter = struct {
     tag_query: ?[]const u8 = null,
     support: ?SupportFilter = null,
     mode: ?ModeFilter = null,
+    detail: bool = false,
 };
 
 pub const CoverageRoute = struct {
-    provider: []const u8,
-    tag: []u8,
-    method: []u8,
-    path: []u8,
-    operation_id: ?[]u8,
-    support: []u8,
-    mode: []u8,
+    route: provider_routes.Route,
     tests: []u8,
-    deprecated: bool,
     notes: []u8,
 
     pub fn init(gpa: Allocator, provider: []const u8, value: std.json.Value) !CoverageRoute {
-        const tag = core_json.fieldString(value, "tag") orelse return error.InvalidCoverageRow;
-        const method = core_json.fieldString(value, "method") orelse return error.InvalidCoverageRow;
-        const path = core_json.fieldString(value, "path") orelse return error.InvalidCoverageRow;
-        const operation_id = core_json.fieldString(value, "operation_id");
-        const support = core_json.fieldString(value, "support") orelse return error.InvalidCoverageRow;
-        const mode = core_json.fieldString(value, "mode") orelse return error.InvalidCoverageRow;
+        const expected_provider = provider_routes.Provider.parse(provider) orelse return error.InvalidCoverageProvider;
+        const route = try provider_routes.Route.init(gpa, expected_provider, value);
+        errdefer route.deinit(gpa);
         const tests = core_json.fieldString(value, "tests") orelse return error.InvalidCoverageRow;
-        const deprecated = core_json.fieldBool(value, "deprecated") orelse return error.InvalidCoverageRow;
         const notes = core_json.fieldString(value, "notes") orelse return error.InvalidCoverageRow;
-        _ = indexOfName(support_names[0..], support) orelse return error.InvalidCoverageSupport;
-        _ = indexOfName(mode_names[0..], mode) orelse return error.InvalidCoverageMode;
-
-        const tag_owned = try gpa.dupe(u8, tag);
-        errdefer gpa.free(tag_owned);
-        const method_owned = try gpa.dupe(u8, method);
-        errdefer gpa.free(method_owned);
-        const path_owned = try gpa.dupe(u8, path);
-        errdefer gpa.free(path_owned);
-        const operation_id_owned = if (operation_id) |id| try gpa.dupe(u8, id) else null;
-        errdefer if (operation_id_owned) |id| gpa.free(id);
-        const support_owned = try gpa.dupe(u8, support);
-        errdefer gpa.free(support_owned);
-        const mode_owned = try gpa.dupe(u8, mode);
-        errdefer gpa.free(mode_owned);
         const tests_owned = try gpa.dupe(u8, tests);
         errdefer gpa.free(tests_owned);
         const notes_owned = try gpa.dupe(u8, notes);
         errdefer gpa.free(notes_owned);
 
         return .{
-            .provider = provider,
-            .tag = tag_owned,
-            .method = method_owned,
-            .path = path_owned,
-            .operation_id = operation_id_owned,
-            .support = support_owned,
-            .mode = mode_owned,
+            .route = route,
             .tests = tests_owned,
-            .deprecated = deprecated,
             .notes = notes_owned,
         };
     }
 
     pub fn deinit(self: CoverageRoute, gpa: Allocator) void {
-        gpa.free(self.tag);
-        gpa.free(self.method);
-        gpa.free(self.path);
-        if (self.operation_id) |id| gpa.free(id);
-        gpa.free(self.support);
-        gpa.free(self.mode);
+        self.route.deinit(gpa);
         gpa.free(self.tests);
         gpa.free(self.notes);
     }
@@ -259,7 +223,7 @@ pub const CoverageRoutes = struct {
         gpa.free(self.items);
     }
 
-    pub fn writeText(self: CoverageRoutes, writer: anytype) !void {
+    pub fn writeText(self: CoverageRoutes, writer: anytype, detail: bool) !void {
         try writer.writeAll("Cloudio provider coverage routes\n");
         if (self.items.len == 0) {
             try writer.writeAll("no matching routes\n");
@@ -269,19 +233,21 @@ pub const CoverageRoutes = struct {
         var current_provider: ?[]const u8 = null;
         var current_tag: ?[]const u8 = null;
         for (self.items) |row| {
-            if (current_provider == null or !std.mem.eql(u8, current_provider.?, row.provider)) {
-                current_provider = row.provider;
+            const provider_name = row.route.provider.name();
+            if (current_provider == null or !std.mem.eql(u8, current_provider.?, provider_name)) {
+                current_provider = provider_name;
                 current_tag = null;
-                try writer.print("\n{s}\n", .{row.provider});
+                try writer.print("\n{s}\n", .{provider_name});
             }
-            if (current_tag == null or !std.mem.eql(u8, current_tag.?, row.tag)) {
-                current_tag = row.tag;
-                try writer.print("  {s}\n", .{row.tag});
+            if (current_tag == null or !std.mem.eql(u8, current_tag.?, row.route.tag)) {
+                current_tag = row.route.tag;
+                try writer.print("  {s}\n", .{row.route.tag});
             }
-            try writer.print("    {s} {s} | support={s} mode={s} tests={s}", .{ row.method, row.path, row.support, row.mode, row.tests });
-            if (row.deprecated) try writer.writeAll(" deprecated=true");
-            if (row.operation_id) |id| try writer.print(" op={s}", .{id});
+            try writer.print("    {s} {s} | support={s} mode={s} tests={s}", .{ row.route.method.name(), row.route.path_template, @tagName(row.route.support), @tagName(row.route.mode), row.tests });
+            if (row.route.deprecated) try writer.writeAll(" deprecated=true");
+            if (row.route.operation_id) |id| try writer.print(" op={s}", .{id});
             try writer.writeByte('\n');
+            if (detail) try writeRouteDetail(writer, row.route);
             if (row.notes.len != 0) try writer.print("      notes: {s}\n", .{row.notes});
         }
     }
@@ -392,7 +358,7 @@ pub fn loadRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger
 pub fn writeRoutesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: RouteFilter, writer: anytype) !void {
     var routes = try loadRoutes(io, gpa, paths, filter);
     defer routes.deinit(gpa);
-    try routes.writeText(writer);
+    try routes.writeText(writer, filter.detail);
 }
 
 fn summarizeProvider(gpa: Allocator, provider: []const u8, text: []const u8, summary: *ProviderSummary) !void {
@@ -530,6 +496,56 @@ fn indexOfName(names: []const []const u8, value: []const u8) ?usize {
     return null;
 }
 
+fn writeRouteDetail(writer: anytype, route: provider_routes.Route) !void {
+    try writer.writeAll("      path_params: ");
+    try writeRouteParamList(writer, route.path_params);
+    try writer.writeByte('\n');
+    try writer.writeAll("      query_params: ");
+    try writeRouteParamList(writer, route.query_params);
+    try writer.writeByte('\n');
+    try writer.print("      request_body: required={}", .{route.request_body.required});
+    try writer.writeAll(" content_types=");
+    try writeStringList(writer, route.request_body.content_types);
+    try writer.writeAll(" schema_refs=");
+    try writeStringList(writer, route.request_body.schema_refs);
+    try writer.writeByte('\n');
+    try writer.writeAll("      responses:");
+    if (route.responses.len == 0) {
+        try writer.writeAll(" none\n");
+        return;
+    }
+    try writer.writeByte('\n');
+    for (route.responses) |response| {
+        try writer.print("        {s} content_types=", .{response.status});
+        try writeStringList(writer, response.content_types);
+        try writer.writeAll(" schema_refs=");
+        try writeStringList(writer, response.schema_refs);
+        try writer.writeByte('\n');
+    }
+}
+
+fn writeRouteParamList(writer: anytype, params: []const provider_routes.RouteParam) !void {
+    if (params.len == 0) {
+        try writer.writeAll("none");
+        return;
+    }
+    for (params, 0..) |param, index| {
+        if (index != 0) try writer.writeAll(", ");
+        try writer.print("{s}({s})", .{ param.name, if (param.required) "required" else "optional" });
+    }
+}
+
+fn writeStringList(writer: anytype, values: anytype) !void {
+    if (values.len == 0) {
+        try writer.writeAll("none");
+        return;
+    }
+    for (values, 0..) |value, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.writeAll(value);
+    }
+}
+
 test "summarizes provider coverage jsonl by status and mode" {
     const allocator = std.testing.allocator;
     const cloudflare =
@@ -596,35 +612,45 @@ test "summarizes provider coverage by tag with provider filters" {
 test "lists provider coverage routes by provider and tag query" {
     const allocator = std.testing.allocator;
     const cloudflare =
-        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ok"}
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ok"}
         \\
     ;
     const hostinger =
-        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"GET","path":"/api/vps/v1/virtual-machines","operation_id":"vps_getVirtualMachineListV1","support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"POC reads VPS inventory."}
-        \\{"provider":"hostinger","tag":"Billing: Catalog","method":"GET","path":"/api/billing/v1/catalog","operation_id":"billing_getCatalogItemListV1","support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"POC reads billing catalog."}
-        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"POST","path":"/api/vps/v1/virtual-machines","operation_id":"vps_createVirtualMachineV1","support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"No writes in POC."}
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/metrics","operation_id":"VPS_getMetricsV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[{"name":"date_from","required":true},{"name":"date_to","required":true}],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/VPS.V1.VirtualMachine.MetricsResource"]},{"status":"401","content_types":["application/json"],"schema_refs":[]}],"support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"POC reads VPS metrics."}
+        \\{"provider":"hostinger","tag":"Billing: Catalog","method":"GET","path":"/api/billing/v1/catalog","operation_id":"billing_getCatalogItemListV1","path_params":[],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/Billing.V1.Catalog.CatalogItemCollection"]}],"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"POC reads billing catalog."}
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"POST","path":"/api/vps/v1/virtual-machines","operation_id":"vps_createVirtualMachineV1","path_params":[],"query_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":["#/components/schemas/VPS.V1.VirtualMachine.PurchaseRequest"]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":["#/components/schemas/Billing.V1.Order.VirtualMachineOrderResource"]}],"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"No writes in POC."}
         \\
     ;
 
     var routes = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .tag_query = "vps", .support = .partial, .mode = .read });
     defer routes.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), routes.items.len);
-    try std.testing.expectEqualStrings("hostinger", routes.items[0].provider);
-    try std.testing.expectEqualStrings("VPS: Virtual machine", routes.items[0].tag);
-    try std.testing.expectEqualStrings("GET", routes.items[0].method);
+    try std.testing.expectEqualStrings("hostinger", routes.items[0].route.provider.name());
+    try std.testing.expectEqualStrings("VPS: Virtual machine", routes.items[0].route.tag);
+    try std.testing.expectEqual(provider_routes.Method.GET, routes.items[0].route.method);
 
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
-    try routes.writeText(&out.writer);
+    try routes.writeText(&out.writer, false);
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage routes\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/vps/v1/virtual-machines | support=partial mode=read") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/vps/v1/virtual-machines/{virtualMachineId}/metrics | support=partial mode=read") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Billing: Catalog") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "POST /api/vps/v1/virtual-machines") == null);
+
+    var detail_out = std.Io.Writer.Allocating.init(allocator);
+    defer detail_out.deinit();
+    try routes.writeText(&detail_out.writer, true);
+    const detail_text = try detail_out.toOwnedSlice();
+    defer allocator.free(detail_text);
+    try std.testing.expect(std.mem.indexOf(u8, detail_text, "path_params: virtualMachineId(required)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail_text, "query_params: date_from(required), date_to(required)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail_text, "request_body: required=false content_types=none schema_refs=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail_text, "200 content_types=application/json schema_refs=#/components/schemas/VPS.V1.VirtualMachine.MetricsResource") != null);
 
     var mutations = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .support = .unsafe_mutation, .mode = .dry_run });
     defer mutations.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), mutations.items.len);
-    try std.testing.expectEqualStrings("POST", mutations.items[0].method);
+    try std.testing.expectEqual(provider_routes.Method.POST, mutations.items[0].route.method);
 }

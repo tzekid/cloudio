@@ -49,6 +49,8 @@ fn parseRoutes(args: []const []const u8) Command {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--support" };
             filter.support = app_coverage.SupportFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.eql(u8, arg, "--detail") or std.mem.eql(u8, arg, "--details")) {
+            filter.detail = true;
         } else if (std.mem.startsWith(u8, arg, "--support=")) {
             const value = arg["--support=".len..];
             filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
@@ -124,17 +126,19 @@ test "coverage command parser defaults to summary" {
             try std.testing.expect(filter.tag_query == null);
             try std.testing.expect(filter.support == null);
             try std.testing.expect(filter.mode == null);
+            try std.testing.expect(!filter.detail);
         },
         else => return error.ExpectedCoverageRoutes,
     }
 
-    const hostinger_routes_args = [_][]const u8{ "routes", "hostinger", "VPS", "--support", "partial", "--mode=read" };
+    const hostinger_routes_args = [_][]const u8{ "routes", "hostinger", "VPS", "--support", "partial", "--mode=read", "--detail" };
     switch (parseCommand(hostinger_routes_args[0..])) {
         .routes => |filter| {
             try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, filter.provider);
             try std.testing.expectEqualStrings("VPS", filter.tag_query orelse "");
             try std.testing.expectEqual(app_coverage.SupportFilter.partial, filter.support.?);
             try std.testing.expectEqual(app_coverage.ModeFilter.read, filter.mode.?);
+            try std.testing.expect(filter.detail);
         },
         else => return error.ExpectedCoverageRoutes,
     }
