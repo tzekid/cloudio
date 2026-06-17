@@ -185,6 +185,18 @@ pub fn build(b: *std.Build) void {
             .{ .name = "net_pagination", .module = net_pagination_mod },
         },
     });
+    const provider_dispatch_mod = b.createModule(.{
+        .root_source_file = b.path("src/providers/dispatch.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "net_http", .module = net_http_mod },
+            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
+            .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
     const collector_hostinger_mod = b.createModule(.{
         .root_source_file = b.path("src/collectors/hostinger.zig"),
         .target = target,
@@ -369,6 +381,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "net_http", .module = net_http_mod },
             .{ .name = "net_pagination", .module = net_pagination_mod },
+            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
             .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
@@ -520,6 +533,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, core_time_mod);
     addModuleTest(b, test_step, net_http_mod);
     addModuleTest(b, test_step, net_pagination_mod);
+    addModuleTest(b, test_step, provider_dispatch_mod);
     addModuleTest(b, test_step, provider_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_mod);
     addModuleTest(b, test_step, provider_cloudflare_models_mod);

@@ -16,7 +16,7 @@ zig build coverage-check
 
 `cloudio coverage` reads the checked-in generated manifests and prints local support/mode counts. `cloudio coverage tags [all|cloudflare|hostinger]` groups those counts by upstream tag so provider expansions can be reviewed by tag group. `cloudio coverage routes [all|cloudflare|hostinger] [tag-query] [--support <status>] [--mode <mode>]` lists the exact manifest routes for a provider, optional tag substring, and optional support/mode filters before implementation work begins. These commands do not fetch upstream specs. Use `zig build coverage-check` when you need to confirm those generated manifests still match the latest official OpenAPI sources.
 
-`src/providers/routes.zig` also consumes these generated JSONL manifests as the provider-neutral route metadata source. It provides lookup by operation ID or method/path template, route support/mode/deprecation state, required path-parameter extraction, and escaped path/URL rendering for Cloudflare and Hostinger without invoking HTTP.
+`src/providers/routes.zig` also consumes these generated JSONL manifests as the provider-neutral route metadata source. It provides lookup by operation ID or method/path template, route support/mode/deprecation state, required path-parameter extraction, and escaped path/URL rendering for Cloudflare and Hostinger without invoking HTTP. `src/providers/dispatch.zig` uses that metadata to execute generic `GET`/`read` calls through provider auth and to render `will_execute:false` dry-run plans for mutation routes.
 
 The manifest is intentionally conservative:
 
