@@ -54,6 +54,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandCloudforceOneRules(ctx, args);
     } else if (std.mem.eql(u8, sub, "ip-access") or std.mem.eql(u8, sub, "access-rules")) {
         try commandIpAccessRules(ctx, args);
+    } else if (app_cloudflare.ZoneLegacyRuleResource.parse(sub)) |resource| {
+        try commandZoneLegacyRules(ctx, args, resource);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -95,6 +97,7 @@ fn commandDryRun(ctx: Context, args: []const []const u8) !void {
     if (std.mem.eql(u8, args[1], "rulesets") or std.mem.eql(u8, args[1], "ruleset")) return try commandDryRunRulesets(ctx, args);
     if (std.mem.eql(u8, args[1], "cloudforce-one-rules") or std.mem.eql(u8, args[1], "cf1-rules")) return try commandDryRunCloudforceOneRules(ctx, args);
     if (std.mem.eql(u8, args[1], "ip-access") or std.mem.eql(u8, args[1], "access-rules")) return try commandDryRunIpAccessRules(ctx, args);
+    if (app_cloudflare.ZoneLegacyRuleResource.parse(args[1])) |resource| return try commandDryRunZoneLegacyRules(ctx, args, resource);
     std.debug.print("unknown cloudflare dry-run target: {s}\n", .{args[1]});
 }
 
@@ -582,6 +585,33 @@ fn commandDryRunIpAccessRules(ctx: Context, args: []const []const u8) !void {
     cli_render.printOutput(ctx.gpa, try app_cloudflare.planIpAccessRuleMutation(appContext(ctx), endpoint, mutation_args));
 }
 
+fn commandDryRunZoneLegacyRules(ctx: Context, args: []const []const u8, resource: app_cloudflare.ZoneLegacyRuleResource) !void {
+    if (args.len < 4) {
+        std.debug.print("operation and zone id required for dry-run {s}\n", .{resource.commandName()});
+        return;
+    }
+    const endpoint = app_cloudflare.ZoneLegacyRuleMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown {s} dry-run operation: {s}\n", .{ resource.commandName(), args[2] });
+        return;
+    };
+    if (!endpoint.supports(resource)) {
+        std.debug.print("{s} dry-run operation is not present in the current Cloudflare API schema: {s}\n", .{ resource.commandName(), endpoint.commandName() });
+        return;
+    }
+    var mutation_args: app_cloudflare.ZoneLegacyRuleMutationArgs = .{
+        .resource = resource,
+        .zone_id = args[3],
+    };
+    if (endpoint.requiresRuleId()) {
+        if (args.len < 5) {
+            std.debug.print("{s} id required for dry-run {s} {s}\n", .{ resource.idLabel(), resource.commandName(), endpoint.commandName() });
+            return;
+        }
+        mutation_args.rule_id = args[4];
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planZoneLegacyRuleMutation(appContext(ctx), endpoint, mutation_args));
+}
+
 fn commandDns(ctx: Context, args: []const []const u8) !void {
     if (args.len == 1) {
         cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
@@ -943,6 +973,27 @@ fn commandIpAccessRules(ctx: Context, args: []const []const u8) !void {
     }
 
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectIpAccessRuleEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+}
+
+fn commandZoneLegacyRules(ctx: Context, args: []const []const u8, resource: app_cloudflare.ZoneLegacyRuleResource) !void {
+    if (args.len < 3) {
+        std.debug.print("{s} list|show command and zone id required\n", .{resource.commandName()});
+        return;
+    }
+    const endpoint = app_cloudflare.ZoneLegacyRuleReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown {s} command: {s}\n", .{ resource.commandName(), args[1] });
+        return;
+    };
+    const zone_id = args[2];
+    var rule_id: ?[]const u8 = null;
+    if (endpoint.requiresRuleId()) {
+        if (args.len < 4) {
+            std.debug.print("{s} id required for {s} {s}\n", .{ resource.idLabel(), resource.commandName(), endpoint.commandName() });
+            return;
+        }
+        rule_id = args[3];
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneLegacyRuleEndpoint(appContext(ctx), zone_id, resource, endpoint, rule_id));
 }
 
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {

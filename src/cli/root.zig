@@ -146,6 +146,8 @@ fn usage() void {
         \\  cloudio cloudflare ip-access user list [key=value...]|user show <rule-id>
         \\  cloudio cloudflare ip-access account list <account-id> [key=value...]|account show <account-id> <rule-id>
         \\  cloudio cloudflare ip-access zone list <zone-id> [key=value...]
+        \\  cloudio cloudflare page-rules|ua-rules|zone-lockdown list <zone-id>
+        \\  cloudio cloudflare page-rules|ua-rules|zone-lockdown show <zone-id> <rule-id>
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>
@@ -183,6 +185,8 @@ fn usage() void {
         \\  cloudio cloudflare dry-run ip-access user create|user update|delete <rule-id>
         \\  cloudio cloudflare dry-run ip-access account|zone create <scope-id>
         \\  cloudio cloudflare dry-run ip-access account|zone update|delete <scope-id> <rule-id>
+        \\  cloudio cloudflare dry-run page-rules create <zone-id>|update|edit|delete <zone-id> <rule-id>
+        \\  cloudio cloudflare dry-run ua-rules|zone-lockdown create <zone-id>|update|delete <zone-id> <rule-id>
         \\  cloudio cloudflare dry-run token create
         \\  cloudio cloudflare dry-run token delete|update|roll <token-id>
         \\  cloudio cloudflare dry-run account create|batch-move

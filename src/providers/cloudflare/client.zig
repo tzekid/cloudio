@@ -226,6 +226,12 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getZoneLegacyRuleEndpoint(self: Client, io: Io, gpa: Allocator, zone_id: []const u8, resource: ZoneLegacyRuleResource, endpoint: ZoneLegacyRuleReadEndpoint, rule_id: ?[]const u8) !net_http.Response {
+        const url = try zoneLegacyRuleReadUrl(gpa, self.base_url_override, zone_id, resource, endpoint, rule_id);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -2805,6 +2811,232 @@ pub const IpAccessRuleMutationArgs = struct {
     rule_id: ?[]const u8 = null,
 };
 
+pub const ZoneLegacyRuleResource = enum {
+    page_rules,
+    ua_rules,
+    zone_lockdown,
+
+    pub fn parse(value: []const u8) ?ZoneLegacyRuleResource {
+        if (std.mem.eql(u8, value, "page-rules") or std.mem.eql(u8, value, "page-rule") or std.mem.eql(u8, value, "pagerules")) return .page_rules;
+        if (std.mem.eql(u8, value, "ua-rules") or std.mem.eql(u8, value, "ua-rule") or std.mem.eql(u8, value, "user-agent-rules") or std.mem.eql(u8, value, "user-agent-blocking")) return .ua_rules;
+        if (std.mem.eql(u8, value, "zone-lockdown") or std.mem.eql(u8, value, "lockdowns") or std.mem.eql(u8, value, "lockdown")) return .zone_lockdown;
+        return null;
+    }
+
+    pub fn commandName(self: ZoneLegacyRuleResource) []const u8 {
+        return switch (self) {
+            .page_rules => "page-rules",
+            .ua_rules => "ua-rules",
+            .zone_lockdown => "zone-lockdown",
+        };
+    }
+
+    pub fn group(self: ZoneLegacyRuleResource) []const u8 {
+        return switch (self) {
+            .page_rules => "Page Rules",
+            .ua_rules => "User Agent Blocking rules",
+            .zone_lockdown => "Zone Lockdown",
+        };
+    }
+
+    pub fn collectionSuffix(self: ZoneLegacyRuleResource) []const u8 {
+        return switch (self) {
+            .page_rules => "pagerules",
+            .ua_rules => "firewall/ua_rules",
+            .zone_lockdown => "firewall/lockdowns",
+        };
+    }
+
+    pub fn idLabel(self: ZoneLegacyRuleResource) []const u8 {
+        return switch (self) {
+            .page_rules => "pagerule",
+            .ua_rules => "ua rule",
+            .zone_lockdown => "lockdown",
+        };
+    }
+
+    pub fn listLabel(self: ZoneLegacyRuleResource) []const u8 {
+        return switch (self) {
+            .page_rules => "page-rules",
+            .ua_rules => "ua-rules",
+            .zone_lockdown => "zone-lockdown-rules",
+        };
+    }
+
+    pub fn detailLabel(self: ZoneLegacyRuleResource) []const u8 {
+        return switch (self) {
+            .page_rules => "page-rule",
+            .ua_rules => "ua-rule",
+            .zone_lockdown => "zone-lockdown-rule",
+        };
+    }
+};
+
+pub const ZoneLegacyRuleReadEndpoint = enum {
+    list,
+    rule,
+
+    pub fn parse(value: []const u8) ?ZoneLegacyRuleReadEndpoint {
+        if (std.mem.eql(u8, value, "list") or std.mem.eql(u8, value, "rules")) return .list;
+        if (std.mem.eql(u8, value, "show") or std.mem.eql(u8, value, "rule") or std.mem.eql(u8, value, "detail") or std.mem.eql(u8, value, "details")) return .rule;
+        return null;
+    }
+
+    pub fn commandName(self: ZoneLegacyRuleReadEndpoint) []const u8 {
+        return switch (self) {
+            .list => "list",
+            .rule => "show",
+        };
+    }
+
+    pub fn label(self: ZoneLegacyRuleReadEndpoint, resource: ZoneLegacyRuleResource) []const u8 {
+        return switch (self) {
+            .list => resource.listLabel(),
+            .rule => resource.detailLabel(),
+        };
+    }
+
+    pub fn operationId(self: ZoneLegacyRuleReadEndpoint, resource: ZoneLegacyRuleResource) []const u8 {
+        return switch (resource) {
+            .page_rules => switch (self) {
+                .list => "page-rules-list-page-rules",
+                .rule => "page-rules-get-a-page-rule",
+            },
+            .ua_rules => switch (self) {
+                .list => "user-agent-blocking-rules-list-user-agent-blocking-rules",
+                .rule => "user-agent-blocking-rules-get-a-user-agent-blocking-rule",
+            },
+            .zone_lockdown => switch (self) {
+                .list => "zone-lockdown-list-zone-lockdown-rules",
+                .rule => "zone-lockdown-get-a-zone-lockdown-rule",
+            },
+        };
+    }
+
+    pub fn summary(self: ZoneLegacyRuleReadEndpoint, resource: ZoneLegacyRuleResource) []const u8 {
+        return switch (resource) {
+            .page_rules => switch (self) {
+                .list => "List Page Rules",
+                .rule => "Get a Page Rule",
+            },
+            .ua_rules => switch (self) {
+                .list => "List User Agent Blocking rules",
+                .rule => "Get a User Agent Blocking rule",
+            },
+            .zone_lockdown => switch (self) {
+                .list => "List Zone Lockdown rules",
+                .rule => "Get a Zone Lockdown rule",
+            },
+        };
+    }
+
+    pub fn requiresRuleId(self: ZoneLegacyRuleReadEndpoint) bool {
+        return self == .rule;
+    }
+};
+
+pub const ZoneLegacyRuleMutationEndpoint = enum {
+    create,
+    update,
+    edit,
+    delete_rule,
+
+    pub fn parse(value: []const u8) ?ZoneLegacyRuleMutationEndpoint {
+        if (std.mem.eql(u8, value, "create") or std.mem.eql(u8, value, "add")) return .create;
+        if (std.mem.eql(u8, value, "update") or std.mem.eql(u8, value, "put")) return .update;
+        if (std.mem.eql(u8, value, "edit") or std.mem.eql(u8, value, "patch")) return .edit;
+        if (std.mem.eql(u8, value, "delete") or std.mem.eql(u8, value, "delete-rule") or std.mem.eql(u8, value, "remove")) return .delete_rule;
+        return null;
+    }
+
+    pub fn commandName(self: ZoneLegacyRuleMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "create",
+            .update => "update",
+            .edit => "edit",
+            .delete_rule => "delete",
+        };
+    }
+
+    pub fn supports(self: ZoneLegacyRuleMutationEndpoint, resource: ZoneLegacyRuleResource) bool {
+        return self != .edit or resource == .page_rules;
+    }
+
+    pub fn method(self: ZoneLegacyRuleMutationEndpoint) []const u8 {
+        return switch (self) {
+            .create => "POST",
+            .update => "PUT",
+            .edit => "PATCH",
+            .delete_rule => "DELETE",
+        };
+    }
+
+    pub fn operationId(self: ZoneLegacyRuleMutationEndpoint, resource: ZoneLegacyRuleResource) ![]const u8 {
+        if (!self.supports(resource)) return error.UnsupportedCloudflareZoneLegacyRuleMutation;
+        return switch (resource) {
+            .page_rules => switch (self) {
+                .create => "page-rules-create-a-page-rule",
+                .update => "page-rules-update-a-page-rule",
+                .edit => "page-rules-edit-a-page-rule",
+                .delete_rule => "page-rules-delete-a-page-rule",
+            },
+            .ua_rules => switch (self) {
+                .create => "user-agent-blocking-rules-create-a-user-agent-blocking-rule",
+                .update => "user-agent-blocking-rules-update-a-user-agent-blocking-rule",
+                .edit => unreachable,
+                .delete_rule => "user-agent-blocking-rules-delete-a-user-agent-blocking-rule",
+            },
+            .zone_lockdown => switch (self) {
+                .create => "zone-lockdown-create-a-zone-lockdown-rule",
+                .update => "zone-lockdown-update-a-zone-lockdown-rule",
+                .edit => unreachable,
+                .delete_rule => "zone-lockdown-delete-a-zone-lockdown-rule",
+            },
+        };
+    }
+
+    pub fn summary(self: ZoneLegacyRuleMutationEndpoint, resource: ZoneLegacyRuleResource) ![]const u8 {
+        if (!self.supports(resource)) return error.UnsupportedCloudflareZoneLegacyRuleMutation;
+        return switch (resource) {
+            .page_rules => switch (self) {
+                .create => "Create a Page Rule object",
+                .update => "Update a Page Rule object",
+                .edit => "Edit a Page Rule object",
+                .delete_rule => "Delete a Page Rule",
+            },
+            .ua_rules => switch (self) {
+                .create => "Create a User Agent Blocking rule object",
+                .update => "Update a User Agent Blocking rule object",
+                .edit => unreachable,
+                .delete_rule => "Delete a User Agent Blocking rule",
+            },
+            .zone_lockdown => switch (self) {
+                .create => "Create a Zone Lockdown rule object",
+                .update => "Update a Zone Lockdown rule object",
+                .edit => unreachable,
+                .delete_rule => "Delete a Zone Lockdown rule",
+            },
+        };
+    }
+
+    pub fn requestBodySchemaRef(self: ZoneLegacyRuleMutationEndpoint) ?[]const u8 {
+        return switch (self) {
+            .create, .update, .edit => "object",
+            .delete_rule => null,
+        };
+    }
+
+    pub fn requiresRuleId(self: ZoneLegacyRuleMutationEndpoint) bool {
+        return self == .update or self == .edit or self == .delete_rule;
+    }
+};
+
+pub const ZoneLegacyRuleMutationArgs = struct {
+    resource: ZoneLegacyRuleResource,
+    zone_id: []const u8,
+    rule_id: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -5102,6 +5334,53 @@ pub fn ipAccessRuleMutationPlanJson(gpa: Allocator, endpoint: IpAccessRuleMutati
     });
 }
 
+pub fn zoneLegacyRuleReadUrl(gpa: Allocator, host: []const u8, zone_id: []const u8, resource: ZoneLegacyRuleResource, endpoint: ZoneLegacyRuleReadEndpoint, rule_id: ?[]const u8) ![]u8 {
+    const path = try zoneLegacyRuleReadPath(gpa, zone_id, resource, endpoint, rule_id);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn zoneLegacyRuleCollectionPath(gpa: Allocator, zone_id: []const u8, resource: ZoneLegacyRuleResource) ![]u8 {
+    const escaped_zone_id = try pathEscape(gpa, zone_id);
+    defer gpa.free(escaped_zone_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ zones_path, escaped_zone_id, resource.collectionSuffix() });
+}
+
+pub fn zoneLegacyRuleReadPath(gpa: Allocator, zone_id: []const u8, resource: ZoneLegacyRuleResource, endpoint: ZoneLegacyRuleReadEndpoint, rule_id: ?[]const u8) ![]u8 {
+    const base_path = try zoneLegacyRuleCollectionPath(gpa, zone_id, resource);
+    defer gpa.free(base_path);
+    if (!endpoint.requiresRuleId()) return try gpa.dupe(u8, base_path);
+    const id = rule_id orelse return error.MissingCloudflareZoneLegacyRuleId;
+    const escaped_rule_id = try pathEscape(gpa, id);
+    defer gpa.free(escaped_rule_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, escaped_rule_id });
+}
+
+pub fn zoneLegacyRuleMutationPath(gpa: Allocator, endpoint: ZoneLegacyRuleMutationEndpoint, args: ZoneLegacyRuleMutationArgs) ![]u8 {
+    if (!endpoint.supports(args.resource)) return error.UnsupportedCloudflareZoneLegacyRuleMutation;
+    const base_path = try zoneLegacyRuleCollectionPath(gpa, args.zone_id, args.resource);
+    defer gpa.free(base_path);
+    if (!endpoint.requiresRuleId()) return try gpa.dupe(u8, base_path);
+    const rule_id = args.rule_id orelse return error.MissingCloudflareZoneLegacyRuleId;
+    const escaped_rule_id = try pathEscape(gpa, rule_id);
+    defer gpa.free(escaped_rule_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, escaped_rule_id });
+}
+
+pub fn zoneLegacyRuleMutationPlanJson(gpa: Allocator, endpoint: ZoneLegacyRuleMutationEndpoint, args: ZoneLegacyRuleMutationArgs) ![]u8 {
+    const path = try zoneLegacyRuleMutationPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try dryRunPlanJson(gpa, .{
+        .group = args.resource.group(),
+        .operation = endpoint.commandName(),
+        .operation_id = try endpoint.operationId(args.resource),
+        .summary = try endpoint.summary(args.resource),
+        .method = endpoint.method(),
+        .path = path,
+        .request_body_schema = endpoint.requestBodySchemaRef(),
+    });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -6655,6 +6934,74 @@ test "builds IP Access Rule paths and dry-run plans" {
     try std.testing.expectError(error.MissingCloudflareIpAccessRuleScopeId, ipAccessRuleReadPath(allocator, .account, null, .list, .{}));
     try std.testing.expectError(error.MissingCloudflareIpAccessRuleId, ipAccessRuleReadPath(allocator, .user, null, .rule, .{}));
     try std.testing.expectError(error.MissingCloudflareIpAccessRuleId, ipAccessRuleMutationPlanJson(allocator, .update, .{ .scope = .account, .scope_id = "acct/1" }));
+}
+
+test "zone legacy rule endpoints map to official operation metadata" {
+    try std.testing.expectEqual(ZoneLegacyRuleResource.page_rules, ZoneLegacyRuleResource.parse("pagerules").?);
+    try std.testing.expectEqual(ZoneLegacyRuleResource.ua_rules, ZoneLegacyRuleResource.parse("user-agent-blocking").?);
+    try std.testing.expectEqual(ZoneLegacyRuleResource.zone_lockdown, ZoneLegacyRuleResource.parse("lockdowns").?);
+    try std.testing.expectEqualStrings("Page Rules", ZoneLegacyRuleResource.page_rules.group());
+    try std.testing.expectEqualStrings("firewall/ua_rules", ZoneLegacyRuleResource.ua_rules.collectionSuffix());
+
+    try std.testing.expectEqual(ZoneLegacyRuleReadEndpoint.list, ZoneLegacyRuleReadEndpoint.parse("rules").?);
+    try std.testing.expectEqual(ZoneLegacyRuleReadEndpoint.rule, ZoneLegacyRuleReadEndpoint.parse("details").?);
+    try std.testing.expectEqualStrings("page-rules-list-page-rules", ZoneLegacyRuleReadEndpoint.list.operationId(.page_rules));
+    try std.testing.expectEqualStrings("user-agent-blocking-rules-get-a-user-agent-blocking-rule", ZoneLegacyRuleReadEndpoint.rule.operationId(.ua_rules));
+    try std.testing.expectEqualStrings("zone-lockdown-list-zone-lockdown-rules", ZoneLegacyRuleReadEndpoint.list.operationId(.zone_lockdown));
+
+    try std.testing.expectEqual(ZoneLegacyRuleMutationEndpoint.delete_rule, ZoneLegacyRuleMutationEndpoint.parse("remove").?);
+    try std.testing.expectEqualStrings("POST", ZoneLegacyRuleMutationEndpoint.create.method());
+    try std.testing.expectEqualStrings("PUT", ZoneLegacyRuleMutationEndpoint.update.method());
+    try std.testing.expectEqualStrings("PATCH", ZoneLegacyRuleMutationEndpoint.edit.method());
+    try std.testing.expectEqualStrings("DELETE", ZoneLegacyRuleMutationEndpoint.delete_rule.method());
+    try std.testing.expect(ZoneLegacyRuleMutationEndpoint.edit.supports(.page_rules));
+    try std.testing.expect(!ZoneLegacyRuleMutationEndpoint.edit.supports(.ua_rules));
+    try std.testing.expectEqualStrings("page-rules-edit-a-page-rule", try ZoneLegacyRuleMutationEndpoint.edit.operationId(.page_rules));
+    try std.testing.expectEqualStrings("zone-lockdown-delete-a-zone-lockdown-rule", try ZoneLegacyRuleMutationEndpoint.delete_rule.operationId(.zone_lockdown));
+    try std.testing.expectError(error.UnsupportedCloudflareZoneLegacyRuleMutation, ZoneLegacyRuleMutationEndpoint.edit.operationId(.zone_lockdown));
+}
+
+test "builds zone legacy rule paths and dry-run plans" {
+    const allocator = std.testing.allocator;
+
+    const page_list = try zoneLegacyRuleReadUrl(allocator, base_url, "zone/1", .page_rules, .list, null);
+    defer allocator.free(page_list);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone%2F1/pagerules", page_list);
+
+    const ua_show = try zoneLegacyRuleReadPath(allocator, "zone/1", .ua_rules, .rule, "ua/1");
+    defer allocator.free(ua_show);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/firewall/ua_rules/ua%2F1", ua_show);
+
+    const lockdown_show = try zoneLegacyRuleReadPath(allocator, "zone/1", .zone_lockdown, .rule, "lock/1");
+    defer allocator.free(lockdown_show);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/firewall/lockdowns/lock%2F1", lockdown_show);
+
+    const page_create = try zoneLegacyRuleMutationPlanJson(allocator, .create, .{ .resource = .page_rules, .zone_id = "zone/1" });
+    defer allocator.free(page_create);
+    try std.testing.expect(std.mem.indexOf(u8, page_create, "\"group\":\"Page Rules\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, page_create, "\"operation_id\":\"page-rules-create-a-page-rule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, page_create, "\"path\":\"/zones/zone%2F1/pagerules\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, page_create, "\"request_body_schema\":\"object\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, page_create, "\"will_execute\":false") != null);
+
+    const page_edit = try zoneLegacyRuleMutationPlanJson(allocator, .edit, .{ .resource = .page_rules, .zone_id = "zone/1", .rule_id = "rule/1" });
+    defer allocator.free(page_edit);
+    try std.testing.expect(std.mem.indexOf(u8, page_edit, "\"method\":\"PATCH\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, page_edit, "\"operation_id\":\"page-rules-edit-a-page-rule\"") != null);
+
+    const ua_update = try zoneLegacyRuleMutationPlanJson(allocator, .update, .{ .resource = .ua_rules, .zone_id = "zone/1", .rule_id = "ua/1" });
+    defer allocator.free(ua_update);
+    try std.testing.expect(std.mem.indexOf(u8, ua_update, "\"operation_id\":\"user-agent-blocking-rules-update-a-user-agent-blocking-rule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ua_update, "\"path\":\"/zones/zone%2F1/firewall/ua_rules/ua%2F1\"") != null);
+
+    const lockdown_delete = try zoneLegacyRuleMutationPlanJson(allocator, .delete_rule, .{ .resource = .zone_lockdown, .zone_id = "zone/1", .rule_id = "lock/1" });
+    defer allocator.free(lockdown_delete);
+    try std.testing.expect(std.mem.indexOf(u8, lockdown_delete, "\"operation_id\":\"zone-lockdown-delete-a-zone-lockdown-rule\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, lockdown_delete, "\"request_body_schema\":null") != null);
+
+    try std.testing.expectError(error.MissingCloudflareZoneLegacyRuleId, zoneLegacyRuleReadPath(allocator, "zone/1", .page_rules, .rule, null));
+    try std.testing.expectError(error.MissingCloudflareZoneLegacyRuleId, zoneLegacyRuleMutationPlanJson(allocator, .update, .{ .resource = .ua_rules, .zone_id = "zone/1" }));
+    try std.testing.expectError(error.UnsupportedCloudflareZoneLegacyRuleMutation, zoneLegacyRuleMutationPlanJson(allocator, .edit, .{ .resource = .zone_lockdown, .zone_id = "zone/1", .rule_id = "lock/1" }));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

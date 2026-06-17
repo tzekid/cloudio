@@ -41,6 +41,10 @@ pub const IpAccessRuleMutationArgs = collector_cloudflare.IpAccessRuleMutationAr
 pub const IpAccessRuleMutationEndpoint = collector_cloudflare.IpAccessRuleMutationEndpoint;
 pub const IpAccessRuleReadEndpoint = collector_cloudflare.IpAccessRuleReadEndpoint;
 pub const IpAccessRuleScope = collector_cloudflare.IpAccessRuleScope;
+pub const ZoneLegacyRuleMutationArgs = collector_cloudflare.ZoneLegacyRuleMutationArgs;
+pub const ZoneLegacyRuleMutationEndpoint = collector_cloudflare.ZoneLegacyRuleMutationEndpoint;
+pub const ZoneLegacyRuleReadEndpoint = collector_cloudflare.ZoneLegacyRuleReadEndpoint;
+pub const ZoneLegacyRuleResource = collector_cloudflare.ZoneLegacyRuleResource;
 pub const LoadBalancingAccountReadEndpoint = collector_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = collector_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = collector_cloudflare.LoadBalancingMutationEndpoint;
@@ -209,6 +213,10 @@ pub fn collectIpAccessRuleEndpoint(ctx: Context, scope: IpAccessRuleScope, scope
     return try collector_cloudflare.collectIpAccessRuleEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, scope, scope_id, endpoint, args, true);
 }
 
+pub fn collectZoneLegacyRuleEndpoint(ctx: Context, zone_id: []const u8, resource: ZoneLegacyRuleResource, endpoint: ZoneLegacyRuleReadEndpoint, rule_id: ?[]const u8) !Output {
+    return try collector_cloudflare.collectZoneLegacyRuleEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, resource, endpoint, rule_id, true);
+}
+
 pub fn collectIdentityEndpoint(ctx: Context, endpoint: IdentityEndpoint) !Output {
     return try collector_cloudflare.collectIdentityEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, endpoint, true);
 }
@@ -339,6 +347,10 @@ pub fn planCloudforceOneRuleMutation(ctx: Context, endpoint: CloudforceOneRuleMu
 
 pub fn planIpAccessRuleMutation(ctx: Context, endpoint: IpAccessRuleMutationEndpoint, args: IpAccessRuleMutationArgs) !Output {
     return .{ .text = try provider_cloudflare.ipAccessRuleMutationPlanJson(ctx.gpa, endpoint, args) };
+}
+
+pub fn planZoneLegacyRuleMutation(ctx: Context, endpoint: ZoneLegacyRuleMutationEndpoint, args: ZoneLegacyRuleMutationArgs) !Output {
+    return .{ .text = try provider_cloudflare.zoneLegacyRuleMutationPlanJson(ctx.gpa, endpoint, args) };
 }
 
 pub fn collectZoneSetting(ctx: Context, domain: []const u8, setting_id: []const u8) !Output {

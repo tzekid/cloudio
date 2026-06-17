@@ -85,6 +85,12 @@ zig build run -- cloudflare ip-access user list mode=block target=ip value=198.5
 zig build run -- cloudflare ip-access account list <account-id> notes=attack match=any
 zig build run -- cloudflare ip-access account show <account-id> <rule-id>
 zig build run -- cloudflare ip-access zone list <zone-id> order=mode direction=desc
+zig build run -- cloudflare page-rules list <zone-id>
+zig build run -- cloudflare page-rules show <zone-id> <pagerule-id>
+zig build run -- cloudflare ua-rules list <zone-id>
+zig build run -- cloudflare ua-rules show <zone-id> <ua-rule-id>
+zig build run -- cloudflare zone-lockdown list <zone-id>
+zig build run -- cloudflare zone-lockdown show <zone-id> <lockdown-id>
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru
@@ -133,6 +139,9 @@ zig build run -- cloudflare dry-run cloudforce-one-rules delete-all <account-id>
 zig build run -- cloudflare dry-run ip-access user create
 zig build run -- cloudflare dry-run ip-access account update <account-id> <rule-id>
 zig build run -- cloudflare dry-run ip-access zone delete <zone-id> <rule-id>
+zig build run -- cloudflare dry-run page-rules edit <zone-id> <pagerule-id>
+zig build run -- cloudflare dry-run ua-rules update <zone-id> <ua-rule-id>
+zig build run -- cloudflare dry-run zone-lockdown delete <zone-id> <lockdown-id>
 zig build run -- cloudflare dry-run token create
 zig build run -- cloudflare dry-run token roll <token-id>
 zig build run -- cloudflare dry-run account create

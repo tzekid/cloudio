@@ -46,6 +46,10 @@ pub const IpAccessRuleMutationArgs = provider_cloudflare.IpAccessRuleMutationArg
 pub const IpAccessRuleMutationEndpoint = provider_cloudflare.IpAccessRuleMutationEndpoint;
 pub const IpAccessRuleReadEndpoint = provider_cloudflare.IpAccessRuleReadEndpoint;
 pub const IpAccessRuleScope = provider_cloudflare.IpAccessRuleScope;
+pub const ZoneLegacyRuleMutationArgs = provider_cloudflare.ZoneLegacyRuleMutationArgs;
+pub const ZoneLegacyRuleMutationEndpoint = provider_cloudflare.ZoneLegacyRuleMutationEndpoint;
+pub const ZoneLegacyRuleReadEndpoint = provider_cloudflare.ZoneLegacyRuleReadEndpoint;
+pub const ZoneLegacyRuleResource = provider_cloudflare.ZoneLegacyRuleResource;
 pub const LoadBalancingAccountReadEndpoint = provider_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = provider_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = provider_cloudflare.LoadBalancingMutationEndpoint;
@@ -767,6 +771,30 @@ pub fn collectIpAccessRuleEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, 
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectZoneLegacyRuleEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, resource: ZoneLegacyRuleResource, endpoint: ZoneLegacyRuleReadEndpoint, rule_id: ?[]const u8, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label(resource);
+    const target = try zoneLegacyRuleTarget(gpa, zone_id, endpoint, rule_id);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getZoneLegacyRuleEndpoint(io, gpa, zone_id, resource, endpoint, rule_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.zoneLegacyRuleReadPath(gpa, zone_id, resource, endpoint, rule_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(resource),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: IdentityEndpoint, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const client = clientFromAuth(auth) catch {
@@ -1092,6 +1120,11 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
                 break :zone_ip_access_refresh;
             };
             defer gpa.free(redacted_ip_access);
+        }
+
+        const legacy_rule_resources = [_]ZoneLegacyRuleResource{ .page_rules, .ua_rules, .zone_lockdown };
+        for (legacy_rule_resources) |resource| {
+            try collectZoneLegacyRulesForZone(gpa, io, client, db, zone_id, domain, resource);
         }
 
         zone_tags_refresh: {
@@ -1988,6 +2021,53 @@ fn collectIpAccessRuleSnapshot(gpa: Allocator, io: Io, client: provider_cloudfla
     });
 }
 
+fn collectZoneLegacyRulesForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, resource: ZoneLegacyRuleResource) !void {
+    const endpoint: ZoneLegacyRuleReadEndpoint = .list;
+    const redacted = collectZoneLegacyRuleSnapshot(gpa, io, client, db, zone_id, target_label, resource, endpoint, null) catch |err| {
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(resource), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(resource), target_label, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    try collectZoneLegacyRuleDetailsForList(gpa, io, client, db, zone_id, target_label, resource, redacted);
+}
+
+fn collectZoneLegacyRuleDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, resource: ZoneLegacyRuleResource, list_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    const endpoint: ZoneLegacyRuleReadEndpoint = .rule;
+    for (rows.items) |row| {
+        const redacted = collectZoneLegacyRuleSnapshot(gpa, io, client, db, zone_id, target_label, resource, endpoint, row.id) catch |err| {
+            const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ target_label, row.id });
+            defer gpa.free(target);
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(resource), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(resource), target, "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(redacted);
+    }
+}
+
+fn collectZoneLegacyRuleSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, resource: ZoneLegacyRuleResource, endpoint: ZoneLegacyRuleReadEndpoint, rule_id: ?[]const u8) ![]u8 {
+    const body = try client.getZoneLegacyRuleEndpoint(io, gpa, zone_id, resource, endpoint, rule_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.zoneLegacyRuleReadPath(gpa, zone_id, resource, endpoint, rule_id);
+    defer gpa.free(endpoint_path);
+    const target = try zoneLegacyRuleTarget(gpa, target_label, endpoint, rule_id);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(resource),
+        .target = target,
+        .summary_label = endpoint.summary(resource),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
 fn collectRulesetSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: RulesetScope, scope_id: []const u8, target_label: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
     const body = try client.getRulesetEndpoint(io, gpa, scope, scope_id, endpoint, args);
     defer body.deinit(gpa);
@@ -2306,6 +2386,14 @@ fn ipAccessRuleTarget(gpa: Allocator, scope: IpAccessRuleScope, scope_id: ?[]con
         return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ scope_label, rule_id });
     }
     return try gpa.dupe(u8, scope_label);
+}
+
+fn zoneLegacyRuleTarget(gpa: Allocator, zone_label: []const u8, endpoint: ZoneLegacyRuleReadEndpoint, rule_id: ?[]const u8) ![]u8 {
+    if (endpoint.requiresRuleId()) {
+        const id = rule_id orelse return try gpa.dupe(u8, zone_label);
+        return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zone_label, id });
+    }
+    return try gpa.dupe(u8, zone_label);
 }
 
 fn resourceTaggingAccountTarget(gpa: Allocator, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
