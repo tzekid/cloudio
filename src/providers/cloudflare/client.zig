@@ -262,6 +262,12 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getEmailSecuritySettingsEndpoint(self: Client, io: Io, gpa: Allocator, account_id: []const u8, endpoint: EmailSecuritySettingsReadEndpoint, args: EmailSecuritySettingsReadArgs) !net_http.Response {
+        const url = try emailSecuritySettingsReadUrl(gpa, self.base_url_override, account_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getCustomPageEndpoint(self: Client, io: Io, gpa: Allocator, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) !net_http.Response {
         const url = try customPageReadUrl(gpa, self.base_url_override, scope, scope_id, resource, endpoint, args);
         defer gpa.free(url);
@@ -3648,6 +3654,171 @@ pub const EmailRoutingZoneReadArgs = struct {
     enabled: ?[]const u8 = null,
     page: ?[]const u8 = null,
     per_page: ?[]const u8 = null,
+};
+
+pub const EmailSecuritySettingsReadEndpoint = enum {
+    allow_policies,
+    allow_policy,
+    blocked_senders,
+    blocked_sender,
+    domains,
+    domain,
+    impersonation_registry,
+    impersonation_registry_entry,
+    sending_domain_restrictions,
+    sending_domain_restriction,
+    trusted_domains,
+    trusted_domain,
+    url_ignore_patterns,
+    url_ignore_pattern,
+
+    pub fn parse(value: []const u8) ?EmailSecuritySettingsReadEndpoint {
+        if (std.mem.eql(u8, value, "allow-policies")) return .allow_policies;
+        if (std.mem.eql(u8, value, "allow-policy")) return .allow_policy;
+        if (std.mem.eql(u8, value, "blocked-senders") or std.mem.eql(u8, value, "block-senders")) return .blocked_senders;
+        if (std.mem.eql(u8, value, "blocked-sender") or std.mem.eql(u8, value, "block-sender")) return .blocked_sender;
+        if (std.mem.eql(u8, value, "domains") or std.mem.eql(u8, value, "protected-domains")) return .domains;
+        if (std.mem.eql(u8, value, "domain") or std.mem.eql(u8, value, "protected-domain")) return .domain;
+        if (std.mem.eql(u8, value, "impersonation-registry")) return .impersonation_registry;
+        if (std.mem.eql(u8, value, "impersonation-registry-entry") or std.mem.eql(u8, value, "impersonation-entry")) return .impersonation_registry_entry;
+        if (std.mem.eql(u8, value, "sending-domain-restrictions")) return .sending_domain_restrictions;
+        if (std.mem.eql(u8, value, "sending-domain-restriction")) return .sending_domain_restriction;
+        if (std.mem.eql(u8, value, "trusted-domains")) return .trusted_domains;
+        if (std.mem.eql(u8, value, "trusted-domain")) return .trusted_domain;
+        if (std.mem.eql(u8, value, "url-ignore-patterns")) return .url_ignore_patterns;
+        if (std.mem.eql(u8, value, "url-ignore-pattern")) return .url_ignore_pattern;
+        return null;
+    }
+
+    pub fn commandName(self: EmailSecuritySettingsReadEndpoint) []const u8 {
+        return switch (self) {
+            .allow_policies => "allow-policies",
+            .allow_policy => "allow-policy",
+            .blocked_senders => "blocked-senders",
+            .blocked_sender => "blocked-sender",
+            .domains => "domains",
+            .domain => "domain",
+            .impersonation_registry => "impersonation-registry",
+            .impersonation_registry_entry => "impersonation-registry-entry",
+            .sending_domain_restrictions => "sending-domain-restrictions",
+            .sending_domain_restriction => "sending-domain-restriction",
+            .trusted_domains => "trusted-domains",
+            .trusted_domain => "trusted-domain",
+            .url_ignore_patterns => "url-ignore-patterns",
+            .url_ignore_pattern => "url-ignore-pattern",
+        };
+    }
+
+    pub fn label(self: EmailSecuritySettingsReadEndpoint) []const u8 {
+        return switch (self) {
+            .allow_policies => "account-email-security-allow-policies",
+            .allow_policy => "account-email-security-allow-policy",
+            .blocked_senders => "account-email-security-blocked-senders",
+            .blocked_sender => "account-email-security-blocked-sender",
+            .domains => "account-email-security-domains",
+            .domain => "account-email-security-domain",
+            .impersonation_registry => "account-email-security-impersonation-registry",
+            .impersonation_registry_entry => "account-email-security-impersonation-registry-entry",
+            .sending_domain_restrictions => "account-email-security-sending-domain-restrictions",
+            .sending_domain_restriction => "account-email-security-sending-domain-restriction",
+            .trusted_domains => "account-email-security-trusted-domains",
+            .trusted_domain => "account-email-security-trusted-domain",
+            .url_ignore_patterns => "account-email-security-url-ignore-patterns",
+            .url_ignore_pattern => "account-email-security-url-ignore-pattern",
+        };
+    }
+
+    pub fn operationId(self: EmailSecuritySettingsReadEndpoint) []const u8 {
+        return switch (self) {
+            .allow_policies => "email_security_list_allow_policies",
+            .allow_policy => "email_security_get_allow_policy",
+            .blocked_senders => "email_security_list_blocked_senders",
+            .blocked_sender => "email_security_get_blocked_sender",
+            .domains => "email_security_list_domains",
+            .domain => "email_security_get_domain",
+            .impersonation_registry => "email_security_list_impersonation_registry",
+            .impersonation_registry_entry => "email_security_get_impersonation_registry",
+            .sending_domain_restrictions => "email_security_list_sending_domain_restrictions",
+            .sending_domain_restriction => "email_security_get_sending_domain_restriction",
+            .trusted_domains => "email_security_list_trusted_domains",
+            .trusted_domain => "email_security_get_trusted_domain",
+            .url_ignore_patterns => "email_security_list_url_ignore_patterns",
+            .url_ignore_pattern => "email_security_get_url_ignore_pattern",
+        };
+    }
+
+    pub fn summary(self: EmailSecuritySettingsReadEndpoint) []const u8 {
+        return switch (self) {
+            .allow_policies => "List Email Security allow policies",
+            .allow_policy => "Get an Email Security allow policy",
+            .blocked_senders => "List Email Security blocked senders",
+            .blocked_sender => "Get an Email Security blocked sender",
+            .domains => "List protected Email Security domains",
+            .domain => "Get a protected Email Security domain",
+            .impersonation_registry => "List Email Security impersonation registry entries",
+            .impersonation_registry_entry => "Get an Email Security impersonation registry entry",
+            .sending_domain_restrictions => "List Email Security sending domain restrictions",
+            .sending_domain_restriction => "Get an Email Security sending domain restriction",
+            .trusted_domains => "List Email Security trusted domains",
+            .trusted_domain => "Get an Email Security trusted domain",
+            .url_ignore_patterns => "List Email Security URL ignore patterns",
+            .url_ignore_pattern => "Get an Email Security URL ignore pattern",
+        };
+    }
+
+    pub fn requiresResourceId(self: EmailSecuritySettingsReadEndpoint) bool {
+        return switch (self) {
+            .allow_policy,
+            .blocked_sender,
+            .domain,
+            .impersonation_registry_entry,
+            .sending_domain_restriction,
+            .trusted_domain,
+            .url_ignore_pattern,
+            => true,
+            else => false,
+        };
+    }
+
+    pub fn acceptsFilters(self: EmailSecuritySettingsReadEndpoint) bool {
+        return !self.requiresResourceId();
+    }
+
+    pub fn detailEndpoint(self: EmailSecuritySettingsReadEndpoint) ?EmailSecuritySettingsReadEndpoint {
+        return switch (self) {
+            .allow_policies => .allow_policy,
+            .blocked_senders => .blocked_sender,
+            .domains => .domain,
+            .impersonation_registry => .impersonation_registry_entry,
+            .sending_domain_restrictions => .sending_domain_restriction,
+            .trusted_domains => .trusted_domain,
+            .url_ignore_patterns => .url_ignore_pattern,
+            else => null,
+        };
+    }
+};
+
+pub const EmailSecuritySettingsReadArgs = struct {
+    resource_id: ?[]const u8 = null,
+    active_delivery_mode: ?[]const u8 = null,
+    allowed_delivery_mode: ?[]const u8 = null,
+    direction: ?[]const u8 = null,
+    domain: ?[]const u8 = null,
+    integration_id: ?[]const u8 = null,
+    is_acceptable_sender: ?[]const u8 = null,
+    is_exempt_recipient: ?[]const u8 = null,
+    is_recent: ?[]const u8 = null,
+    is_similarity: ?[]const u8 = null,
+    is_trusted_sender: ?[]const u8 = null,
+    order: ?[]const u8 = null,
+    page: ?[]const u8 = null,
+    pattern: ?[]const u8 = null,
+    pattern_type: ?[]const u8 = null,
+    per_page: ?[]const u8 = null,
+    provenance: ?[]const u8 = null,
+    search: ?[]const u8 = null,
+    status: ?[]const u8 = null,
+    verify_sender: ?[]const u8 = null,
 };
 
 pub const PageShieldMutationEndpoint = enum {
@@ -8898,6 +9069,38 @@ pub fn emailRoutingZoneReadPath(gpa: Allocator, zone_id: []const u8, endpoint: E
     };
 }
 
+pub fn emailSecuritySettingsReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: EmailSecuritySettingsReadEndpoint, args: EmailSecuritySettingsReadArgs) ![]u8 {
+    const path = try emailSecuritySettingsReadPath(gpa, account_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn emailSecuritySettingsReadPath(gpa: Allocator, account_id: []const u8, endpoint: EmailSecuritySettingsReadEndpoint, args: EmailSecuritySettingsReadArgs) ![]u8 {
+    const escaped_account_id = try pathEscape(gpa, account_id);
+    defer gpa.free(escaped_account_id);
+    const settings_base = try std.fmt.allocPrint(gpa, "{s}/{s}/email-security/settings", .{ accounts_path, escaped_account_id });
+    defer gpa.free(settings_base);
+    const collection_path = try emailSecuritySettingsCollectionPath(gpa, settings_base, endpoint);
+    defer gpa.free(collection_path);
+    if (!endpoint.requiresResourceId()) return try appendEmailSecuritySettingsFilters(gpa, collection_path, endpoint, args);
+    const resource_id = args.resource_id orelse return error.MissingCloudflareEmailSecuritySettingsResourceId;
+    const escaped_resource_id = try pathEscape(gpa, resource_id);
+    defer gpa.free(escaped_resource_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ collection_path, escaped_resource_id });
+}
+
+fn emailSecuritySettingsCollectionPath(gpa: Allocator, settings_base: []const u8, endpoint: EmailSecuritySettingsReadEndpoint) ![]u8 {
+    return switch (endpoint) {
+        .allow_policies, .allow_policy => try std.fmt.allocPrint(gpa, "{s}/allow_policies", .{settings_base}),
+        .blocked_senders, .blocked_sender => try std.fmt.allocPrint(gpa, "{s}/block_senders", .{settings_base}),
+        .domains, .domain => try std.fmt.allocPrint(gpa, "{s}/domains", .{settings_base}),
+        .impersonation_registry, .impersonation_registry_entry => try std.fmt.allocPrint(gpa, "{s}/impersonation_registry", .{settings_base}),
+        .sending_domain_restrictions, .sending_domain_restriction => try std.fmt.allocPrint(gpa, "{s}/sending_domain_restrictions", .{settings_base}),
+        .trusted_domains, .trusted_domain => try std.fmt.allocPrint(gpa, "{s}/trusted_domains", .{settings_base}),
+        .url_ignore_patterns, .url_ignore_pattern => try std.fmt.allocPrint(gpa, "{s}/url_ignore_patterns", .{settings_base}),
+    };
+}
+
 pub fn pageShieldMutationPath(gpa: Allocator, endpoint: PageShieldMutationEndpoint, args: PageShieldMutationArgs) ![]u8 {
     const base_path = try pageShieldBasePath(gpa, args.zone_id);
     defer gpa.free(base_path);
@@ -10643,6 +10846,75 @@ fn appendEmailRoutingRulesFilters(gpa: Allocator, base_path: []const u8, args: E
     });
 }
 
+fn appendEmailSecuritySettingsFilters(gpa: Allocator, base_path: []const u8, endpoint: EmailSecuritySettingsReadEndpoint, args: EmailSecuritySettingsReadArgs) ![]u8 {
+    return switch (endpoint) {
+        .allow_policies => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "direction", .value = args.direction },
+            .{ .name = "is_acceptable_sender", .value = args.is_acceptable_sender },
+            .{ .name = "is_exempt_recipient", .value = args.is_exempt_recipient },
+            .{ .name = "is_trusted_sender", .value = args.is_trusted_sender },
+            .{ .name = "order", .value = args.order },
+            .{ .name = "page", .value = args.page },
+            .{ .name = "pattern", .value = args.pattern },
+            .{ .name = "pattern_type", .value = args.pattern_type },
+            .{ .name = "per_page", .value = args.per_page },
+            .{ .name = "search", .value = args.search },
+            .{ .name = "verify_sender", .value = args.verify_sender },
+        }),
+        .blocked_senders => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "direction", .value = args.direction },
+            .{ .name = "order", .value = args.order },
+            .{ .name = "page", .value = args.page },
+            .{ .name = "pattern", .value = args.pattern },
+            .{ .name = "pattern_type", .value = args.pattern_type },
+            .{ .name = "per_page", .value = args.per_page },
+            .{ .name = "search", .value = args.search },
+        }),
+        .domains => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "active_delivery_mode", .value = args.active_delivery_mode },
+            .{ .name = "allowed_delivery_mode", .value = args.allowed_delivery_mode },
+            .{ .name = "direction", .value = args.direction },
+            .{ .name = "domain", .value = args.domain },
+            .{ .name = "integration_id", .value = args.integration_id },
+            .{ .name = "order", .value = args.order },
+            .{ .name = "page", .value = args.page },
+            .{ .name = "per_page", .value = args.per_page },
+            .{ .name = "search", .value = args.search },
+            .{ .name = "status", .value = args.status },
+        }),
+        .impersonation_registry => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "direction", .value = args.direction },
+            .{ .name = "order", .value = args.order },
+            .{ .name = "page", .value = args.page },
+            .{ .name = "per_page", .value = args.per_page },
+            .{ .name = "provenance", .value = args.provenance },
+            .{ .name = "search", .value = args.search },
+        }),
+        .sending_domain_restrictions => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "direction", .value = args.direction },
+            .{ .name = "order", .value = args.order },
+            .{ .name = "page", .value = args.page },
+            .{ .name = "per_page", .value = args.per_page },
+            .{ .name = "search", .value = args.search },
+        }),
+        .trusted_domains => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "direction", .value = args.direction },
+            .{ .name = "is_recent", .value = args.is_recent },
+            .{ .name = "is_similarity", .value = args.is_similarity },
+            .{ .name = "order", .value = args.order },
+            .{ .name = "page", .value = args.page },
+            .{ .name = "pattern", .value = args.pattern },
+            .{ .name = "per_page", .value = args.per_page },
+            .{ .name = "search", .value = args.search },
+        }),
+        .url_ignore_patterns => try appendQuery(gpa, base_path, &[_]QueryParam{
+            .{ .name = "page", .value = args.page },
+            .{ .name = "per_page", .value = args.per_page },
+        }),
+        else => try gpa.dupe(u8, base_path),
+    };
+}
+
 pub fn pathEscape(gpa: Allocator, value: []const u8) ![]u8 {
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
@@ -11891,6 +12163,60 @@ test "builds email routing read paths" {
 
     try std.testing.expectError(error.MissingCloudflareEmailRoutingAddressId, emailRoutingAccountReadPath(allocator, "acct/1", .address, .{}));
     try std.testing.expectError(error.MissingCloudflareEmailRoutingRuleId, emailRoutingZoneReadPath(allocator, "zone/1", .rule, .{}));
+}
+
+test "email security settings endpoints map to official operation metadata" {
+    try std.testing.expectEqual(EmailSecuritySettingsReadEndpoint.allow_policies, EmailSecuritySettingsReadEndpoint.parse("allow-policies").?);
+    try std.testing.expectEqual(EmailSecuritySettingsReadEndpoint.blocked_senders, EmailSecuritySettingsReadEndpoint.parse("block-senders").?);
+    try std.testing.expectEqual(EmailSecuritySettingsReadEndpoint.domains, EmailSecuritySettingsReadEndpoint.parse("protected-domains").?);
+    try std.testing.expectEqual(EmailSecuritySettingsReadEndpoint.impersonation_registry_entry, EmailSecuritySettingsReadEndpoint.parse("impersonation-entry").?);
+    try std.testing.expectEqualStrings("email_security_list_allow_policies", EmailSecuritySettingsReadEndpoint.allow_policies.operationId());
+    try std.testing.expectEqualStrings("email_security_get_allow_policy", EmailSecuritySettingsReadEndpoint.allow_policy.operationId());
+    try std.testing.expectEqualStrings("email_security_list_trusted_domains", EmailSecuritySettingsReadEndpoint.trusted_domains.operationId());
+    try std.testing.expectEqualStrings("account-email-security-url-ignore-pattern", EmailSecuritySettingsReadEndpoint.url_ignore_pattern.label());
+    try std.testing.expect(EmailSecuritySettingsReadEndpoint.allow_policy.requiresResourceId());
+    try std.testing.expect(!EmailSecuritySettingsReadEndpoint.allow_policies.requiresResourceId());
+    try std.testing.expectEqual(EmailSecuritySettingsReadEndpoint.domain, EmailSecuritySettingsReadEndpoint.domains.detailEndpoint().?);
+    try std.testing.expectEqual(@as(?EmailSecuritySettingsReadEndpoint, null), EmailSecuritySettingsReadEndpoint.domain.detailEndpoint());
+}
+
+test "builds email security settings read paths" {
+    const allocator = std.testing.allocator;
+    const cf_base_url = "https://api.cloudflare.com/client/v4";
+    const allow = try emailSecuritySettingsReadUrl(allocator, cf_base_url, "acct/1", .allow_policies, .{
+        .direction = "desc",
+        .pattern_type = "DOMAIN",
+        .per_page = "25",
+        .verify_sender = "true",
+    });
+    defer allocator.free(allow);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/email-security/settings/allow_policies?direction=desc&pattern_type=DOMAIN&per_page=25&verify_sender=true", allow);
+
+    const blocked = try emailSecuritySettingsReadPath(allocator, "acct/1", .blocked_sender, .{ .resource_id = "pattern/1" });
+    defer allocator.free(blocked);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/email-security/settings/block_senders/pattern%2F1", blocked);
+
+    const domains = try emailSecuritySettingsReadPath(allocator, "acct/1", .domains, .{
+        .active_delivery_mode = "DIRECT",
+        .domain = "plosca.ru",
+        .status = "active",
+    });
+    defer allocator.free(domains);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/email-security/settings/domains?active_delivery_mode=DIRECT&domain=plosca.ru&status=active", domains);
+
+    const trusted = try emailSecuritySettingsReadPath(allocator, "acct/1", .trusted_domains, .{
+        .is_recent = "true",
+        .is_similarity = "false",
+        .search = "partner",
+    });
+    defer allocator.free(trusted);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/email-security/settings/trusted_domains?is_recent=true&is_similarity=false&search=partner", trusted);
+
+    const ignored = try emailSecuritySettingsReadPath(allocator, "acct/1", .url_ignore_patterns, .{ .page = "2", .per_page = "10" });
+    defer allocator.free(ignored);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/email-security/settings/url_ignore_patterns?page=2&per_page=10", ignored);
+
+    try std.testing.expectError(error.MissingCloudflareEmailSecuritySettingsResourceId, emailSecuritySettingsReadPath(allocator, "acct/1", .trusted_domain, .{}));
 }
 
 test "custom page endpoints map to official operation metadata" {

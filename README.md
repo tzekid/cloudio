@@ -164,6 +164,11 @@ zig build run -- cloudflare email-routing zone settings <zone-id>
 zig build run -- cloudflare email-routing zone dns <zone-id>
 zig build run -- cloudflare email-routing zone rules <zone-id>
 zig build run -- cloudflare email-routing zone catch-all <zone-id>
+zig build run -- cloudflare email-security settings domains <account-id>
+zig build run -- cloudflare email-security settings trusted-domains <account-id>
+zig build run -- cloudflare email-security settings allow-policies <account-id>
+zig build run -- cloudflare email-security settings blocked-senders <account-id>
+zig build run -- cloudflare email-security settings url-ignore-patterns <account-id>
 zig build run -- cloudflare security-posture ai-settings <zone-id>
 zig build run -- cloudflare security-posture bot-management <zone-id>
 zig build run -- cloudflare security-posture content-scanning-settings <zone-id>

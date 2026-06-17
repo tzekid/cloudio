@@ -180,6 +180,7 @@ fn usage() void {
         \\  cloudio cloudflare security-center account|zone context|insight-audit-log <scope-id> <issue-id> [key=value...]
         \\  cloudio cloudflare email-routing account addresses|address <account-id> [address-id] [key=value...]
         \\  cloudio cloudflare email-routing zone settings|dns|rules|rule|catch-all <zone-id> [rule-id] [key=value...]
+        \\  cloudio cloudflare email-security settings allow-policies|allow-policy|blocked-senders|blocked-sender|domains|domain|impersonation-registry|impersonation-registry-entry|sending-domain-restrictions|sending-domain-restriction|trusted-domains|trusted-domain|url-ignore-patterns|url-ignore-pattern <account-id> [resource-id] [key=value...]
         \\  cloudio cloudflare audit-logs account <account-id> [key=value...]|account-v2 <account-id> since=<rfc3339> before=<rfc3339> [key=value...]|organization-v2 <organization-id> since=<rfc3339> before=<rfc3339> [key=value...]|user [key=value...]
         \\  cloudio cloudflare logpush account|zone jobs <scope-id>|job <scope-id> <job-id>|dataset-jobs|dataset-fields <scope-id> <dataset-id>
         \\  cloudio cloudflare log-explorer account|zone datasets|available <scope-id> [include_zones=true]|dataset <scope-id> <dataset-id>

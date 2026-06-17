@@ -64,6 +64,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandApiShield(ctx, args);
     } else if (std.mem.eql(u8, sub, "security-posture") or std.mem.eql(u8, sub, "zone-security")) {
         try commandZoneSecurityPosture(ctx, args);
+    } else if (std.mem.eql(u8, sub, "email-security")) {
+        try commandEmailSecurity(ctx, args);
     } else if (std.mem.eql(u8, sub, "email-routing") or std.mem.eql(u8, sub, "email")) {
         try commandEmailRouting(ctx, args);
     } else if (std.mem.eql(u8, sub, "custom-pages")) {
@@ -1274,6 +1276,39 @@ fn commandZoneSecurityPosture(ctx: Context, args: []const []const u8) !void {
     cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneSecurityPostureEndpoint(appContext(ctx), zone_id, endpoint, read_args));
 }
 
+fn commandEmailSecurity(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4 or !std.mem.eql(u8, args[1], "settings")) {
+        std.debug.print("email-security settings allow-policies|allow-policy|blocked-senders|blocked-sender|domains|domain|impersonation-registry|impersonation-registry-entry|sending-domain-restrictions|sending-domain-restriction|trusted-domains|trusted-domain|url-ignore-patterns|url-ignore-pattern <account-id> [resource-id] [key=value...] required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.EmailSecuritySettingsReadEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown email-security settings command: {s}\n", .{args[2]});
+        return;
+    };
+    const account_id = args[3];
+    var read_args: app_cloudflare.EmailSecuritySettingsReadArgs = .{};
+    var index: usize = 4;
+    if (endpoint.requiresResourceId()) {
+        if (args.len <= index) {
+            std.debug.print("resource id required for email-security settings {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.resource_id = args[index];
+        index += 1;
+    }
+    while (index < args.len) : (index += 1) {
+        if (!endpoint.acceptsFilters()) {
+            std.debug.print("email-security settings {s} does not accept filters: {s}\n", .{ endpoint.commandName(), args[index] });
+            return;
+        }
+        if (!applyEmailSecuritySettingsFilter(&read_args, args[index])) {
+            std.debug.print("unknown email-security settings filter: {s}\n", .{args[index]});
+            return;
+        }
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectEmailSecuritySettingsEndpoint(appContext(ctx), account_id, endpoint, read_args));
+}
+
 fn commandEmailRouting(ctx: Context, args: []const []const u8) !void {
     if (args.len < 4) {
         std.debug.print("email-routing account addresses|address <account-id> [address-id] [key=value...] or email-routing zone settings|dns|rules|rule|catch-all <zone-id> [rule-id] [key=value...] required\n", .{});
@@ -2069,6 +2104,54 @@ fn applyEmailRoutingZoneFilter(args: *app_cloudflare.EmailRoutingZoneReadArgs, r
     return true;
 }
 
+fn applyEmailSecuritySettingsFilter(args: *app_cloudflare.EmailSecuritySettingsReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "active_delivery_mode") or std.mem.eql(u8, key, "active-delivery-mode")) {
+        args.active_delivery_mode = value;
+    } else if (std.mem.eql(u8, key, "allowed_delivery_mode") or std.mem.eql(u8, key, "allowed-delivery-mode")) {
+        args.allowed_delivery_mode = value;
+    } else if (std.mem.eql(u8, key, "direction")) {
+        args.direction = value;
+    } else if (std.mem.eql(u8, key, "domain")) {
+        args.domain = value;
+    } else if (std.mem.eql(u8, key, "integration_id") or std.mem.eql(u8, key, "integration-id")) {
+        args.integration_id = value;
+    } else if (std.mem.eql(u8, key, "is_acceptable_sender") or std.mem.eql(u8, key, "is-acceptable-sender")) {
+        args.is_acceptable_sender = value;
+    } else if (std.mem.eql(u8, key, "is_exempt_recipient") or std.mem.eql(u8, key, "is-exempt-recipient")) {
+        args.is_exempt_recipient = value;
+    } else if (std.mem.eql(u8, key, "is_recent") or std.mem.eql(u8, key, "is-recent")) {
+        args.is_recent = value;
+    } else if (std.mem.eql(u8, key, "is_similarity") or std.mem.eql(u8, key, "is-similarity")) {
+        args.is_similarity = value;
+    } else if (std.mem.eql(u8, key, "is_trusted_sender") or std.mem.eql(u8, key, "is-trusted-sender")) {
+        args.is_trusted_sender = value;
+    } else if (std.mem.eql(u8, key, "order")) {
+        args.order = value;
+    } else if (std.mem.eql(u8, key, "page")) {
+        args.page = value;
+    } else if (std.mem.eql(u8, key, "pattern")) {
+        args.pattern = value;
+    } else if (std.mem.eql(u8, key, "pattern_type") or std.mem.eql(u8, key, "pattern-type")) {
+        args.pattern_type = value;
+    } else if (std.mem.eql(u8, key, "per_page") or std.mem.eql(u8, key, "per-page")) {
+        args.per_page = value;
+    } else if (std.mem.eql(u8, key, "provenance")) {
+        args.provenance = value;
+    } else if (std.mem.eql(u8, key, "search")) {
+        args.search = value;
+    } else if (std.mem.eql(u8, key, "status")) {
+        args.status = value;
+    } else if (std.mem.eql(u8, key, "verify_sender") or std.mem.eql(u8, key, "verify-sender")) {
+        args.verify_sender = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 fn applyZeroTrustReadFilter(args: *app_cloudflare.ZeroTrustReadArgs, raw: []const u8) bool {
     const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
     const key = raw[0..eq];
@@ -2414,6 +2497,36 @@ test "email routing filters parse key value arguments" {
     try std.testing.expect(!applyEmailRoutingZoneFilter(&zone_args, "enabled"));
     try std.testing.expectEqualStrings("mail.example.test", zone_args.subdomain.?);
     try std.testing.expectEqualStrings("false", zone_args.enabled.?);
+}
+
+test "email security settings filters parse key value arguments" {
+    var args: app_cloudflare.EmailSecuritySettingsReadArgs = .{};
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "active-delivery-mode=DIRECT"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "allowed_delivery_mode=API"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "direction=desc"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "domain=plosca.ru"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "integration-id=abc"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "is-acceptable-sender=true"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "is_exempt_recipient=false"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "is-recent=true"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "is_similarity=false"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "is-trusted-sender=true"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "order=pattern"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "page=2"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "pattern=example.com"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "pattern-type=DOMAIN"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "per-page=50"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "provenance=AUTO"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "search=partner"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "status=active"));
+    try std.testing.expect(applyEmailSecuritySettingsFilter(&args, "verify-sender=true"));
+    try std.testing.expect(!applyEmailSecuritySettingsFilter(&args, "unknown=value"));
+    try std.testing.expect(!applyEmailSecuritySettingsFilter(&args, "search"));
+    try std.testing.expectEqualStrings("DIRECT", args.active_delivery_mode.?);
+    try std.testing.expectEqualStrings("API", args.allowed_delivery_mode.?);
+    try std.testing.expectEqualStrings("DOMAIN", args.pattern_type.?);
+    try std.testing.expectEqualStrings("50", args.per_page.?);
+    try std.testing.expectEqualStrings("true", args.verify_sender.?);
 }
 
 test "zero trust read filters parse key value arguments" {

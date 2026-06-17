@@ -71,6 +71,8 @@ pub const EmailRoutingAccountReadArgs = collector_cloudflare.EmailRoutingAccount
 pub const EmailRoutingAccountReadEndpoint = collector_cloudflare.EmailRoutingAccountReadEndpoint;
 pub const EmailRoutingZoneReadArgs = collector_cloudflare.EmailRoutingZoneReadArgs;
 pub const EmailRoutingZoneReadEndpoint = collector_cloudflare.EmailRoutingZoneReadEndpoint;
+pub const EmailSecuritySettingsReadArgs = collector_cloudflare.EmailSecuritySettingsReadArgs;
+pub const EmailSecuritySettingsReadEndpoint = collector_cloudflare.EmailSecuritySettingsReadEndpoint;
 pub const TunnelReadArgs = collector_cloudflare.TunnelReadArgs;
 pub const TunnelReadEndpoint = collector_cloudflare.TunnelReadEndpoint;
 pub const ZeroTrustReadArgs = collector_cloudflare.ZeroTrustReadArgs;
@@ -280,6 +282,10 @@ pub fn collectEmailRoutingAccountEndpoint(ctx: Context, account_id: []const u8, 
 
 pub fn collectEmailRoutingZoneEndpoint(ctx: Context, zone_id: []const u8, endpoint: EmailRoutingZoneReadEndpoint, args: EmailRoutingZoneReadArgs) !Output {
     return try collector_cloudflare.collectEmailRoutingZoneEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, zone_id, endpoint, args, true);
+}
+
+pub fn collectEmailSecuritySettingsEndpoint(ctx: Context, account_id: []const u8, endpoint: EmailSecuritySettingsReadEndpoint, args: EmailSecuritySettingsReadArgs) !Output {
+    return try collector_cloudflare.collectEmailSecuritySettingsEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, args, true);
 }
 
 pub fn collectCustomPageEndpoint(ctx: Context, scope: CustomPageScope, scope_id: []const u8, resource: CustomPageResource, endpoint: CustomPageReadEndpoint, args: CustomPageReadArgs) !Output {
