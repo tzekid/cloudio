@@ -1,5 +1,6 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
+const core_time = @import("core_time");
 const core_process = @import("core_process");
 const core_redact = @import("core_redact");
 const collector_capture = @import("collector_capture");
@@ -72,6 +73,11 @@ pub const TunnelReadArgs = provider_cloudflare.TunnelReadArgs;
 pub const TunnelReadEndpoint = provider_cloudflare.TunnelReadEndpoint;
 pub const ZeroTrustReadArgs = provider_cloudflare.ZeroTrustReadArgs;
 pub const ZeroTrustReadEndpoint = provider_cloudflare.ZeroTrustReadEndpoint;
+pub const SecurityCenterReadArgs = provider_cloudflare.SecurityCenterReadArgs;
+pub const SecurityCenterReadEndpoint = provider_cloudflare.SecurityCenterReadEndpoint;
+pub const SecurityCenterScope = provider_cloudflare.SecurityCenterScope;
+pub const AuditLogReadArgs = provider_cloudflare.AuditLogReadArgs;
+pub const AuditLogReadEndpoint = provider_cloudflare.AuditLogReadEndpoint;
 pub const LoadBalancingAccountReadEndpoint = provider_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = provider_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = provider_cloudflare.LoadBalancingMutationEndpoint;
@@ -180,6 +186,8 @@ pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_outp
     try collectAccessForAccounts(gpa, io, client, db, redacted);
     try collectTunnelsForAccounts(gpa, io, client, db, redacted);
     try collectZeroTrustForAccounts(gpa, io, client, db, redacted);
+    try collectSecurityCenterForAccounts(gpa, io, client, db, redacted);
+    try collectAuditLogsForAccounts(gpa, io, client, db, redacted);
     try collectAccountTokenEndpointsForAccounts(gpa, io, auth, client, db, redacted);
     try collectAccountDnsSettings(gpa, io, client, db, redacted);
     try collectAccountDnsRecordUsageForAccounts(gpa, io, client, db, redacted);
@@ -966,6 +974,54 @@ pub fn collectZeroTrustEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, acc
     return .{ .text = if (capture_output) redacted else null };
 }
 
+pub fn collectSecurityCenterEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, scope: SecurityCenterScope, scope_id: []const u8, endpoint: SecurityCenterReadEndpoint, args: SecurityCenterReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label(scope);
+    const target = try securityCenterTarget(gpa, scope_id, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getSecurityCenterEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.securityCenterReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAuditLogEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: AuditLogReadEndpoint, args: AuditLogReadArgs, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = try auditLogTarget(gpa, endpoint, args);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAuditLogEndpoint(io, gpa, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.auditLogReadPath(gpa, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: IdentityEndpoint, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const client = clientFromAuth(auth) catch {
@@ -1301,6 +1357,7 @@ pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const 
         try collectPageShieldForZone(gpa, io, client, db, zone_id, domain);
         try collectCustomPagesForZone(gpa, io, client, db, zone_id, domain);
         try collectAccessForZone(gpa, io, client, db, zone_id, domain);
+        try collectSecurityCenterForZone(gpa, io, client, db, zone_id, domain);
 
         zone_tags_refresh: {
             const tag_body = client.getResourceTaggingZoneTags(io, gpa, zone_id, .{
@@ -2751,6 +2808,135 @@ fn collectZeroTrustSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.
     });
 }
 
+fn collectSecurityCenterForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const endpoints = [_]SecurityCenterReadEndpoint{
+        .issue_types,
+        .insights,
+        .class_counts,
+        .severity_counts,
+        .type_counts,
+        .audit_log,
+    };
+    for (rows.items) |row| {
+        for (endpoints) |endpoint| {
+            try collectSecurityCenterReadForTarget(gpa, io, client, db, .account, row.id, row.id, endpoint, .{});
+        }
+    }
+}
+
+fn collectSecurityCenterForZone(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8) !void {
+    const endpoints = [_]SecurityCenterReadEndpoint{
+        .insights,
+        .class_counts,
+        .severity_counts,
+        .type_counts,
+        .audit_log,
+    };
+    for (endpoints) |endpoint| {
+        try collectSecurityCenterReadForTarget(gpa, io, client, db, .zone, zone_id, target_label, endpoint, .{});
+    }
+}
+
+fn collectSecurityCenterReadForTarget(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: SecurityCenterScope, scope_id: []const u8, target_label: []const u8, endpoint: SecurityCenterReadEndpoint, args: SecurityCenterReadArgs) anyerror!void {
+    const redacted = collectSecurityCenterSnapshot(gpa, io, client, db, scope, scope_id, target_label, endpoint, args) catch |err| {
+        const target = securityCenterTarget(gpa, target_label, endpoint, args) catch try gpa.dupe(u8, target_label);
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(scope), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(scope), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+    try collectSecurityCenterDetailsForList(gpa, io, client, db, scope, scope_id, target_label, endpoint, redacted);
+}
+
+fn collectSecurityCenterDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: SecurityCenterScope, scope_id: []const u8, target_label: []const u8, list_endpoint: SecurityCenterReadEndpoint, list_body: []const u8) anyerror!void {
+    if (list_endpoint != .insights) return;
+    var rows = try provider_cloudflare_models.parseResourceIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        if (scope == .account) {
+            try collectSecurityCenterReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .insight_context, .{ .issue_id = row.id });
+        }
+        try collectSecurityCenterReadForTarget(gpa, io, client, db, scope, scope_id, target_label, .insight_audit_log, .{ .issue_id = row.id });
+    }
+}
+
+fn collectSecurityCenterSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: SecurityCenterScope, scope_id: []const u8, target_label: []const u8, endpoint: SecurityCenterReadEndpoint, args: SecurityCenterReadArgs) ![]u8 {
+    const body = try client.getSecurityCenterEndpoint(io, gpa, scope, scope_id, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.securityCenterReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try securityCenterTarget(gpa, target_label, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(scope),
+        .target = target,
+        .summary_label = endpoint.summary(scope),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
+fn collectAuditLogsForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const now_seconds = core_time.currentEpochSeconds() catch 0;
+    const day_seconds: u64 = 24 * 60 * 60;
+    const since_seconds = if (now_seconds > day_seconds) now_seconds - day_seconds else 0;
+    var since_buf: [20]u8 = undefined;
+    var before_buf: [20]u8 = undefined;
+    const since = try core_time.formatUtcSecond(&since_buf, since_seconds);
+    const before = try core_time.formatUtcSecond(&before_buf, now_seconds);
+    for (rows.items) |row| {
+        try collectAuditLogRead(gpa, io, client, db, .account_v1, .{ .account_id = row.id });
+        try collectAuditLogRead(gpa, io, client, db, .account_v2, .{ .account_id = row.id, .since = since, .before = before });
+
+        const org_body = client.getAccountEndpoint(io, gpa, row.id, .organizations) catch continue;
+        defer org_body.deinit(gpa);
+        var org_rows = try provider_cloudflare_models.parseResourceIdRows(gpa, org_body.body);
+        defer org_rows.deinit(gpa);
+        for (org_rows.items) |org_row| {
+            try collectAuditLogRead(gpa, io, client, db, .organization_v2, .{ .organization_id = org_row.id, .since = since, .before = before });
+        }
+    }
+    try collectAuditLogRead(gpa, io, client, db, .user_v1, .{});
+}
+
+fn collectAuditLogRead(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, endpoint: AuditLogReadEndpoint, args: AuditLogReadArgs) anyerror!void {
+    const redacted = collectAuditLogSnapshot(gpa, io, client, db, endpoint, args) catch |err| {
+        const target = auditLogTarget(gpa, endpoint, args) catch try gpa.dupe(u8, endpoint.commandName());
+        defer gpa.free(target);
+        const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+        defer gpa.free(error_summary);
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+        return;
+    };
+    defer gpa.free(redacted);
+}
+
+fn collectAuditLogSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, endpoint: AuditLogReadEndpoint, args: AuditLogReadArgs) ![]u8 {
+    const body = try client.getAuditLogEndpoint(io, gpa, endpoint, args);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.auditLogReadPath(gpa, endpoint, args);
+    defer gpa.free(endpoint_path);
+    const target = try auditLogTarget(gpa, endpoint, args);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
 fn collectRulesetSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, scope: RulesetScope, scope_id: []const u8, target_label: []const u8, endpoint: RulesetReadEndpoint, args: RulesetReadArgs) ![]u8 {
     const body = try client.getRulesetEndpoint(io, gpa, scope, scope_id, endpoint, args);
     defer body.deinit(gpa);
@@ -3210,6 +3396,22 @@ fn zeroTrustTarget(gpa: Allocator, account_id: []const u8, endpoint: ZeroTrustRe
         return try std.fmt.allocPrint(gpa, "{s}/user:{s}", .{ account_id, user_id });
     }
     return try gpa.dupe(u8, account_id);
+}
+
+fn securityCenterTarget(gpa: Allocator, scope_label: []const u8, endpoint: SecurityCenterReadEndpoint, args: SecurityCenterReadArgs) ![]u8 {
+    if (endpoint.requiresIssueId()) {
+        const issue_id = args.issue_id orelse return try gpa.dupe(u8, scope_label);
+        return try std.fmt.allocPrint(gpa, "{s}/issue:{s}", .{ scope_label, issue_id });
+    }
+    return try gpa.dupe(u8, scope_label);
+}
+
+fn auditLogTarget(gpa: Allocator, endpoint: AuditLogReadEndpoint, args: AuditLogReadArgs) ![]u8 {
+    return switch (endpoint) {
+        .account_v1, .account_v2 => if (args.account_id) |account_id| try gpa.dupe(u8, account_id) else try gpa.dupe(u8, endpoint.commandName()),
+        .organization_v2 => if (args.organization_id) |organization_id| try gpa.dupe(u8, organization_id) else try gpa.dupe(u8, endpoint.commandName()),
+        .user_v1 => try gpa.dupe(u8, "user"),
+    };
 }
 
 fn resourceTaggingAccountTarget(gpa: Allocator, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {

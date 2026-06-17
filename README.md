@@ -134,6 +134,13 @@ zig build run -- cloudflare zero-trust lists <account-id> type=SERIAL
 zig build run -- cloudflare zero-trust list-items <account-id> <list-id>
 zig build run -- cloudflare zero-trust users <account-id> search=admin
 zig build run -- cloudflare zero-trust user-last-seen-identity <account-id> <user-id>
+zig build run -- cloudflare security-center account insights <account-id>
+zig build run -- cloudflare security-center account severity <account-id> dismissed=false
+zig build run -- cloudflare security-center zone insights <zone-id> severity=critical
+zig build run -- cloudflare security-center account context <account-id> <issue-id>
+zig build run -- cloudflare audit-logs account <account-id> per-page=10
+zig build run -- cloudflare audit-logs account-v2 <account-id> since=2026-06-16T00:00:00Z before=2026-06-17T23:59:00Z limit=10
+zig build run -- cloudflare audit-logs user per-page=10
 zig build run -- cloudflare dns plosca.ru
 zig build run -- cloudflare dns usage plosca.ru
 zig build run -- cloudflare dns show <record-id> plosca.ru

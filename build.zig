@@ -125,6 +125,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "core_process", .module = core_process_mod },
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "collector_capture", .module = collector_capture_mod },

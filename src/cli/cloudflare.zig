@@ -68,6 +68,10 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandTunnel(ctx, args);
     } else if (std.mem.eql(u8, sub, "zero-trust") or std.mem.eql(u8, sub, "zerotrust") or std.mem.eql(u8, sub, "gateway")) {
         try commandZeroTrust(ctx, args);
+    } else if (std.mem.eql(u8, sub, "security-center") or std.mem.eql(u8, sub, "sec-center")) {
+        try commandSecurityCenter(ctx, args);
+    } else if (std.mem.eql(u8, sub, "audit-logs") or std.mem.eql(u8, sub, "audit")) {
+        try commandAuditLogs(ctx, args);
     } else if (std.mem.eql(u8, sub, "dnssec")) {
         try commandDnssec(ctx, args);
     } else if (std.mem.eql(u8, sub, "secondary-dns")) {
@@ -1424,6 +1428,75 @@ fn printMissingZeroTrustReadArg(endpoint: app_cloudflare.ZeroTrustReadEndpoint, 
     std.debug.print("{s} required for zero-trust {s}\n", .{ label, endpoint.commandName() });
 }
 
+fn commandSecurityCenter(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("security-center account|zone <route> <scope-id> [issue-id] [key=value...] required\n", .{});
+        return;
+    }
+    const scope = app_cloudflare.SecurityCenterScope.parse(args[1]) orelse {
+        std.debug.print("unknown security-center scope: {s}\n", .{args[1]});
+        return;
+    };
+    const endpoint = app_cloudflare.SecurityCenterReadEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown security-center route: {s}\n", .{args[2]});
+        return;
+    };
+    const scope_id = args[3];
+    var read_args: app_cloudflare.SecurityCenterReadArgs = .{};
+    var index: usize = 4;
+    if (endpoint.requiresIssueId()) {
+        if (index >= args.len) {
+            std.debug.print("issue id required for security-center {s} {s}\n", .{ scope.commandName(), endpoint.commandName() });
+            return;
+        }
+        read_args.issue_id = args[index];
+        index += 1;
+    }
+    while (index < args.len) : (index += 1) {
+        if (!applySecurityCenterReadFilter(&read_args, args[index])) {
+            std.debug.print("unused security-center argument: {s}\n", .{args[index]});
+            return;
+        }
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectSecurityCenterEndpoint(appContext(ctx), scope, scope_id, endpoint, read_args));
+}
+
+fn commandAuditLogs(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 2) {
+        std.debug.print("audit-logs account|account-v2|organization-v2|user [id] [key=value...] required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.AuditLogReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown audit-logs route: {s}\n", .{args[1]});
+        return;
+    };
+    var read_args: app_cloudflare.AuditLogReadArgs = .{};
+    var index: usize = 2;
+    if (endpoint.requiresAccountId()) {
+        if (index >= args.len) {
+            std.debug.print("account id required for audit-logs {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.account_id = args[index];
+        index += 1;
+    }
+    if (endpoint.requiresOrganizationId()) {
+        if (index >= args.len) {
+            std.debug.print("organization id required for audit-logs {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        read_args.organization_id = args[index];
+        index += 1;
+    }
+    while (index < args.len) : (index += 1) {
+        if (!applyAuditLogReadFilter(&read_args, args[index])) {
+            std.debug.print("unused audit-logs argument: {s}\n", .{args[index]});
+            return;
+        }
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAuditLogEndpoint(appContext(ctx), endpoint, read_args));
+}
+
 fn commandDnssec(ctx: Context, args: []const []const u8) !void {
     if (args.len > 1 and std.mem.eql(u8, args[1], "zsk")) {
         const domain = if (args.len > 2) args[2] else ctx.domains[0];
@@ -1644,6 +1717,106 @@ fn applyZeroTrustReadFilter(args: *app_cloudflare.ZeroTrustReadArgs, raw: []cons
     return true;
 }
 
+fn applySecurityCenterReadFilter(args: *app_cloudflare.SecurityCenterReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "dismissed")) {
+        args.dismissed = value;
+    } else if (std.mem.eql(u8, key, "issue_class") or std.mem.eql(u8, key, "class")) {
+        args.issue_class = value;
+    } else if (std.mem.eql(u8, key, "issue_class~neq") or std.mem.eql(u8, key, "class!") or std.mem.eql(u8, key, "class_neq")) {
+        args.issue_class_neq = value;
+    } else if (std.mem.eql(u8, key, "issue_type") or std.mem.eql(u8, key, "type")) {
+        args.issue_type = value;
+    } else if (std.mem.eql(u8, key, "issue_type~neq") or std.mem.eql(u8, key, "type!") or std.mem.eql(u8, key, "type_neq")) {
+        args.issue_type_neq = value;
+    } else if (std.mem.eql(u8, key, "page")) {
+        args.page = value;
+    } else if (std.mem.eql(u8, key, "per_page") or std.mem.eql(u8, key, "per-page")) {
+        args.per_page = value;
+    } else if (std.mem.eql(u8, key, "product")) {
+        args.product = value;
+    } else if (std.mem.eql(u8, key, "product~neq") or std.mem.eql(u8, key, "product!") or std.mem.eql(u8, key, "product_neq")) {
+        args.product_neq = value;
+    } else if (std.mem.eql(u8, key, "severity")) {
+        args.severity = value;
+    } else if (std.mem.eql(u8, key, "severity~neq") or std.mem.eql(u8, key, "severity!") or std.mem.eql(u8, key, "severity_neq")) {
+        args.severity_neq = value;
+    } else if (std.mem.eql(u8, key, "subject")) {
+        args.subject = value;
+    } else if (std.mem.eql(u8, key, "subject~neq") or std.mem.eql(u8, key, "subject!") or std.mem.eql(u8, key, "subject_neq")) {
+        args.subject_neq = value;
+    } else if (std.mem.eql(u8, key, "before")) {
+        args.before = value;
+    } else if (std.mem.eql(u8, key, "changed_by") or std.mem.eql(u8, key, "changed-by")) {
+        args.changed_by = value;
+    } else if (std.mem.eql(u8, key, "cursor")) {
+        args.cursor = value;
+    } else if (std.mem.eql(u8, key, "field_changed") or std.mem.eql(u8, key, "field-changed")) {
+        args.field_changed = value;
+    } else if (std.mem.eql(u8, key, "order")) {
+        args.order = value;
+    } else if (std.mem.eql(u8, key, "since")) {
+        args.since = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+fn applyAuditLogReadFilter(args: *app_cloudflare.AuditLogReadArgs, raw: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
+    const key = raw[0..eq];
+    const value = raw[eq + 1 ..];
+    if (std.mem.eql(u8, key, "since")) {
+        args.since = value;
+    } else if (std.mem.eql(u8, key, "before")) {
+        args.before = value;
+    } else if (std.mem.eql(u8, key, "cursor")) {
+        args.cursor = value;
+    } else if (std.mem.eql(u8, key, "direction")) {
+        args.direction = value;
+    } else if (std.mem.eql(u8, key, "id")) {
+        args.id = value;
+    } else if (std.mem.eql(u8, key, "limit")) {
+        args.limit = value;
+    } else if (std.mem.eql(u8, key, "page")) {
+        args.page = value;
+    } else if (std.mem.eql(u8, key, "per_page") or std.mem.eql(u8, key, "per-page")) {
+        args.per_page = value;
+    } else if (std.mem.eql(u8, key, "actor_email") or std.mem.eql(u8, key, "actor.email")) {
+        args.actor_email = value;
+    } else if (std.mem.eql(u8, key, "actor_ip") or std.mem.eql(u8, key, "actor.ip") or std.mem.eql(u8, key, "actor_ip_address")) {
+        args.actor_ip = value;
+    } else if (std.mem.eql(u8, key, "action_type") or std.mem.eql(u8, key, "action.type")) {
+        args.action_type = value;
+    } else if (std.mem.eql(u8, key, "action_result")) {
+        args.action_result = value;
+    } else if (std.mem.eql(u8, key, "actor_id")) {
+        args.actor_id = value;
+    } else if (std.mem.eql(u8, key, "actor_type")) {
+        args.actor_type = value;
+    } else if (std.mem.eql(u8, key, "resource_id")) {
+        args.resource_id = value;
+    } else if (std.mem.eql(u8, key, "resource_product")) {
+        args.resource_product = value;
+    } else if (std.mem.eql(u8, key, "resource_type")) {
+        args.resource_type = value;
+    } else if (std.mem.eql(u8, key, "zone_id")) {
+        args.zone_id = value;
+    } else if (std.mem.eql(u8, key, "zone_name") or std.mem.eql(u8, key, "zone.name")) {
+        args.zone_name = value;
+    } else if (std.mem.eql(u8, key, "hide_user_logs") or std.mem.eql(u8, key, "hide-user-logs")) {
+        args.hide_user_logs = value;
+    } else if (std.mem.eql(u8, key, "export")) {
+        args.export_format = value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 fn applyCloudforceOneRuleFilter(args: *app_cloudflare.CloudforceOneRuleReadArgs, raw: []const u8) bool {
     const eq = std.mem.indexOfScalar(u8, raw, '=') orelse return false;
     const key = raw[0..eq];
@@ -1802,6 +1975,47 @@ test "zero trust read filters parse key value arguments" {
     try std.testing.expectEqualStrings("Admin User", args.name.?);
     try std.testing.expectEqualStrings("50", args.per_page.?);
     try std.testing.expectEqualStrings("admin", args.search.?);
+}
+
+test "security center read filters parse key value arguments" {
+    var args: app_cloudflare.SecurityCenterReadArgs = .{};
+    try std.testing.expect(applySecurityCenterReadFilter(&args, "dismissed=false"));
+    try std.testing.expect(applySecurityCenterReadFilter(&args, "class=compliance"));
+    try std.testing.expect(applySecurityCenterReadFilter(&args, "class!=informational"));
+    try std.testing.expect(applySecurityCenterReadFilter(&args, "type=weak_tls"));
+    try std.testing.expect(applySecurityCenterReadFilter(&args, "product=waf"));
+    try std.testing.expect(applySecurityCenterReadFilter(&args, "severity=critical"));
+    try std.testing.expect(applySecurityCenterReadFilter(&args, "subject=plosca.ru"));
+    try std.testing.expect(applySecurityCenterReadFilter(&args, "per-page=50"));
+    try std.testing.expect(applySecurityCenterReadFilter(&args, "changed-by=system"));
+    try std.testing.expect(applySecurityCenterReadFilter(&args, "field-changed=status"));
+    try std.testing.expect(!applySecurityCenterReadFilter(&args, "unknown=value"));
+    try std.testing.expect(!applySecurityCenterReadFilter(&args, "severity"));
+    try std.testing.expectEqualStrings("false", args.dismissed.?);
+    try std.testing.expectEqualStrings("compliance", args.issue_class.?);
+    try std.testing.expectEqualStrings("informational", args.issue_class_neq.?);
+    try std.testing.expectEqualStrings("50", args.per_page.?);
+    try std.testing.expectEqualStrings("system", args.changed_by.?);
+}
+
+test "audit log read filters parse key value arguments" {
+    var args: app_cloudflare.AuditLogReadArgs = .{};
+    try std.testing.expect(applyAuditLogReadFilter(&args, "since=2026-06-01T00:00:00Z"));
+    try std.testing.expect(applyAuditLogReadFilter(&args, "before=2026-06-17T00:00:00Z"));
+    try std.testing.expect(applyAuditLogReadFilter(&args, "actor.email=admin@example.test"));
+    try std.testing.expect(applyAuditLogReadFilter(&args, "actor_ip_address=198.51.100.2"));
+    try std.testing.expect(applyAuditLogReadFilter(&args, "action.type=edit"));
+    try std.testing.expect(applyAuditLogReadFilter(&args, "resource_id=zone/1"));
+    try std.testing.expect(applyAuditLogReadFilter(&args, "zone.name=plosca.ru"));
+    try std.testing.expect(applyAuditLogReadFilter(&args, "hide-user-logs=true"));
+    try std.testing.expect(applyAuditLogReadFilter(&args, "per-page=25"));
+    try std.testing.expect(!applyAuditLogReadFilter(&args, "unknown=value"));
+    try std.testing.expect(!applyAuditLogReadFilter(&args, "since"));
+    try std.testing.expectEqualStrings("admin@example.test", args.actor_email.?);
+    try std.testing.expectEqualStrings("198.51.100.2", args.actor_ip.?);
+    try std.testing.expectEqualStrings("edit", args.action_type.?);
+    try std.testing.expectEqualStrings("zone/1", args.resource_id.?);
+    try std.testing.expectEqualStrings("true", args.hide_user_logs.?);
 }
 
 test "ip access rule filters parse key value arguments" {

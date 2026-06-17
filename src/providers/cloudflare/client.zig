@@ -268,6 +268,18 @@ pub const Client = struct {
         return try self.get(io, gpa, url);
     }
 
+    pub fn getSecurityCenterEndpoint(self: Client, io: Io, gpa: Allocator, scope: SecurityCenterScope, scope_id: []const u8, endpoint: SecurityCenterReadEndpoint, args: SecurityCenterReadArgs) !net_http.Response {
+        const url = try securityCenterReadUrl(gpa, self.base_url_override, scope, scope_id, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
+    pub fn getAuditLogEndpoint(self: Client, io: Io, gpa: Allocator, endpoint: AuditLogReadEndpoint, args: AuditLogReadArgs) !net_http.Response {
+        const url = try auditLogReadUrl(gpa, self.base_url_override, endpoint, args);
+        defer gpa.free(url);
+        return try self.get(io, gpa, url);
+    }
+
     pub fn getZones(self: Client, io: Io, gpa: Allocator, domain: []const u8) !net_http.Response {
         const url = try zonesUrl(gpa, self.base_url_override, domain);
         defer gpa.free(url);
@@ -4954,6 +4966,268 @@ pub const ZeroTrustReadArgs = struct {
     search: ?[]const u8 = null,
 };
 
+pub const SecurityCenterScope = enum {
+    account,
+    zone,
+
+    pub fn parse(value: []const u8) ?SecurityCenterScope {
+        if (std.mem.eql(u8, value, "account") or std.mem.eql(u8, value, "accounts")) return .account;
+        if (std.mem.eql(u8, value, "zone") or std.mem.eql(u8, value, "zones")) return .zone;
+        return null;
+    }
+
+    pub fn commandName(self: SecurityCenterScope) []const u8 {
+        return switch (self) {
+            .account => "account",
+            .zone => "zone",
+        };
+    }
+
+    pub fn collection(self: SecurityCenterScope) []const u8 {
+        return switch (self) {
+            .account => accounts_path,
+            .zone => zones_path,
+        };
+    }
+};
+
+pub const SecurityCenterReadEndpoint = enum {
+    issue_types,
+    insights,
+    class_counts,
+    severity_counts,
+    type_counts,
+    insight_context,
+    audit_log,
+    insight_audit_log,
+
+    pub fn parse(value: []const u8) ?SecurityCenterReadEndpoint {
+        if (std.mem.eql(u8, value, "issue-types") or std.mem.eql(u8, value, "types-catalog")) return .issue_types;
+        if (std.mem.eql(u8, value, "insights") or std.mem.eql(u8, value, "issues")) return .insights;
+        if (std.mem.eql(u8, value, "class") or std.mem.eql(u8, value, "class-counts")) return .class_counts;
+        if (std.mem.eql(u8, value, "severity") or std.mem.eql(u8, value, "severity-counts")) return .severity_counts;
+        if (std.mem.eql(u8, value, "type") or std.mem.eql(u8, value, "type-counts")) return .type_counts;
+        if (std.mem.eql(u8, value, "context") or std.mem.eql(u8, value, "insight-context")) return .insight_context;
+        if (std.mem.eql(u8, value, "audit-log") or std.mem.eql(u8, value, "audit")) return .audit_log;
+        if (std.mem.eql(u8, value, "insight-audit-log") or std.mem.eql(u8, value, "issue-audit-log")) return .insight_audit_log;
+        return null;
+    }
+
+    pub fn commandName(self: SecurityCenterReadEndpoint) []const u8 {
+        return switch (self) {
+            .issue_types => "issue-types",
+            .insights => "insights",
+            .class_counts => "class",
+            .severity_counts => "severity",
+            .type_counts => "type",
+            .insight_context => "context",
+            .audit_log => "audit-log",
+            .insight_audit_log => "insight-audit-log",
+        };
+    }
+
+    pub fn label(self: SecurityCenterReadEndpoint, scope: SecurityCenterScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .issue_types => "security-center-account-issue-types",
+                .insights => "security-center-account-insights",
+                .class_counts => "security-center-account-class-counts",
+                .severity_counts => "security-center-account-severity-counts",
+                .type_counts => "security-center-account-type-counts",
+                .insight_context => "security-center-account-insight-context",
+                .audit_log => "security-center-account-audit-log",
+                .insight_audit_log => "security-center-account-insight-audit-log",
+            },
+            .zone => switch (self) {
+                .issue_types => "security-center-zone-issue-types",
+                .insights => "security-center-zone-insights",
+                .class_counts => "security-center-zone-class-counts",
+                .severity_counts => "security-center-zone-severity-counts",
+                .type_counts => "security-center-zone-type-counts",
+                .insight_context => "security-center-zone-insight-context",
+                .audit_log => "security-center-zone-audit-log",
+                .insight_audit_log => "security-center-zone-insight-audit-log",
+            },
+        };
+    }
+
+    pub fn group(self: SecurityCenterReadEndpoint) []const u8 {
+        return switch (self) {
+            .audit_log, .insight_audit_log => "Security Center Audit Log",
+            else => "Security Center Insights",
+        };
+    }
+
+    pub fn supports(self: SecurityCenterReadEndpoint, scope: SecurityCenterScope) bool {
+        return switch (self) {
+            .issue_types, .insight_context => scope == .account,
+            else => true,
+        };
+    }
+
+    pub fn operationId(self: SecurityCenterReadEndpoint, scope: SecurityCenterScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .issue_types => "get-security-center-issue-types",
+                .insights => "get-security-center-insights",
+                .class_counts => "get-security-center-insight-counts-by-class",
+                .severity_counts => "get-security-center-insight-counts-by-severity",
+                .type_counts => "get-security-center-insight-counts-by-type",
+                .insight_context => "get-security-center-insight-context",
+                .audit_log => "get-security-center-account-audit-log",
+                .insight_audit_log => "get-security-center-issue-audit-log",
+            },
+            .zone => switch (self) {
+                .issue_types => "unsupported-zone-security-center-issue-types",
+                .insights => "get-zone-security-center-insights",
+                .class_counts => "get-zone-security-center-insight-counts-by-class",
+                .severity_counts => "get-zone-security-center-insight-counts-by-severity",
+                .type_counts => "get-zone-security-center-insight-counts-by-type",
+                .insight_context => "unsupported-zone-security-center-insight-context",
+                .audit_log => "get-zone-security-center-audit-log",
+                .insight_audit_log => "get-zone-security-center-issue-audit-log",
+            },
+        };
+    }
+
+    pub fn summary(self: SecurityCenterReadEndpoint, scope: SecurityCenterScope) []const u8 {
+        return switch (scope) {
+            .account => switch (self) {
+                .issue_types => "Security Center issue types",
+                .insights => "Account Security Center insights",
+                .class_counts => "Account Security Center insight class counts",
+                .severity_counts => "Account Security Center insight severity counts",
+                .type_counts => "Account Security Center insight type counts",
+                .insight_context => "Account Security Center insight context",
+                .audit_log => "Account Security Center insight audit log",
+                .insight_audit_log => "Account Security Center issue audit log",
+            },
+            .zone => switch (self) {
+                .issue_types => "Zone Security Center issue types",
+                .insights => "Zone Security Center insights",
+                .class_counts => "Zone Security Center insight class counts",
+                .severity_counts => "Zone Security Center insight severity counts",
+                .type_counts => "Zone Security Center insight type counts",
+                .insight_context => "Zone Security Center insight context",
+                .audit_log => "Zone Security Center insight audit log",
+                .insight_audit_log => "Zone Security Center issue audit log",
+            },
+        };
+    }
+
+    pub fn requiresIssueId(self: SecurityCenterReadEndpoint) bool {
+        return self == .insight_context or self == .insight_audit_log;
+    }
+};
+
+pub const SecurityCenterReadArgs = struct {
+    issue_id: ?[]const u8 = null,
+    dismissed: ?[]const u8 = null,
+    issue_class: ?[]const u8 = null,
+    issue_class_neq: ?[]const u8 = null,
+    issue_type: ?[]const u8 = null,
+    issue_type_neq: ?[]const u8 = null,
+    page: ?[]const u8 = null,
+    per_page: ?[]const u8 = null,
+    product: ?[]const u8 = null,
+    product_neq: ?[]const u8 = null,
+    severity: ?[]const u8 = null,
+    severity_neq: ?[]const u8 = null,
+    subject: ?[]const u8 = null,
+    subject_neq: ?[]const u8 = null,
+    before: ?[]const u8 = null,
+    changed_by: ?[]const u8 = null,
+    cursor: ?[]const u8 = null,
+    field_changed: ?[]const u8 = null,
+    order: ?[]const u8 = null,
+    since: ?[]const u8 = null,
+};
+
+pub const AuditLogReadEndpoint = enum {
+    account_v1,
+    account_v2,
+    organization_v2,
+    user_v1,
+
+    pub fn parse(value: []const u8) ?AuditLogReadEndpoint {
+        if (std.mem.eql(u8, value, "account") or std.mem.eql(u8, value, "account-v1")) return .account_v1;
+        if (std.mem.eql(u8, value, "account-v2") or std.mem.eql(u8, value, "account-logs")) return .account_v2;
+        if (std.mem.eql(u8, value, "organization") or std.mem.eql(u8, value, "organization-v2") or std.mem.eql(u8, value, "org-v2")) return .organization_v2;
+        if (std.mem.eql(u8, value, "user") or std.mem.eql(u8, value, "user-v1")) return .user_v1;
+        return null;
+    }
+
+    pub fn commandName(self: AuditLogReadEndpoint) []const u8 {
+        return switch (self) {
+            .account_v1 => "account",
+            .account_v2 => "account-v2",
+            .organization_v2 => "organization-v2",
+            .user_v1 => "user",
+        };
+    }
+
+    pub fn label(self: AuditLogReadEndpoint) []const u8 {
+        return switch (self) {
+            .account_v1 => "audit-logs-account",
+            .account_v2 => "audit-logs-account-v2",
+            .organization_v2 => "audit-logs-organization-v2",
+            .user_v1 => "audit-logs-user",
+        };
+    }
+
+    pub fn operationId(self: AuditLogReadEndpoint) []const u8 {
+        return switch (self) {
+            .account_v1 => "audit-logs-get-account-audit-logs",
+            .account_v2 => "audit-logs-v2-get-account-audit-logs",
+            .organization_v2 => "audit-logs-v2-get-organization-audit-logs",
+            .user_v1 => "audit-logs-get-user-audit-logs",
+        };
+    }
+
+    pub fn summary(self: AuditLogReadEndpoint) []const u8 {
+        return switch (self) {
+            .account_v1 => "Account audit logs",
+            .account_v2 => "Account audit logs v2",
+            .organization_v2 => "Organization audit logs v2",
+            .user_v1 => "User audit logs",
+        };
+    }
+
+    pub fn requiresAccountId(self: AuditLogReadEndpoint) bool {
+        return self == .account_v1 or self == .account_v2;
+    }
+
+    pub fn requiresOrganizationId(self: AuditLogReadEndpoint) bool {
+        return self == .organization_v2;
+    }
+};
+
+pub const AuditLogReadArgs = struct {
+    account_id: ?[]const u8 = null,
+    organization_id: ?[]const u8 = null,
+    since: ?[]const u8 = null,
+    before: ?[]const u8 = null,
+    cursor: ?[]const u8 = null,
+    direction: ?[]const u8 = null,
+    id: ?[]const u8 = null,
+    limit: ?[]const u8 = null,
+    page: ?[]const u8 = null,
+    per_page: ?[]const u8 = null,
+    actor_email: ?[]const u8 = null,
+    actor_ip: ?[]const u8 = null,
+    action_type: ?[]const u8 = null,
+    action_result: ?[]const u8 = null,
+    actor_id: ?[]const u8 = null,
+    actor_type: ?[]const u8 = null,
+    resource_id: ?[]const u8 = null,
+    resource_product: ?[]const u8 = null,
+    resource_type: ?[]const u8 = null,
+    zone_id: ?[]const u8 = null,
+    zone_name: ?[]const u8 = null,
+    hide_user_logs: ?[]const u8 = null,
+    export_format: ?[]const u8 = null,
+};
+
 pub const ResourceTaggingAccountReadEndpoint = enum {
     tags,
     keys,
@@ -7938,6 +8212,182 @@ fn zeroTrustUserSuffixPath(gpa: Allocator, account_id: []const u8, maybe_user_id
     return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_user_path, suffix });
 }
 
+pub fn securityCenterReadUrl(gpa: Allocator, host: []const u8, scope: SecurityCenterScope, scope_id: []const u8, endpoint: SecurityCenterReadEndpoint, args: SecurityCenterReadArgs) ![]u8 {
+    const path = try securityCenterReadPath(gpa, scope, scope_id, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn securityCenterReadPath(gpa: Allocator, scope: SecurityCenterScope, scope_id: []const u8, endpoint: SecurityCenterReadEndpoint, args: SecurityCenterReadArgs) ![]u8 {
+    if (!endpoint.supports(scope)) return error.UnsupportedCloudflareSecurityCenterEndpoint;
+    if (endpoint == .issue_types) {
+        const escaped_account_id = try pathEscape(gpa, scope_id);
+        defer gpa.free(escaped_account_id);
+        return try std.fmt.allocPrint(gpa, "{s}/{s}/intel/attack-surface-report/issue-types", .{ accounts_path, escaped_account_id });
+    }
+
+    const base_path = try securityCenterBasePath(gpa, scope, scope_id);
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .issue_types => unreachable,
+        .insights => try appendSecurityCenterInsightFilters(gpa, base_path, args, true),
+        .class_counts => blk: {
+            const path = try std.fmt.allocPrint(gpa, "{s}/class", .{base_path});
+            defer gpa.free(path);
+            break :blk try appendSecurityCenterInsightFilters(gpa, path, args, false);
+        },
+        .severity_counts => blk: {
+            const path = try std.fmt.allocPrint(gpa, "{s}/severity", .{base_path});
+            defer gpa.free(path);
+            break :blk try appendSecurityCenterInsightFilters(gpa, path, args, false);
+        },
+        .type_counts => blk: {
+            const path = try std.fmt.allocPrint(gpa, "{s}/type", .{base_path});
+            defer gpa.free(path);
+            break :blk try appendSecurityCenterInsightFilters(gpa, path, args, false);
+        },
+        .insight_context => blk: {
+            const issue_id = args.issue_id orelse return error.MissingCloudflareSecurityCenterIssueId;
+            const insight_path = try securityCenterInsightPath(gpa, base_path, issue_id);
+            defer gpa.free(insight_path);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/context", .{insight_path});
+        },
+        .audit_log => blk: {
+            const path = try std.fmt.allocPrint(gpa, "{s}/audit-log", .{base_path});
+            defer gpa.free(path);
+            break :blk try appendSecurityCenterAuditFilters(gpa, path, args);
+        },
+        .insight_audit_log => blk: {
+            const issue_id = args.issue_id orelse return error.MissingCloudflareSecurityCenterIssueId;
+            const insight_path = try securityCenterInsightPath(gpa, base_path, issue_id);
+            defer gpa.free(insight_path);
+            const path = try std.fmt.allocPrint(gpa, "{s}/audit-log", .{insight_path});
+            defer gpa.free(path);
+            break :blk try appendSecurityCenterAuditFilters(gpa, path, args);
+        },
+    };
+}
+
+fn securityCenterBasePath(gpa: Allocator, scope: SecurityCenterScope, scope_id: []const u8) ![]u8 {
+    const escaped_scope_id = try pathEscape(gpa, scope_id);
+    defer gpa.free(escaped_scope_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}/security-center/insights", .{ scope.collection(), escaped_scope_id });
+}
+
+fn securityCenterInsightPath(gpa: Allocator, base_path: []const u8, issue_id: []const u8) ![]u8 {
+    const escaped_issue_id = try pathEscape(gpa, issue_id);
+    defer gpa.free(escaped_issue_id);
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base_path, escaped_issue_id });
+}
+
+fn appendSecurityCenterInsightFilters(gpa: Allocator, base_path: []const u8, args: SecurityCenterReadArgs, include_pagination: bool) ![]u8 {
+    return try appendQuery(gpa, base_path, &[_]QueryParam{
+        .{ .name = "dismissed", .value = args.dismissed },
+        .{ .name = "issue_class", .value = args.issue_class },
+        .{ .name = "issue_class~neq", .value = args.issue_class_neq },
+        .{ .name = "issue_type", .value = args.issue_type },
+        .{ .name = "issue_type~neq", .value = args.issue_type_neq },
+        .{ .name = "page", .value = if (include_pagination) args.page else null },
+        .{ .name = "per_page", .value = if (include_pagination) args.per_page else null },
+        .{ .name = "product", .value = args.product },
+        .{ .name = "product~neq", .value = args.product_neq },
+        .{ .name = "severity", .value = args.severity },
+        .{ .name = "severity~neq", .value = args.severity_neq },
+        .{ .name = "subject", .value = args.subject },
+        .{ .name = "subject~neq", .value = args.subject_neq },
+    });
+}
+
+fn appendSecurityCenterAuditFilters(gpa: Allocator, base_path: []const u8, args: SecurityCenterReadArgs) ![]u8 {
+    return try appendQuery(gpa, base_path, &[_]QueryParam{
+        .{ .name = "before", .value = args.before },
+        .{ .name = "changed_by", .value = args.changed_by },
+        .{ .name = "cursor", .value = args.cursor },
+        .{ .name = "field_changed", .value = args.field_changed },
+        .{ .name = "order", .value = args.order },
+        .{ .name = "per_page", .value = args.per_page },
+        .{ .name = "since", .value = args.since },
+    });
+}
+
+pub fn auditLogReadUrl(gpa: Allocator, host: []const u8, endpoint: AuditLogReadEndpoint, args: AuditLogReadArgs) ![]u8 {
+    const path = try auditLogReadPath(gpa, endpoint, args);
+    defer gpa.free(path);
+    return try std.fmt.allocPrint(gpa, "{s}{s}", .{ host, path });
+}
+
+pub fn auditLogReadPath(gpa: Allocator, endpoint: AuditLogReadEndpoint, args: AuditLogReadArgs) ![]u8 {
+    if (endpoint == .account_v2 or endpoint == .organization_v2) {
+        if (args.since == null) return error.MissingCloudflareAuditLogSince;
+        if (args.before == null) return error.MissingCloudflareAuditLogBefore;
+    }
+    const base_path = switch (endpoint) {
+        .account_v1 => blk: {
+            const account_id = args.account_id orelse return error.MissingCloudflareAuditLogAccountId;
+            const escaped_account_id = try pathEscape(gpa, account_id);
+            defer gpa.free(escaped_account_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/{s}/audit_logs", .{ accounts_path, escaped_account_id });
+        },
+        .account_v2 => blk: {
+            const account_id = args.account_id orelse return error.MissingCloudflareAuditLogAccountId;
+            const escaped_account_id = try pathEscape(gpa, account_id);
+            defer gpa.free(escaped_account_id);
+            break :blk try std.fmt.allocPrint(gpa, "{s}/{s}/logs/audit", .{ accounts_path, escaped_account_id });
+        },
+        .organization_v2 => blk: {
+            const organization_id = args.organization_id orelse return error.MissingCloudflareAuditLogOrganizationId;
+            const escaped_organization_id = try pathEscape(gpa, organization_id);
+            defer gpa.free(escaped_organization_id);
+            break :blk try std.fmt.allocPrint(gpa, "/organizations/{s}/logs/audit", .{escaped_organization_id});
+        },
+        .user_v1 => try gpa.dupe(u8, "/user/audit_logs"),
+    };
+    defer gpa.free(base_path);
+    return switch (endpoint) {
+        .account_v1, .user_v1 => try appendAuditLogV1Filters(gpa, base_path, args),
+        .account_v2, .organization_v2 => try appendAuditLogV2Filters(gpa, base_path, args),
+    };
+}
+
+fn appendAuditLogV1Filters(gpa: Allocator, base_path: []const u8, args: AuditLogReadArgs) ![]u8 {
+    return try appendQuery(gpa, base_path, &[_]QueryParam{
+        .{ .name = "action.type", .value = args.action_type },
+        .{ .name = "actor.email", .value = args.actor_email },
+        .{ .name = "actor.ip", .value = args.actor_ip },
+        .{ .name = "before", .value = args.before },
+        .{ .name = "direction", .value = args.direction },
+        .{ .name = "export", .value = args.export_format },
+        .{ .name = "hide_user_logs", .value = args.hide_user_logs },
+        .{ .name = "id", .value = args.id },
+        .{ .name = "page", .value = args.page },
+        .{ .name = "per_page", .value = args.per_page },
+        .{ .name = "since", .value = args.since },
+        .{ .name = "zone.name", .value = args.zone_name },
+    });
+}
+
+fn appendAuditLogV2Filters(gpa: Allocator, base_path: []const u8, args: AuditLogReadArgs) ![]u8 {
+    return try appendQuery(gpa, base_path, &[_]QueryParam{
+        .{ .name = "action_result", .value = args.action_result },
+        .{ .name = "action_type", .value = args.action_type },
+        .{ .name = "actor_email", .value = args.actor_email },
+        .{ .name = "actor_id", .value = args.actor_id },
+        .{ .name = "actor_ip_address", .value = args.actor_ip },
+        .{ .name = "actor_type", .value = args.actor_type },
+        .{ .name = "before", .value = args.before },
+        .{ .name = "cursor", .value = args.cursor },
+        .{ .name = "direction", .value = args.direction },
+        .{ .name = "id", .value = args.id },
+        .{ .name = "limit", .value = args.limit },
+        .{ .name = "resource_id", .value = args.resource_id },
+        .{ .name = "resource_product", .value = args.resource_product },
+        .{ .name = "resource_type", .value = args.resource_type },
+        .{ .name = "since", .value = args.since },
+        .{ .name = "zone_id", .value = args.zone_id },
+        .{ .name = "zone_name", .value = args.zone_name },
+    });
+}
+
 pub fn resourceTaggingAccountReadUrl(gpa: Allocator, host: []const u8, account_id: []const u8, endpoint: ResourceTaggingAccountReadEndpoint, args: ResourceTaggingAccountReadArgs) ![]u8 {
     const path = try resourceTaggingAccountReadPath(gpa, account_id, endpoint, args);
     defer gpa.free(path);
@@ -9980,6 +10430,74 @@ test "builds Cloudflare zero trust gateway paths" {
     try std.testing.expectError(error.MissingCloudflareZeroTrustListId, zeroTrustReadPath(allocator, "acct/1", .list_items, .{}));
     try std.testing.expectError(error.MissingCloudflareZeroTrustUserId, zeroTrustReadPath(allocator, "acct/1", .user_failed_logins, .{}));
     try std.testing.expectError(error.MissingCloudflareZeroTrustUserSessionNonce, zeroTrustReadPath(allocator, "acct/1", .user_active_session, .{ .user_id = "user/1" }));
+}
+
+test "cloudflare security center and audit log endpoints parse commands" {
+    try std.testing.expectEqual(SecurityCenterScope.account, SecurityCenterScope.parse("accounts").?);
+    try std.testing.expectEqual(SecurityCenterScope.zone, SecurityCenterScope.parse("zone").?);
+    try std.testing.expectEqual(SecurityCenterReadEndpoint.issue_types, SecurityCenterReadEndpoint.parse("issue-types").?);
+    try std.testing.expectEqual(SecurityCenterReadEndpoint.insights, SecurityCenterReadEndpoint.parse("issues").?);
+    try std.testing.expectEqual(SecurityCenterReadEndpoint.class_counts, SecurityCenterReadEndpoint.parse("class-counts").?);
+    try std.testing.expectEqual(SecurityCenterReadEndpoint.insight_context, SecurityCenterReadEndpoint.parse("context").?);
+    try std.testing.expectEqual(SecurityCenterReadEndpoint.insight_audit_log, SecurityCenterReadEndpoint.parse("issue-audit-log").?);
+    try std.testing.expect(SecurityCenterReadEndpoint.insight_context.requiresIssueId());
+    try std.testing.expect(SecurityCenterReadEndpoint.issue_types.supports(.account));
+    try std.testing.expect(!SecurityCenterReadEndpoint.issue_types.supports(.zone));
+    try std.testing.expectEqualStrings("get-zone-security-center-audit-log", SecurityCenterReadEndpoint.audit_log.operationId(.zone));
+    try std.testing.expectEqual(AuditLogReadEndpoint.account_v1, AuditLogReadEndpoint.parse("account").?);
+    try std.testing.expectEqual(AuditLogReadEndpoint.account_v2, AuditLogReadEndpoint.parse("account-logs").?);
+    try std.testing.expectEqual(AuditLogReadEndpoint.organization_v2, AuditLogReadEndpoint.parse("org-v2").?);
+    try std.testing.expectEqual(AuditLogReadEndpoint.user_v1, AuditLogReadEndpoint.parse("user").?);
+    try std.testing.expect(AuditLogReadEndpoint.account_v2.requiresAccountId());
+    try std.testing.expect(AuditLogReadEndpoint.organization_v2.requiresOrganizationId());
+    try std.testing.expectEqualStrings("audit-logs-v2-get-account-audit-logs", AuditLogReadEndpoint.account_v2.operationId());
+}
+
+test "builds Cloudflare security center and audit log paths" {
+    const allocator = std.testing.allocator;
+
+    const account_insights = try securityCenterReadUrl(allocator, base_url, .account, "acct/1", .insights, .{ .severity = "critical", .page = "2" });
+    defer allocator.free(account_insights);
+    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/accounts/acct%2F1/security-center/insights?page=2&severity=critical", account_insights);
+
+    const zone_counts = try securityCenterReadPath(allocator, .zone, "zone/1", .severity_counts, .{ .dismissed = "false", .product = "waf" });
+    defer allocator.free(zone_counts);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/security-center/insights/severity?dismissed=false&product=waf", zone_counts);
+
+    const context = try securityCenterReadPath(allocator, .account, "acct/1", .insight_context, .{ .issue_id = "issue/1" });
+    defer allocator.free(context);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/security-center/insights/issue%2F1/context", context);
+
+    const issue_audit = try securityCenterReadPath(allocator, .zone, "zone/1", .insight_audit_log, .{ .issue_id = "issue/1", .since = "2026-06-01T00:00:00Z" });
+    defer allocator.free(issue_audit);
+    try std.testing.expectEqualStrings("/zones/zone%2F1/security-center/insights/issue%2F1/audit-log?since=2026-06-01T00%3A00%3A00Z", issue_audit);
+
+    const issue_types = try securityCenterReadPath(allocator, .account, "acct/1", .issue_types, .{});
+    defer allocator.free(issue_types);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/intel/attack-surface-report/issue-types", issue_types);
+
+    const account_audit = try auditLogReadPath(allocator, .account_v1, .{ .account_id = "acct/1", .actor_email = "admin@example.test", .zone_name = "plosca.ru" });
+    defer allocator.free(account_audit);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/audit_logs?actor.email=admin%40example.test&zone.name=plosca.ru", account_audit);
+
+    const account_audit_v2 = try auditLogReadPath(allocator, .account_v2, .{ .account_id = "acct/1", .since = "2026-06-01T00:00:00Z", .before = "2026-06-17T00:00:00Z", .action_type = "create", .limit = "10", .zone_id = "zone/1" });
+    defer allocator.free(account_audit_v2);
+    try std.testing.expectEqualStrings("/accounts/acct%2F1/logs/audit?action_type=create&before=2026-06-17T00%3A00%3A00Z&limit=10&since=2026-06-01T00%3A00%3A00Z&zone_id=zone%2F1", account_audit_v2);
+
+    const org_audit = try auditLogReadPath(allocator, .organization_v2, .{ .organization_id = "org/1", .since = "2026-06-01T00:00:00Z", .before = "2026-06-17T00:00:00Z", .resource_type = "zone" });
+    defer allocator.free(org_audit);
+    try std.testing.expectEqualStrings("/organizations/org%2F1/logs/audit?before=2026-06-17T00%3A00%3A00Z&resource_type=zone&since=2026-06-01T00%3A00%3A00Z", org_audit);
+
+    const user_audit = try auditLogReadPath(allocator, .user_v1, .{ .hide_user_logs = "true", .per_page = "5" });
+    defer allocator.free(user_audit);
+    try std.testing.expectEqualStrings("/user/audit_logs?hide_user_logs=true&per_page=5", user_audit);
+
+    try std.testing.expectError(error.UnsupportedCloudflareSecurityCenterEndpoint, securityCenterReadPath(allocator, .zone, "zone/1", .issue_types, .{}));
+    try std.testing.expectError(error.MissingCloudflareSecurityCenterIssueId, securityCenterReadPath(allocator, .account, "acct/1", .insight_context, .{}));
+    try std.testing.expectError(error.MissingCloudflareAuditLogSince, auditLogReadPath(allocator, .account_v2, .{ .account_id = "acct/1" }));
+    try std.testing.expectError(error.MissingCloudflareAuditLogBefore, auditLogReadPath(allocator, .account_v2, .{ .account_id = "acct/1", .since = "2026-06-01T00:00:00Z" }));
+    try std.testing.expectError(error.MissingCloudflareAuditLogAccountId, auditLogReadPath(allocator, .account_v2, .{ .since = "2026-06-01T00:00:00Z", .before = "2026-06-17T00:00:00Z" }));
+    try std.testing.expectError(error.MissingCloudflareAuditLogOrganizationId, auditLogReadPath(allocator, .organization_v2, .{ .since = "2026-06-01T00:00:00Z", .before = "2026-06-17T00:00:00Z" }));
 }
 
 test "cloudflare resource tagging endpoints map to official operation metadata" {

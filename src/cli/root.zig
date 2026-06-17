@@ -165,6 +165,9 @@ fn usage() void {
         \\  cloudio cloudflare tunnel route|hostname-route|subnet <account-id> <resource-id>|route-ip <account-id> <ip-or-cidr>
         \\  cloudio cloudflare zero-trust gateway|device-settings|gateway-configuration|gateway-egress-cidr-pairs|gateway-logging|dns-destination-ips|app-types|categories|operations|locations|proxy-endpoints|rules|tenant-rules|ssh-settings|apps-review-status|certificates|pacfiles|lists|organization|organization-doh|users <account-id> [key=value...]
         \\  cloudio cloudflare zero-trust operation|location|proxy-endpoint|rule|certificate|pacfile|list|list-items|user|user-active-sessions|user-active-session|user-failed-logins|user-last-seen-identity <account-id> <resource-id> [nonce]
+        \\  cloudio cloudflare security-center account|zone issue-types|insights|class|severity|type|audit-log <scope-id> [key=value...]
+        \\  cloudio cloudflare security-center account|zone context|insight-audit-log <scope-id> <issue-id> [key=value...]
+        \\  cloudio cloudflare audit-logs account <account-id> [key=value...]|account-v2 <account-id> since=<rfc3339> before=<rfc3339> [key=value...]|organization-v2 <organization-id> since=<rfc3339> before=<rfc3339> [key=value...]|user [key=value...]
         \\  cloudio cloudflare dns [domain]|dns list|export|usage|scan-review [domain]|dns show <record-id> [domain]
         \\  cloudio cloudflare dnssec [domain]|dnssec zsk [domain]
         \\  cloudio cloudflare dry-run dns create|batch|import|apply-scan-results|trigger-scan <zone-id>

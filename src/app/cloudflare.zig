@@ -67,6 +67,11 @@ pub const TunnelReadArgs = collector_cloudflare.TunnelReadArgs;
 pub const TunnelReadEndpoint = collector_cloudflare.TunnelReadEndpoint;
 pub const ZeroTrustReadArgs = collector_cloudflare.ZeroTrustReadArgs;
 pub const ZeroTrustReadEndpoint = collector_cloudflare.ZeroTrustReadEndpoint;
+pub const SecurityCenterReadArgs = collector_cloudflare.SecurityCenterReadArgs;
+pub const SecurityCenterReadEndpoint = collector_cloudflare.SecurityCenterReadEndpoint;
+pub const SecurityCenterScope = collector_cloudflare.SecurityCenterScope;
+pub const AuditLogReadArgs = collector_cloudflare.AuditLogReadArgs;
+pub const AuditLogReadEndpoint = collector_cloudflare.AuditLogReadEndpoint;
 pub const LoadBalancingAccountReadEndpoint = collector_cloudflare.LoadBalancingAccountReadEndpoint;
 pub const LoadBalancingMutationArgs = collector_cloudflare.LoadBalancingMutationArgs;
 pub const LoadBalancingMutationEndpoint = collector_cloudflare.LoadBalancingMutationEndpoint;
@@ -261,6 +266,14 @@ pub fn collectTunnelEndpoint(ctx: Context, account_id: []const u8, endpoint: Tun
 
 pub fn collectZeroTrustEndpoint(ctx: Context, account_id: []const u8, endpoint: ZeroTrustReadEndpoint, args: ZeroTrustReadArgs) !Output {
     return try collector_cloudflare.collectZeroTrustEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, account_id, endpoint, args, true);
+}
+
+pub fn collectSecurityCenterEndpoint(ctx: Context, scope: SecurityCenterScope, scope_id: []const u8, endpoint: SecurityCenterReadEndpoint, args: SecurityCenterReadArgs) !Output {
+    return try collector_cloudflare.collectSecurityCenterEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, scope, scope_id, endpoint, args, true);
+}
+
+pub fn collectAuditLogEndpoint(ctx: Context, endpoint: AuditLogReadEndpoint, args: AuditLogReadArgs) !Output {
+    return try collector_cloudflare.collectAuditLogEndpoint(ctx.io, ctx.gpa, ctx.auth, ctx.db, endpoint, args, true);
 }
 
 pub fn collectIdentityEndpoint(ctx: Context, endpoint: IdentityEndpoint) !Output {

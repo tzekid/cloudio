@@ -203,6 +203,8 @@ pub fn parseResourceIdRows(gpa: Allocator, body: []const u8) !IdRows {
     for (items.items) |item| {
         const id_value = core_json.fieldString(item, "id") orelse
             core_json.fieldString(item, "uid") orelse
+            core_json.fieldString(item, "issue_id") orelse
+            core_json.fieldString(item, "uuid") orelse
             core_json.fieldString(item, "name") orelse
             continue;
         const id = try dupeRequired(gpa, id_value);
@@ -324,14 +326,16 @@ test "parses generic Cloudflare result ids" {
 test "parses generic Cloudflare resource ids from id uid or name" {
     const allocator = std.testing.allocator;
     var rows = try parseResourceIdRows(allocator,
-        \\{"result":[{"id":"page-id"},{"uid":"access-uid"},{"name":"asset-name"},{"description":"missing"}]}
+        \\{"result":[{"id":"page-id"},{"uid":"access-uid"},{"issue_id":"insight-issue"},{"uuid":"audit-uuid"},{"name":"asset-name"},{"description":"missing"}]}
     );
     defer rows.deinit(allocator);
 
-    try std.testing.expectEqual(@as(usize, 3), rows.items.len);
+    try std.testing.expectEqual(@as(usize, 5), rows.items.len);
     try std.testing.expectEqualStrings("page-id", rows.items[0].id);
     try std.testing.expectEqualStrings("access-uid", rows.items[1].id);
-    try std.testing.expectEqualStrings("asset-name", rows.items[2].id);
+    try std.testing.expectEqualStrings("insight-issue", rows.items[2].id);
+    try std.testing.expectEqualStrings("audit-uuid", rows.items[3].id);
+    try std.testing.expectEqualStrings("asset-name", rows.items[4].id);
 }
 
 test "parses generic Cloudflare resource ids matching a string field" {
