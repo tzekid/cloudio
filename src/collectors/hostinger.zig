@@ -47,6 +47,11 @@ const reach_refresh_endpoints = [_]ReachEndpoint{
     .profiles,
     .segments,
 };
+const docker_project_detail_endpoints = [_]DockerEndpoint{
+    .contents,
+    .containers,
+    .logs,
+};
 const max_hostinger_pages = 25;
 
 pub const Output = collector_capture.Output;
@@ -115,8 +120,7 @@ pub fn collectAll(io: Io, gpa: Allocator, token: ?[]const u8, domains: []const [
         snapshot.deinit(gpa);
         var monarx = try collectVmEndpoint(io, gpa, token, db, id, .monarx, false);
         monarx.deinit(gpa);
-        var docker = try collectDockerEndpoint(io, gpa, token, db, id, .projects, null, false);
-        docker.deinit(gpa);
+        try collectDockerProjectGroup(io, gpa, token, db, id);
     }
 }
 
@@ -241,6 +245,22 @@ pub fn collectDockerEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db
     defer if (!capture_output) gpa.free(redacted);
     if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, target, redacted);
     return .{ .text = if (capture_output) redacted else null };
+}
+
+fn collectDockerProjectGroup(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, vm_id: []const u8) !void {
+    var projects = try collectDockerEndpoint(io, gpa, token, db, vm_id, .projects, null, true);
+    defer projects.deinit(gpa);
+    const body = projects.text orelse return;
+
+    var project_names = try provider_hostinger_models.parseDockerProjectNames(gpa, body);
+    defer project_names.deinit(gpa);
+
+    for (project_names.items) |project_name| {
+        for (docker_project_detail_endpoints) |endpoint| {
+            var detail = try collectDockerEndpoint(io, gpa, token, db, vm_id, endpoint, project_name, false);
+            detail.deinit(gpa);
+        }
+    }
 }
 
 pub fn collectBillingEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, endpoint: BillingEndpoint, capture_output: bool) !Output {

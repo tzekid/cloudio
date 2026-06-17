@@ -203,6 +203,20 @@ pub fn parseResourceIds(gpa: Allocator, body: []const u8) !IdRows {
     return .{ .items = try rows.toOwnedSlice(gpa) };
 }
 
+pub fn parseDockerProjectNames(gpa: Allocator, body: []const u8) !IdRows {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return .{ .items = &.{} };
+    defer parsed.deinit();
+
+    var rows = std.ArrayList([]u8).empty;
+    errdefer {
+        for (rows.items) |name| gpa.free(name);
+        rows.deinit(gpa);
+    }
+
+    try appendDockerProjectNames(gpa, &rows, parsed.value);
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
 pub fn parseResourceRows(gpa: Allocator, kind: []const u8, target: ?[]const u8, body: []const u8) !ResourceRows {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return .{ .items = &.{} };
     defer parsed.deinit();
@@ -229,6 +243,32 @@ pub fn parseInventoryRows(gpa: Allocator, kind: []const u8, target: ?[]const u8,
 
     try appendInventoryRowsFromValue(gpa, &rows, kind, target, parsed.value);
     return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
+fn appendDockerProjectNames(gpa: Allocator, rows: *std.ArrayList([]u8), value: std.json.Value) !void {
+    switch (value) {
+        .array => |array| {
+            for (array.items) |item| try appendDockerProjectName(gpa, rows, item);
+        },
+        .object => |object| {
+            if (object.get("data")) |data| {
+                try appendDockerProjectNames(gpa, rows, data);
+            } else {
+                try appendDockerProjectName(gpa, rows, value);
+            }
+        },
+        else => {},
+    }
+}
+
+fn appendDockerProjectName(gpa: Allocator, rows: *std.ArrayList([]u8), item: std.json.Value) !void {
+    if (item != .object) return;
+    const name = core_json.fieldString(item, "name") orelse
+        core_json.fieldString(item, "project_name") orelse
+        core_json.fieldString(item, "projectName") orelse
+        return;
+    if (name.len == 0 or containsText(rows.items, name)) return;
+    try rows.append(gpa, try gpa.dupe(u8, name));
 }
 
 fn appendResourceRowsFromValue(gpa: Allocator, rows: *std.ArrayList(ResourceRow), kind: []const u8, target: ?[]const u8, value: std.json.Value) !void {
@@ -447,6 +487,13 @@ fn isPlainDomainTarget(value: []const u8) bool {
         std.mem.indexOfScalar(u8, value, '=') == null;
 }
 
+fn containsText(values: []const []u8, candidate: []const u8) bool {
+    for (values) |value| {
+        if (std.mem.eql(u8, value, candidate)) return true;
+    }
+    return false;
+}
+
 pub fn paginationInfo(body: []const u8) ?PaginationInfo {
     return net_pagination.dataPageInfo(body);
 }
@@ -475,6 +522,28 @@ test "parses ids from Hostinger array and paginated data responses" {
     defer paginated.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), paginated.items.len);
     try std.testing.expectEqualStrings("65224", paginated.items[0]);
+}
+
+test "parses Docker Manager project names from Hostinger envelopes" {
+    const allocator = std.testing.allocator;
+    var rows = try parseDockerProjectNames(allocator,
+        \\{"data":[
+        \\  {"name":"plosca"},
+        \\  {"project_name":"workers"},
+        \\  {"projectName":"legacy"},
+        \\  {"name":"plosca"}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), rows.items.len);
+    try std.testing.expectEqualStrings("plosca", rows.items[0]);
+    try std.testing.expectEqualStrings("workers", rows.items[1]);
+    try std.testing.expectEqualStrings("legacy", rows.items[2]);
+
+    var unsupported = try parseDockerProjectNames(allocator, "{\"message\":\"Unsupported OS\"}");
+    defer unsupported.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), unsupported.items.len);
 }
 
 test "parses Hostinger pagination envelopes" {
