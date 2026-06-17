@@ -100,6 +100,7 @@ pub fn dryRunPlanJsonWithQuery(gpa: Allocator, route: provider_routes.Route, pat
     try writeJsonField(writer, "path", path, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
     try writeRequestBodyField(writer, "request_body", route.request_body, true);
+    try writeResponsesField(writer, "responses", route.responses, true);
     try writer.writeAll("\"mode\":\"dry_run\",");
     try writer.writeAll("\"will_execute\":false,");
     try writeJsonField(writer, "safety", "No provider API request is sent. This is a generic dry-run plan for a live mutation route.", false);
@@ -123,6 +124,21 @@ fn writeRequestBodyField(writer: anytype, name: []const u8, body: provider_route
     try writeStringArrayField(writer, "content_types", body.content_types, true);
     try writeStringArrayField(writer, "schema_refs", body.schema_refs, false);
     try writer.writeByte('}');
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeResponsesField(writer: anytype, name: []const u8, responses: []const provider_routes.Response, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeAll(":[");
+    for (responses, 0..) |response, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.writeByte('{');
+        try writeJsonField(writer, "status", response.status, true);
+        try writeStringArrayField(writer, "content_types", response.content_types, true);
+        try writeStringArrayField(writer, "schema_refs", response.schema_refs, false);
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
     if (trailing_comma) try writer.writeByte(',');
 }
 
@@ -152,6 +168,7 @@ test "generic dispatch renders dry-run plans without executing mutations" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"method\":\"POST\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct%2F1/access/idp_federation_grants\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"responses\":[{\"status\":\"201\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/access_idp_federation_grant_response\"]},{\"status\":\"4XX\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/access_api-response-common-failure\"]}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 
@@ -172,6 +189,7 @@ test "generic dispatch renders query-aware dry-run plans" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"worker-assets-upload\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/accounts/acct%2F1/workers/assets/upload?base64=true\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true,\"content_types\":[\"multipart/form-data\"],\"schema_refs\":[]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"responses\":[{\"status\":\"201\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/workers_completed-upload-assets-response\"]},{\"status\":\"202\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/workers_upload-assets-response\"]},{\"status\":\"4XX\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/workers_api-response-common-failure\"]}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 
@@ -186,6 +204,7 @@ test "generic dispatch reports request body schema refs in dry-run plans" {
 
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"VPS_purchaseNewVirtualMachineV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"request_body\":{\"required\":true,\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/VPS.V1.VirtualMachine.PurchaseRequest\"]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"responses\":[{\"status\":\"200\",\"content_types\":[\"application/json\"],\"schema_refs\":[\"#/components/schemas/Billing.V1.Order.VirtualMachineOrderResource\"]},{\"status\":\"401\",\"content_types\":[\"application/json\"],\"schema_refs\":[]},{\"status\":\"422\",\"content_types\":[\"application/json\"],\"schema_refs\":[]},{\"status\":\"500\",\"content_types\":[\"application/json\"],\"schema_refs\":[]}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 
