@@ -1,0 +1,11 @@
+.cloudio/
+.env
+.env.fish
+cloudio.db
+*.db
+*.db-shm
+*.db-wal
+cloudio.local.toml
+zig-cache/
+zig-out/
+.zig-cache/

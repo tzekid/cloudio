@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "cloudflare": "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json",
+    "hostinger": "https://raw.githubusercontent.com/hostinger/api/main/openapi.json"
+  },
+  "operation_counts": {
+    "cloudflare": 3151,
+    "hostinger": 133
+  },
+  "overrides": {
+    "cloudflare": "coverage/overrides/cloudflare.jsonl",
+    "hostinger": "coverage/overrides/hostinger.jsonl"
+  },
+  "classification_defaults": {
+    "GET": "planned/read",
+    "non-GET": "unsafe_mutation/dry_run",
+    "deprecated": "deprecated/none"
+  }
+}

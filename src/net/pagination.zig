@@ -1,0 +1,105 @@
+const std = @import("std");
+const core_json = @import("core_json");
+
+const Allocator = std.mem.Allocator;
+
+pub const PageInfo = struct {
+    current_page: usize,
+    per_page: usize,
+    total: usize,
+    data_len: usize,
+
+    pub fn hasNext(self: PageInfo) bool {
+        return self.data_len > 0 and self.per_page > 0 and self.current_page * self.per_page < self.total;
+    }
+};
+
+pub fn dataPageInfo(body: []const u8) ?PageInfo {
+    var parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, body, .{}) catch return null;
+    defer parsed.deinit();
+    return dataPageInfoFromValue(parsed.value);
+}
+
+pub fn mergeDataPages(gpa: Allocator, bodies: []const []const u8) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+
+    try out.writer.writeAll("{\"data\":[");
+    var first = true;
+    var last_info: ?PageInfo = null;
+    var page_count: usize = 0;
+    for (bodies) |body| {
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch continue;
+        defer parsed.deinit();
+        const data = core_json.field(parsed.value, "data") orelse continue;
+        if (data != .array) continue;
+        page_count += 1;
+        if (dataPageInfoFromValue(parsed.value)) |info| last_info = info;
+        for (data.array.items) |item| {
+            if (!first) try out.writer.writeByte(',');
+            first = false;
+            try std.json.Stringify.value(item, .{}, &out.writer);
+        }
+    }
+    try out.writer.writeAll("],\"meta\":");
+    if (last_info) |info| {
+        try out.writer.print("{{\"current_page\":{d},\"per_page\":{d},\"total\":{d},\"pages\":{d}}}", .{ info.current_page, info.per_page, info.total, page_count });
+    } else {
+        try out.writer.print("{{\"current_page\":0,\"per_page\":0,\"total\":0,\"pages\":{d}}}", .{page_count});
+    }
+    try out.writer.writeByte('}');
+    return try out.toOwnedSlice();
+}
+
+pub fn dataPageInfoFromValue(value: std.json.Value) ?PageInfo {
+    const data = core_json.field(value, "data") orelse return null;
+    if (data != .array) return null;
+    const meta = core_json.field(value, "meta") orelse return null;
+    const current_page = positiveInt(meta, "current_page") orelse return null;
+    const per_page = positiveInt(meta, "per_page") orelse return null;
+    const total = positiveInt(meta, "total") orelse return null;
+    return .{
+        .current_page = current_page,
+        .per_page = per_page,
+        .total = total,
+        .data_len = data.array.items.len,
+    };
+}
+
+fn positiveInt(value: std.json.Value, name: []const u8) ?usize {
+    const int_value = core_json.fieldInt(value, name) orelse return null;
+    if (int_value < 0) return null;
+    return @intCast(int_value);
+}
+
+test "parses data pagination envelopes" {
+    const info = dataPageInfo(
+        \\{"data":[{"id": 1}, {"id": 2}], "meta": {"current_page": 1, "per_page": 2, "total": 5}}
+    ) orelse return error.TestExpectedPagination;
+    try std.testing.expectEqual(@as(usize, 1), info.current_page);
+    try std.testing.expectEqual(@as(usize, 2), info.per_page);
+    try std.testing.expectEqual(@as(usize, 5), info.total);
+    try std.testing.expectEqual(@as(usize, 2), info.data_len);
+    try std.testing.expect(info.hasNext());
+
+    const last = dataPageInfo(
+        \\{"data":[{"id": 5}], "meta": {"current_page": 3, "per_page": 2, "total": 5}}
+    ) orelse return error.TestExpectedPagination;
+    try std.testing.expect(!last.hasNext());
+    try std.testing.expect(dataPageInfo("[{\"id\": 1}]") == null);
+}
+
+test "merges data pagination envelopes" {
+    const allocator = std.testing.allocator;
+    const bodies = [_][]const u8{
+        \\{"data":[{"id": 1}, {"id": 2}], "meta": {"current_page": 1, "per_page": 2, "total": 3}}
+        ,
+        \\{"data":[{"id": 3}], "meta": {"current_page": 2, "per_page": 2, "total": 3}}
+        ,
+    };
+    const merged = try mergeDataPages(allocator, &bodies);
+    defer allocator.free(merged);
+    try std.testing.expect(std.mem.indexOf(u8, merged, "\"id\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, merged, "\"id\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, merged, "\"pages\":2") != null);
+}

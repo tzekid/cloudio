@@ -1,0 +1,97 @@
+# Provider Coverage Baseline
+
+Last checked: 2026-06-17.
+
+Canonical sources:
+
+- Cloudflare API reference: https://developers.cloudflare.com/api/
+- Cloudflare OpenAPI schema: https://github.com/cloudflare/api-schemas and https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json
+- Hostinger API reference: https://developers.hostinger.com/
+- Hostinger OpenAPI schema: https://github.com/hostinger/api and https://raw.githubusercontent.com/hostinger/api/main/openapi.json
+
+Use `cloudio coverage` to summarize the checked-in generated manifests locally, `cloudio coverage tags [all|cloudflare|hostinger]` to review support/mode counts by upstream tag group, and `cloudio coverage routes [all|cloudflare|hostinger] [tag-query] [--support <status>] [--mode <mode>]` to inspect the exact operations in a provider/tag/status group. Use `zig build api-summary` to fetch the current public OpenAPI files and print operation/tag counts. Use `zig build coverage-manifest` to regenerate `coverage/generated/*.jsonl`, and `zig build coverage-check` to compare checked-in coverage rows with the current official specs. The `zig build` coverage/spec commands are intentionally networked and are not part of normal `zig build test`.
+
+## Status Taxonomy
+
+- `implemented`: Cloudio has a typed or clearly bounded implementation, fixture coverage, and a read-only/manual smoke path when credentials allow it.
+- `partial`: Cloudio calls at least one endpoint in the group, but coverage, pagination, models, errors, or tests are incomplete.
+- `planned`: Endpoint exists upstream and belongs in Cloudio, but is not implemented yet.
+- `blocked_permission`: Endpoint exists but the current token/account/server cannot verify it.
+- `unsafe_mutation`: Endpoint mutates remote state and must stay disabled or dry-run until explicit write-mode design exists.
+- `deprecated`: Upstream marks the endpoint deprecated.
+- `not_applicable`: Endpoint exists but is outside Cloudio's VPS/control-plane scope or has an upstream transport contract Cloudio intentionally does not model.
+
+## Cloudflare Current Coverage
+
+Official schema size checked today: 3151 operations. Read-only account/zone/DNS URL/auth handling lives in `src/providers/cloudflare/client.zig`; account, zone, DNS record, and zone-id response normalization lives in `src/providers/cloudflare/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Cloudflare collection, diagnostics, and SQLite normalization live in `src/collectors/cloudflare.zig`.
+
+Current POC status is intentionally narrow and read-only:
+
+| Upstream area | Current status | Cloudio behavior |
+| --- | --- | --- |
+| Accounts | partial | Lists accounts, reads account details/profile/organizations for listed or explicit accounts, and stores raw/account summary data. Current account profile reads are captured but Cloudflare returns a provider `500` no-rows envelope on this account. Renders typed dry-run plans for account create/delete/update, profile update, single-account move, and batch move routes without sending live Cloudflare requests. |
+| Cloudflare IP ranges | partial | Reads public Cloudflare IP ranges and optional JD Cloud ranges as redacted raw provider data without requiring Cloudflare credentials. |
+| Account members and roles | partial | Reads account member and role lists for discovered or explicit accounts and details by explicit ID as redacted raw provider data for access inventory. Renders typed dry-run plans for account member add/update/remove routes without sending live Cloudflare requests. |
+| Account-owned API tokens | partial | Reads account-owned token lists, token details, token permission groups, and account-token verification when API-token auth is configured. Token responses use token-context redaction for JSON `value` fields; legacy email/global-key auth skips account-token verification with an explicit diagnostic. Renders typed dry-run plans for account-owned token create/delete/update/roll routes without sending live Cloudflare requests. |
+| Account IAM permission groups | partial | Reads account IAM permission-group lists for discovered or explicit accounts and details by explicit permission-group ID as redacted raw provider data. |
+| Account IAM resource and user groups | partial | Reads account IAM resource-group and user-group lists for discovered or explicit accounts, details by explicit ID, and user-group member lists/details as redacted raw provider data. Renders typed dry-run plans for resource-group create/update/delete, user-group create/update/delete, and user-group member add/update/remove routes without sending live Cloudflare requests. |
+| User identity and account memberships | partial | Reads current user details, user tenants, current user's account memberships, and membership detail by explicit ID as redacted raw provider data. Refresh follows membership-list IDs to capture detail snapshots. Renders typed dry-run plans for membership accept/reject updates and deletion without sending live Cloudflare requests. |
+| Zone | partial | Looks up configured domains such as `plosca.ru`, stores zone summary data, and reads zone detail by explicit zone ID as redacted raw provider data. Renders typed dry-run plans for zone create/delete/edit, purge cache, purge environment cache, and activation-check routes without sending live Cloudflare requests. |
+| Zone lifecycle, plans, holds, and subscription | partial | Reads available plans, available rate plans, plan details by explicit plan ID, zone environments, zone hold status, and zone subscription details as redacted raw provider data. Renders typed dry-run plans for zone environment create/edit/update/delete/rollback, zone hold create/update/delete, and zone subscription create/update without sending live Cloudflare requests. |
+| Zone cache settings | partial | Reads Cache Reserve, Cache Reserve Clear, Regional Tiered Cache, and Variants setting endpoints as redacted raw provider data. Renders typed dry-run plans for changing cache reserve, starting cache reserve clear, changing regional tiered cache, deleting variants, and changing variants without sending live Cloudflare requests. |
+| DNS Records for a Zone | partial | Lists zone DNS records, stores normalized records, reads record detail/export/usage/scan-review endpoints by domain lookup, and renders typed dry-run plans for non-deprecated DNS record create/delete/patch/update/batch/import/scan routes without sending live Cloudflare requests. |
+| DNS Records for an Account | partial | Reads account-level DNS record usage for discovered or explicit accounts as redacted raw provider data. |
+| DNS Analytics and DNS Firewall | partial | Reads zone DNS Analytics report/by-time endpoints, account-level DNS Firewall cluster list/detail/reverse-DNS endpoints, and DNS Firewall analytics report/by-time endpoints as redacted raw provider data. Refresh follows discovered DNS Firewall cluster IDs. Renders typed dry-run plans for DNS Firewall create/update/delete/reverse-DNS update routes without sending live Cloudflare requests. |
+| DNSSEC | partial | Reads DNSSEC details and ZSK inventory by domain lookup as redacted raw provider data, and renders typed dry-run plans for DNSSEC delete/edit-status routes without sending live Cloudflare requests. |
+| DNS Settings for a Zone | partial | Reads zone DNS settings as redacted raw provider data and renders a typed dry-run plan for DNS settings updates without sending live Cloudflare requests. |
+| DNS Settings for an Account | partial | Reads account DNS settings as redacted raw provider data for accounts returned by the account list and renders a typed dry-run plan for DNS settings updates without sending live Cloudflare requests. |
+| Secondary DNS | partial | Reads account-level Secondary DNS ACL, peer, and TSIG lists/details and zone-level primary/secondary DNS transfer configuration/status as redacted raw provider data. Renders typed dry-run plans for ACL/peer/TSIG create/update/delete, primary-zone create/update/delete/enable/disable/force-notify, and secondary-zone create/update/delete/force-AXFR without sending live Cloudflare requests. |
+| Load Balancing | partial | Reads account monitor groups, monitors, pools, pool health/references, regions, user monitors/pools/healthcheck events, and zone load balancers as redacted raw provider data; refresh follows discovered list IDs for detail/reference/health endpoints. Account search and preview-result reads are explicit CLI calls because they require a query or preview ID. Renders typed dry-run plans for monitor-group, monitor, pool, and zone load-balancer create/update/patch/delete/preview/collection-patch routes without sending live Cloudflare requests. |
+| Zone Settings | partial | Current POC still fetches the deprecated aggregate settings endpoint for compatibility, reads non-deprecated Aegis, Fonts, origin HTTP/2 max streams, origin max HTTP version, and Speed Brain setting endpoints, and exposes generic read-only `settings/{setting_id}` lookup as redacted raw provider data. |
+| SSL/TLS and cache-visible settings | partial | Reads Automatic SSL/TLS enrollment status as redacted raw provider data; broader SSL/TLS and cache-specific read endpoints remain planned. |
+| User API Tokens and token permission model | partial | Reads user token lists, token details by explicit token ID, and token permission groups as token-context-redacted raw provider data. Verifies the configured user token when API-token auth is configured; legacy email/global-key auth skips token verification with an explicit diagnostic. Renders typed dry-run plans for user token create/delete/update/roll routes without sending live Cloudflare requests. |
+| Remaining Cloudflare API groups | planned | Must be classified and implemented from the generated manifest before claiming full coverage; some rows may later become `not_applicable`. |
+
+Cloudflare implementation must prefer API tokens. Legacy email/global-key auth remains compatibility-only and should be isolated in the provider auth layer.
+
+## Hostinger Current Coverage
+
+Official schema size checked today: 133 operations; Hostinger OpenAPI version `0.19.1`. Read-only VPS endpoint URL/auth handling lives in `src/providers/hostinger/client.zig`; VPS inventory response normalization lives in `src/providers/hostinger/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Hostinger collection and SQLite normalization live in `src/collectors/hostinger.zig`.
+
+Current POC status:
+
+| Upstream area | Current status | Cloudio behavior |
+| --- | --- | --- |
+| VPS: Virtual machine | partial | Lists VPS inventory, reads VM details, stores hostname/state/IPv4/plan/raw JSON, gets metrics with a default 24h UTC window, and renders typed dry-run plans for official VM purchase/lifecycle/hostname/nameserver/password mutation routes without sending live Hostinger requests. |
+| VPS: Actions | partial | Paginates VM actions as raw provider data; action details are collected by explicit detail calls. |
+| VPS: Backups | partial | Paginates backups as raw provider data and renders typed dry-run plans for backup restore without sending live Hostinger requests. |
+| VPS: Snapshots | partial | Reads current snapshot as raw provider data and renders typed dry-run plans for snapshot create/delete/restore without sending live Hostinger requests. |
+| VPS: Public Keys | partial | Paginates global public keys as raw provider data and renders typed dry-run plans for public-key create/delete/attach without sending live Hostinger requests; the current per-VM attached-key route still returns provider `404` on this account. |
+| VPS: Malware scanner | blocked_permission | Reads Monarx endpoint; current server returns provider `422` because Monarx is unsupported/not installed. Renders typed dry-run plans for Monarx install/uninstall without sending live Hostinger requests. |
+| VPS: Docker Manager | blocked_permission | Reads experimental Docker Manager project list, project contents, containers, and logs; current Arch VPS returns provider `400` unsupported OS response. Renders typed dry-run plans for project create/delete/start/stop/restart/update without sending live Hostinger requests. |
+| VPS: Recovery | partial | Renders typed dry-run plans for starting and stopping recovery mode without sending live Hostinger requests. |
+| VPS: PTR records | partial | Renders typed dry-run plans for PTR record creation and deletion by VM ID and IP address ID without sending live Hostinger requests. |
+| VPS: Firewall | partial | Paginates firewall inventory and reads firewall details by ID as raw provider data. Renders typed dry-run plans for firewall create/delete, activate/deactivate/sync, and rule create/update/delete without sending live Hostinger requests. |
+| VPS: Data centers, OS templates, post-install scripts | partial | Lists direct-array inventory for data centers/templates, paginates post-install scripts, reads template/script details by ID as redacted raw provider data, and renders typed dry-run plans for post-install-script create/update/delete without sending live Hostinger requests. |
+| Billing: Catalog, payment methods, subscriptions | partial | Reads catalog, masked payment methods, and subscriptions as redacted raw provider data. Renders typed dry-run plans for default/delete payment-method routes and subscription auto-renewal enable/disable without sending live Hostinger requests. |
+| DNS: Zones and snapshots | partial | Reads DNS zone records and snapshot lists for configured domains; snapshot detail reads are explicit by domain and snapshot ID. Renders typed dry-run plans for DNS record update/delete/reset/validate and snapshot restore without sending live Hostinger requests. |
+| Domains: Availability, portfolio, forwarding, WHOIS | partial | Reads portfolio lists, explicit-domain details, configured-domain forwarding state, and WHOIS profile lists as redacted raw provider data. Renders typed dry-run plans for availability, purchase, forwarding create/delete, domain lock/privacy/nameserver changes, and WHOIS create/delete routes without sending live Hostinger requests. Current configured domains return Hostinger not-found envelopes for portfolio detail. WHOIS profile detail and usage reads are explicit by ID. |
+| Hosting: Orders, websites, WordPress, datacenters, databases, domains, NodeJS | partial | Refresh paginates hosting orders and websites and reads WordPress installations. Datacenters require an explicit order ID; databases, phpMyAdmin links, parked domains, subdomains, NodeJS builds, and NodeJS build logs require explicit hosting username/domain/database/build identifiers. Renders typed dry-run plans for website creation, WordPress install, database create/delete/password/repair, free subdomain generation, domain ownership verification, parked-domain/subdomain create/delete, and NodeJS archive-build creation without sending live Hostinger requests. |
+| Reach: Contacts, profiles, segments | blocked_permission | Reach contacts, profiles, segments, segment details, segment contacts, and profile segment contacts are typed and routed, but the current token returns provider `403` for top-level Reach reads. Renders typed dry-run plans for non-deprecated contact delete, profile contact create, and segment create mutations without sending live Hostinger requests; deprecated contact-group/create-contact routes remain deprecated. |
+| Ecommerce: Stores | partial | Refresh paginates Ecommerce stores as redacted raw provider data and renders typed dry-run plans for store creation without sending live Hostinger requests. |
+| Horizons: Websites | partial | Reads Horizons website details by explicit website ID only and renders typed dry-run plans for website creation without sending live Hostinger requests. |
+| Domain Access Verifier | not_applicable | The official Hostinger `0.19.1` schema marks `GET /api/v2/direct/verifications/active` with `requestBody.required=true`, but the same API overview says JSON bodies are for `POST`, `PUT`, and `PATCH`; Zig `0.16.0` `std.http` also only allows request bodies for those methods, so Cloudio does not model this inconsistent transport contract. |
+| Remaining Hostinger mutations | deprecated | Non-deprecated Hostinger mutation routes are covered by typed dry-run plans; deprecated mutation routes remain classified as deprecated until explicit compatibility work is needed. |
+
+Hostinger metrics require `date_from` and `date_to` query parameters. Cloudio currently uses a read-only 24-hour UTC window for refresh and CLI metrics calls.
+
+## Coverage Review Gate
+
+Before adding or changing provider behavior:
+
+1. Run `zig build api-summary` and paste the relevant operation/tag delta into the review notes.
+2. Run `zig build coverage-manifest` and update the generated provider coverage row before or alongside code changes.
+3. Add fixture tests for response parsing and error envelopes.
+4. For read-only endpoints, run a smoke command when credentials permit it.
+5. For mutation endpoints, implement only a typed dry-run plan until explicit write-mode policy exists.
+6. Run `zig build coverage-check` before closing provider work to catch upstream drift.

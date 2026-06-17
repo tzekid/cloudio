@@ -1,0 +1,722 @@
+const std = @import("std");
+const app_cloudflare = @import("app_cloudflare");
+const cli_render = @import("cli_render");
+const db_store = @import("db_store");
+
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const Db = db_store.Db;
+
+pub const Context = struct {
+    io: Io,
+    gpa: Allocator,
+    auth: app_cloudflare.Auth,
+    domains: []const []const u8,
+    db: *Db,
+};
+
+pub fn run(ctx: Context, args: []const []const u8) !void {
+    if (args.len == 0) {
+        std.debug.print("cloudflare subcommand required\n", .{});
+        return;
+    }
+    const sub = args[0];
+    if (std.mem.eql(u8, sub, "account")) {
+        try commandAccount(ctx, args);
+    } else if (std.mem.eql(u8, sub, "dry-run")) {
+        try commandDryRun(ctx, args);
+    } else if (std.mem.eql(u8, sub, "ips")) {
+        const networks: ?[]const u8 = if (args.len > 1) args[1] else null;
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectIps(appContext(ctx), networks));
+    } else if (std.mem.eql(u8, sub, "membership")) {
+        try commandMembership(ctx, args);
+    } else if (app_cloudflare.IdentityEndpoint.parse(sub)) |endpoint| {
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectIdentityEndpoint(appContext(ctx), endpoint));
+    } else if (std.mem.eql(u8, sub, "token")) {
+        try commandToken(ctx, args);
+    } else if (std.mem.eql(u8, sub, "zone")) {
+        try commandZone(ctx, args);
+    } else if (std.mem.eql(u8, sub, "dns")) {
+        try commandDns(ctx, args);
+    } else if (std.mem.eql(u8, sub, "dns-analytics")) {
+        try commandDnsAnalytics(ctx, args);
+    } else if (std.mem.eql(u8, sub, "dns-firewall")) {
+        try commandDnsFirewall(ctx, args);
+    } else if (std.mem.eql(u8, sub, "load-balancing") or std.mem.eql(u8, sub, "lb")) {
+        try commandLoadBalancing(ctx, args);
+    } else if (std.mem.eql(u8, sub, "dnssec")) {
+        try commandDnssec(ctx, args);
+    } else if (std.mem.eql(u8, sub, "secondary-dns")) {
+        try commandSecondaryDns(ctx, args);
+    } else if (std.mem.eql(u8, sub, "setting")) {
+        try commandSetting(ctx, args);
+    } else if (std.mem.eql(u8, sub, "diagnose")) {
+        const domain = app_cloudflare.selectedDomain(ctx.domains, args);
+        try app_cloudflare.diagnose(appContext(ctx), domain);
+    } else {
+        std.debug.print("unknown cloudflare command: {s}\n", .{sub});
+    }
+}
+
+fn commandDryRun(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("dry-run target and operation required\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "dns")) return try commandDryRunDns(ctx, args);
+    if (std.mem.eql(u8, args[1], "dnssec")) return try commandDryRunDnssec(ctx, args);
+    if (std.mem.eql(u8, args[1], "zone")) return try commandDryRunZone(ctx, args);
+    if (std.mem.eql(u8, args[1], "zone-lifecycle")) return try commandDryRunZoneLifecycle(ctx, args);
+    if (std.mem.eql(u8, args[1], "token")) return try commandDryRunToken(ctx, args);
+    if (std.mem.eql(u8, args[1], "membership")) return try commandDryRunMembership(ctx, args);
+    if (std.mem.eql(u8, args[1], "account")) return try commandDryRunAccount(ctx, args);
+    if (std.mem.eql(u8, args[1], "account-token")) return try commandDryRunAccountToken(ctx, args);
+    if (std.mem.eql(u8, args[1], "account-member") or std.mem.eql(u8, args[1], "member")) return try commandDryRunAccountMember(ctx, args);
+    if (std.mem.eql(u8, args[1], "resource-group") or std.mem.eql(u8, args[1], "account-resource-group")) return try commandDryRunAccountIamGroup(ctx, args, .resource_groups);
+    if (std.mem.eql(u8, args[1], "user-group") or std.mem.eql(u8, args[1], "account-user-group")) return try commandDryRunAccountIamGroup(ctx, args, .user_groups);
+    if (std.mem.eql(u8, args[1], "account-user-group-member") or std.mem.eql(u8, args[1], "user-group-member")) return try commandDryRunAccountUserGroupMember(ctx, args);
+    if (std.mem.eql(u8, args[1], "secondary-dns-account")) return try commandDryRunSecondaryDnsAccount(ctx, args);
+    if (std.mem.eql(u8, args[1], "secondary-dns-zone")) return try commandDryRunSecondaryDnsZone(ctx, args);
+    if (std.mem.eql(u8, args[1], "dns-firewall")) return try commandDryRunDnsFirewall(ctx, args);
+    if (std.mem.eql(u8, args[1], "dns-settings")) return try commandDryRunDnsSettings(ctx, args);
+    if (std.mem.eql(u8, args[1], "load-balancing") or std.mem.eql(u8, args[1], "lb")) return try commandDryRunLoadBalancing(ctx, args);
+    std.debug.print("unknown cloudflare dry-run target: {s}\n", .{args[1]});
+}
+
+fn commandDryRunDns(ctx: Context, args: []const []const u8) !void {
+    const endpoint = app_cloudflare.DnsRecordMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown dns dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (args.len < 4) {
+        std.debug.print("zone id required for dry-run dns {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    if (endpoint.requiresRecordId() and args.len < 5) {
+        std.debug.print("dns record id required for dry-run dns {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    const plan_args: app_cloudflare.DnsRecordMutationArgs = .{
+        .zone_id = args[3],
+        .dns_record_id = if (endpoint.requiresRecordId()) args[4] else null,
+    };
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planDnsRecordMutation(appContext(ctx), endpoint, plan_args));
+}
+
+fn commandDryRunDnssec(ctx: Context, args: []const []const u8) !void {
+    const endpoint = app_cloudflare.DnssecMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown dnssec dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (args.len < 4) {
+        std.debug.print("zone id required for dry-run dnssec {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planDnssecMutation(appContext(ctx), endpoint, .{ .zone_id = args[3] }));
+}
+
+fn commandDryRunZone(ctx: Context, args: []const []const u8) !void {
+    const endpoint = app_cloudflare.ZoneMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown zone dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (endpoint.requiresZoneId() and args.len < 4) {
+        std.debug.print("zone id required for dry-run zone {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    if (endpoint.requiresEnvironmentId() and args.len < 5) {
+        std.debug.print("environment id required for dry-run zone {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planZoneMutation(appContext(ctx), endpoint, .{
+        .zone_id = if (endpoint.requiresZoneId()) args[3] else null,
+        .environment_id = if (endpoint.requiresEnvironmentId()) args[4] else null,
+    }));
+}
+
+fn commandDryRunZoneLifecycle(ctx: Context, args: []const []const u8) !void {
+    const endpoint = app_cloudflare.ZoneLifecycleMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown zone-lifecycle dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (args.len < 4) {
+        std.debug.print("zone id required for dry-run zone-lifecycle {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    if (endpoint.requiresEnvironmentId() and args.len < 5) {
+        std.debug.print("environment id required for dry-run zone-lifecycle {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planZoneLifecycleMutation(appContext(ctx), endpoint, .{
+        .zone_id = args[3],
+        .environment_id = if (endpoint.requiresEnvironmentId()) args[4] else null,
+    }));
+}
+
+fn commandDryRunToken(ctx: Context, args: []const []const u8) !void {
+    const endpoint = app_cloudflare.UserTokenMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown token dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (endpoint.requiresTokenId() and args.len < 4) {
+        std.debug.print("token id required for dry-run token {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planUserTokenMutation(appContext(ctx), endpoint, .{
+        .token_id = if (endpoint.requiresTokenId()) args[3] else null,
+    }));
+}
+
+fn commandDryRunMembership(ctx: Context, args: []const []const u8) !void {
+    const endpoint = app_cloudflare.MembershipMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown membership dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (args.len < 4) {
+        std.debug.print("membership id required for dry-run membership {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planMembershipMutation(appContext(ctx), endpoint, .{ .membership_id = args[3] }));
+}
+
+fn commandDryRunAccount(ctx: Context, args: []const []const u8) !void {
+    const endpoint = app_cloudflare.AccountMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown account dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (endpoint.requiresAccountId() and args.len < 4) {
+        std.debug.print("account id required for dry-run account {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccountMutation(appContext(ctx), endpoint, .{
+        .account_id = if (endpoint.requiresAccountId()) args[3] else null,
+    }));
+}
+
+fn commandDryRunAccountToken(ctx: Context, args: []const []const u8) !void {
+    const endpoint = app_cloudflare.AccountTokenMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown account token dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (args.len < 4) {
+        std.debug.print("account id required for dry-run account-token {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    if (endpoint.requiresTokenId() and args.len < 5) {
+        std.debug.print("token id required for dry-run account-token {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccountTokenMutation(appContext(ctx), endpoint, .{
+        .account_id = args[3],
+        .token_id = if (endpoint.requiresTokenId()) args[4] else null,
+    }));
+}
+
+fn commandDryRunAccountMember(ctx: Context, args: []const []const u8) !void {
+    const endpoint = app_cloudflare.AccountMemberMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown account member dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (args.len < 4) {
+        std.debug.print("account id required for dry-run account-member {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    if (endpoint.requiresMemberId() and args.len < 5) {
+        std.debug.print("member id required for dry-run account-member {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccountMemberMutation(appContext(ctx), endpoint, .{
+        .account_id = args[3],
+        .member_id = if (endpoint.requiresMemberId()) args[4] else null,
+    }));
+}
+
+fn commandDryRunAccountIamGroup(ctx: Context, args: []const []const u8, collection: app_cloudflare.AccountIamCollection) !void {
+    const endpoint = app_cloudflare.AccountIamGroupMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown {s} dry-run operation: {s}\n", .{ collection.detailCommandName(), args[2] });
+        return;
+    };
+    if (args.len < 4) {
+        std.debug.print("account id required for dry-run {s} {s}\n", .{ collection.detailCommandName(), endpoint.commandName() });
+        return;
+    }
+    if (endpoint.requiresResourceId() and args.len < 5) {
+        std.debug.print("resource id required for dry-run {s} {s}\n", .{ collection.detailCommandName(), endpoint.commandName() });
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccountIamGroupMutation(appContext(ctx), endpoint, .{
+        .collection = collection,
+        .account_id = args[3],
+        .resource_id = if (endpoint.requiresResourceId()) args[4] else null,
+    }));
+}
+
+fn commandDryRunAccountUserGroupMember(ctx: Context, args: []const []const u8) !void {
+    const endpoint = app_cloudflare.AccountUserGroupMemberMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown account user-group member dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (args.len < 5) {
+        std.debug.print("account id and user group id required for dry-run account-user-group-member {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    if (endpoint.requiresMemberId() and args.len < 6) {
+        std.debug.print("member id required for dry-run account-user-group-member {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planAccountUserGroupMemberMutation(appContext(ctx), endpoint, .{
+        .account_id = args[3],
+        .user_group_id = args[4],
+        .member_id = if (endpoint.requiresMemberId()) args[5] else null,
+    }));
+}
+
+fn commandDryRunSecondaryDnsAccount(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 5) {
+        std.debug.print("resource, operation, and account id required for dry-run secondary-dns-account\n", .{});
+        return;
+    }
+    const resource = app_cloudflare.SecondaryDnsAccountResource.parseDetailCommand(args[2]) orelse {
+        std.debug.print("unknown secondary-dns-account resource: {s}\n", .{args[2]});
+        return;
+    };
+    const endpoint = app_cloudflare.SecondaryDnsAccountMutationEndpoint.parse(args[3]) orelse {
+        std.debug.print("unknown secondary-dns-account dry-run operation: {s}\n", .{args[3]});
+        return;
+    };
+    if (endpoint.requiresResourceId() and args.len < 6) {
+        std.debug.print("resource id required for dry-run secondary-dns-account {s} {s}\n", .{ resource.detailCommandName(), endpoint.commandName() });
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planSecondaryDnsAccountMutation(appContext(ctx), endpoint, .{
+        .resource = resource,
+        .account_id = args[4],
+        .resource_id = if (endpoint.requiresResourceId()) args[5] else null,
+    }));
+}
+
+fn commandDryRunSecondaryDnsZone(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("operation and zone id required for dry-run secondary-dns-zone\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.SecondaryDnsZoneMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown secondary-dns-zone dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planSecondaryDnsZoneMutation(appContext(ctx), endpoint, .{ .zone_id = args[3] }));
+}
+
+fn commandDryRunDnsFirewall(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("operation and account id required for dry-run dns-firewall\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.DnsFirewallMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown dns-firewall dry-run operation: {s}\n", .{args[2]});
+        return;
+    };
+    if (endpoint.requiresFirewallId() and args.len < 5) {
+        std.debug.print("dns firewall id required for dry-run dns-firewall {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planDnsFirewallMutation(appContext(ctx), endpoint, .{
+        .account_id = args[3],
+        .dns_firewall_id = if (endpoint.requiresFirewallId()) args[4] else null,
+    }));
+}
+
+fn commandDryRunDnsSettings(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("scope and id required for dry-run dns-settings\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.DnsSettingsMutationEndpoint.parse(args[2]) orelse {
+        std.debug.print("unknown dns-settings dry-run scope: {s}\n", .{args[2]});
+        return;
+    };
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planDnsSettingsMutation(appContext(ctx), endpoint, .{
+        .account_id = if (endpoint == .account) args[3] else null,
+        .zone_id = if (endpoint == .zone) args[3] else null,
+    }));
+}
+
+fn commandDryRunLoadBalancing(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 4) {
+        std.debug.print("resource and operation required for dry-run load-balancing\n", .{});
+        return;
+    }
+    const resource = app_cloudflare.LoadBalancingMutationResource.parse(args[2]) orelse {
+        std.debug.print("unknown load-balancing dry-run resource: {s}\n", .{args[2]});
+        return;
+    };
+    const endpoint = app_cloudflare.LoadBalancingMutationEndpoint.parse(args[3]) orelse {
+        std.debug.print("unknown load-balancing dry-run operation: {s}\n", .{args[3]});
+        return;
+    };
+    if (!endpoint.supports(resource)) {
+        std.debug.print("unsupported load-balancing dry-run operation: {s} {s}\n", .{ resource.commandName(), endpoint.commandName() });
+        return;
+    }
+
+    var index: usize = 4;
+    var account_id: ?[]const u8 = null;
+    var zone_id: ?[]const u8 = null;
+    if (resource.usesAccountId()) {
+        if (args.len <= index) {
+            std.debug.print("account id required for dry-run load-balancing {s} {s}\n", .{ resource.commandName(), endpoint.commandName() });
+            return;
+        }
+        account_id = args[index];
+        index += 1;
+    } else if (resource.usesZoneId()) {
+        if (args.len <= index) {
+            std.debug.print("zone id required for dry-run load-balancing {s} {s}\n", .{ resource.commandName(), endpoint.commandName() });
+            return;
+        }
+        zone_id = args[index];
+        index += 1;
+    }
+
+    if (endpoint.requiresResourceId() and args.len <= index) {
+        std.debug.print("{s} id required for dry-run load-balancing {s} {s}\n", .{ resource.resourceLabel(), resource.commandName(), endpoint.commandName() });
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.planLoadBalancingMutation(appContext(ctx), endpoint, .{
+        .resource = resource,
+        .account_id = account_id,
+        .zone_id = zone_id,
+        .resource_id = if (endpoint.requiresResourceId()) args[index] else null,
+    }));
+}
+
+fn commandDns(ctx: Context, args: []const []const u8) !void {
+    if (args.len == 1) {
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
+        return;
+    }
+    if (app_cloudflare.DnsRecordReadEndpoint.parse(args[1])) |endpoint| {
+        if (endpoint.requiresRecordId() and args.len < 3) {
+            std.debug.print("dns record id required for dns {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        const record_id: ?[]const u8 = if (endpoint.requiresRecordId()) args[2] else null;
+        const domain = if (endpoint.requiresRecordId())
+            if (args.len > 3) args[3] else ctx.domains[0]
+        else if (args.len > 2) args[2] else ctx.domains[0];
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDnsRecordEndpoint(appContext(ctx), domain, endpoint, record_id));
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), args[1]));
+}
+
+fn commandDnsAnalytics(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("dns-analytics report|bytime <zone-id> required\n", .{});
+        return;
+    }
+    const endpoint = app_cloudflare.DnsAnalyticsEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown dns-analytics command: {s}\n", .{args[1]});
+        return;
+    };
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDnsAnalyticsEndpoint(appContext(ctx), args[2], endpoint));
+}
+
+fn commandDnsFirewall(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 2) {
+        std.debug.print("dns-firewall command required\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "analytics")) {
+        if (args.len < 5) {
+            std.debug.print("dns-firewall analytics report|bytime <account-id> <dns-firewall-id> required\n", .{});
+            return;
+        }
+        const endpoint = app_cloudflare.DnsAnalyticsEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown dns-firewall analytics command: {s}\n", .{args[2]});
+            return;
+        };
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDnsFirewallAnalyticsEndpoint(appContext(ctx), args[3], args[4], endpoint));
+        return;
+    }
+    const endpoint = app_cloudflare.DnsFirewallReadEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown dns-firewall command: {s}\n", .{args[1]});
+        return;
+    };
+    if (args.len < 3) {
+        std.debug.print("account id required for dns-firewall {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    if (endpoint.requiresFirewallId() and args.len < 4) {
+        std.debug.print("dns firewall id required for dns-firewall {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectDnsFirewallReadEndpoint(appContext(ctx), args[2], endpoint, if (endpoint.requiresFirewallId()) args[3] else null));
+}
+
+fn commandLoadBalancing(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 3) {
+        std.debug.print("load-balancing account|user|zone command required\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "account")) {
+        const endpoint = app_cloudflare.LoadBalancingAccountReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown load-balancing account command: {s}\n", .{args[2]});
+            return;
+        };
+        if (args.len < 4) {
+            std.debug.print("account id required for load-balancing account {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        const resource_index: usize = 4;
+        if (endpoint.requiresResourceId() and args.len <= resource_index) {
+            std.debug.print("resource id required for load-balancing account {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        const search_query: ?[]const u8 = if (endpoint == .search and args.len > resource_index) args[resource_index] else null;
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLoadBalancingAccountEndpoint(appContext(ctx), args[3], endpoint, if (endpoint.requiresResourceId()) args[resource_index] else null, search_query));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "user")) {
+        const endpoint = app_cloudflare.LoadBalancingUserReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown load-balancing user command: {s}\n", .{args[2]});
+            return;
+        };
+        if (endpoint.requiresResourceId() and args.len < 4) {
+            std.debug.print("resource id required for load-balancing user {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLoadBalancingUserEndpoint(appContext(ctx), endpoint, if (endpoint.requiresResourceId()) args[3] else null));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "zone")) {
+        const endpoint = app_cloudflare.LoadBalancingZoneReadEndpoint.parse(args[2]) orelse {
+            std.debug.print("unknown load-balancing zone command: {s}\n", .{args[2]});
+            return;
+        };
+        if (args.len < 4) {
+            std.debug.print("zone id required for load-balancing zone {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        if (endpoint.requiresLoadBalancerId() and args.len < 5) {
+            std.debug.print("load balancer id required for load-balancing zone {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectLoadBalancingZoneEndpoint(appContext(ctx), args[3], endpoint, if (endpoint.requiresLoadBalancerId()) args[4] else null));
+        return;
+    }
+    std.debug.print("unknown load-balancing scope: {s}\n", .{args[1]});
+}
+
+fn commandDnssec(ctx: Context, args: []const []const u8) !void {
+    if (args.len > 1 and std.mem.eql(u8, args[1], "zsk")) {
+        const domain = if (args.len > 2) args[2] else ctx.domains[0];
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneEndpoint(appContext(ctx), domain, .dnssec_zsk));
+        return;
+    }
+    const domain = app_cloudflare.selectedDomain(ctx.domains, args);
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneEndpoint(appContext(ctx), domain, .dnssec));
+}
+
+fn commandMembership(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 2) {
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectIdentityEndpoint(appContext(ctx), .memberships));
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectMembership(appContext(ctx), args[1]));
+}
+
+fn commandZone(ctx: Context, args: []const []const u8) !void {
+    if (args.len > 1 and (std.mem.eql(u8, args[1], "show") or std.mem.eql(u8, args[1], "detail") or std.mem.eql(u8, args[1], "details"))) {
+        if (args.len < 3) {
+            std.debug.print("zone id required for zone {s}\n", .{args[1]});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneById(appContext(ctx), args[2]));
+        return;
+    }
+    if (args.len > 1) {
+        if (app_cloudflare.ZoneLifecycleReadEndpoint.parse(args[1])) |endpoint| {
+            if (args.len < 3) {
+                std.debug.print("zone id required for zone {s}\n", .{endpoint.commandName()});
+                return;
+            }
+            if (endpoint.requiresPlanId() and args.len < 4) {
+                std.debug.print("plan id required for zone {s}\n", .{endpoint.commandName()});
+                return;
+            }
+            cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneLifecycleReadEndpoint(appContext(ctx), args[2], endpoint, if (endpoint.requiresPlanId()) args[3] else null));
+            return;
+        }
+    }
+    const domain = app_cloudflare.selectedDomain(ctx.domains, args);
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZone(appContext(ctx), domain));
+}
+
+fn commandSecondaryDns(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 2) {
+        std.debug.print("secondary-dns command required\n", .{});
+        return;
+    }
+    if (app_cloudflare.SecondaryDnsAccountResource.parseListCommand(args[1])) |resource| {
+        if (args.len < 3) {
+            std.debug.print("account id required for secondary-dns {s}\n", .{resource.listCommandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectSecondaryDnsAccountCollection(appContext(ctx), args[2], resource));
+        return;
+    }
+    if (app_cloudflare.SecondaryDnsAccountResource.parseDetailCommand(args[1])) |resource| {
+        if (args.len < 4) {
+            std.debug.print("account id and resource id required for secondary-dns {s}\n", .{resource.detailCommandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectSecondaryDnsAccountResource(appContext(ctx), args[2], resource, args[3]));
+        return;
+    }
+    if (app_cloudflare.SecondaryDnsZoneReadEndpoint.parse(args[1])) |endpoint| {
+        if (args.len < 3) {
+            std.debug.print("zone id required for secondary-dns {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectSecondaryDnsZoneEndpoint(appContext(ctx), args[2], endpoint));
+        return;
+    }
+    std.debug.print("unknown secondary-dns command: {s}\n", .{args[1]});
+}
+
+fn commandAccount(ctx: Context, args: []const []const u8) !void {
+    if (args.len == 1 or std.mem.eql(u8, args[1], "list")) {
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccounts(appContext(ctx)));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "dns-record-usage") or std.mem.eql(u8, args[1], "dns-usage")) {
+        if (args.len < 3) {
+            std.debug.print("account id required for account dns-record-usage\n", .{});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountDnsRecordUsage(appContext(ctx), args[2]));
+        return;
+    }
+    if (app_cloudflare.AccountCollection.parseListCommand(args[1])) |collection| {
+        if (args.len < 3) {
+            std.debug.print("account id required for account {s}\n", .{collection.listCommandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountCollection(appContext(ctx), args[2], collection));
+        return;
+    }
+    if (app_cloudflare.AccountCollection.parseDetailCommand(args[1])) |collection| {
+        if (args.len < 4) {
+            std.debug.print("account id and resource id required for account {s}\n", .{collection.detailCommandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountResource(appContext(ctx), args[2], collection, args[3]));
+        return;
+    }
+    if (app_cloudflare.AccountTokenEndpoint.parse(args[1])) |endpoint| {
+        if (args.len < 3) {
+            std.debug.print("account id required for account {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountTokenEndpoint(appContext(ctx), args[2], endpoint));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "token")) {
+        if (args.len < 4) {
+            std.debug.print("account id and token id required for account token\n", .{});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountToken(appContext(ctx), args[2], args[3]));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "user-group-members")) {
+        if (args.len < 4) {
+            std.debug.print("account id and user group id required for account user-group-members\n", .{});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountUserGroupMembers(appContext(ctx), args[2], args[3]));
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "user-group-member")) {
+        if (args.len < 5) {
+            std.debug.print("account id, user group id, and member id required for account user-group-member\n", .{});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountUserGroupMember(appContext(ctx), args[2], args[3], args[4]));
+        return;
+    }
+    if (app_cloudflare.AccountIamCollection.parseListCommand(args[1])) |collection| {
+        if (args.len < 3) {
+            std.debug.print("account id required for account {s}\n", .{collection.listCommandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountIamCollection(appContext(ctx), args[2], collection));
+        return;
+    }
+    if (app_cloudflare.AccountIamCollection.parseDetailCommand(args[1])) |collection| {
+        if (args.len < 4) {
+            std.debug.print("account id and resource id required for account {s}\n", .{collection.detailCommandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountIamResource(appContext(ctx), args[2], collection, args[3]));
+        return;
+    }
+    const endpoint = app_cloudflare.AccountEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown account command: {s}\n", .{args[1]});
+        return;
+    };
+    if (args.len < 3) {
+        std.debug.print("account id required for account {s}\n", .{endpoint.commandName()});
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectAccountEndpoint(appContext(ctx), args[2], endpoint));
+}
+
+fn commandToken(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 2) {
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectUserTokenEndpoint(appContext(ctx), .list));
+        return;
+    }
+    const endpoint = app_cloudflare.UserTokenEndpoint.parse(args[1]) orelse {
+        std.debug.print("unknown token command: {s}\n", .{args[1]});
+        return;
+    };
+    if (endpoint.requiresTokenId()) {
+        if (args.len < 3) {
+            std.debug.print("token id required for token {s}\n", .{endpoint.commandName()});
+            return;
+        }
+        cli_render.printOutput(ctx.gpa, try app_cloudflare.collectUserToken(appContext(ctx), args[2]));
+        return;
+    }
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectUserTokenEndpoint(appContext(ctx), endpoint));
+}
+
+fn commandSetting(ctx: Context, args: []const []const u8) !void {
+    if (args.len < 2) {
+        std.debug.print("setting id required\n", .{});
+        return;
+    }
+    const domain = if (args.len > 2) args[2] else ctx.domains[0];
+    cli_render.printOutput(ctx.gpa, try app_cloudflare.collectZoneSetting(appContext(ctx), domain, args[1]));
+}
+
+fn appContext(ctx: Context) app_cloudflare.Context {
+    return .{
+        .io = ctx.io,
+        .gpa = ctx.gpa,
+        .auth = ctx.auth,
+        .domains = ctx.domains,
+        .db = ctx.db,
+    };
+}
+
+test "cloudflare domain commands use explicit or default domain" {
+    const configured = [_][]const u8{ "plosca.ru", "example.com" };
+    const zone_default = [_][]const u8{"zone"};
+    try std.testing.expectEqualStrings("plosca.ru", app_cloudflare.selectedDomain(configured[0..], zone_default[0..]));
+
+    const zone_explicit = [_][]const u8{ "zone", "example.net" };
+    try std.testing.expectEqualStrings("example.net", app_cloudflare.selectedDomain(configured[0..], zone_explicit[0..]));
+}

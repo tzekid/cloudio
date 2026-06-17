@@ -1,0 +1,1663 @@
+const std = @import("std");
+const sqlite = @import("sqlite");
+const core_process = @import("core_process");
+const core_redact = @import("core_redact");
+const collector_capture = @import("collector_capture");
+const db_store = @import("db_store");
+const provider_cloudflare = @import("provider_cloudflare");
+const provider_cloudflare_models = @import("provider_cloudflare_models");
+
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const Db = db_store.Db;
+const columnText = db_store.columnText;
+
+pub const Auth = provider_cloudflare.Auth;
+pub const AccountCollection = provider_cloudflare.AccountCollection;
+pub const AccountEndpoint = provider_cloudflare.AccountEndpoint;
+pub const AccountMutationArgs = provider_cloudflare.AccountMutationArgs;
+pub const AccountMutationEndpoint = provider_cloudflare.AccountMutationEndpoint;
+pub const AccountMemberMutationArgs = provider_cloudflare.AccountMemberMutationArgs;
+pub const AccountMemberMutationEndpoint = provider_cloudflare.AccountMemberMutationEndpoint;
+pub const AccountIamGroupMutationArgs = provider_cloudflare.AccountIamGroupMutationArgs;
+pub const AccountIamGroupMutationEndpoint = provider_cloudflare.AccountIamGroupMutationEndpoint;
+pub const AccountIamCollection = provider_cloudflare.AccountIamCollection;
+pub const AccountTokenEndpoint = provider_cloudflare.AccountTokenEndpoint;
+pub const AccountTokenMutationArgs = provider_cloudflare.AccountTokenMutationArgs;
+pub const AccountTokenMutationEndpoint = provider_cloudflare.AccountTokenMutationEndpoint;
+pub const AccountUserGroupMemberMutationArgs = provider_cloudflare.AccountUserGroupMemberMutationArgs;
+pub const AccountUserGroupMemberMutationEndpoint = provider_cloudflare.AccountUserGroupMemberMutationEndpoint;
+pub const DnsAnalyticsEndpoint = provider_cloudflare.DnsAnalyticsEndpoint;
+pub const DnsFirewallMutationArgs = provider_cloudflare.DnsFirewallMutationArgs;
+pub const DnsFirewallMutationEndpoint = provider_cloudflare.DnsFirewallMutationEndpoint;
+pub const DnsFirewallReadEndpoint = provider_cloudflare.DnsFirewallReadEndpoint;
+pub const DnsSettingsMutationArgs = provider_cloudflare.DnsSettingsMutationArgs;
+pub const DnsSettingsMutationEndpoint = provider_cloudflare.DnsSettingsMutationEndpoint;
+pub const LoadBalancingAccountReadEndpoint = provider_cloudflare.LoadBalancingAccountReadEndpoint;
+pub const LoadBalancingMutationArgs = provider_cloudflare.LoadBalancingMutationArgs;
+pub const LoadBalancingMutationEndpoint = provider_cloudflare.LoadBalancingMutationEndpoint;
+pub const LoadBalancingMutationResource = provider_cloudflare.LoadBalancingMutationResource;
+pub const LoadBalancingUserReadEndpoint = provider_cloudflare.LoadBalancingUserReadEndpoint;
+pub const LoadBalancingZoneReadEndpoint = provider_cloudflare.LoadBalancingZoneReadEndpoint;
+pub const SecondaryDnsAccountMutationArgs = provider_cloudflare.SecondaryDnsAccountMutationArgs;
+pub const SecondaryDnsAccountMutationEndpoint = provider_cloudflare.SecondaryDnsAccountMutationEndpoint;
+pub const SecondaryDnsAccountResource = provider_cloudflare.SecondaryDnsAccountResource;
+pub const SecondaryDnsZoneMutationArgs = provider_cloudflare.SecondaryDnsZoneMutationArgs;
+pub const SecondaryDnsZoneMutationEndpoint = provider_cloudflare.SecondaryDnsZoneMutationEndpoint;
+pub const SecondaryDnsZoneReadEndpoint = provider_cloudflare.SecondaryDnsZoneReadEndpoint;
+pub const DnsRecordMutationArgs = provider_cloudflare.DnsRecordMutationArgs;
+pub const DnsRecordMutationEndpoint = provider_cloudflare.DnsRecordMutationEndpoint;
+pub const DnsRecordReadEndpoint = provider_cloudflare.DnsRecordReadEndpoint;
+pub const DnssecMutationArgs = provider_cloudflare.DnssecMutationArgs;
+pub const DnssecMutationEndpoint = provider_cloudflare.DnssecMutationEndpoint;
+pub const IdentityEndpoint = provider_cloudflare.IdentityEndpoint;
+pub const MembershipMutationArgs = provider_cloudflare.MembershipMutationArgs;
+pub const MembershipMutationEndpoint = provider_cloudflare.MembershipMutationEndpoint;
+pub const UserTokenEndpoint = provider_cloudflare.UserTokenEndpoint;
+pub const UserTokenMutationArgs = provider_cloudflare.UserTokenMutationArgs;
+pub const UserTokenMutationEndpoint = provider_cloudflare.UserTokenMutationEndpoint;
+pub const ZoneEndpoint = provider_cloudflare.ZoneEndpoint;
+pub const ZoneLifecycleMutationArgs = provider_cloudflare.ZoneLifecycleMutationArgs;
+pub const ZoneLifecycleMutationEndpoint = provider_cloudflare.ZoneLifecycleMutationEndpoint;
+pub const ZoneLifecycleReadEndpoint = provider_cloudflare.ZoneLifecycleReadEndpoint;
+pub const ZoneMutationArgs = provider_cloudflare.ZoneMutationArgs;
+pub const ZoneMutationEndpoint = provider_cloudflare.ZoneMutationEndpoint;
+
+const max_command_bytes = 4 * 1024 * 1024;
+const runCommand = core_process.run;
+
+pub const Output = collector_capture.Output;
+
+pub fn collectAll(io: Io, gpa: Allocator, auth: Auth, domains: []const []const u8, db: *Db) !void {
+    var ips = try collectIps(io, gpa, db, null, false);
+    ips.deinit(gpa);
+    var user = try collectIdentityEndpoint(io, gpa, auth, db, .user, false);
+    user.deinit(gpa);
+    var tenants = try collectIdentityEndpoint(io, gpa, auth, db, .tenants, false);
+    tenants.deinit(gpa);
+    var memberships = try collectIdentityEndpoint(io, gpa, auth, db, .memberships, false);
+    memberships.deinit(gpa);
+    var token_list = try collectUserTokenEndpoint(io, gpa, auth, db, .list, false);
+    token_list.deinit(gpa);
+    var token_verify = try collectUserTokenEndpoint(io, gpa, auth, db, .verify, false);
+    token_verify.deinit(gpa);
+    var token_permission_groups = try collectUserTokenEndpoint(io, gpa, auth, db, .permission_groups, false);
+    token_permission_groups.deinit(gpa);
+    try collectLoadBalancingUserForRefresh(io, gpa, auth, db);
+    var account_output = try collectAccounts(io, gpa, auth, db, false);
+    account_output.deinit(gpa);
+    for (domains) |domain| {
+        var zone_output = try collectZone(io, gpa, auth, db, domain, false);
+        zone_output.deinit(gpa);
+        var dns_output = try collectDns(io, gpa, auth, db, domain, false);
+        dns_output.deinit(gpa);
+        try diagnoseDomain(io, gpa, db, domain);
+    }
+}
+
+pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_output: bool) !Output {
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "account", null, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccounts(io, gpa);
+    defer body.deinit(gpa);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "accounts",
+        .summary_label = "account list",
+        .endpoint = provider_cloudflare.accounts_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    try persistAccountRows(gpa, db, redacted);
+    try collectAccountEndpoints(gpa, io, client, db, redacted);
+    try collectAccountCollectionsForAccounts(gpa, io, client, db, redacted);
+    try collectAccountIamCollectionsForAccounts(gpa, io, client, db, redacted);
+    try collectSecondaryDnsAccountCollectionsForAccounts(gpa, io, client, db, redacted);
+    try collectDnsFirewallForAccounts(gpa, io, client, db, redacted);
+    try collectLoadBalancingAccountForAccounts(gpa, io, client, db, redacted);
+    try collectAccountTokenEndpointsForAccounts(gpa, io, auth, client, db, redacted);
+    try collectAccountDnsSettings(gpa, io, client, db, redacted);
+    try collectAccountDnsRecordUsageForAccounts(gpa, io, client, db, redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectIps(io: Io, gpa: Allocator, db: *Db, networks: ?[]const u8, capture_output: bool) !Output {
+    const client = provider_cloudflare.Client.init(.{});
+    const body = try client.getIps(io, gpa, networks);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.ipsPath(gpa, networks);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "ips",
+        .target = networks,
+        .summary_label = "cloudflare ips",
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAccountEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, endpoint: AccountEndpoint, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, account_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccountEndpoint(io, gpa, account_id, endpoint);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.accountEndpointPath(gpa, account_id, endpoint);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = account_id,
+        .summary_label = endpoint_label,
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAccountDnsRecordUsage(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, capture_output: bool) !Output {
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "account-dns-record-usage", account_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccountDnsRecordUsage(io, gpa, account_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.accountDnsRecordUsagePath(gpa, account_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "account-dns-record-usage",
+        .target = account_id,
+        .summary_label = "account dns-record usage",
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAccountCollection(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, collection: AccountCollection, capture_output: bool) !Output {
+    const list_kind = collection.listKind();
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", list_kind, account_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccountCollection(io, gpa, account_id, collection);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.accountCollectionPath(gpa, account_id, collection);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = list_kind,
+        .target = account_id,
+        .summary_label = list_kind,
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAccountResource(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, collection: AccountCollection, resource_id: []const u8, capture_output: bool) !Output {
+    const detail_kind = collection.detailKind();
+    const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, resource_id });
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", detail_kind, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccountResource(io, gpa, account_id, collection, resource_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.accountResourcePath(gpa, account_id, collection, resource_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = detail_kind,
+        .target = target,
+        .summary_label = detail_kind,
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAccountPermissionGroups(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, capture_output: bool) !Output {
+    return try collectAccountIamCollection(io, gpa, auth, db, account_id, .permission_groups, capture_output);
+}
+
+pub fn collectAccountPermissionGroup(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, permission_group_id: []const u8, capture_output: bool) !Output {
+    return try collectAccountIamResource(io, gpa, auth, db, account_id, .permission_groups, permission_group_id, capture_output);
+}
+
+pub fn collectAccountTokenEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, endpoint: AccountTokenEndpoint, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    if (endpoint == .verify and !auth.hasApiToken()) {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, account_id, "Cloudflare account token verification requires API token auth", "Cloudflare API token auth missing for account token verification", capture_output);
+    }
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, account_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccountTokenEndpoint(io, gpa, account_id, endpoint);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.accountTokenEndpointPath(gpa, account_id, endpoint);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = account_id,
+        .summary_label = endpoint_label,
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAccountToken(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, token_id: []const u8, capture_output: bool) !Output {
+    const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, token_id });
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "account-token", target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccountToken(io, gpa, account_id, token_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.accountTokenPath(gpa, account_id, token_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "account-token",
+        .target = target,
+        .summary_label = "account-token",
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAccountIamCollection(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, collection: AccountIamCollection, capture_output: bool) !Output {
+    const list_kind = collection.listKind();
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", list_kind, account_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccountIamCollection(io, gpa, account_id, collection);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.accountIamCollectionPath(gpa, account_id, collection);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = list_kind,
+        .target = account_id,
+        .summary_label = list_kind,
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAccountIamResource(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, collection: AccountIamCollection, resource_id: []const u8, capture_output: bool) !Output {
+    const detail_kind = collection.detailKind();
+    const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, resource_id });
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", detail_kind, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccountIamResource(io, gpa, account_id, collection, resource_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.accountIamResourcePath(gpa, account_id, collection, resource_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = detail_kind,
+        .target = target,
+        .summary_label = detail_kind,
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAccountUserGroupMembers(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, user_group_id: []const u8, capture_output: bool) !Output {
+    const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, user_group_id });
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "account-user-group-members", target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccountUserGroupMembers(io, gpa, account_id, user_group_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.accountUserGroupMembersPath(gpa, account_id, user_group_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "account-user-group-members",
+        .target = target,
+        .summary_label = "account-user-group-members",
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectAccountUserGroupMember(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, user_group_id: []const u8, member_id: []const u8, capture_output: bool) !Output {
+    const target = try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ account_id, user_group_id, member_id });
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "account-user-group-member", target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccountUserGroupMember(io, gpa, account_id, user_group_id, member_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.accountUserGroupMemberPath(gpa, account_id, user_group_id, member_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "account-user-group-member",
+        .target = target,
+        .summary_label = "account-user-group-member",
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectSecondaryDnsAccountCollection(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, resource: SecondaryDnsAccountResource, capture_output: bool) !Output {
+    const list_kind = resource.listKind();
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", list_kind, account_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getSecondaryDnsAccountCollection(io, gpa, account_id, resource);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.secondaryDnsAccountCollectionPath(gpa, account_id, resource);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = list_kind,
+        .target = account_id,
+        .summary_label = resource.listSummary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectSecondaryDnsAccountResource(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, resource: SecondaryDnsAccountResource, resource_id: []const u8, capture_output: bool) !Output {
+    const detail_kind = resource.detailKind();
+    const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, resource_id });
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", detail_kind, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getSecondaryDnsAccountResource(io, gpa, account_id, resource, resource_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.secondaryDnsAccountResourcePath(gpa, account_id, resource, resource_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = detail_kind,
+        .target = target,
+        .summary_label = resource.detailSummary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectDnsFirewallReadEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, endpoint: DnsFirewallReadEndpoint, dns_firewall_id: ?[]const u8, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = if (dns_firewall_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, id }) else try gpa.dupe(u8, account_id);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getDnsFirewallReadEndpoint(io, gpa, account_id, endpoint, dns_firewall_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.dnsFirewallReadPath(gpa, account_id, endpoint, dns_firewall_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectDnsFirewallAnalyticsEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, dns_firewall_id: []const u8, endpoint: DnsAnalyticsEndpoint, capture_output: bool) !Output {
+    const endpoint_label = endpoint.firewallLabel();
+    const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, dns_firewall_id });
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getDnsFirewallAnalyticsEndpoint(io, gpa, account_id, dns_firewall_id, endpoint);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.dnsFirewallAnalyticsPath(gpa, account_id, dns_firewall_id, endpoint);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectLoadBalancingAccountEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, account_id: []const u8, endpoint: LoadBalancingAccountReadEndpoint, resource_id: ?[]const u8, search_query: ?[]const u8, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = if (resource_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, id }) else try gpa.dupe(u8, account_id);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getLoadBalancingAccountEndpoint(io, gpa, account_id, endpoint, resource_id, search_query);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.loadBalancingAccountReadPath(gpa, account_id, endpoint, resource_id, search_query);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectLoadBalancingUserEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: LoadBalancingUserReadEndpoint, resource_id: ?[]const u8, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = resource_id orelse "user";
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getLoadBalancingUserEndpoint(io, gpa, endpoint, resource_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.loadBalancingUserReadPath(gpa, endpoint, resource_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectLoadBalancingZoneEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: LoadBalancingZoneReadEndpoint, load_balancer_id: ?[]const u8, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = if (load_balancer_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zone_id, id }) else try gpa.dupe(u8, zone_id);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getLoadBalancingZoneEndpoint(io, gpa, zone_id, endpoint, load_balancer_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.loadBalancingZoneReadPath(gpa, zone_id, endpoint, load_balancer_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectIdentityEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: IdentityEndpoint, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, null, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getIdentityEndpoint(io, gpa, endpoint);
+    defer body.deinit(gpa);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .summary_label = endpoint_label,
+        .endpoint = endpoint.path(),
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    if (endpoint == .memberships) {
+        try collectMembershipDetailsForResponse(gpa, io, client, db, redacted);
+    }
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectMembership(io: Io, gpa: Allocator, auth: Auth, db: *Db, membership_id: []const u8, capture_output: bool) !Output {
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "membership", membership_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getMembership(io, gpa, membership_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.membershipPath(gpa, membership_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "membership",
+        .target = membership_id,
+        .summary_label = "membership",
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectUserTokenEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, endpoint: UserTokenEndpoint, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    if (endpoint.requiresTokenId()) {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, null, "Cloudflare user token id required", "Cloudflare user token id required", capture_output);
+    }
+    if (endpoint == .verify and !auth.hasApiToken()) {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, null, "Cloudflare token verification requires API token auth", "Cloudflare API token auth missing for token verification", capture_output);
+    }
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, null, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getUserTokenEndpoint(io, gpa, endpoint);
+    defer body.deinit(gpa);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .summary_label = endpoint_label,
+        .endpoint = endpoint.path(),
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectUserToken(io: Io, gpa: Allocator, auth: Auth, db: *Db, token_id: []const u8, capture_output: bool) !Output {
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "user-token", token_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getUserToken(io, gpa, token_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.userTokenReadPath(gpa, .details, token_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "user-token",
+        .target = token_id,
+        .summary_label = "user-token",
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectZone(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const u8, capture_output: bool) !Output {
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "zone", domain, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getZones(io, gpa, domain);
+    defer body.deinit(gpa);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "zone",
+        .target = domain,
+        .summary_label = "zone details",
+        .endpoint = provider_cloudflare.zones_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    try persistZoneRows(gpa, db, redacted);
+
+    if (try provider_cloudflare_models.zoneIdFromResponse(gpa, redacted)) |zone_id| {
+        defer gpa.free(zone_id);
+        const endpoints = [_]ZoneEndpoint{
+            .dnssec,
+            .dns_settings,
+            .settings,
+            .settings_aegis,
+            .settings_fonts,
+            .settings_origin_h2_max_streams,
+            .settings_origin_max_http_version,
+            .settings_speed_brain,
+            .settings_ssl_automatic_mode,
+        };
+        for (endpoints) |endpoint| {
+            const extra_body = client.getZoneEndpoint(io, gpa, zone_id, endpoint) catch |err| {
+                const endpoint_label = endpoint.label();
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint_label, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint_label, domain, "error", error_summary, null, null);
+                continue;
+            };
+            defer extra_body.deinit(gpa);
+            const endpoint_label = endpoint.label();
+            const endpoint_path = try provider_cloudflare.zoneEndpointPath(gpa, zone_id, endpoint);
+            defer gpa.free(endpoint_path);
+            const extra_redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint_label,
+                .target = domain,
+                .summary_label = endpoint_label,
+                .endpoint = endpoint_path,
+                .status = extra_body.status,
+                .body = extra_body.body,
+            });
+            defer gpa.free(extra_redacted);
+        }
+
+        const lifecycle_endpoints = [_]ZoneLifecycleReadEndpoint{
+            .available_plans,
+            .available_rate_plans,
+            .cache_reserve,
+            .cache_reserve_clear,
+            .regional_tiered_cache,
+            .variants,
+            .environments,
+            .hold,
+            .subscription,
+        };
+        for (lifecycle_endpoints) |endpoint| {
+            const extra_body = client.getZoneLifecycleReadEndpoint(io, gpa, zone_id, endpoint, null) catch |err| {
+                const endpoint_label = endpoint.label();
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint_label, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint_label, domain, "error", error_summary, null, null);
+                continue;
+            };
+            defer extra_body.deinit(gpa);
+            const endpoint_label = endpoint.label();
+            const endpoint_path = try provider_cloudflare.zoneLifecycleReadPath(gpa, zone_id, endpoint, null);
+            defer gpa.free(endpoint_path);
+            const extra_redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint_label,
+                .target = domain,
+                .summary_label = endpoint.summary(),
+                .endpoint = endpoint_path,
+                .status = extra_body.status,
+                .body = extra_body.body,
+            });
+            defer gpa.free(extra_redacted);
+        }
+
+        const secondary_dns_zone_endpoints = [_]SecondaryDnsZoneReadEndpoint{
+            .primary,
+            .primary_status,
+            .secondary,
+        };
+        for (secondary_dns_zone_endpoints) |endpoint| {
+            const extra_body = client.getSecondaryDnsZoneEndpoint(io, gpa, zone_id, endpoint) catch |err| {
+                const endpoint_label = endpoint.label();
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint_label, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint_label, domain, "error", error_summary, null, null);
+                continue;
+            };
+            defer extra_body.deinit(gpa);
+            const endpoint_label = endpoint.label();
+            const endpoint_path = try provider_cloudflare.secondaryDnsZoneReadPath(gpa, zone_id, endpoint);
+            defer gpa.free(endpoint_path);
+            const extra_redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint_label,
+                .target = domain,
+                .summary_label = endpoint.summary(),
+                .endpoint = endpoint_path,
+                .status = extra_body.status,
+                .body = extra_body.body,
+            });
+            defer gpa.free(extra_redacted);
+        }
+
+        const dns_analytics_endpoints = [_]DnsAnalyticsEndpoint{ .report, .bytime };
+        for (dns_analytics_endpoints) |endpoint| {
+            const extra_body = client.getDnsAnalyticsEndpoint(io, gpa, zone_id, endpoint) catch |err| {
+                const endpoint_label = endpoint.label();
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint_label, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint_label, domain, "error", error_summary, null, null);
+                continue;
+            };
+            defer extra_body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.dnsAnalyticsPath(gpa, zone_id, endpoint);
+            defer gpa.free(endpoint_path);
+            const extra_redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint.label(),
+                .target = domain,
+                .summary_label = endpoint.summary(),
+                .endpoint = endpoint_path,
+                .status = extra_body.status,
+                .body = extra_body.body,
+            });
+            defer gpa.free(extra_redacted);
+        }
+
+        lb_refresh: {
+            const lb_endpoint: LoadBalancingZoneReadEndpoint = .load_balancers;
+            const lb_body = client.getLoadBalancingZoneEndpoint(io, gpa, zone_id, lb_endpoint, null) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ lb_endpoint.label(), @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", lb_endpoint.label(), domain, "error", error_summary, null, null);
+                break :lb_refresh;
+            };
+            defer lb_body.deinit(gpa);
+            const lb_endpoint_path = try provider_cloudflare.loadBalancingZoneReadPath(gpa, zone_id, lb_endpoint, null);
+            defer gpa.free(lb_endpoint_path);
+            const lb_redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = lb_endpoint.label(),
+                .target = domain,
+                .summary_label = lb_endpoint.summary(),
+                .endpoint = lb_endpoint_path,
+                .status = lb_body.status,
+                .body = lb_body.body,
+            });
+            defer gpa.free(lb_redacted);
+            try collectLoadBalancingZoneDetailsForList(gpa, io, client, db, zone_id, domain, lb_redacted);
+        }
+    }
+
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectZoneById(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, capture_output: bool) !Output {
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "zone-detail", zone_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getZone(io, gpa, zone_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.zonePath(gpa, zone_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "zone-detail",
+        .target = zone_id,
+        .summary_label = "zone-detail",
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectZoneLifecycleReadEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: ZoneLifecycleReadEndpoint, plan_id: ?[]const u8, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const target = if (plan_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zone_id, id }) else try gpa.dupe(u8, zone_id);
+    defer gpa.free(target);
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getZoneLifecycleReadEndpoint(io, gpa, zone_id, endpoint, plan_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.zoneLifecycleReadPath(gpa, zone_id, endpoint, plan_id);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectSecondaryDnsZoneEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: SecondaryDnsZoneReadEndpoint, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, zone_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getSecondaryDnsZoneEndpoint(io, gpa, zone_id, endpoint);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.secondaryDnsZoneReadPath(gpa, zone_id, endpoint);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = zone_id,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectDnsAnalyticsEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, zone_id: []const u8, endpoint: DnsAnalyticsEndpoint, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, zone_id, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getDnsAnalyticsEndpoint(io, gpa, zone_id, endpoint);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.dnsAnalyticsPath(gpa, zone_id, endpoint);
+    defer gpa.free(endpoint_path);
+    const redacted = try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint_label,
+        .target = zone_id,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+pub fn collectZoneEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const u8, endpoint: ZoneEndpoint, capture_output: bool) !Output {
+    const endpoint_label = endpoint.label();
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint_label, domain, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const zone_body = try client.getZones(io, gpa, domain);
+    defer zone_body.deinit(gpa);
+    if (try provider_cloudflare_models.zoneIdFromResponse(gpa, zone_body.body)) |zone_id| {
+        defer gpa.free(zone_id);
+        const body = try client.getZoneEndpoint(io, gpa, zone_id, endpoint);
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.zoneEndpointPath(gpa, zone_id, endpoint);
+        defer gpa.free(endpoint_path);
+        const redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = endpoint_label,
+            .target = domain,
+            .summary_label = endpoint_label,
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer if (!capture_output) gpa.free(redacted);
+        return .{ .text = if (capture_output) redacted else null };
+    }
+
+    _ = try db.insertSnapshot("cloudflare", endpoint_label, domain, "not_found", "zone id not found", null, null);
+    const message = try std.fmt.allocPrint(gpa, "zone not found: {s}", .{domain});
+    defer gpa.free(message);
+    return try collector_capture.outputText(gpa, capture_output, message);
+}
+
+pub fn collectDns(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const u8, capture_output: bool) !Output {
+    return try collectDnsRecordEndpoint(io, gpa, auth, db, domain, .list, null, capture_output);
+}
+
+pub fn collectDnsRecordEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const u8, endpoint: DnsRecordReadEndpoint, dns_record_id: ?[]const u8, capture_output: bool) !Output {
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", endpoint.label(), domain, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const zone_body = try client.getZones(io, gpa, domain);
+    defer zone_body.deinit(gpa);
+    if (try provider_cloudflare_models.zoneIdFromResponse(gpa, zone_body.body)) |zone_id| {
+        defer gpa.free(zone_id);
+        const body = try client.getDnsRecordEndpoint(io, gpa, zone_id, endpoint, dns_record_id);
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.dnsRecordReadPath(gpa, zone_id, endpoint, dns_record_id);
+        defer gpa.free(endpoint_path);
+        const target = if (dns_record_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ domain, id }) else try gpa.dupe(u8, domain);
+        defer gpa.free(target);
+        const redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = endpoint.label(),
+            .target = target,
+            .summary_label = endpoint.summary(),
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer if (!capture_output) gpa.free(redacted);
+        if (endpoint == .list) try persistDnsRecordRows(gpa, db, zone_id, redacted);
+        return .{ .text = if (capture_output) redacted else null };
+    }
+
+    _ = try db.insertSnapshot("cloudflare", endpoint.label(), domain, "not_found", "zone id not found", null, null);
+    const message = try std.fmt.allocPrint(gpa, "zone not found: {s}", .{domain});
+    defer gpa.free(message);
+    return try collector_capture.outputText(gpa, capture_output, message);
+}
+
+pub fn collectZoneSetting(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const u8, setting_id: []const u8, capture_output: bool) !Output {
+    const client = clientFromAuth(auth) catch {
+        const target = try settingTarget(gpa, domain, setting_id);
+        defer gpa.free(target);
+        return try collector_capture.skipped(gpa, db, "cloudflare", "setting", target, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const zone_body = try client.getZones(io, gpa, domain);
+    defer zone_body.deinit(gpa);
+    if (try provider_cloudflare_models.zoneIdFromResponse(gpa, zone_body.body)) |zone_id| {
+        defer gpa.free(zone_id);
+        const body = try client.getZoneSetting(io, gpa, zone_id, setting_id);
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.zoneSettingPath(gpa, zone_id, setting_id);
+        defer gpa.free(endpoint_path);
+        const target = try settingTarget(gpa, domain, setting_id);
+        defer gpa.free(target);
+        const summary_label = try std.fmt.allocPrint(gpa, "setting {s}", .{setting_id});
+        defer gpa.free(summary_label);
+        const redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = "setting",
+            .target = target,
+            .summary_label = summary_label,
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer if (!capture_output) gpa.free(redacted);
+        return .{ .text = if (capture_output) redacted else null };
+    }
+
+    _ = try db.insertSnapshot("cloudflare", "setting", domain, "not_found", "zone id not found", null, null);
+    const message = try std.fmt.allocPrint(gpa, "zone not found: {s}", .{domain});
+    defer gpa.free(message);
+    return try collector_capture.outputText(gpa, capture_output, message);
+}
+
+fn collectAccountDnsSettings(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const body = client.getAccountDnsSettings(io, gpa, row.id) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "account-dns-settings: {s}", .{@errorName(err)});
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", "account-dns-settings", row.id, "error", error_summary, null, null);
+            continue;
+        };
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.accountDnsSettingsPath(gpa, row.id);
+        defer gpa.free(endpoint_path);
+        const extra_redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = "account-dns-settings",
+            .target = row.id,
+            .summary_label = "account dns-settings",
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer gpa.free(extra_redacted);
+    }
+}
+
+fn collectAccountDnsRecordUsageForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const body = client.getAccountDnsRecordUsage(io, gpa, row.id) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "account-dns-record-usage: {s}", .{@errorName(err)});
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", "account-dns-record-usage", row.id, "error", error_summary, null, null);
+            continue;
+        };
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.accountDnsRecordUsagePath(gpa, row.id);
+        defer gpa.free(endpoint_path);
+        const redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = "account-dns-record-usage",
+            .target = row.id,
+            .summary_label = "account dns-record usage",
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer gpa.free(redacted);
+    }
+}
+
+fn collectMembershipDetailsForResponse(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, memberships_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, memberships_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const body = client.getMembership(io, gpa, row.id) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "membership: {s}", .{@errorName(err)});
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", "membership", row.id, "error", error_summary, null, null);
+            continue;
+        };
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.membershipPath(gpa, row.id);
+        defer gpa.free(endpoint_path);
+        const redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = "membership",
+            .target = row.id,
+            .summary_label = "membership",
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer gpa.free(redacted);
+    }
+}
+
+fn collectAccountEndpoints(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const endpoints = [_]AccountEndpoint{
+        .details,
+        .profile,
+        .organizations,
+    };
+    for (rows.items) |row| {
+        for (endpoints) |endpoint| {
+            const endpoint_label = endpoint.label();
+            const body = client.getAccountEndpoint(io, gpa, row.id, endpoint) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint_label, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint_label, row.id, "error", error_summary, null, null);
+                continue;
+            };
+            defer body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.accountEndpointPath(gpa, row.id, endpoint);
+            defer gpa.free(endpoint_path);
+            const redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint_label,
+                .target = row.id,
+                .summary_label = endpoint_label,
+                .endpoint = endpoint_path,
+                .status = body.status,
+                .body = body.body,
+            });
+            defer gpa.free(redacted);
+        }
+    }
+}
+
+fn collectAccountCollectionsForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const collections = [_]AccountCollection{
+        .members,
+        .roles,
+    };
+    for (rows.items) |row| {
+        for (collections) |collection| {
+            const list_kind = collection.listKind();
+            const body = client.getAccountCollection(io, gpa, row.id, collection) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ list_kind, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", list_kind, row.id, "error", error_summary, null, null);
+                continue;
+            };
+            defer body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.accountCollectionPath(gpa, row.id, collection);
+            defer gpa.free(endpoint_path);
+            const redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = list_kind,
+                .target = row.id,
+                .summary_label = list_kind,
+                .endpoint = endpoint_path,
+                .status = body.status,
+                .body = body.body,
+            });
+            defer gpa.free(redacted);
+        }
+    }
+}
+
+fn collectAccountIamCollectionsForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const collections = [_]AccountIamCollection{
+        .permission_groups,
+        .resource_groups,
+        .user_groups,
+    };
+    for (rows.items) |row| {
+        for (collections) |collection| {
+            const list_kind = collection.listKind();
+            const body = client.getAccountIamCollection(io, gpa, row.id, collection) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ list_kind, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", list_kind, row.id, "error", error_summary, null, null);
+                continue;
+            };
+            defer body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.accountIamCollectionPath(gpa, row.id, collection);
+            defer gpa.free(endpoint_path);
+            const redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = list_kind,
+                .target = row.id,
+                .summary_label = list_kind,
+                .endpoint = endpoint_path,
+                .status = body.status,
+                .body = body.body,
+            });
+            defer gpa.free(redacted);
+            if (collection == .user_groups) try collectAccountUserGroupMembersForGroups(gpa, io, client, db, row.id, redacted);
+        }
+    }
+}
+
+fn collectSecondaryDnsAccountCollectionsForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const resources = [_]SecondaryDnsAccountResource{
+        .acl,
+        .peer,
+        .tsig,
+    };
+    for (rows.items) |row| {
+        for (resources) |resource| {
+            const list_kind = resource.listKind();
+            const body = client.getSecondaryDnsAccountCollection(io, gpa, row.id, resource) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ list_kind, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", list_kind, row.id, "error", error_summary, null, null);
+                continue;
+            };
+            defer body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.secondaryDnsAccountCollectionPath(gpa, row.id, resource);
+            defer gpa.free(endpoint_path);
+            const redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = list_kind,
+                .target = row.id,
+                .summary_label = resource.listSummary(),
+                .endpoint = endpoint_path,
+                .status = body.status,
+                .body = body.body,
+            });
+            defer gpa.free(redacted);
+        }
+    }
+}
+
+fn collectDnsFirewallForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const body = client.getDnsFirewallReadEndpoint(io, gpa, row.id, .list, null) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "dns-firewall: {s}", .{@errorName(err)});
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", "dns-firewall", row.id, "error", error_summary, null, null);
+            continue;
+        };
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.dnsFirewallReadPath(gpa, row.id, .list, null);
+        defer gpa.free(endpoint_path);
+        const redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = "dns-firewall",
+            .target = row.id,
+            .summary_label = "List DNS Firewall Clusters",
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer gpa.free(redacted);
+        try collectDnsFirewallDetailsForList(gpa, io, client, db, row.id, redacted);
+    }
+}
+
+fn collectDnsFirewallDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, list_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    const read_endpoints = [_]DnsFirewallReadEndpoint{ .details, .reverse_dns };
+    const analytics_endpoints = [_]DnsAnalyticsEndpoint{ .report, .bytime };
+    for (rows.items) |row| {
+        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, row.id });
+        defer gpa.free(target);
+        for (read_endpoints) |endpoint| {
+            const body = client.getDnsFirewallReadEndpoint(io, gpa, account_id, endpoint, row.id) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+                continue;
+            };
+            defer body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.dnsFirewallReadPath(gpa, account_id, endpoint, row.id);
+            defer gpa.free(endpoint_path);
+            const redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint.label(),
+                .target = target,
+                .summary_label = endpoint.summary(),
+                .endpoint = endpoint_path,
+                .status = body.status,
+                .body = body.body,
+            });
+            defer gpa.free(redacted);
+        }
+        for (analytics_endpoints) |endpoint| {
+            const body = client.getDnsFirewallAnalyticsEndpoint(io, gpa, account_id, row.id, endpoint) catch |err| {
+                const endpoint_label = endpoint.firewallLabel();
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint_label, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint_label, target, "error", error_summary, null, null);
+                continue;
+            };
+            defer body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.dnsFirewallAnalyticsPath(gpa, account_id, row.id, endpoint);
+            defer gpa.free(endpoint_path);
+            const redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint.firewallLabel(),
+                .target = target,
+                .summary_label = endpoint.summary(),
+                .endpoint = endpoint_path,
+                .status = body.status,
+                .body = body.body,
+            });
+            defer gpa.free(redacted);
+        }
+    }
+}
+
+fn collectLoadBalancingAccountForAccounts(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const list_endpoints = [_]LoadBalancingAccountReadEndpoint{
+        .monitor_groups,
+        .monitors,
+        .pools,
+        .regions,
+    };
+    for (rows.items) |row| {
+        for (list_endpoints) |endpoint| {
+            const redacted = collectLoadBalancingAccountSnapshot(gpa, io, client, db, row.id, endpoint, null, null) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint.label(), row.id, "error", error_summary, null, null);
+                continue;
+            };
+            defer gpa.free(redacted);
+            try collectLoadBalancingAccountDetailsForList(gpa, io, client, db, row.id, endpoint, redacted);
+        }
+    }
+}
+
+fn collectLoadBalancingAccountDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, list_endpoint: LoadBalancingAccountReadEndpoint, list_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    const detail_endpoints: []const LoadBalancingAccountReadEndpoint = switch (list_endpoint) {
+        .monitor_groups => &[_]LoadBalancingAccountReadEndpoint{ .monitor_group, .monitor_group_references },
+        .monitors => &[_]LoadBalancingAccountReadEndpoint{ .monitor, .monitor_references },
+        .pools => &[_]LoadBalancingAccountReadEndpoint{ .pool, .pool_health, .pool_references },
+        .regions => &[_]LoadBalancingAccountReadEndpoint{.region},
+        else => &[_]LoadBalancingAccountReadEndpoint{},
+    };
+    for (rows.items) |row| {
+        for (detail_endpoints) |endpoint| {
+            const redacted = collectLoadBalancingAccountSnapshot(gpa, io, client, db, account_id, endpoint, row.id, null) catch |err| {
+                const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, row.id });
+                defer gpa.free(target);
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+                continue;
+            };
+            defer gpa.free(redacted);
+        }
+    }
+}
+
+fn collectLoadBalancingAccountSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, endpoint: LoadBalancingAccountReadEndpoint, resource_id: ?[]const u8, search_query: ?[]const u8) ![]u8 {
+    const body = try client.getLoadBalancingAccountEndpoint(io, gpa, account_id, endpoint, resource_id, search_query);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.loadBalancingAccountReadPath(gpa, account_id, endpoint, resource_id, search_query);
+    defer gpa.free(endpoint_path);
+    const target = if (resource_id) |id| try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, id }) else try gpa.dupe(u8, account_id);
+    defer gpa.free(target);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = target,
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
+fn collectLoadBalancingUserForRefresh(io: Io, gpa: Allocator, auth: Auth, db: *Db) !void {
+    const client = clientFromAuth(auth) catch {
+        _ = try db.insertSnapshot("cloudflare", "load-balancing-user", "user", "skipped", "missing Cloudflare credentials", null, null);
+        return;
+    };
+    const list_endpoints = [_]LoadBalancingUserReadEndpoint{
+        .monitors,
+        .pools,
+        .healthcheck_events,
+    };
+    for (list_endpoints) |endpoint| {
+        const redacted = collectLoadBalancingUserSnapshot(gpa, io, client, db, endpoint, null) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(), "user", "error", error_summary, null, null);
+            continue;
+        };
+        defer gpa.free(redacted);
+        try collectLoadBalancingUserDetailsForList(gpa, io, client, db, endpoint, redacted);
+    }
+}
+
+fn collectLoadBalancingUserDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, list_endpoint: LoadBalancingUserReadEndpoint, list_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    const detail_endpoints: []const LoadBalancingUserReadEndpoint = switch (list_endpoint) {
+        .monitors => &[_]LoadBalancingUserReadEndpoint{ .monitor, .monitor_references },
+        .pools => &[_]LoadBalancingUserReadEndpoint{ .pool, .pool_health, .pool_references },
+        else => &[_]LoadBalancingUserReadEndpoint{},
+    };
+    for (rows.items) |row| {
+        for (detail_endpoints) |endpoint| {
+            const redacted = collectLoadBalancingUserSnapshot(gpa, io, client, db, endpoint, row.id) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint.label(), row.id, "error", error_summary, null, null);
+                continue;
+            };
+            defer gpa.free(redacted);
+        }
+    }
+}
+
+fn collectLoadBalancingUserSnapshot(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, endpoint: LoadBalancingUserReadEndpoint, resource_id: ?[]const u8) ![]u8 {
+    const body = try client.getLoadBalancingUserEndpoint(io, gpa, endpoint, resource_id);
+    defer body.deinit(gpa);
+    const endpoint_path = try provider_cloudflare.loadBalancingUserReadPath(gpa, endpoint, resource_id);
+    defer gpa.free(endpoint_path);
+    return try collector_capture.storeResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = endpoint.label(),
+        .target = resource_id orelse "user",
+        .summary_label = endpoint.summary(),
+        .endpoint = endpoint_path,
+        .status = body.status,
+        .body = body.body,
+    });
+}
+
+fn collectLoadBalancingZoneDetailsForList(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, zone_id: []const u8, target_label: []const u8, list_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, list_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ target_label, row.id });
+        defer gpa.free(target);
+        const endpoint: LoadBalancingZoneReadEndpoint = .load_balancer;
+        const body = client.getLoadBalancingZoneEndpoint(io, gpa, zone_id, endpoint, row.id) catch |err| {
+            const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint.label(), @errorName(err) });
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", error_summary, null, null);
+            continue;
+        };
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.loadBalancingZoneReadPath(gpa, zone_id, endpoint, row.id);
+        defer gpa.free(endpoint_path);
+        const redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = endpoint.label(),
+            .target = target,
+            .summary_label = endpoint.summary(),
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer gpa.free(redacted);
+    }
+}
+
+fn collectAccountUserGroupMembersForGroups(gpa: Allocator, io: Io, client: provider_cloudflare.Client, db: *Db, account_id: []const u8, user_groups_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseIdRows(gpa, user_groups_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        const body = client.getAccountUserGroupMembers(io, gpa, account_id, row.id) catch |err| {
+            const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, row.id });
+            defer gpa.free(target);
+            const error_summary = try std.fmt.allocPrint(gpa, "account-user-group-members: {s}", .{@errorName(err)});
+            defer gpa.free(error_summary);
+            _ = try db.insertSnapshot("cloudflare", "account-user-group-members", target, "error", error_summary, null, null);
+            continue;
+        };
+        defer body.deinit(gpa);
+        const endpoint_path = try provider_cloudflare.accountUserGroupMembersPath(gpa, account_id, row.id);
+        defer gpa.free(endpoint_path);
+        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ account_id, row.id });
+        defer gpa.free(target);
+        const redacted = try collector_capture.storeResponse(gpa, db, .{
+            .provider = "cloudflare",
+            .kind = "account-user-group-members",
+            .target = target,
+            .summary_label = "account-user-group-members",
+            .endpoint = endpoint_path,
+            .status = body.status,
+            .body = body.body,
+        });
+        defer gpa.free(redacted);
+    }
+}
+
+fn collectAccountTokenEndpointsForAccounts(gpa: Allocator, io: Io, auth: Auth, client: provider_cloudflare.Client, db: *Db, accounts_body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, accounts_body);
+    defer rows.deinit(gpa);
+    const endpoints = [_]AccountTokenEndpoint{
+        .list,
+        .permission_groups,
+    };
+    for (rows.items) |row| {
+        for (endpoints) |endpoint| {
+            const endpoint_label = endpoint.label();
+            const body = client.getAccountTokenEndpoint(io, gpa, row.id, endpoint) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint_label, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint_label, row.id, "error", error_summary, null, null);
+                continue;
+            };
+            defer body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.accountTokenEndpointPath(gpa, row.id, endpoint);
+            defer gpa.free(endpoint_path);
+            const redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint_label,
+                .target = row.id,
+                .summary_label = endpoint_label,
+                .endpoint = endpoint_path,
+                .status = body.status,
+                .body = body.body,
+            });
+            defer gpa.free(redacted);
+        }
+        if (auth.hasApiToken()) {
+            const endpoint: AccountTokenEndpoint = .verify;
+            const endpoint_label = endpoint.label();
+            const body = client.getAccountTokenEndpoint(io, gpa, row.id, endpoint) catch |err| {
+                const error_summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ endpoint_label, @errorName(err) });
+                defer gpa.free(error_summary);
+                _ = try db.insertSnapshot("cloudflare", endpoint_label, row.id, "error", error_summary, null, null);
+                continue;
+            };
+            defer body.deinit(gpa);
+            const endpoint_path = try provider_cloudflare.accountTokenEndpointPath(gpa, row.id, endpoint);
+            defer gpa.free(endpoint_path);
+            const redacted = try collector_capture.storeResponse(gpa, db, .{
+                .provider = "cloudflare",
+                .kind = endpoint_label,
+                .target = row.id,
+                .summary_label = endpoint_label,
+                .endpoint = endpoint_path,
+                .status = body.status,
+                .body = body.body,
+            });
+            defer gpa.free(redacted);
+        }
+    }
+}
+
+pub fn diagnoseDomain(io: Io, gpa: Allocator, db: *Db, domain: []const u8) !void {
+    const doh_url = try std.fmt.allocPrint(gpa, "https://cloudflare-dns.com/dns-query?name={s}&type=A", .{domain});
+    defer gpa.free(doh_url);
+    const tcp_22 = try std.fmt.allocPrint(gpa, ":</dev/tcp/{s}/22", .{domain});
+    defer gpa.free(tcp_22);
+    const tcp_80 = try std.fmt.allocPrint(gpa, ":</dev/tcp/{s}/80", .{domain});
+    defer gpa.free(tcp_80);
+    const tcp_443 = try std.fmt.allocPrint(gpa, ":</dev/tcp/{s}/443", .{domain});
+    defer gpa.free(tcp_443);
+    const https_url = try std.fmt.allocPrint(gpa, "https://{s}/", .{domain});
+    defer gpa.free(https_url);
+    const checks = [_]struct { kind: []const u8, argv: []const []const u8 }{
+        .{ .kind = "egress-ip", .argv = &.{ "curl", "-sS", "--max-time", "8", "https://ipinfo.io/ip" } },
+        .{ .kind = "resolver", .argv = &.{ "getent", "ahosts", domain } },
+        .{ .kind = "doh-cloudflare", .argv = &.{ "curl", "-sS", "--max-time", "8", "-H", "Accept: application/dns-json", doh_url } },
+        .{ .kind = "tcp-22", .argv = &.{ "timeout", "5", "bash", "-lc", tcp_22 } },
+        .{ .kind = "tcp-80", .argv = &.{ "timeout", "5", "bash", "-lc", tcp_80 } },
+        .{ .kind = "tcp-443", .argv = &.{ "timeout", "5", "bash", "-lc", tcp_443 } },
+        .{ .kind = "https-head", .argv = &.{ "curl", "-sS", "-I", "--max-time", "8", https_url } },
+    };
+    for (checks) |check| {
+        const result = runCommand(gpa, io, check.argv, max_command_bytes) catch |err| {
+            const summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ check.kind, @errorName(err) });
+            defer gpa.free(summary);
+            _ = try db.insertSnapshot("cloudflare", check.kind, domain, "error", summary, null, null);
+            continue;
+        };
+        defer result.deinit(gpa);
+        const redacted = try core_redact.secrets(gpa, result.stdout);
+        defer gpa.free(redacted);
+        _ = try db.insertSnapshot("cloudflare", check.kind, domain, if (result.ok()) "ok" else "error", firstLine(redacted), null, redacted);
+        std.debug.print("{s}: {s}\n", .{ check.kind, if (firstLine(redacted).len > 0) firstLine(redacted) else result.statusText() });
+    }
+}
+
+pub fn persistAccountRows(gpa: Allocator, db: *Db, body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseAccountRows(gpa, body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertCloudflareAccount(row.id, row.name, row.typ, row.status, row.raw_json);
+    }
+}
+
+pub fn persistZoneRows(gpa: Allocator, db: *Db, body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseZoneRows(gpa, body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertCloudflareZone(row.id, row.name, row.account_id, row.status, row.paused, row.typ, row.name_servers, row.raw_json);
+    }
+}
+
+pub fn persistDnsRecordRows(gpa: Allocator, db: *Db, zone_id: []const u8, body: []const u8) !void {
+    var rows = try provider_cloudflare_models.parseDnsRecordRows(gpa, zone_id, body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertDnsRecord(row.id, row.zone_id, row.name, row.typ, row.content, row.ttl, row.proxied, row.raw_json);
+    }
+}
+
+fn clientFromAuth(auth: Auth) !provider_cloudflare.Client {
+    if (!auth.isConfigured()) return error.MissingCloudflareAuth;
+    return provider_cloudflare.Client.init(auth);
+}
+
+fn trim(value: []const u8) []const u8 {
+    return std.mem.trim(u8, value, " \t\r\n");
+}
+
+fn firstLine(value: []const u8) []const u8 {
+    const clean = trim(value);
+    if (std.mem.indexOfScalar(u8, clean, '\n')) |idx| return clean[0..idx];
+    return clean;
+}
+
+fn settingTarget(gpa: Allocator, domain: []const u8, setting_id: []const u8) ![]u8 {
+    return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ domain, setting_id });
+}
+
+test "persists Cloudflare account, zone, and DNS rows" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudflare.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    try persistAccountRows(allocator, &db,
+        \\{"result":[{"id":"acct-1","name":"Main","type":"standard","status":"active"}]}
+    );
+    try persistZoneRows(allocator, &db,
+        \\{"result":[{"id":"zone-1","name":"plosca.ru","account":{"id":"acct-1"},"status":"active","paused":false,"type":"full","name_servers":["a.ns.cloudflare.com"]}]}
+    );
+    try persistDnsRecordRows(allocator, &db, "zone-1",
+        \\{"result":[{"id":"dns-1","name":"plosca.ru","type":"A","content":"76.13.130.170","ttl":1,"proxied":true}]}
+    );
+
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_accounts"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_zones"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_dns_records"));
+
+    const stmt = try db.prepare("SELECT name, account_id, status, paused FROM cloudflare_zones WHERE id = 'zone-1'");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try std.testing.expectEqual(@as(c_int, sqlite.SQLITE_ROW), sqlite.sqlite3_step(stmt));
+    try std.testing.expectEqualStrings("plosca.ru", columnText(stmt, 0) orelse "");
+    try std.testing.expectEqualStrings("acct-1", columnText(stmt, 1) orelse "");
+    try std.testing.expectEqualStrings("active", columnText(stmt, 2) orelse "");
+    try std.testing.expectEqual(@as(c_int, 0), sqlite.sqlite3_column_int(stmt, 3));
+}
+
+test "missing Cloudflare credentials records zone setting snapshot without live API call" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudflare-setting.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    var output = try collectZoneSetting(std.testing.io, allocator, .{}, &db, "plosca.ru", "ssl", true);
+    defer output.deinit(allocator);
+    try std.testing.expectEqualStrings("Cloudflare credentials missing", output.text orelse "");
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
+}
