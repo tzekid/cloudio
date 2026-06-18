@@ -260,6 +260,38 @@ pub const migrations = [_]Migration{
         \\CREATE INDEX IF NOT EXISTS idx_cloudflare_inventory_status ON cloudflare_inventory_items(status, kind, updated_at DESC);
         ,
     },
+    .{
+        .version = 7,
+        .name = "cloudflare_security_typed_inventory",
+        .sql =
+        \\CREATE TABLE IF NOT EXISTS cloudflare_security_items (
+        \\  key TEXT PRIMARY KEY,
+        \\  kind TEXT NOT NULL,
+        \\  resource_id TEXT NOT NULL,
+        \\  scope TEXT,
+        \\  scope_id TEXT,
+        \\  display_name TEXT,
+        \\  status TEXT,
+        \\  category TEXT,
+        \\  severity TEXT,
+        \\  action TEXT,
+        \\  domain TEXT,
+        \\  account_id TEXT,
+        \\  zone_id TEXT,
+        \\  related_id TEXT,
+        \\  flag TEXT,
+        \\  created_at_source TEXT,
+        \\  updated_at_source TEXT,
+        \\  expires_at_source TEXT,
+        \\  raw_json TEXT,
+        \\  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        \\);
+        \\CREATE INDEX IF NOT EXISTS idx_cloudflare_security_kind ON cloudflare_security_items(kind, updated_at DESC);
+        \\CREATE INDEX IF NOT EXISTS idx_cloudflare_security_scope ON cloudflare_security_items(scope, scope_id, updated_at DESC);
+        \\CREATE INDEX IF NOT EXISTS idx_cloudflare_security_domain ON cloudflare_security_items(domain, kind, updated_at DESC);
+        \\CREATE INDEX IF NOT EXISTS idx_cloudflare_security_severity ON cloudflare_security_items(severity, kind, updated_at DESC);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;
@@ -350,6 +382,7 @@ test "applies migrations idempotently" {
     try std.testing.expectEqual(latest_version, try latestAppliedVersion(handle.?));
     try std.testing.expect(try tableExists(handle.?, "snapshots"));
     try std.testing.expect(try tableExists(handle.?, "audit_events"));
+    try std.testing.expect(try tableExists(handle.?, "cloudflare_security_items"));
 }
 
 fn tableExists(handle: *sqlite.sqlite3, table: []const u8) !bool {

@@ -3847,9 +3847,30 @@ fn isTypedTableCoverageCandidate(provider: []const u8, tag: []const u8) bool {
     if (std.mem.eql(u8, provider, "cloudflare")) {
         return std.mem.eql(u8, tag, "Accounts") or
             std.mem.eql(u8, tag, "Zone") or
-            std.mem.eql(u8, tag, "DNS Records for a Zone");
+            std.mem.eql(u8, tag, "DNS Records for a Zone") or
+            isCloudflareSecurityTypedTableTag(tag);
     }
     return false;
+}
+
+fn isCloudflareSecurityTypedTableTag(tag: []const u8) bool {
+    return tagContainsAny(tag, &.{
+        "Email Security",
+        "Security Center",
+        "Leaked Credential",
+        "Page Shield",
+        "Bot",
+        "Botnet",
+        "DNS Firewall",
+        "IP Access",
+        "WAF",
+        "Firewall",
+        "API Gateway",
+        "Schema Validation",
+        "Token Validation",
+        "Vulnerability Scanner",
+        "AI Security",
+    });
 }
 
 fn indexOfName(names: []const []const u8, value: []const u8) ?usize {
@@ -4428,6 +4449,7 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
     const allocator = std.testing.allocator;
     const cloudflare =
         \\{"provider":"cloudflare","tag":"Security Center Insights","method":"GET","path":"/accounts/{account_id}/security-center/insights","operation_id":"security-insights-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"generic inventory only"}
+        \\{"provider":"cloudflare","tag":"Logs","method":"GET","path":"/accounts/{account_id}/logs/received","operation_id":"logs-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"generic inventory only"}
         \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"typed account rows"}
         \\
     ;
@@ -4442,11 +4464,12 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
         .provider = .cloudflare,
         .family = .security,
         .limit = 10,
+        .include_complete = true,
     }, &text_out.writer);
     const text = try text_out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio typed model candidates\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Security Center Insights: typed_gap=1 L3_generic=1 typed=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Security Center Insights: typed_gap=0 L3_generic=1 typed=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "routes: cloudio coverage routes cloudflare 'Security Center Insights' --support partial --mode read --detail") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "review-bundle: cloudio coverage workplan cloudflare --family security --limit 5 --candidate-limit 10 --bundle --plans --json") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Accounts") == null);
@@ -4460,13 +4483,14 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_typed_model_candidates\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Security Center Insights\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"focus_family\":\"security\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Logs\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"focus_family\":\"logs\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_gap\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Security Center Insights' --support partial --mode read --detail\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Logs' --support partial --mode read --detail\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Hosting websites\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Security Center Insights\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Accounts\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_or_complete_rows_hidden\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_or_complete_rows_hidden\":2") != null);
 
     var complete_json_out = std.Io.Writer.Allocating.init(allocator);
     defer complete_json_out.deinit();
@@ -4478,6 +4502,7 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
     const complete_json = try complete_json_out.toOwnedSlice();
     defer allocator.free(complete_json);
     try std.testing.expect(std.mem.indexOf(u8, complete_json, "\"tag\":\"Accounts\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_json, "\"tag\":\"Security Center Insights\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, complete_json, "\"status\":\"typed\"") != null);
 }
 
@@ -5045,6 +5070,51 @@ test "captures Cloudflare DNS route into typed records table" {
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_resources"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_inventory_items"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_dns_records"));
+}
+
+test "captures Cloudflare security route into typed security table" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/route-cloudflare-security.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Email Security Settings","method":"GET","path":"/accounts/{account_id}/email-security/settings/allow_policies","operation_id":"email-security-list-allow-policies","path_params":[{"name":"account_id","required":true}],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ok"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"GET","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_getVirtualMachinesV1","path_params":[],"query_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ok"}
+        \\
+    ;
+
+    var routes = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .cloudflare, .operation_id = "email-security-list-allow-policies" });
+    defer routes.deinit(allocator);
+    const route = try selectSingleRoute(routes.items);
+    const body = try allocator.dupe(u8,
+        \\{"result":[{"policy_id":"policy-1","name":"Trusted sender","is_enabled":true,"action":"allow","pattern":"*@example.com","domain":"example.com","created_at":"2026-06-17T00:00:00Z"}],"success":true,"errors":[],"messages":[]}
+    );
+    const result = provider_dispatch.matchReadRouteResponse(route.route, .{ .status = .ok, .body = body });
+    defer result.deinit(allocator);
+
+    const json = try captureRouteReadResultJson(
+        allocator,
+        &db,
+        route.route,
+        .{ .path_params = &.{.{ .name = "account_id", .value = "acct-1" }} },
+        result,
+        .{ .kind = "route-cloudflare-email-security", .target = "acct-1" },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"normalized_resources\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_rows\":2") != null);
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_resources"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_inventory_items"));
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_security_items"));
 }
 
 test "captures paginated generic route pages into snapshots and metadata" {

@@ -37,9 +37,13 @@ fn normalizeCloudflareRouteModels(gpa: Allocator, db: *Db, route: provider_route
         try db.upsertCloudflareResource(row.key, row.kind, row.resource_id, row.scope, row.scope_id, row.name, row.status, row.resource_type, row.raw_json);
     }
     const inventory_rows = try normalizeCloudflareInventoryRows(gpa, db, kind, scope.name, scope.id, redacted_body);
+    const security_rows = if (isCloudflareSecurityRouteTag(route.tag))
+        try normalizeCloudflareSecurityRows(gpa, db, kind, scope.name, scope.id, redacted_body)
+    else
+        0;
     return .{
         .resources = rows.items.len,
-        .typed_rows = inventory_rows + try normalizeCloudflareTypedRows(gpa, db, route, request, redacted_body),
+        .typed_rows = inventory_rows + security_rows + try normalizeCloudflareTypedRows(gpa, db, route, request, redacted_body),
     };
 }
 
@@ -94,6 +98,35 @@ fn normalizeCloudflareInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, s
             row.name,
             row.status,
             row.category,
+            row.domain,
+            row.account_id,
+            row.zone_id,
+            row.related_id,
+            row.flag,
+            row.created_at,
+            row.updated_at,
+            row.expires_at,
+            row.raw_json,
+        );
+    }
+    return rows.items.len;
+}
+
+fn normalizeCloudflareSecurityRows(gpa: Allocator, db: *Db, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, redacted_body: []const u8) !usize {
+    var rows = try provider_cloudflare_models.parseSecurityRows(gpa, kind, scope, scope_id, redacted_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertCloudflareSecurityItem(
+            row.key,
+            row.kind,
+            row.resource_id,
+            row.scope,
+            row.scope_id,
+            row.name,
+            row.status,
+            row.category,
+            row.severity,
+            row.action,
             row.domain,
             row.account_id,
             row.zone_id,
@@ -170,4 +203,38 @@ fn pathParamValue(request: provider_routes.Request, name: []const u8) ?[]const u
 fn firstPathParamValue(request: provider_routes.Request) ?[]const u8 {
     if (request.path_params.len == 0) return null;
     return request.path_params[0].value;
+}
+
+fn isCloudflareSecurityRouteTag(tag: []const u8) bool {
+    const needles = [_][]const u8{
+        "Email Security",
+        "Security Center",
+        "Leaked Credential",
+        "Page Shield",
+        "Bot",
+        "Botnet",
+        "DNS Firewall",
+        "IP Access",
+        "WAF",
+        "Firewall",
+        "API Gateway",
+        "Schema Validation",
+        "Token Validation",
+        "Vulnerability Scanner",
+        "AI Security",
+    };
+    for (needles) |needle| {
+        if (containsIgnoreCase(tag, needle)) return true;
+    }
+    return false;
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    var index: usize = 0;
+    while (index + needle.len <= haystack.len) : (index += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return true;
+    }
+    return false;
 }

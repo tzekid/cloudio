@@ -132,6 +132,50 @@ pub const InventoryRow = struct {
     }
 };
 
+pub const SecurityRow = struct {
+    key: []u8,
+    kind: []u8,
+    resource_id: []u8,
+    scope: ?[]u8,
+    scope_id: ?[]u8,
+    name: ?[]u8,
+    status: ?[]u8,
+    category: ?[]u8,
+    severity: ?[]u8,
+    action: ?[]u8,
+    domain: ?[]u8,
+    account_id: ?[]u8,
+    zone_id: ?[]u8,
+    related_id: ?[]u8,
+    flag: ?[]u8,
+    created_at: ?[]u8,
+    updated_at: ?[]u8,
+    expires_at: ?[]u8,
+    raw_json: []u8,
+
+    pub fn deinit(self: SecurityRow, allocator: Allocator) void {
+        allocator.free(self.key);
+        allocator.free(self.kind);
+        allocator.free(self.resource_id);
+        if (self.scope) |value| allocator.free(value);
+        if (self.scope_id) |value| allocator.free(value);
+        if (self.name) |value| allocator.free(value);
+        if (self.status) |value| allocator.free(value);
+        if (self.category) |value| allocator.free(value);
+        if (self.severity) |value| allocator.free(value);
+        if (self.action) |value| allocator.free(value);
+        if (self.domain) |value| allocator.free(value);
+        if (self.account_id) |value| allocator.free(value);
+        if (self.zone_id) |value| allocator.free(value);
+        if (self.related_id) |value| allocator.free(value);
+        if (self.flag) |value| allocator.free(value);
+        if (self.created_at) |value| allocator.free(value);
+        if (self.updated_at) |value| allocator.free(value);
+        if (self.expires_at) |value| allocator.free(value);
+        allocator.free(self.raw_json);
+    }
+};
+
 pub fn Rows(comptime T: type) type {
     return struct {
         items: []T,
@@ -150,6 +194,7 @@ pub const DnsRecordRows = Rows(DnsRecordRow);
 pub const IdRows = Rows(IdRow);
 pub const ResourceRows = Rows(ResourceRow);
 pub const InventoryRows = Rows(InventoryRow);
+pub const SecurityRows = Rows(SecurityRow);
 
 pub fn parseAccountRows(gpa: Allocator, body: []const u8) !AccountRows {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(AccountRow);
@@ -329,6 +374,16 @@ pub fn parseInventoryRows(gpa: Allocator, kind: []const u8, scope: ?[]const u8, 
     return .{ .items = try rows.toOwnedSlice(gpa) };
 }
 
+pub fn parseSecurityRows(gpa: Allocator, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, body: []const u8) !SecurityRows {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return emptyRows(SecurityRow);
+    defer parsed.deinit();
+
+    var rows = std.ArrayList(SecurityRow).empty;
+    errdefer deinitPartial(SecurityRow, &rows, gpa);
+    try appendSecurityRowsFromValue(gpa, &rows, kind, scope, scope_id, parsed.value);
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
 fn appendResourceRowsFromValue(gpa: Allocator, rows: *std.ArrayList(ResourceRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, value: std.json.Value) !void {
     switch (value) {
         .array => |array| {
@@ -456,6 +511,88 @@ fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: 
     });
 }
 
+fn appendSecurityRowsFromValue(gpa: Allocator, rows: *std.ArrayList(SecurityRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, value: std.json.Value) !void {
+    switch (value) {
+        .array => |array| {
+            for (array.items) |item| try appendSecurityRow(gpa, rows, kind, scope, scope_id, item);
+        },
+        .object => |object| {
+            if (object.get("result")) |result| {
+                try appendSecurityRowsFromValue(gpa, rows, kind, scope, scope_id, result);
+            } else if (object.get("data")) |data| {
+                try appendSecurityRowsFromValue(gpa, rows, kind, scope, scope_id, data);
+            } else {
+                try appendSecurityRow(gpa, rows, kind, scope, scope_id, value);
+            }
+        },
+        else => {},
+    }
+}
+
+fn appendSecurityRow(gpa: Allocator, rows: *std.ArrayList(SecurityRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, item: std.json.Value) !void {
+    if (item != .object) return;
+    const resource_id = try resourceIdValue(gpa, item) orelse return;
+    errdefer gpa.free(resource_id);
+    const key = try resourceKey(gpa, kind, scope, scope_id, resource_id);
+    errdefer gpa.free(key);
+    const kind_owned = try gpa.dupe(u8, kind);
+    errdefer gpa.free(kind_owned);
+    const scope_owned = try dupeOptional(gpa, scope);
+    errdefer if (scope_owned) |value| gpa.free(value);
+    const scope_id_owned = try dupeOptional(gpa, scope_id);
+    errdefer if (scope_id_owned) |value| gpa.free(value);
+    const name = try securityName(gpa, item);
+    errdefer if (name) |value| gpa.free(value);
+    const status = try resourceStatus(gpa, item);
+    errdefer if (status) |value| gpa.free(value);
+    const category = try securityCategory(gpa, item);
+    errdefer if (category) |value| gpa.free(value);
+    const severity = securitySeverity(gpa, item);
+    errdefer if (severity) |value| gpa.free(value);
+    const action = try securityAction(gpa, item);
+    errdefer if (action) |value| gpa.free(value);
+    const domain = try resourceDomain(gpa, item, name, scope, scope_id);
+    errdefer if (domain) |value| gpa.free(value);
+    const account_id = resourceAccountId(gpa, item, scope, scope_id);
+    errdefer if (account_id) |value| gpa.free(value);
+    const zone_id = resourceZoneId(gpa, item, scope, scope_id);
+    errdefer if (zone_id) |value| gpa.free(value);
+    const related_id = securityRelatedId(gpa, item, resource_id);
+    errdefer if (related_id) |value| gpa.free(value);
+    const flag = try securityFlag(gpa, item);
+    errdefer if (flag) |value| gpa.free(value);
+    const created_at = try dupeOptional(gpa, firstStringField(item, &.{ "created_at", "created_on", "created", "first_seen" }));
+    errdefer if (created_at) |value| gpa.free(value);
+    const updated_at = try dupeOptional(gpa, firstStringField(item, &.{ "updated_at", "modified_on", "modified", "last_updated", "last_seen", "detected_at" }));
+    errdefer if (updated_at) |value| gpa.free(value);
+    const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expiration", "not_after", "valid_until" }));
+    errdefer if (expires_at) |value| gpa.free(value);
+    const raw = try core_json.stringifyValue(gpa, item);
+    errdefer gpa.free(raw);
+
+    try rows.append(gpa, .{
+        .key = key,
+        .kind = kind_owned,
+        .resource_id = resource_id,
+        .scope = scope_owned,
+        .scope_id = scope_id_owned,
+        .name = name,
+        .status = status,
+        .category = category,
+        .severity = severity,
+        .action = action,
+        .domain = domain,
+        .account_id = account_id,
+        .zone_id = zone_id,
+        .related_id = related_id,
+        .flag = flag,
+        .created_at = created_at,
+        .updated_at = updated_at,
+        .expires_at = expires_at,
+        .raw_json = raw,
+    });
+}
+
 fn resourceKey(gpa: Allocator, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, resource_id: []const u8) ![]u8 {
     return try std.fmt.allocPrint(gpa, "{s}|{s}|{s}|{s}", .{ kind, scope orelse "", scope_id orelse "", resource_id });
 }
@@ -470,6 +607,7 @@ fn resourceName(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "account_name",
         "dataset",
         "key",
+        "display_name",
     };
     for (fields) |field_name| {
         if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
@@ -502,6 +640,11 @@ fn resourceType(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "target_type",
         "product",
         "dataset",
+        "class",
+        "category",
+        "risk_type",
+        "rule_type",
+        "profile_type",
     };
     for (fields) |field_name| {
         if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
@@ -510,7 +653,7 @@ fn resourceType(gpa: Allocator, item: std.json.Value) !?[]u8 {
 }
 
 fn resourceDomain(gpa: Allocator, item: std.json.Value, name: ?[]const u8, scope: ?[]const u8, scope_id: ?[]const u8) !?[]u8 {
-    const fields = [_][]const u8{ "domain", "hostname", "zone_name", "host", "address" };
+    const fields = [_][]const u8{ "domain", "domain_name", "hostname", "zone_name", "host", "address" };
     for (fields) |field_name| {
         if (core_json.fieldString(item, field_name)) |value| {
             if (isDomainLike(value)) return try gpa.dupe(u8, value);
@@ -560,6 +703,11 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "ruleset_id",
         "rule_id",
         "policy_id",
+        "pattern_id",
+        "domain_id",
+        "trusted_domain_id",
+        "impersonation_registry_id",
+        "sending_domain_restriction_id",
         "app_id",
         "application_id",
         "certificate_id",
@@ -575,6 +723,11 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "phase",
         "target",
         "content",
+        "pattern",
+        "sender",
+        "email",
+        "username",
+        "value",
     };
     for (fields) |field_name| {
         if (core_json.fieldAnyString(gpa, item, field_name)) |value| return value;
@@ -592,6 +745,73 @@ fn resourceFlag(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldBool(item, "is_default")) |default| return try gpa.dupe(u8, if (default) "default" else "not_default");
     if (core_json.fieldBool(item, "verified")) |verified| return try gpa.dupe(u8, if (verified) "verified" else "unverified");
     if (core_json.fieldBool(item, "healthy")) |healthy| return try gpa.dupe(u8, if (healthy) "healthy" else "unhealthy");
+    return null;
+}
+
+fn securityName(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    if (try resourceName(gpa, item)) |value| return value;
+    return firstAnyStringField(gpa, item, &.{ "description", "summary", "pattern", "email", "sender", "username", "value" });
+}
+
+fn securityCategory(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    if (try resourceType(gpa, item)) |value| return value;
+    return firstAnyStringField(gpa, item, &.{ "finding_type", "issue_type", "threat_type", "policy_type", "rule_category" });
+}
+
+fn securitySeverity(gpa: Allocator, item: std.json.Value) ?[]u8 {
+    return firstAnyStringField(gpa, item, &.{ "severity", "risk", "risk_level", "priority", "confidence", "score" });
+}
+
+fn securityAction(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    if (firstAnyStringField(gpa, item, &.{ "action", "disposition", "mitigation", "policy_action", "recommended_action" })) |value| return value;
+    if (core_json.fieldBool(item, "allowed")) |allowed| return try gpa.dupe(u8, if (allowed) "allowed" else "blocked");
+    if (core_json.fieldBool(item, "allow")) |allow| return try gpa.dupe(u8, if (allow) "allow" else "deny");
+    if (core_json.fieldBool(item, "blocked")) |blocked| return try gpa.dupe(u8, if (blocked) "blocked" else "not_blocked");
+    return null;
+}
+
+fn securityRelatedId(gpa: Allocator, item: std.json.Value, resource_id: []const u8) ?[]u8 {
+    const supporting_fields = [_][]const u8{
+        "pattern",
+        "sender",
+        "email",
+        "username",
+        "value",
+        "target",
+        "content",
+        "rule_id",
+        "ruleset_id",
+        "app_id",
+        "application_id",
+        "profile_id",
+        "dataset_id",
+        "ray_id",
+        "phase",
+    };
+    for (supporting_fields) |field_name| {
+        const value = core_json.fieldAnyString(gpa, item, field_name) orelse continue;
+        if (!std.mem.eql(u8, value, resource_id)) return value;
+        gpa.free(value);
+    }
+    if (resourceRelatedId(gpa, item)) |value| {
+        if (!std.mem.eql(u8, value, resource_id)) return value;
+        gpa.free(value);
+    }
+    return null;
+}
+
+fn securityFlag(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    if (try resourceFlag(gpa, item)) |value| return value;
+    if (core_json.fieldBool(item, "dismissed")) |dismissed| return try gpa.dupe(u8, if (dismissed) "dismissed" else "not_dismissed");
+    if (core_json.fieldBool(item, "mitigated")) |mitigated| return try gpa.dupe(u8, if (mitigated) "mitigated" else "not_mitigated");
+    if (core_json.fieldBool(item, "verified")) |verified| return try gpa.dupe(u8, if (verified) "verified" else "unverified");
+    return null;
+}
+
+fn firstAnyStringField(gpa: Allocator, item: std.json.Value, fields: []const []const u8) ?[]u8 {
+    for (fields) |field_name| {
+        if (core_json.fieldAnyString(gpa, item, field_name)) |value| return value;
+    }
     return null;
 }
 
@@ -613,6 +833,12 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
     const fields = [_][]const u8{
         "id",
         "uid",
+        "policy_id",
+        "pattern_id",
+        "domain_id",
+        "trusted_domain_id",
+        "impersonation_registry_id",
+        "sending_domain_restriction_id",
         "issue_id",
         "operation_id",
         "discovery_id",
@@ -855,4 +1081,34 @@ test "parses typed Cloudflare inventory rows from broad result shapes" {
     try std.testing.expectEqualStrings("acct-1", rows.items[2].account_id orelse "");
     try std.testing.expectEqualStrings("ssh.plosca.ru", rows.items[2].domain orelse "");
     try std.testing.expectEqualStrings("enabled", rows.items[2].flag orelse "");
+}
+
+test "parses typed Cloudflare security rows from broad security result shapes" {
+    const allocator = std.testing.allocator;
+    var rows = try parseSecurityRows(allocator, "cloudflare-security", "account", "acct-1",
+        \\{"result":[
+        \\  {"policy_id":"policy-1","name":"Trusted sender","is_enabled":true,"action":"allow","pattern":"*@example.com","domain":"example.com","created_at":"2026-06-17T00:00:00Z"},
+        \\  {"issue_id":"issue-1","severity":"high","status":"open","class":"dns","domain":"plosca.ru","dismissed":false,"last_seen":"2026-06-17T01:00:00Z"},
+        \\  {"id":"cred-1","domain":"admin.plosca.ru","risk_level":"critical","username":"kid@example.com","created_at":"2026-06-17T02:00:00Z"}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), rows.items.len);
+    try std.testing.expectEqualStrings("cloudflare-security|account|acct-1|policy-1", rows.items[0].key);
+    try std.testing.expectEqualStrings("Trusted sender", rows.items[0].name orelse "");
+    try std.testing.expectEqualStrings("enabled", rows.items[0].status orelse "");
+    try std.testing.expectEqualStrings("allow", rows.items[0].action orelse "");
+    try std.testing.expectEqualStrings("example.com", rows.items[0].domain orelse "");
+    try std.testing.expectEqualStrings("*@example.com", rows.items[0].related_id orelse "");
+    try std.testing.expectEqualStrings("acct-1", rows.items[0].account_id orelse "");
+    try std.testing.expectEqualStrings("issue-1", rows.items[1].resource_id);
+    try std.testing.expectEqualStrings("dns", rows.items[1].category orelse "");
+    try std.testing.expectEqualStrings("high", rows.items[1].severity orelse "");
+    try std.testing.expectEqualStrings("not_dismissed", rows.items[1].flag orelse "");
+    try std.testing.expectEqualStrings("2026-06-17T01:00:00Z", rows.items[1].updated_at orelse "");
+    try std.testing.expectEqualStrings("cred-1", rows.items[2].resource_id);
+    try std.testing.expectEqualStrings("critical", rows.items[2].severity orelse "");
+    try std.testing.expectEqualStrings("admin.plosca.ru", rows.items[2].domain orelse "");
+    try std.testing.expectEqualStrings("kid@example.com", rows.items[2].related_id orelse "");
 }
