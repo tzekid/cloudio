@@ -1,9 +1,11 @@
 const std = @import("std");
 const core_json = @import("core_json");
 const db_store = @import("db_store");
+const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
+pub const Provider = provider_routes.Provider;
 
 pub const Context = struct {
     gpa: Allocator,
@@ -11,7 +13,7 @@ pub const Context = struct {
 };
 
 pub const ListOptions = struct {
-    provider: ?[]const u8 = null,
+    provider: ?Provider = null,
     domain: ?[]const u8 = null,
     query: ?[]const u8 = null,
     limit: i64 = 200,
@@ -19,7 +21,7 @@ pub const ListOptions = struct {
 
 pub fn list(ctx: Context, options: ListOptions) !db_store.InventoryItems {
     return try ctx.db.inventoryItems(ctx.gpa, .{
-        .provider = options.provider,
+        .provider = providerName(options.provider),
         .domain = options.domain,
         .query = options.query,
         .limit = options.limit,
@@ -28,11 +30,16 @@ pub fn list(ctx: Context, options: ListOptions) !db_store.InventoryItems {
 
 pub fn summary(ctx: Context, options: ListOptions) !db_store.InventoryFacets {
     return try ctx.db.inventoryFacets(ctx.gpa, .{
-        .provider = options.provider,
+        .provider = providerName(options.provider),
         .domain = options.domain,
         .query = options.query,
         .limit = options.limit,
     });
+}
+
+fn providerName(provider: ?Provider) ?[]const u8 {
+    const value = provider orelse return null;
+    return value.name();
 }
 
 pub fn writeText(ctx: Context, options: ListOptions, writer: anytype) !void {
@@ -194,7 +201,7 @@ test "inventory app renders provider-neutral typed rows" {
 
     var json_out = std.Io.Writer.Allocating.init(allocator);
     defer json_out.deinit();
-    try writeJson(.{ .gpa = allocator, .db = &db }, .{ .provider = "hostinger" }, &json_out.writer);
+    try writeJson(.{ .gpa = allocator, .db = &db }, .{ .provider = .hostinger }, &json_out.writer);
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
 
@@ -221,7 +228,7 @@ test "inventory app renders provider-neutral typed row facets" {
 
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
-    try writeSummaryText(.{ .gpa = allocator, .db = &db }, .{ .provider = "hostinger" }, &out.writer);
+    try writeSummaryText(.{ .gpa = allocator, .db = &db }, .{ .provider = .hostinger }, &out.writer);
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
 
@@ -231,7 +238,7 @@ test "inventory app renders provider-neutral typed row facets" {
 
     var json_out = std.Io.Writer.Allocating.init(allocator);
     defer json_out.deinit();
-    try writeSummaryJson(.{ .gpa = allocator, .db = &db }, .{ .provider = "hostinger" }, &json_out.writer);
+    try writeSummaryJson(.{ .gpa = allocator, .db = &db }, .{ .provider = .hostinger }, &json_out.writer);
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
 
@@ -254,7 +261,7 @@ test "inventory app reports empty filtered results" {
 
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
-    try writeText(.{ .gpa = allocator, .db = &db }, .{ .provider = "cloudflare" }, &out.writer);
+    try writeText(.{ .gpa = allocator, .db = &db }, .{ .provider = .cloudflare }, &out.writer);
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
 

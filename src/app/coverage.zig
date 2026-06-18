@@ -87,16 +87,18 @@ pub const ProviderFilter = enum {
 
     pub fn parse(value: []const u8) ?ProviderFilter {
         if (std.mem.eql(u8, value, "all")) return .all;
-        if (std.mem.eql(u8, value, "cloudflare")) return .cloudflare;
-        if (std.mem.eql(u8, value, "hostinger")) return .hostinger;
-        return null;
+        return switch (provider_routes.Provider.parse(value) orelse return null) {
+            .cloudflare => .cloudflare,
+            .hostinger => .hostinger,
+        };
     }
 
     pub fn includes(self: ProviderFilter, provider: []const u8) bool {
+        const parsed = provider_routes.Provider.parse(provider) orelse return false;
         return switch (self) {
             .all => true,
-            .cloudflare => std.mem.eql(u8, provider, "cloudflare"),
-            .hostinger => std.mem.eql(u8, provider, "hostinger"),
+            .cloudflare => parsed == .cloudflare,
+            .hostinger => parsed == .hostinger,
         };
     }
 

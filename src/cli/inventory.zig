@@ -93,7 +93,7 @@ pub fn parseParsed(args: []const []const u8) !Parsed {
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             parsed.format = try parseFormat(arg["--format=".len..]);
         } else if (isProvider(arg) and parsed.options.provider == null) {
-            parsed.options.provider = arg;
+            parsed.options.provider = try parseProvider(arg);
         } else if (parsed.options.query == null) {
             parsed.options.query = arg;
         } else {
@@ -103,13 +103,12 @@ pub fn parseParsed(args: []const []const u8) !Parsed {
     return parsed;
 }
 
-fn parseProvider(value: []const u8) ![]const u8 {
-    if (!isProvider(value)) return error.InvalidProvider;
-    return value;
+fn parseProvider(value: []const u8) !app_inventory.Provider {
+    return app_inventory.Provider.parse(value) orelse error.InvalidProvider;
 }
 
 fn isProvider(value: []const u8) bool {
-    return std.mem.eql(u8, value, "cloudflare") or std.mem.eql(u8, value, "hostinger");
+    return app_inventory.Provider.parse(value) != null;
 }
 
 fn parseLimit(value: []const u8) !i64 {
@@ -127,7 +126,7 @@ fn parseFormat(value: []const u8) !RenderFormat {
 test "inventory parser maps positional provider and filters" {
     const args = [_][]const u8{ "cloudflare", "--domain", "plosca.ru", "--query", "dns", "--limit", "25" };
     const options = try parseOptions(args[0..]);
-    try std.testing.expectEqualStrings("cloudflare", options.provider.?);
+    try std.testing.expectEqual(app_inventory.Provider.cloudflare, options.provider.?);
     try std.testing.expectEqualStrings("plosca.ru", options.domain.?);
     try std.testing.expectEqualStrings("dns", options.query.?);
     try std.testing.expectEqual(@as(i64, 25), options.limit);
@@ -137,7 +136,7 @@ test "inventory parser routes summary command with filters" {
     const args = [_][]const u8{ "summary", "hostinger", "--domain", "plosca.ru", "--limit", "10" };
     switch (try parseCommand(args[0..])) {
         .summary => |parsed| {
-            try std.testing.expectEqualStrings("hostinger", parsed.options.provider.?);
+            try std.testing.expectEqual(app_inventory.Provider.hostinger, parsed.options.provider.?);
             try std.testing.expectEqualStrings("plosca.ru", parsed.options.domain.?);
             try std.testing.expectEqual(@as(i64, 10), parsed.options.limit);
             try std.testing.expectEqual(RenderFormat.text, parsed.format);
@@ -148,7 +147,7 @@ test "inventory parser routes summary command with filters" {
     const facets_args = [_][]const u8{ "facets", "--provider", "cloudflare", "dns", "--format=json" };
     switch (try parseCommand(facets_args[0..])) {
         .summary => |parsed| {
-            try std.testing.expectEqualStrings("cloudflare", parsed.options.provider.?);
+            try std.testing.expectEqual(app_inventory.Provider.cloudflare, parsed.options.provider.?);
             try std.testing.expectEqualStrings("dns", parsed.options.query.?);
             try std.testing.expectEqual(RenderFormat.json, parsed.format);
         },
@@ -160,7 +159,7 @@ test "inventory parser accepts json output for list commands" {
     const args = [_][]const u8{ "hostinger", "--json", "--limit", "5" };
     switch (try parseCommand(args[0..])) {
         .list => |parsed| {
-            try std.testing.expectEqualStrings("hostinger", parsed.options.provider.?);
+            try std.testing.expectEqual(app_inventory.Provider.hostinger, parsed.options.provider.?);
             try std.testing.expectEqual(RenderFormat.json, parsed.format);
             try std.testing.expectEqual(@as(i64, 5), parsed.options.limit);
         },
@@ -171,7 +170,7 @@ test "inventory parser accepts json output for list commands" {
 test "inventory parser accepts provider flag and query positional" {
     const args = [_][]const u8{ "--provider", "hostinger", "u123" };
     const options = try parseOptions(args[0..]);
-    try std.testing.expectEqualStrings("hostinger", options.provider.?);
+    try std.testing.expectEqual(app_inventory.Provider.hostinger, options.provider.?);
     try std.testing.expectEqualStrings("u123", options.query.?);
 }
 

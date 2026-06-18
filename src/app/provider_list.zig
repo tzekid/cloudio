@@ -1,22 +1,13 @@
 const std = @import("std");
 const core_output = @import("core_output");
 const db_store = @import("db_store");
+const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
 const Output = core_output.Output;
 
-pub const Provider = enum {
-    cloudflare,
-    hostinger,
-
-    pub fn name(self: Provider) []const u8 {
-        return switch (self) {
-            .cloudflare => "cloudflare",
-            .hostinger => "hostinger",
-        };
-    }
-};
+pub const Provider = provider_routes.Provider;
 
 pub const Dataset = enum {
     resources,

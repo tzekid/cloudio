@@ -75,6 +75,7 @@ test "facade exposes stable integration modules" {
     _ = app.hostinger.VmEndpoint;
     _ = app.init.Result;
     _ = app.inventory.Context;
+    _ = app.inventory.Provider;
     _ = app.log.Context;
     _ = app.overview.Overview;
     _ = app.projects.Context;

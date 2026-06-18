@@ -371,6 +371,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
     linkSqlite(app_provider_list_mod);
@@ -410,6 +411,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
     linkSqlite(app_inventory_mod);
