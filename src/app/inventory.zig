@@ -1,5 +1,5 @@
 const std = @import("std");
-const core_json = @import("core_json");
+const app_render = @import("app_render");
 const db_store = @import("db_store");
 const provider_routes = @import("provider_routes");
 
@@ -89,43 +89,43 @@ pub fn writeSummaryJson(ctx: Context, options: ListOptions, writer: anytype) !vo
 
 fn writeItem(item: db_store.InventoryItem, writer: anytype) !void {
     try writer.print("{s}\t{s}/{s}", .{ item.provider, item.kind, item.resource_id });
-    try writeField(writer, "name", item.display_name);
-    try writeField(writer, "status", item.status);
-    try writeField(writer, "category", item.category);
-    try writeField(writer, "domain", item.domain);
+    try app_render.writeTextField(writer, "name", item.display_name);
+    try app_render.writeTextField(writer, "status", item.status);
+    try app_render.writeTextField(writer, "category", item.category);
+    try app_render.writeTextField(writer, "domain", item.domain);
     try writeScope(writer, item);
-    try writeField(writer, "username", item.username);
-    try writeField(writer, "account", item.account_id);
-    try writeField(writer, "zone", item.zone_id);
-    try writeField(writer, "related", item.related_id);
-    try writeField(writer, "flag", item.flag);
-    try writeField(writer, "created", item.created_at_source);
-    try writeField(writer, "source_updated", item.updated_at_source);
-    try writeField(writer, "expires", item.expires_at_source);
-    try writeField(writer, "collected", item.updated_at);
+    try app_render.writeTextField(writer, "username", item.username);
+    try app_render.writeTextField(writer, "account", item.account_id);
+    try app_render.writeTextField(writer, "zone", item.zone_id);
+    try app_render.writeTextField(writer, "related", item.related_id);
+    try app_render.writeTextField(writer, "flag", item.flag);
+    try app_render.writeTextField(writer, "created", item.created_at_source);
+    try app_render.writeTextField(writer, "source_updated", item.updated_at_source);
+    try app_render.writeTextField(writer, "expires", item.expires_at_source);
+    try app_render.writeTextField(writer, "collected", item.updated_at);
     try writer.writeByte('\n');
 }
 
 fn writeItemJson(item: db_store.InventoryItem, writer: anytype) !void {
     try writer.writeByte('{');
-    try writeJsonStringField(writer, "provider", item.provider, true);
-    try writeJsonStringField(writer, "kind", item.kind, true);
-    try writeJsonStringField(writer, "resource_id", item.resource_id, true);
-    try writeJsonStringField(writer, "display_name", item.display_name, true);
-    try writeJsonStringField(writer, "status", item.status, true);
-    try writeJsonStringField(writer, "category", item.category, true);
-    try writeJsonStringField(writer, "domain", item.domain, true);
-    try writeJsonStringField(writer, "scope", item.scope, true);
-    try writeJsonStringField(writer, "scope_id", item.scope_id, true);
-    try writeJsonStringField(writer, "username", item.username, true);
-    try writeJsonStringField(writer, "account_id", item.account_id, true);
-    try writeJsonStringField(writer, "zone_id", item.zone_id, true);
-    try writeJsonStringField(writer, "related_id", item.related_id, true);
-    try writeJsonStringField(writer, "flag", item.flag, true);
-    try writeJsonStringField(writer, "created_at_source", item.created_at_source, true);
-    try writeJsonStringField(writer, "updated_at_source", item.updated_at_source, true);
-    try writeJsonStringField(writer, "expires_at_source", item.expires_at_source, true);
-    try writeJsonStringField(writer, "updated_at", item.updated_at, false);
+    try app_render.writeJsonStringField(writer, "provider", item.provider, true);
+    try app_render.writeJsonStringField(writer, "kind", item.kind, true);
+    try app_render.writeJsonStringField(writer, "resource_id", item.resource_id, true);
+    try app_render.writeJsonStringField(writer, "display_name", item.display_name, true);
+    try app_render.writeJsonStringField(writer, "status", item.status, true);
+    try app_render.writeJsonStringField(writer, "category", item.category, true);
+    try app_render.writeJsonStringField(writer, "domain", item.domain, true);
+    try app_render.writeJsonStringField(writer, "scope", item.scope, true);
+    try app_render.writeJsonStringField(writer, "scope_id", item.scope_id, true);
+    try app_render.writeJsonStringField(writer, "username", item.username, true);
+    try app_render.writeJsonStringField(writer, "account_id", item.account_id, true);
+    try app_render.writeJsonStringField(writer, "zone_id", item.zone_id, true);
+    try app_render.writeJsonStringField(writer, "related_id", item.related_id, true);
+    try app_render.writeJsonStringField(writer, "flag", item.flag, true);
+    try app_render.writeJsonStringField(writer, "created_at_source", item.created_at_source, true);
+    try app_render.writeJsonStringField(writer, "updated_at_source", item.updated_at_source, true);
+    try app_render.writeJsonStringField(writer, "expires_at_source", item.expires_at_source, true);
+    try app_render.writeJsonStringField(writer, "updated_at", item.updated_at, false);
     try writer.writeByte('}');
 }
 
@@ -133,33 +133,22 @@ fn writeFacet(row: db_store.InventoryFacet, writer: anytype) !void {
     try writer.print("{s}\t{s}", .{ row.provider, row.kind });
     try writer.print("\tcount={d}", .{row.count});
     if (row.domains != 0) try writer.print("\tdomains={d}", .{row.domains});
-    try writeField(writer, "status", row.status);
-    try writeField(writer, "category", row.category);
-    try writeField(writer, "latest", row.latest_updated);
+    try app_render.writeTextField(writer, "status", row.status);
+    try app_render.writeTextField(writer, "category", row.category);
+    try app_render.writeTextField(writer, "latest", row.latest_updated);
     try writer.writeByte('\n');
 }
 
 fn writeFacetJson(row: db_store.InventoryFacet, writer: anytype) !void {
     try writer.writeByte('{');
-    try writeJsonStringField(writer, "provider", row.provider, true);
-    try writeJsonStringField(writer, "kind", row.kind, true);
-    try writeJsonStringField(writer, "status", row.status, true);
-    try writeJsonStringField(writer, "category", row.category, true);
-    try writer.writeAll("\"count\":");
-    try writer.print("{d}", .{row.count});
-    try writer.writeByte(',');
-    try writer.writeAll("\"domains\":");
-    try writer.print("{d}", .{row.domains});
-    try writer.writeByte(',');
-    try writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
+    try app_render.writeJsonStringField(writer, "provider", row.provider, true);
+    try app_render.writeJsonStringField(writer, "kind", row.kind, true);
+    try app_render.writeJsonStringField(writer, "status", row.status, true);
+    try app_render.writeJsonStringField(writer, "category", row.category, true);
+    try app_render.writeJsonIntField(writer, "count", row.count, true);
+    try app_render.writeJsonIntField(writer, "domains", row.domains, true);
+    try app_render.writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
     try writer.writeByte('}');
-}
-
-fn writeJsonStringField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 fn writeScope(writer: anytype, item: db_store.InventoryItem) !void {
@@ -168,11 +157,6 @@ fn writeScope(writer: anytype, item: db_store.InventoryItem) !void {
     if (item.scope.len != 0) try writer.writeAll(item.scope);
     if (item.scope.len != 0 and item.scope_id.len != 0) try writer.writeByte('/');
     if (item.scope_id.len != 0) try writer.writeAll(item.scope_id);
-}
-
-fn writeField(writer: anytype, label: []const u8, value: []const u8) !void {
-    if (value.len == 0) return;
-    try writer.print("\t{s}={s}", .{ label, value });
 }
 
 test "inventory app renders provider-neutral typed rows" {

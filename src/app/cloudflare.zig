@@ -1,7 +1,7 @@
 const std = @import("std");
 const collector_cloudflare = @import("collector_cloudflare");
 const app_provider_list = @import("app_provider_list");
-const core_json = @import("core_json");
+const app_render = @import("app_render");
 const core_output = @import("core_output");
 const db_store = @import("db_store");
 const provider_cloudflare = @import("provider_cloudflare");
@@ -9,6 +9,9 @@ const provider_cloudflare = @import("provider_cloudflare");
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
 const Io = std.Io;
+const positiveLimit = app_render.positiveLimit;
+const writeJsonStringField = app_render.writeJsonStringField;
+const writeTextField = app_render.writeTextField;
 
 pub const Auth = provider_cloudflare.Auth;
 pub const AccountCollection = provider_cloudflare.AccountCollection;
@@ -737,27 +740,9 @@ fn writeDnsRecordJson(row: db_store.CloudflareDnsRecordRow, writer: anytype) !vo
 fn writeKindCountJson(row: db_store.CloudflareKindCount, writer: anytype) !void {
     try writer.writeByte('{');
     try writeJsonStringField(writer, "kind", row.kind, true);
-    try writer.writeAll("\"count\":");
-    try writer.print("{d}", .{row.count});
-    try writer.writeByte(',');
+    try app_render.writeJsonIntField(writer, "count", row.count, true);
     try writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
     try writer.writeByte('}');
-}
-
-fn writeJsonStringField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeTextField(writer: anytype, label: []const u8, value: []const u8) !void {
-    if (value.len == 0) return;
-    try writer.print("\t{s}={s}", .{ label, value });
-}
-
-fn positiveLimit(value: i64, fallback: i64) i64 {
-    return if (value > 0) value else fallback;
 }
 
 test "cloudflare app domain selection uses explicit or default domain" {

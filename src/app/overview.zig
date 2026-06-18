@@ -1,5 +1,5 @@
 const std = @import("std");
-const core_json = @import("core_json");
+const app_render = @import("app_render");
 const db_store = @import("db_store");
 
 const Allocator = std.mem.Allocator;
@@ -78,21 +78,21 @@ pub const Overview = struct {
 
     pub fn writeJson(self: Overview, writer: anytype) !void {
         try writer.writeAll("{\"counts\":{");
-        try writeJsonCountField(writer, "snapshots", self.counts.snapshots, true);
-        try writeJsonCountField(writer, "cloudflare_accounts", self.counts.cloudflare_accounts, true);
-        try writeJsonCountField(writer, "cloudflare_zones", self.counts.cloudflare_zones, true);
-        try writeJsonCountField(writer, "cloudflare_dns_records", self.counts.cloudflare_dns_records, true);
-        try writeJsonCountField(writer, "cloudflare_resources", self.counts.cloudflare_resources, true);
-        try writeJsonCountField(writer, "cloudflare_inventory_items", self.counts.cloudflare_inventory_items, true);
-        try writeJsonCountField(writer, "hostinger_vps", self.counts.hostinger_vps, true);
-        try writeJsonCountField(writer, "hostinger_resources", self.counts.hostinger_resources, true);
-        try writeJsonCountField(writer, "hostinger_inventory_items", self.counts.hostinger_inventory_items, true);
-        try writeJsonCountField(writer, "caddy_sites", self.counts.caddy_sites, true);
-        try writeJsonCountField(writer, "caddy_upstreams", self.counts.caddy_upstreams, true);
-        try writeJsonCountField(writer, "projects", self.counts.projects, true);
-        try writeJsonCountField(writer, "services", self.counts.services, true);
-        try writeJsonCountField(writer, "sockets", self.counts.sockets, true);
-        try writeJsonCountField(writer, "containers", self.counts.containers, false);
+        try app_render.writeJsonIntField(writer, "snapshots", self.counts.snapshots, true);
+        try app_render.writeJsonIntField(writer, "cloudflare_accounts", self.counts.cloudflare_accounts, true);
+        try app_render.writeJsonIntField(writer, "cloudflare_zones", self.counts.cloudflare_zones, true);
+        try app_render.writeJsonIntField(writer, "cloudflare_dns_records", self.counts.cloudflare_dns_records, true);
+        try app_render.writeJsonIntField(writer, "cloudflare_resources", self.counts.cloudflare_resources, true);
+        try app_render.writeJsonIntField(writer, "cloudflare_inventory_items", self.counts.cloudflare_inventory_items, true);
+        try app_render.writeJsonIntField(writer, "hostinger_vps", self.counts.hostinger_vps, true);
+        try app_render.writeJsonIntField(writer, "hostinger_resources", self.counts.hostinger_resources, true);
+        try app_render.writeJsonIntField(writer, "hostinger_inventory_items", self.counts.hostinger_inventory_items, true);
+        try app_render.writeJsonIntField(writer, "caddy_sites", self.counts.caddy_sites, true);
+        try app_render.writeJsonIntField(writer, "caddy_upstreams", self.counts.caddy_upstreams, true);
+        try app_render.writeJsonIntField(writer, "projects", self.counts.projects, true);
+        try app_render.writeJsonIntField(writer, "services", self.counts.services, true);
+        try app_render.writeJsonIntField(writer, "sockets", self.counts.sockets, true);
+        try app_render.writeJsonIntField(writer, "containers", self.counts.containers, false);
         try writer.writeAll("},\"recent_snapshots\":[");
         for (self.snapshots.items, 0..) |row, index| {
             if (index != 0) try writer.writeByte(',');
@@ -135,27 +135,13 @@ fn writeCounts(writer: anytype, counts: Counts) !void {
 
 fn writeSnapshotJson(row: db_store.SnapshotSummary, writer: anytype) !void {
     try writer.writeByte('{');
-    try writeJsonStringField(writer, "source", row.source, true);
-    try writeJsonStringField(writer, "kind", row.kind, true);
-    try writeJsonStringField(writer, "target", row.target, true);
-    try writeJsonStringField(writer, "status", row.status, true);
-    try writeJsonStringField(writer, "summary", row.summary, true);
-    try writeJsonStringField(writer, "captured_at", row.captured_at, false);
+    try app_render.writeJsonStringField(writer, "source", row.source, true);
+    try app_render.writeJsonStringField(writer, "kind", row.kind, true);
+    try app_render.writeJsonStringField(writer, "target", row.target, true);
+    try app_render.writeJsonStringField(writer, "status", row.status, true);
+    try app_render.writeJsonStringField(writer, "summary", row.summary, true);
+    try app_render.writeJsonStringField(writer, "captured_at", row.captured_at, false);
     try writer.writeByte('}');
-}
-
-fn writeJsonCountField(writer: anytype, name: []const u8, value: i64, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try writer.print("{d}", .{value});
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonStringField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 test "overview loads typed counts and renders recent snapshots" {

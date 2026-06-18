@@ -259,12 +259,21 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_refresh_mod);
 
+    const app_render_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/render.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_json", .module = core_json_mod },
+        },
+    });
+
     const app_overview_mod = b.createModule(.{
         .root_source_file = b.path("src/app/overview.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
     });
@@ -383,7 +392,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "collector_cloudflare", .module = collector_cloudflare_mod },
             .{ .name = "app_provider_list", .module = app_provider_list_mod },
-            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
@@ -398,7 +407,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "collector_hostinger", .module = collector_hostinger_mod },
             .{ .name = "app_provider_list", .module = app_provider_list_mod },
-            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
@@ -411,7 +420,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
@@ -631,6 +640,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_projects_mod);
     addModuleTest(b, test_step, app_system_mod);
     addModuleTest(b, test_step, app_provider_list_mod);
+    addModuleTest(b, test_step, app_render_mod);
     addModuleTest(b, test_step, app_cloudflare_mod);
     addModuleTest(b, test_step, app_hostinger_mod);
     addModuleTest(b, test_step, app_inventory_mod);
