@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_provider_l1 = @import("app_provider_l1");
+const app_provider_coverage_candidates = @import("app_provider_coverage_candidates");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
 const app_provider_route_capture = @import("app_provider_route_capture");
 const app_provider_route_plan = @import("app_provider_route_plan");
@@ -602,11 +603,7 @@ pub const LevelReport = struct {
 
 pub const RouteFilter = app_provider_coverage_routes.RouteFilter;
 
-pub const CaptureCandidateOptions = struct {
-    filter: RouteFilter = .{},
-    limit: usize = 25,
-    include_plans: bool = false,
-};
+pub const CaptureCandidateOptions = app_provider_coverage_candidates.CaptureCandidateOptions;
 
 pub const ActualCaptureOptions = struct {
     filter: RouteFilter = .{},
@@ -625,11 +622,7 @@ pub const ActualReadyCaptureOptions = struct {
     configured_domains: []const []const u8 = &.{},
 };
 
-pub const DryRunCandidateOptions = struct {
-    filter: RouteFilter = .{},
-    limit: usize = 25,
-    include_plans: bool = false,
-};
+pub const DryRunCandidateOptions = app_provider_coverage_candidates.DryRunCandidateOptions;
 
 pub const RoutePlanInput = app_provider_coverage_routes.RoutePlanInput;
 pub const CoverageRoute = app_provider_coverage_routes.CoverageRoute;
@@ -1439,27 +1432,19 @@ pub fn writeRoutesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: Ro
 }
 
 pub fn writeCaptureCandidatesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: CaptureCandidateOptions, writer: anytype) !void {
-    var routes = try loadCaptureCandidateRoutes(io, gpa, paths, options);
-    defer routes.deinit(gpa);
-    try writeCaptureCandidatesText(gpa, routes.items, options, writer);
+    try app_provider_coverage_candidates.writeCaptureCandidatesTextFromFiles(io, gpa, paths, options, writer);
 }
 
 pub fn writeCaptureCandidatesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: CaptureCandidateOptions, writer: anytype) !void {
-    var routes = try loadCaptureCandidateRoutes(io, gpa, paths, options);
-    defer routes.deinit(gpa);
-    try writeCaptureCandidatesJson(gpa, routes.items, options, writer);
+    try app_provider_coverage_candidates.writeCaptureCandidatesJsonFromFiles(io, gpa, paths, options, writer);
 }
 
 pub fn writeCaptureCandidatesTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: CaptureCandidateOptions, writer: anytype) !void {
-    var routes = try loadCaptureCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
-    defer routes.deinit(gpa);
-    try writeCaptureCandidatesText(gpa, routes.items, options, writer);
+    try app_provider_coverage_candidates.writeCaptureCandidatesTextFromText(gpa, cloudflare_text, hostinger_text, options, writer);
 }
 
 pub fn writeCaptureCandidatesJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: CaptureCandidateOptions, writer: anytype) !void {
-    var routes = try loadCaptureCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
-    defer routes.deinit(gpa);
-    try writeCaptureCandidatesJson(gpa, routes.items, options, writer);
+    try app_provider_coverage_candidates.writeCaptureCandidatesJsonFromText(gpa, cloudflare_text, hostinger_text, options, writer);
 }
 
 pub fn writeActualCapturesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, options: ActualCaptureOptions, writer: anytype) !void {
@@ -1511,37 +1496,19 @@ pub fn actualReadyCaptureJsonFromText(io: Io, gpa: Allocator, cloudflare_text: [
 }
 
 pub fn writeDryRunCandidatesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: DryRunCandidateOptions, writer: anytype) !void {
-    var routes = try loadDryRunCandidateRoutes(io, gpa, paths, options);
-    defer routes.deinit(gpa);
-    try writeDryRunCandidatesText(gpa, routes.items, options, writer);
+    try app_provider_coverage_candidates.writeDryRunCandidatesTextFromFiles(io, gpa, paths, options, writer);
 }
 
 pub fn writeDryRunCandidatesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: DryRunCandidateOptions, writer: anytype) !void {
-    var routes = try loadDryRunCandidateRoutes(io, gpa, paths, options);
-    defer routes.deinit(gpa);
-    try writeDryRunCandidatesJson(gpa, routes.items, options, writer);
+    try app_provider_coverage_candidates.writeDryRunCandidatesJsonFromFiles(io, gpa, paths, options, writer);
 }
 
 pub fn writeDryRunCandidatesTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: DryRunCandidateOptions, writer: anytype) !void {
-    var routes = try loadDryRunCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
-    defer routes.deinit(gpa);
-    try writeDryRunCandidatesText(gpa, routes.items, options, writer);
+    try app_provider_coverage_candidates.writeDryRunCandidatesTextFromText(gpa, cloudflare_text, hostinger_text, options, writer);
 }
 
 pub fn writeDryRunCandidatesJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: DryRunCandidateOptions, writer: anytype) !void {
-    var routes = try loadDryRunCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
-    defer routes.deinit(gpa);
-    try writeDryRunCandidatesJson(gpa, routes.items, options, writer);
-}
-
-fn loadCaptureCandidateRoutes(io: Io, gpa: Allocator, paths: Paths, options: CaptureCandidateOptions) !CoverageRoutes {
-    const filter = captureCandidateRouteFilter(options.filter);
-    return try loadRoutes(io, gpa, paths, filter);
-}
-
-fn loadCaptureCandidateRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: CaptureCandidateOptions) !CoverageRoutes {
-    const filter = captureCandidateRouteFilter(options.filter);
-    return try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, filter);
+    try app_provider_coverage_candidates.writeDryRunCandidatesJsonFromText(gpa, cloudflare_text, hostinger_text, options, writer);
 }
 
 fn loadActualCapturePlanFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, options: ActualCaptureOptions) !ActualCapturePlan {
@@ -1671,16 +1638,6 @@ fn actualCaptureProviderDbValue(provider: ProviderFilter) ?[]const u8 {
     };
 }
 
-fn loadDryRunCandidateRoutes(io: Io, gpa: Allocator, paths: Paths, options: DryRunCandidateOptions) !CoverageRoutes {
-    const filter = dryRunCandidateRouteFilter(options.filter);
-    return try loadRoutes(io, gpa, paths, filter);
-}
-
-fn loadDryRunCandidateRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: DryRunCandidateOptions) !CoverageRoutes {
-    const filter = dryRunCandidateRouteFilter(options.filter);
-    return try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, filter);
-}
-
 pub fn routePlanJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput) ![]u8 {
     return try app_provider_route_plan.planJson(io, gpa, paths, routePlanInput(input));
 }
@@ -1775,39 +1732,19 @@ fn actualCaptureRouteFilter(filter: RouteFilter) RouteFilter {
 }
 
 fn captureCandidateRouteFilter(filter: RouteFilter) RouteFilter {
-    var next = filter;
-    next.method = .GET;
-    next.mode = .read;
-    next.detail = false;
-    return next;
+    return app_provider_coverage_candidates.captureCandidateRouteFilter(filter);
 }
 
 fn dryRunCandidateRouteFilter(filter: RouteFilter) RouteFilter {
-    var next = filter;
-    next.mode = .dry_run;
-    if (next.support == null) next.support = .unsafe_mutation;
-    next.detail = false;
-    return next;
+    return app_provider_coverage_candidates.dryRunCandidateRouteFilter(filter);
 }
 
 fn routeIsCaptureCandidate(row: CoverageRoute, options: CaptureCandidateOptions) bool {
-    const route = row.route;
-    if (route.deprecated or !route.isRoutable()) return false;
-    if (route.method != .GET or route.mode != .read) return false;
-    if (route.request_body.required) return false;
-    if (!std.mem.eql(u8, row.tests, "missing")) return false;
-    if (options.filter.support != null) return true;
-    return route.support == .planned or route.support == .blocked_permission;
+    return app_provider_coverage_candidates.isCaptureCandidate(row, options);
 }
 
 fn routeIsDryRunCandidate(row: CoverageRoute, options: DryRunCandidateOptions) bool {
-    const route = row.route;
-    if (route.deprecated or !route.isRoutable()) return false;
-    if (!route.isDryRunMutation()) return false;
-    if (!std.mem.eql(u8, row.tests, "missing")) return false;
-    if (hasGeneratedDryRunPolicyEvidence(row)) return false;
-    if (options.filter.support != null) return true;
-    return route.support == .unsafe_mutation;
+    return app_provider_coverage_candidates.isDryRunCandidate(row, options);
 }
 
 fn actualCaptureState(route: provider_routes.Route, captures: []const db_store.RouteCaptureEvidenceRow) ?ActualCaptureState {
@@ -3343,105 +3280,6 @@ fn actualReadyCaptureRequest(gpa: Allocator, route: provider_routes.Route, hints
     };
 }
 
-fn writeCaptureCandidatesText(gpa: Allocator, routes: []const CoverageRoute, options: CaptureCandidateOptions, writer: anytype) !void {
-    try writer.writeAll("Cloudio route capture candidates\n");
-    try writer.writeAll("rank: generated bodyless GET/read routes missing L2 capture evidence\n");
-    try writer.print("filter provider={s}", .{options.filter.provider.name()});
-    if (options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
-    if (options.filter.family != .all) try writer.print(" family={s}", .{options.filter.family.name()});
-    if (options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
-    if (options.include_plans) try writer.writeAll(" plans=true");
-    try writer.writeAll(" limit=");
-    if (options.limit == 0) {
-        try writer.writeAll("all\n");
-    } else {
-        try writer.print("{d}\n", .{options.limit});
-    }
-
-    var visible: usize = 0;
-    var omitted: usize = 0;
-    var total: usize = 0;
-    var current_provider: ?[]const u8 = null;
-    var current_tag: ?[]const u8 = null;
-    for (routes) |row| {
-        if (!routeIsCaptureCandidate(row, options)) continue;
-        total += 1;
-        if (options.limit != 0 and visible >= options.limit) {
-            omitted += 1;
-            continue;
-        }
-        visible += 1;
-        if (current_provider == null or !std.mem.eql(u8, current_provider.?, row.route.provider.name())) {
-            current_provider = row.route.provider.name();
-            current_tag = null;
-            try writer.print("\n{s}\n", .{row.route.provider.name()});
-        }
-        if (current_tag == null or !std.mem.eql(u8, current_tag.?, row.route.tag)) {
-            current_tag = row.route.tag;
-            try writer.print("  {s}\n", .{row.route.tag});
-        }
-        try writer.print("    {s} {s} | support={s}", .{ row.route.method.name(), row.route.path_template, @tagName(row.route.support) });
-        if (row.route.operation_id) |id| try writer.print(" op={s}", .{id});
-        try writer.writeByte('\n');
-        try writer.writeAll("      required_path=");
-        try writeRequiredParamNamesText(writer, row.route.path_params);
-        try writer.writeAll(" required_query=");
-        try writeRequiredParamNamesText(writer, row.route.query_params);
-        try writer.writeAll(" required_header=");
-        try writeRequiredParamNamesText(writer, row.route.header_params);
-        try writer.print(" pagination={s}\n", .{routePaginationKind(row.route) orelse "none"});
-        const command = try routeCaptureCommand(gpa, row.route);
-        defer gpa.free(command);
-        try writer.print("      capture: {s}\n", .{command});
-        if (options.include_plans) {
-            const plan = try routeReadPlanJson(gpa, row.route);
-            defer gpa.free(plan);
-            try writer.print("      read-plan: {s}\n", .{plan});
-        }
-    }
-
-    if (total == 0) {
-        try writer.writeAll("no capture candidates for filter\n");
-    } else if (omitted != 0) {
-        try writer.print("omitted={d}\n", .{omitted});
-    }
-}
-
-fn writeCaptureCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, options: CaptureCandidateOptions, writer: anytype) !void {
-    try writer.writeByte('{');
-    try writeJsonField(writer, "kind", "coverage_capture_candidates", true);
-    try writer.writeAll("\"filter\":");
-    try writeRouteFilterJson(captureCandidateRouteFilter(options.filter), writer);
-    try writer.writeByte(',');
-    try writeJsonCountField(writer, "limit", options.limit, true);
-    try writeJsonBoolField(writer, "include_plans", options.include_plans, true);
-    try writeJsonField(writer, "rank", "generated bodyless GET/read routes missing L2 capture evidence", true);
-    try writer.writeAll("\"candidates\":[");
-
-    var visible: usize = 0;
-    var omitted: usize = 0;
-    var total: usize = 0;
-    var first = true;
-    for (routes) |row| {
-        if (!routeIsCaptureCandidate(row, options)) continue;
-        total += 1;
-        if (options.limit != 0 and visible >= options.limit) {
-            omitted += 1;
-            continue;
-        }
-        visible += 1;
-        try writeMaybeJsonComma(writer, &first);
-        try writeCaptureCandidateJson(gpa, row, options, writer);
-    }
-
-    try writer.writeAll("],");
-    try writeJsonCountField(writer, "total_candidates", total, true);
-    try writeJsonCountField(writer, "visible", visible, true);
-    try writeJsonCountField(writer, "omitted", omitted, false);
-    try writer.writeByte('}');
-    try writer.writeByte('\n');
-}
-
 fn buildFamilyReport(gpa: Allocator, rows: []const LevelTagEvidence, options: FamilyOptions) !FamilyReport {
     var families = std.ArrayList(FamilyEvidence).empty;
     errdefer families.deinit(gpa);
@@ -4072,241 +3910,24 @@ fn workplanDryRunCommand(gpa: Allocator, row: LevelTagEvidence, include_plans: b
     return try out.toOwnedSlice();
 }
 
-fn writeDryRunCandidatesText(gpa: Allocator, routes: []const CoverageRoute, options: DryRunCandidateOptions, writer: anytype) !void {
-    try writer.writeAll("Cloudio route dry-run candidates\n");
-    try writer.writeAll("rank: generated mutation routes missing dry-run review evidence\n");
-    try writer.print("filter provider={s}", .{options.filter.provider.name()});
-    if (options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
-    if (options.filter.family != .all) try writer.print(" family={s}", .{options.filter.family.name()});
-    if (options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
-    if (options.include_plans) try writer.writeAll(" plans=true");
-    try writer.writeAll(" limit=");
-    if (options.limit == 0) {
-        try writer.writeAll("all\n");
-    } else {
-        try writer.print("{d}\n", .{options.limit});
-    }
-
-    var visible: usize = 0;
-    var omitted: usize = 0;
-    var total: usize = 0;
-    var current_provider: ?[]const u8 = null;
-    var current_tag: ?[]const u8 = null;
-    for (routes) |row| {
-        if (!routeIsDryRunCandidate(row, options)) continue;
-        total += 1;
-        if (options.limit != 0 and visible >= options.limit) {
-            omitted += 1;
-            continue;
-        }
-        visible += 1;
-        if (current_provider == null or !std.mem.eql(u8, current_provider.?, row.route.provider.name())) {
-            current_provider = row.route.provider.name();
-            current_tag = null;
-            try writer.print("\n{s}\n", .{row.route.provider.name()});
-        }
-        if (current_tag == null or !std.mem.eql(u8, current_tag.?, row.route.tag)) {
-            current_tag = row.route.tag;
-            try writer.print("  {s}\n", .{row.route.tag});
-        }
-        try writer.print("    {s} {s} | support={s}", .{ row.route.method.name(), row.route.path_template, @tagName(row.route.support) });
-        if (row.route.operation_id) |id| try writer.print(" op={s}", .{id});
-        try writer.writeByte('\n');
-        try writer.writeAll("      required_path=");
-        try writeRequiredParamNamesText(writer, row.route.path_params);
-        try writer.writeAll(" required_query=");
-        try writeRequiredParamNamesText(writer, row.route.query_params);
-        try writer.writeAll(" required_header=");
-        try writeRequiredParamNamesText(writer, row.route.header_params);
-        try writer.print(" body_required={}", .{row.route.request_body.required});
-        try writer.print(" body_content_type={s}", .{primaryRequestBodyContentType(row.route.request_body) orelse "none"});
-        try writer.writeAll(" schema_refs=");
-        try writeStringList(writer, row.route.request_body.schema_refs);
-        try writer.writeByte('\n');
-        const command = try routeDryRunCommand(gpa, row.route);
-        defer gpa.free(command);
-        try writer.print("      dry-run: {s}\n", .{command});
-        if (options.include_plans) {
-            const plan = try routeDryRunPlanJson(gpa, row.route);
-            defer gpa.free(plan);
-            try writer.print("      dry-run-plan: {s}\n", .{plan});
-        }
-    }
-
-    if (total == 0) {
-        try writer.writeAll("no dry-run candidates for filter\n");
-    } else if (omitted != 0) {
-        try writer.print("omitted={d}\n", .{omitted});
-    }
-}
-
-fn writeDryRunCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, options: DryRunCandidateOptions, writer: anytype) !void {
-    try writer.writeByte('{');
-    try writeJsonField(writer, "kind", "coverage_dry_run_candidates", true);
-    try writer.writeAll("\"filter\":");
-    try writeRouteFilterJson(dryRunCandidateRouteFilter(options.filter), writer);
-    try writer.writeByte(',');
-    try writeJsonCountField(writer, "limit", options.limit, true);
-    try writeJsonBoolField(writer, "include_plans", options.include_plans, true);
-    try writeJsonField(writer, "rank", "generated mutation routes missing dry-run review evidence", true);
-    try writer.writeAll("\"candidates\":[");
-
-    var visible: usize = 0;
-    var omitted: usize = 0;
-    var total: usize = 0;
-    var first = true;
-    for (routes) |row| {
-        if (!routeIsDryRunCandidate(row, options)) continue;
-        total += 1;
-        if (options.limit != 0 and visible >= options.limit) {
-            omitted += 1;
-            continue;
-        }
-        visible += 1;
-        try writeMaybeJsonComma(writer, &first);
-        try writeDryRunCandidateJson(gpa, row, options, writer);
-    }
-
-    try writer.writeAll("],");
-    try writeJsonCountField(writer, "total_candidates", total, true);
-    try writeJsonCountField(writer, "visible", visible, true);
-    try writeJsonCountField(writer, "omitted", omitted, false);
-    try writer.writeByte('}');
-    try writer.writeByte('\n');
-}
-
 fn writeDryRunCandidateJson(gpa: Allocator, row: CoverageRoute, options: DryRunCandidateOptions, writer: anytype) !void {
-    const route = row.route;
-    const command = try routeDryRunCommand(gpa, route);
-    defer gpa.free(command);
-    try writer.writeByte('{');
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "tag", route.tag, true);
-    try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "path_template", route.path_template, true);
-    try writeJsonNullableStringField(writer, "operation_id", route.operation_id, true);
-    try writeJsonField(writer, "support", @tagName(route.support), true);
-    try writeJsonField(writer, "tests", row.tests, true);
-    try writer.writeAll("\"required_path_params\":");
-    try writeRequiredParamNamesJson(writer, route.path_params);
-    try writer.writeByte(',');
-    try writer.writeAll("\"required_query_params\":");
-    try writeRequiredParamNamesJson(writer, route.query_params);
-    try writer.writeByte(',');
-    try writer.writeAll("\"required_header_params\":");
-    try writeRequiredParamNamesJson(writer, route.header_params);
-    try writer.writeByte(',');
-    try writeJsonBoolField(writer, "body_required", route.request_body.required, true);
-    try writeJsonNullableStringField(writer, "body_content_type", primaryRequestBodyContentType(route.request_body), true);
-    try writer.writeAll("\"request_body_schema_refs\":");
-    try writeJsonStringArray(writer, route.request_body.schema_refs);
-    try writer.writeByte(',');
-    try writeJsonField(writer, "dry_run_command", command, options.include_plans);
-    if (options.include_plans) {
-        const plan = try routeDryRunPlanJson(gpa, route);
-        defer gpa.free(plan);
-        try writer.writeAll("\"dry_run_plan\":");
-        try writer.writeAll(plan);
-    }
-    try writer.writeByte('}');
+    try app_provider_coverage_candidates.writeDryRunCandidateJson(gpa, row, options, writer);
 }
 
 fn routeDryRunPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
-    const example = try route.exampleRequest(gpa);
-    defer example.deinit(gpa);
-    return try provider_dispatch.dryRunPlanJsonRequest(gpa, route, example.request);
+    return try app_provider_coverage_candidates.dryRunPlanJson(gpa, route);
 }
 
 fn writeCaptureCandidateJson(gpa: Allocator, row: CoverageRoute, options: CaptureCandidateOptions, writer: anytype) !void {
-    const route = row.route;
-    const command = try routeCaptureCommand(gpa, route);
-    defer gpa.free(command);
-    try writer.writeByte('{');
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "tag", route.tag, true);
-    try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "path_template", route.path_template, true);
-    try writeJsonNullableStringField(writer, "operation_id", route.operation_id, true);
-    try writeJsonField(writer, "support", @tagName(route.support), true);
-    try writeJsonField(writer, "tests", row.tests, true);
-    try writeJsonNullableStringField(writer, "pagination", routePaginationKind(route), true);
-    try writer.writeAll("\"required_path_params\":");
-    try writeRequiredParamNamesJson(writer, route.path_params);
-    try writer.writeByte(',');
-    try writer.writeAll("\"required_query_params\":");
-    try writeRequiredParamNamesJson(writer, route.query_params);
-    try writer.writeByte(',');
-    try writer.writeAll("\"required_header_params\":");
-    try writeRequiredParamNamesJson(writer, route.header_params);
-    try writer.writeByte(',');
-    try writeJsonField(writer, "capture_command", command, options.include_plans);
-    if (options.include_plans) {
-        const plan = try routeReadPlanJson(gpa, route);
-        defer gpa.free(plan);
-        try writer.writeAll("\"read_plan\":");
-        try writer.writeAll(plan);
-    }
-    try writer.writeByte('}');
+    try app_provider_coverage_candidates.writeCaptureCandidateJson(gpa, row, options, writer);
 }
 
 fn routeReadPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
-    const example = try route.exampleRequest(gpa);
-    defer example.deinit(gpa);
-    return try provider_dispatch.planRouteJsonRequest(gpa, route, example.request);
-}
-
-fn routeCaptureCommand(gpa: Allocator, route: provider_routes.Route) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    try writer.print("cloudio route capture {s}", .{route.provider.name()});
-    if (route.operation_id) |id| {
-        try writer.print(" --operation {s}", .{id});
-    } else {
-        try writer.print(" --method {s} --path {s}", .{ route.method.name(), route.path_template });
-    }
-    try writeRequiredParamPlaceholders(writer, "--path-param", route.path_params);
-    try writeRequiredParamPlaceholders(writer, "--query-param", route.query_params);
-    try writeRequiredParamPlaceholders(writer, "--header-param", route.header_params);
-    if (routePaginationKind(route) != null) try writer.writeAll(" --paginate");
-    return try out.toOwnedSlice();
-}
-
-fn routeDryRunCommand(gpa: Allocator, route: provider_routes.Route) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    try writer.print("cloudio route dry-run {s}", .{route.provider.name()});
-    if (route.operation_id) |id| {
-        try writer.print(" --operation {s}", .{id});
-    } else {
-        try writer.print(" --method {s} --path {s}", .{ route.method.name(), route.path_template });
-    }
-    try writeRequiredParamPlaceholders(writer, "--path-param", route.path_params);
-    try writeRequiredParamPlaceholders(writer, "--query-param", route.query_params);
-    try writeRequiredParamPlaceholders(writer, "--header-param", route.header_params);
-    if (primaryRequestBodyContentType(route.request_body)) |content_type| {
-        try writer.print(" --body-content-type {s}", .{content_type});
-    }
-    return try out.toOwnedSlice();
-}
-
-fn primaryRequestBodyContentType(body: provider_routes.RequestBody) ?[]const u8 {
-    if (body.content_types.len == 0) return null;
-    return body.content_types[0];
+    return try app_provider_coverage_candidates.readPlanJson(gpa, route);
 }
 
 fn routePaginationKind(route: provider_routes.Route) ?[]const u8 {
-    if (app_provider_route_capture.routeSupportsPageQuery(route)) return "page";
-    if (app_provider_route_capture.routeSupportsCursorQuery(route)) return "cursor";
-    return null;
-}
-
-fn writeRequiredParamPlaceholders(writer: anytype, option: []const u8, params: []const provider_routes.RouteParam) !void {
-    for (params) |param| {
-        if (!param.required) continue;
-        try writer.print(" {s} {s}=<{s}>", .{ option, param.name, param.name });
-    }
+    return app_provider_coverage_candidates.paginationKind(route);
 }
 
 fn writeRequiredParamNamesText(writer: anytype, params: []const provider_routes.RouteParam) !void {
@@ -4903,12 +4524,7 @@ fn updateDryRunLevelEvidence(evidence: *LevelProviderEvidence, row: CoverageRout
 }
 
 fn hasGeneratedDryRunPolicyEvidence(row: CoverageRoute) bool {
-    const route = row.route;
-    if (!std.mem.eql(u8, route.provider.name(), "cloudflare")) return false;
-    if (route.deprecated or !route.isRoutable()) return false;
-    if (!route.isDryRunMutation()) return false;
-    if (route.support != .unsafe_mutation) return false;
-    return true;
+    return app_provider_coverage_candidates.hasGeneratedDryRunPolicyEvidence(row);
 }
 
 fn hasCoverageEvidence(tests: []const u8) bool {
