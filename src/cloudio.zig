@@ -35,6 +35,7 @@ pub const app = struct {
     pub const overview = @import("app_overview");
     pub const projects = @import("app_projects");
     pub const provider_list = @import("app_provider_list");
+    pub const provider_coverage_actual_plan = @import("app_provider_coverage_actual_plan");
     pub const provider_route_capture_result = @import("app_provider_route_capture_result");
     pub const refresh = @import("app_refresh");
     pub const route_catalog = @import("app_route_catalog");
@@ -94,6 +95,7 @@ test "facade exposes stable integration modules" {
     _ = app.overview.Overview;
     _ = app.projects.Context;
     _ = app.provider_list.Options;
+    _ = app.provider_coverage_actual_plan.ActualCapturePlan;
     _ = app.provider_route_capture_result.CaptureMetadataView;
     _ = app.refresh.Selection;
     _ = app.route_catalog.Catalog;

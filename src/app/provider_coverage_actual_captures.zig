@@ -1,6 +1,7 @@
 const std = @import("std");
 const app_provider_coverage_candidates = @import("app_provider_coverage_candidates");
 const app_provider_coverage_actual_inputs = @import("app_provider_coverage_actual_inputs");
+const app_provider_coverage_actual_plan = @import("app_provider_coverage_actual_plan");
 const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
 const app_provider_route_capture = @import("app_provider_route_capture");
@@ -23,8 +24,6 @@ const writeMaybeJsonComma = app_provider_coverage_render.writeMaybeJsonComma;
 const writeShellArg = app_provider_coverage_render.writeShellArg;
 
 const default_capture_max_pages = 25;
-const actual_capture_load_limit: i64 = 100_000;
-const actual_capture_source_evidence_limit: i64 = 5000;
 
 pub const Paths = provider_routes.Paths;
 pub const ProviderFilter = provider_routes.ProviderFilter;
@@ -37,21 +36,17 @@ pub const Request = provider_routes.Request;
 pub const Auth = provider_dispatch.Auth;
 pub const CaptureOptions = app_provider_route_capture.CaptureOptions;
 
-const ActualRouteStatus = app_provider_coverage_actual_inputs.RouteStatus;
 const ActualCaptureState = app_provider_coverage_actual_inputs.CaptureState;
 const ActualCaptureSourceSummary = app_provider_coverage_actual_inputs.SourceSummary;
 const ActualCaptureHints = app_provider_coverage_actual_inputs.Hints;
 const ActualCaptureInputSource = app_provider_coverage_actual_inputs.InputSource;
 const ActualCaptureSourceBodyEvidence = app_provider_coverage_actual_inputs.SourceBodyEvidence;
+pub const ActualCaptureOptions = app_provider_coverage_actual_plan.ActualCaptureOptions;
+const ActualCapturePlan = app_provider_coverage_actual_plan.ActualCapturePlan;
+const ActualCaptureTotals = app_provider_coverage_actual_plan.ActualCaptureTotals;
+const loadActualCapturePlanFromFiles = app_provider_coverage_actual_plan.loadActualCapturePlanFromFiles;
+const loadActualCapturePlanFromText = app_provider_coverage_actual_plan.loadActualCapturePlanFromText;
 
-const loadActualCaptureCloudflareAccountHints = app_provider_coverage_actual_inputs.loadActualCaptureCloudflareAccountHints;
-const loadActualCaptureCloudflareZoneHints = app_provider_coverage_actual_inputs.loadActualCaptureCloudflareZoneHints;
-const loadActualCaptureCloudflareResourceHints = app_provider_coverage_actual_inputs.loadActualCaptureCloudflareResourceHints;
-const loadActualCaptureCloudflareInventoryHints = app_provider_coverage_actual_inputs.loadActualCaptureCloudflareInventoryHints;
-const loadActualCaptureHostingerHints = app_provider_coverage_actual_inputs.loadActualCaptureHostingerHints;
-const loadActualCaptureHostingerResourceHints = app_provider_coverage_actual_inputs.loadActualCaptureHostingerResourceHints;
-const loadActualCaptureHostingerInventoryHints = app_provider_coverage_actual_inputs.loadActualCaptureHostingerInventoryHints;
-const actualCaptureProviderDbValue = app_provider_coverage_actual_inputs.actualCaptureProviderDbValue;
 const actualCaptureRouteFilter = app_provider_coverage_actual_inputs.actualCaptureRouteFilter;
 const actualCaptureState = app_provider_coverage_actual_inputs.actualCaptureState;
 const actualRouteCaptureStatus = app_provider_coverage_actual_inputs.actualRouteCaptureStatus;
@@ -62,7 +57,6 @@ const actualCaptureMissingInputCount = app_provider_coverage_actual_inputs.actua
 const actualCapturePathParamHint = app_provider_coverage_actual_inputs.actualCapturePathParamHint;
 const actualCaptureHasQueryParamHint = app_provider_coverage_actual_inputs.actualCaptureHasQueryParamHint;
 const actualCaptureQueryParamHint = app_provider_coverage_actual_inputs.actualCaptureQueryParamHint;
-const actualCaptureSummarizeMissingInputSources = app_provider_coverage_actual_inputs.actualCaptureSummarizeMissingInputSources;
 const actualCaptureMissingInputSources = app_provider_coverage_actual_inputs.actualCaptureMissingInputSources;
 const actualCaptureFindRouteByOperationId = app_provider_coverage_actual_inputs.actualCaptureFindRouteByOperationId;
 const actualCaptureUnmappedSourceResult = app_provider_coverage_actual_inputs.actualCaptureUnmappedSourceResult;
@@ -74,13 +68,6 @@ const actualCaptureSourceResult = app_provider_coverage_actual_inputs.actualCapt
 const actualCaptureSourceNextAction = app_provider_coverage_actual_inputs.actualCaptureSourceNextAction;
 const actualCaptureSourceHintCount = app_provider_coverage_actual_inputs.actualCaptureSourceHintCount;
 
-pub const ActualCaptureOptions = struct {
-    filter: RouteFilter = .{},
-    limit: usize = 25,
-    include_plans: bool = false,
-    configured_domains: []const []const u8 = &.{},
-};
-
 pub const ActualReadyCaptureOptions = struct {
     filter: RouteFilter = .{},
     limit: usize = 25,
@@ -91,321 +78,192 @@ pub const ActualReadyCaptureOptions = struct {
     configured_domains: []const []const u8 = &.{},
 };
 
-const ActualCaptureTotals = struct {
-    official_read_routes: usize = 0,
-    ok_read_routes: usize = 0,
-    non_ok_read_routes: usize = 0,
-    missing_read_routes: usize = 0,
-    candidate_routes: usize = 0,
-    ready_candidates: usize = 0,
-    capture_events: i64 = 0,
-};
-
-const ActualCapturePlan = struct {
-    options: ActualCaptureOptions,
-    routes: CoverageRoutes,
-    captures: db_store.RouteCaptureEvidenceRows,
-    source_evidence: db_store.RouteSourceEvidenceRows,
-    cloudflare_accounts: ?db_store.CloudflareAccountRows,
-    cloudflare_zones: ?db_store.CloudflareZoneRows,
-    cloudflare_resources: ?db_store.CloudflareResourceHintRows,
-    cloudflare_inventory: ?db_store.CloudflareInventoryHintRows,
-    hostinger_vps: ?db_store.HostingerVpsRows,
-    hostinger_resources: ?db_store.HostingerResourceHintRows,
-    hostinger_inventory: ?db_store.HostingerInventoryHintRows,
-
-    fn deinit(self: *ActualCapturePlan, gpa: Allocator) void {
-        if (self.hostinger_inventory) |*rows| rows.deinit(gpa);
-        if (self.hostinger_resources) |*rows| rows.deinit(gpa);
-        if (self.hostinger_vps) |*rows| rows.deinit(gpa);
-        if (self.cloudflare_inventory) |*rows| rows.deinit(gpa);
-        if (self.cloudflare_resources) |*rows| rows.deinit(gpa);
-        if (self.cloudflare_zones) |*rows| rows.deinit(gpa);
-        if (self.cloudflare_accounts) |*rows| rows.deinit(gpa);
-        self.source_evidence.deinit(gpa);
-        self.captures.deinit(gpa);
-        self.routes.deinit(gpa);
+fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
+    const totals_value = plan.totals();
+    const source_summary = try plan.sourceSummary(gpa);
+    try writer.writeAll("Cloudio actual route capture plan\n");
+    try writer.writeAll("rank: official GET/read routes missing an OK route.capture audit event\n");
+    try writer.print("filter provider={s}", .{plan.options.filter.provider.name()});
+    if (plan.options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
+    if (plan.options.filter.family != .all) try writer.print(" family={s}", .{plan.options.filter.family.name()});
+    if (plan.options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
+    if (plan.options.include_plans) try writer.writeAll(" plans=true");
+    try writer.writeAll(" limit=");
+    if (plan.options.limit == 0) {
+        try writer.writeAll("all\n");
+    } else {
+        try writer.print("{d}\n", .{plan.options.limit});
     }
+    try writer.print("loaded_capture_operation_status_rows={d} loaded_source_evidence_rows={d} configured_domain_hints={d} cloudflare_account_hints={d} cloudflare_zone_hints={d} cloudflare_resource_hints={d} cloudflare_inventory_hints={d} hostinger_vps_hints={d} hostinger_resource_hints={d} hostinger_inventory_hints={d}\n", .{ plan.captures.items.len, plan.source_evidence.items.len, plan.options.configured_domains.len, plan.cloudflareAccountRows().len, plan.cloudflareZoneRows().len, plan.cloudflareResourceRows().len, plan.cloudflareInventoryRows().len, plan.hostingerVpsRows().len, plan.hostingerResourceRows().len, plan.hostingerInventoryRows().len });
+    try writer.print("summary official_read_routes={d} ok_read_routes={d} non_ok_read_routes={d} missing_read_routes={d} candidate_routes={d} ready_candidates={d} capture_events={d}\n", .{
+        totals_value.official_read_routes,
+        totals_value.ok_read_routes,
+        totals_value.non_ok_read_routes,
+        totals_value.missing_read_routes,
+        totals_value.candidate_routes,
+        totals_value.ready_candidates,
+        totals_value.capture_events,
+    });
+    try writer.print("source_summary total={d} captured_with_hints={d} captured_empty={d} captured_without_hints={d} captured_unknown_body={d} ready_to_capture={d} waiting_for_inputs={d} diagnostic_blocked={d} captured_error={d} no_official_source={d} not_in_catalog={d} unmapped={d} not_eligible={d} body_array={d} body_data_array={d} body_error_object={d} body_no_evidence={d} body_other={d}\n", .{
+        source_summary.total_sources,
+        source_summary.captured_with_hints,
+        source_summary.captured_empty,
+        source_summary.captured_without_hints,
+        source_summary.captured_unknown_body,
+        source_summary.ready_to_capture,
+        source_summary.waiting_for_inputs,
+        source_summary.diagnostic_blocked,
+        source_summary.captured_error,
+        source_summary.no_official_source,
+        source_summary.not_in_catalog,
+        source_summary.unmapped,
+        source_summary.not_eligible,
+        source_summary.body_array,
+        source_summary.body_data_array,
+        source_summary.body_error_object,
+        source_summary.body_no_evidence,
+        source_summary.body_other,
+    });
 
-    fn cloudflareAccountRows(self: ActualCapturePlan) []const db_store.CloudflareAccountRow {
-        if (self.cloudflare_accounts) |rows| return rows.items;
-        return &.{};
-    }
-
-    fn cloudflareZoneRows(self: ActualCapturePlan) []const db_store.CloudflareZoneRow {
-        if (self.cloudflare_zones) |rows| return rows.items;
-        return &.{};
-    }
-
-    fn cloudflareResourceRows(self: ActualCapturePlan) []const db_store.CloudflareResourceHintRow {
-        if (self.cloudflare_resources) |rows| return rows.items;
-        return &.{};
-    }
-
-    fn cloudflareInventoryRows(self: ActualCapturePlan) []const db_store.CloudflareInventoryHintRow {
-        if (self.cloudflare_inventory) |rows| return rows.items;
-        return &.{};
-    }
-
-    fn hostingerVpsRows(self: ActualCapturePlan) []const db_store.HostingerVpsRow {
-        if (self.hostinger_vps) |rows| return rows.items;
-        return &.{};
-    }
-
-    fn hostingerResourceRows(self: ActualCapturePlan) []const db_store.HostingerResourceHintRow {
-        if (self.hostinger_resources) |rows| return rows.items;
-        return &.{};
-    }
-
-    fn hostingerInventoryRows(self: ActualCapturePlan) []const db_store.HostingerInventoryHintRow {
-        if (self.hostinger_inventory) |rows| return rows.items;
-        return &.{};
-    }
-
-    fn hints(self: ActualCapturePlan) ActualCaptureHints {
-        return .{
-            .configured_domains = self.options.configured_domains,
-            .cloudflare_accounts = self.cloudflareAccountRows(),
-            .cloudflare_zones = self.cloudflareZoneRows(),
-            .cloudflare_resources = self.cloudflareResourceRows(),
-            .cloudflare_inventory = self.cloudflareInventoryRows(),
-            .hostinger_vps = self.hostingerVpsRows(),
-            .hostinger_resources = self.hostingerResourceRows(),
-            .hostinger_inventory = self.hostingerInventoryRows(),
-        };
-    }
-
-    fn totals(self: ActualCapturePlan) ActualCaptureTotals {
-        var out = ActualCaptureTotals{};
-        const hints_value = self.hints();
-        for (self.routes.items) |row| {
-            const status = actualCaptureState(row.route, self.captures.items) orelse continue;
-            out.official_read_routes += 1;
-            const route_status = actualRouteCaptureStatus(row.route.provider.name(), row.route.operation_id.?, self.captures.items);
-            out.capture_events += route_status.events;
-            switch (status) {
-                .ok => out.ok_read_routes += 1,
-                .missing => {
-                    out.missing_read_routes += 1;
-                    out.candidate_routes += 1;
-                    if (actualCaptureReady(row.route, hints_value)) out.ready_candidates += 1;
-                },
-                .non_ok => {
-                    out.non_ok_read_routes += 1;
-                    out.candidate_routes += 1;
-                    if (actualCaptureReady(row.route, hints_value)) out.ready_candidates += 1;
-                },
-            }
+    var visible: usize = 0;
+    var omitted: usize = 0;
+    var current_provider: ?[]const u8 = null;
+    var current_tag: ?[]const u8 = null;
+    const hints_value = plan.hints();
+    for (plan.routes.items) |row| {
+        const state = actualCaptureState(row.route, plan.captures.items) orelse continue;
+        if (state == .ok) continue;
+        if (plan.options.limit != 0 and visible >= plan.options.limit) {
+            omitted += 1;
+            continue;
         }
-        return out;
-    }
-
-    fn writeText(self: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
-        const totals_value = self.totals();
-        const source_summary = try self.sourceSummary(gpa);
-        try writer.writeAll("Cloudio actual route capture plan\n");
-        try writer.writeAll("rank: official GET/read routes missing an OK route.capture audit event\n");
-        try writer.print("filter provider={s}", .{self.options.filter.provider.name()});
-        if (self.options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
-        if (self.options.filter.family != .all) try writer.print(" family={s}", .{self.options.filter.family.name()});
-        if (self.options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
-        if (self.options.include_plans) try writer.writeAll(" plans=true");
-        try writer.writeAll(" limit=");
-        if (self.options.limit == 0) {
-            try writer.writeAll("all\n");
-        } else {
-            try writer.print("{d}\n", .{self.options.limit});
+        visible += 1;
+        const provider_name = row.route.provider.name();
+        if (current_provider == null or !std.mem.eql(u8, current_provider.?, provider_name)) {
+            current_provider = provider_name;
+            current_tag = null;
+            try writer.print("\n{s}\n", .{provider_name});
         }
-        try writer.print("loaded_capture_operation_status_rows={d} loaded_source_evidence_rows={d} configured_domain_hints={d} cloudflare_account_hints={d} cloudflare_zone_hints={d} cloudflare_resource_hints={d} cloudflare_inventory_hints={d} hostinger_vps_hints={d} hostinger_resource_hints={d} hostinger_inventory_hints={d}\n", .{ self.captures.items.len, self.source_evidence.items.len, self.options.configured_domains.len, self.cloudflareAccountRows().len, self.cloudflareZoneRows().len, self.cloudflareResourceRows().len, self.cloudflareInventoryRows().len, self.hostingerVpsRows().len, self.hostingerResourceRows().len, self.hostingerInventoryRows().len });
-        try writer.print("summary official_read_routes={d} ok_read_routes={d} non_ok_read_routes={d} missing_read_routes={d} candidate_routes={d} ready_candidates={d} capture_events={d}\n", .{
-            totals_value.official_read_routes,
-            totals_value.ok_read_routes,
-            totals_value.non_ok_read_routes,
-            totals_value.missing_read_routes,
-            totals_value.candidate_routes,
-            totals_value.ready_candidates,
-            totals_value.capture_events,
+        if (current_tag == null or !std.mem.eql(u8, current_tag.?, row.route.tag)) {
+            current_tag = row.route.tag;
+            try writer.print("  {s}\n", .{row.route.tag});
+        }
+        const route_status = actualRouteCaptureStatus(provider_name, row.route.operation_id.?, plan.captures.items);
+        try writer.print("    {s} {s} | state={s} support={s} op={s} events={d}", .{
+            row.route.method.name(),
+            row.route.path_template,
+            state.name(),
+            @tagName(row.route.support),
+            row.route.operation_id.?,
+            route_status.events,
         });
-        try writer.print("source_summary total={d} captured_with_hints={d} captured_empty={d} captured_without_hints={d} captured_unknown_body={d} ready_to_capture={d} waiting_for_inputs={d} diagnostic_blocked={d} captured_error={d} no_official_source={d} not_in_catalog={d} unmapped={d} not_eligible={d} body_array={d} body_data_array={d} body_error_object={d} body_no_evidence={d} body_other={d}\n", .{
-            source_summary.total_sources,
-            source_summary.captured_with_hints,
-            source_summary.captured_empty,
-            source_summary.captured_without_hints,
-            source_summary.captured_unknown_body,
-            source_summary.ready_to_capture,
-            source_summary.waiting_for_inputs,
-            source_summary.diagnostic_blocked,
-            source_summary.captured_error,
-            source_summary.no_official_source,
-            source_summary.not_in_catalog,
-            source_summary.unmapped,
-            source_summary.not_eligible,
-            source_summary.body_array,
-            source_summary.body_data_array,
-            source_summary.body_error_object,
-            source_summary.body_no_evidence,
-            source_summary.body_other,
-        });
-
-        var visible: usize = 0;
-        var omitted: usize = 0;
-        var current_provider: ?[]const u8 = null;
-        var current_tag: ?[]const u8 = null;
-        const hints_value = self.hints();
-        for (self.routes.items) |row| {
-            const state = actualCaptureState(row.route, self.captures.items) orelse continue;
-            if (state == .ok) continue;
-            if (self.options.limit != 0 and visible >= self.options.limit) {
-                omitted += 1;
-                continue;
-            }
-            visible += 1;
-            const provider_name = row.route.provider.name();
-            if (current_provider == null or !std.mem.eql(u8, current_provider.?, provider_name)) {
-                current_provider = provider_name;
-                current_tag = null;
-                try writer.print("\n{s}\n", .{provider_name});
-            }
-            if (current_tag == null or !std.mem.eql(u8, current_tag.?, row.route.tag)) {
-                current_tag = row.route.tag;
-                try writer.print("  {s}\n", .{row.route.tag});
-            }
-            const route_status = actualRouteCaptureStatus(provider_name, row.route.operation_id.?, self.captures.items);
-            try writer.print("    {s} {s} | state={s} support={s} op={s} events={d}", .{
-                row.route.method.name(),
-                row.route.path_template,
-                state.name(),
-                @tagName(row.route.support),
-                row.route.operation_id.?,
-                route_status.events,
-            });
-            if (route_status.latest_at.len != 0) try writer.print(" latest={s}", .{route_status.latest_at});
-            try writer.writeByte('\n');
-            try writer.writeAll("      required_path=");
-            try writeRequiredParamNamesText(writer, row.route.path_params);
-            try writer.writeAll(" required_query=");
-            try writeRequiredParamNamesText(writer, row.route.query_params);
-            try writer.writeAll(" required_header=");
-            try writeRequiredParamNamesText(writer, row.route.header_params);
-            try writer.print(" pagination={s}\n", .{routePaginationKind(row.route) orelse "none"});
-            try writer.print("      ready={s} live_read_supported={s} missing_inputs=", .{
-                if (actualCaptureReady(row.route, hints_value)) "true" else "false",
-                if (provider_capabilities.routeLiveReadSupported(row.route)) "true" else "false",
-            });
-            try writeActualMissingInputsText(writer, row.route, hints_value);
-            try writer.writeByte('\n');
-            if (actualCaptureMissingInputCount(row.route, hints_value) != 0) {
-                try writeActualMissingInputSourcesText(gpa, writer, row.route, self.routes.items, self.captures.items, self.source_evidence.items, hints_value);
-            }
-            const command = try actualCaptureCommand(gpa, row.route, hints_value);
-            defer gpa.free(command);
-            try writer.print("      capture: {s}\n", .{command});
-            if (self.options.include_plans) {
-                const plan = try routeReadPlanJson(gpa, row.route);
-                defer gpa.free(plan);
-                try writer.print("      read-plan: {s}\n", .{plan});
-            }
-        }
-
-        if (totals_value.candidate_routes == 0) {
-            try writer.writeAll("no actual capture gaps for filter\n");
-        } else if (omitted != 0) {
-            try writer.print("omitted={d}\n", .{omitted});
-        }
-    }
-
-    fn writeJson(self: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
-        const totals_value = self.totals();
-        const source_summary = try self.sourceSummary(gpa);
-        try writer.writeByte('{');
-        try writeJsonField(writer, "kind", "coverage_actual_captures", true);
-        try writer.writeAll("\"filter\":");
-        try writeRouteFilterJson(actualCaptureRouteFilter(self.options.filter), writer);
-        try writer.writeByte(',');
-        try writeJsonCountField(writer, "limit", self.options.limit, true);
-        try writeJsonBoolField(writer, "include_plans", self.options.include_plans, true);
-        try writeJsonField(writer, "rank", "official GET/read routes missing an OK route.capture audit event", true);
-        try writeJsonCountField(writer, "loaded_capture_operation_status_rows", self.captures.items.len, true);
-        try writeJsonCountField(writer, "loaded_source_evidence_rows", self.source_evidence.items.len, true);
-        try writeJsonCountField(writer, "configured_domain_hints", self.options.configured_domains.len, true);
-        try writeJsonCountField(writer, "cloudflare_account_hints", self.cloudflareAccountRows().len, true);
-        try writeJsonCountField(writer, "cloudflare_zone_hints", self.cloudflareZoneRows().len, true);
-        try writeJsonCountField(writer, "cloudflare_resource_hints", self.cloudflareResourceRows().len, true);
-        try writeJsonCountField(writer, "cloudflare_inventory_hints", self.cloudflareInventoryRows().len, true);
-        try writeJsonCountField(writer, "hostinger_vps_hints", self.hostingerVpsRows().len, true);
-        try writeJsonCountField(writer, "hostinger_resource_hints", self.hostingerResourceRows().len, true);
-        try writeJsonCountField(writer, "hostinger_inventory_hints", self.hostingerInventoryRows().len, true);
-        try writer.writeAll("\"summary\":");
-        try writeActualCaptureTotalsJson(totals_value, writer);
-        try writer.writeAll(",\"source_summary\":");
-        try writeActualCaptureSourceSummaryJson(source_summary, writer);
-        try writer.writeAll(",\"candidates\":[");
-
-        var visible: usize = 0;
-        var omitted: usize = 0;
-        var first = true;
-        const hints_value = self.hints();
-        for (self.routes.items) |row| {
-            const state = actualCaptureState(row.route, self.captures.items) orelse continue;
-            if (state == .ok) continue;
-            if (self.options.limit != 0 and visible >= self.options.limit) {
-                omitted += 1;
-                continue;
-            }
-            visible += 1;
-            try writeMaybeJsonComma(writer, &first);
-            try writeActualCaptureCandidateJson(gpa, row, state, self.routes.items, self.captures.items, self.source_evidence.items, hints_value, self.options, writer);
-        }
-
-        try writer.writeAll("],");
-        try writeJsonCountField(writer, "visible", visible, true);
-        try writeJsonCountField(writer, "omitted", omitted, false);
-        try writer.writeByte('}');
+        if (route_status.latest_at.len != 0) try writer.print(" latest={s}", .{route_status.latest_at});
         try writer.writeByte('\n');
-    }
-
-    fn sourceSummary(self: ActualCapturePlan, gpa: Allocator) !ActualCaptureSourceSummary {
-        var out = ActualCaptureSourceSummary{};
-        const hints_value = self.hints();
-        for (self.routes.items) |row| {
-            const state = actualCaptureState(row.route, self.captures.items) orelse continue;
-            if (state == .ok) continue;
-            try actualCaptureSummarizeMissingInputSources(gpa, &out, row.route, self.routes.items, self.captures.items, self.source_evidence.items, hints_value);
+        try writer.writeAll("      required_path=");
+        try writeRequiredParamNamesText(writer, row.route.path_params);
+        try writer.writeAll(" required_query=");
+        try writeRequiredParamNamesText(writer, row.route.query_params);
+        try writer.writeAll(" required_header=");
+        try writeRequiredParamNamesText(writer, row.route.header_params);
+        try writer.print(" pagination={s}\n", .{routePaginationKind(row.route) orelse "none"});
+        try writer.print("      ready={s} live_read_supported={s} missing_inputs=", .{
+            if (actualCaptureReady(row.route, hints_value)) "true" else "false",
+            if (provider_capabilities.routeLiveReadSupported(row.route)) "true" else "false",
+        });
+        try writeActualMissingInputsText(writer, row.route, hints_value);
+        try writer.writeByte('\n');
+        if (actualCaptureMissingInputCount(row.route, hints_value) != 0) {
+            try writeActualMissingInputSourcesText(gpa, writer, row.route, plan.routes.items, plan.captures.items, plan.source_evidence.items, hints_value);
         }
-        return out;
+        const command = try actualCaptureCommand(gpa, row.route, hints_value);
+        defer gpa.free(command);
+        try writer.print("      capture: {s}\n", .{command});
+        if (plan.options.include_plans) {
+            const route_plan = try routeReadPlanJson(gpa, row.route);
+            defer gpa.free(route_plan);
+            try writer.print("      read-plan: {s}\n", .{route_plan});
+        }
     }
-};
 
-fn loadRoutes(io: Io, gpa: Allocator, paths: Paths, filter: RouteFilter) !CoverageRoutes {
-    return try app_provider_coverage_routes.loadRoutes(io, gpa, paths, filter);
+    if (totals_value.candidate_routes == 0) {
+        try writer.writeAll("no actual capture gaps for filter\n");
+    } else if (omitted != 0) {
+        try writer.print("omitted={d}\n", .{omitted});
+    }
 }
 
-fn loadRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, filter: RouteFilter) !CoverageRoutes {
-    return try app_provider_coverage_routes.loadRoutesFromText(gpa, cloudflare_text, hostinger_text, filter);
+fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
+    const totals_value = plan.totals();
+    const source_summary = try plan.sourceSummary(gpa);
+    try writer.writeByte('{');
+    try writeJsonField(writer, "kind", "coverage_actual_captures", true);
+    try writer.writeAll("\"filter\":");
+    try writeRouteFilterJson(actualCaptureRouteFilter(plan.options.filter), writer);
+    try writer.writeByte(',');
+    try writeJsonCountField(writer, "limit", plan.options.limit, true);
+    try writeJsonBoolField(writer, "include_plans", plan.options.include_plans, true);
+    try writeJsonField(writer, "rank", "official GET/read routes missing an OK route.capture audit event", true);
+    try writeJsonCountField(writer, "loaded_capture_operation_status_rows", plan.captures.items.len, true);
+    try writeJsonCountField(writer, "loaded_source_evidence_rows", plan.source_evidence.items.len, true);
+    try writeJsonCountField(writer, "configured_domain_hints", plan.options.configured_domains.len, true);
+    try writeJsonCountField(writer, "cloudflare_account_hints", plan.cloudflareAccountRows().len, true);
+    try writeJsonCountField(writer, "cloudflare_zone_hints", plan.cloudflareZoneRows().len, true);
+    try writeJsonCountField(writer, "cloudflare_resource_hints", plan.cloudflareResourceRows().len, true);
+    try writeJsonCountField(writer, "cloudflare_inventory_hints", plan.cloudflareInventoryRows().len, true);
+    try writeJsonCountField(writer, "hostinger_vps_hints", plan.hostingerVpsRows().len, true);
+    try writeJsonCountField(writer, "hostinger_resource_hints", plan.hostingerResourceRows().len, true);
+    try writeJsonCountField(writer, "hostinger_inventory_hints", plan.hostingerInventoryRows().len, true);
+    try writer.writeAll("\"summary\":");
+    try writeActualCaptureTotalsJson(totals_value, writer);
+    try writer.writeAll(",\"source_summary\":");
+    try writeActualCaptureSourceSummaryJson(source_summary, writer);
+    try writer.writeAll(",\"candidates\":[");
+
+    var visible: usize = 0;
+    var omitted: usize = 0;
+    var first = true;
+    const hints_value = plan.hints();
+    for (plan.routes.items) |row| {
+        const state = actualCaptureState(row.route, plan.captures.items) orelse continue;
+        if (state == .ok) continue;
+        if (plan.options.limit != 0 and visible >= plan.options.limit) {
+            omitted += 1;
+            continue;
+        }
+        visible += 1;
+        try writeMaybeJsonComma(writer, &first);
+        try writeActualCaptureCandidateJson(gpa, row, state, plan.routes.items, plan.captures.items, plan.source_evidence.items, hints_value, plan.options, writer);
+    }
+
+    try writer.writeAll("],");
+    try writeJsonCountField(writer, "visible", visible, true);
+    try writeJsonCountField(writer, "omitted", omitted, false);
+    try writer.writeByte('}');
+    try writer.writeByte('\n');
 }
 
 pub fn writeActualCapturesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, options: ActualCaptureOptions, writer: anytype) !void {
     var plan = try loadActualCapturePlanFromFiles(io, gpa, paths, db, options);
     defer plan.deinit(gpa);
-    try plan.writeText(gpa, writer);
+    try writeActualCapturePlanText(plan, gpa, writer);
 }
 
 pub fn writeActualCapturesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, options: ActualCaptureOptions, writer: anytype) !void {
     var plan = try loadActualCapturePlanFromFiles(io, gpa, paths, db, options);
     defer plan.deinit(gpa);
-    try plan.writeJson(gpa, writer);
+    try writeActualCapturePlanJson(plan, gpa, writer);
 }
 
 pub fn writeActualCapturesTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, db: *Db, options: ActualCaptureOptions, writer: anytype) !void {
     var plan = try loadActualCapturePlanFromText(gpa, cloudflare_text, hostinger_text, db, options);
     defer plan.deinit(gpa);
-    try plan.writeText(gpa, writer);
+    try writeActualCapturePlanText(plan, gpa, writer);
 }
 
 pub fn writeActualCapturesJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, db: *Db, options: ActualCaptureOptions, writer: anytype) !void {
     var plan = try loadActualCapturePlanFromText(gpa, cloudflare_text, hostinger_text, db, options);
     defer plan.deinit(gpa);
-    try plan.writeJson(gpa, writer);
+    try writeActualCapturePlanJson(plan, gpa, writer);
 }
 
 pub fn actualReadyCaptureJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, auth: Auth, options: ActualReadyCaptureOptions) ![]u8 {
@@ -430,90 +288,6 @@ pub fn actualReadyCaptureJsonFromText(io: Io, gpa: Allocator, cloudflare_text: [
     });
     defer plan.deinit(gpa);
     return try actualReadyCaptureJson(io, gpa, db, auth, plan, options);
-}
-
-fn loadActualCapturePlanFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, options: ActualCaptureOptions) !ActualCapturePlan {
-    var routes = try loadRoutes(io, gpa, paths, actualCaptureRouteFilter(options.filter));
-    errdefer routes.deinit(gpa);
-    var captures = try db.routeCaptureEvidence(gpa, .{
-        .provider = actualCaptureProviderDbValue(options.filter.provider),
-        .limit = actual_capture_load_limit,
-    });
-    errdefer captures.deinit(gpa);
-    var source_evidence = try db.routeSourceEvidence(gpa, .{
-        .provider = actualCaptureProviderDbValue(options.filter.provider),
-        .limit = actual_capture_source_evidence_limit,
-    });
-    errdefer source_evidence.deinit(gpa);
-    var cloudflare_accounts = try loadActualCaptureCloudflareAccountHints(gpa, db, options.filter.provider);
-    errdefer if (cloudflare_accounts) |*rows| rows.deinit(gpa);
-    var cloudflare_zones = try loadActualCaptureCloudflareZoneHints(gpa, db, options.filter.provider);
-    errdefer if (cloudflare_zones) |*rows| rows.deinit(gpa);
-    var cloudflare_resources = try loadActualCaptureCloudflareResourceHints(gpa, db, options.filter.provider);
-    errdefer if (cloudflare_resources) |*rows| rows.deinit(gpa);
-    var cloudflare_inventory = try loadActualCaptureCloudflareInventoryHints(gpa, db, options.filter.provider);
-    errdefer if (cloudflare_inventory) |*rows| rows.deinit(gpa);
-    var hostinger_vps = try loadActualCaptureHostingerHints(gpa, db, options.filter.provider);
-    errdefer if (hostinger_vps) |*rows| rows.deinit(gpa);
-    var hostinger_resources = try loadActualCaptureHostingerResourceHints(gpa, db, options.filter.provider);
-    errdefer if (hostinger_resources) |*rows| rows.deinit(gpa);
-    var hostinger_inventory = try loadActualCaptureHostingerInventoryHints(gpa, db, options.filter.provider);
-    errdefer if (hostinger_inventory) |*rows| rows.deinit(gpa);
-    return .{
-        .options = options,
-        .routes = routes,
-        .captures = captures,
-        .source_evidence = source_evidence,
-        .cloudflare_accounts = cloudflare_accounts,
-        .cloudflare_zones = cloudflare_zones,
-        .cloudflare_resources = cloudflare_resources,
-        .cloudflare_inventory = cloudflare_inventory,
-        .hostinger_vps = hostinger_vps,
-        .hostinger_resources = hostinger_resources,
-        .hostinger_inventory = hostinger_inventory,
-    };
-}
-
-fn loadActualCapturePlanFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, db: *Db, options: ActualCaptureOptions) !ActualCapturePlan {
-    var routes = try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, actualCaptureRouteFilter(options.filter));
-    errdefer routes.deinit(gpa);
-    var captures = try db.routeCaptureEvidence(gpa, .{
-        .provider = actualCaptureProviderDbValue(options.filter.provider),
-        .limit = actual_capture_load_limit,
-    });
-    errdefer captures.deinit(gpa);
-    var source_evidence = try db.routeSourceEvidence(gpa, .{
-        .provider = actualCaptureProviderDbValue(options.filter.provider),
-        .limit = actual_capture_source_evidence_limit,
-    });
-    errdefer source_evidence.deinit(gpa);
-    var cloudflare_accounts = try loadActualCaptureCloudflareAccountHints(gpa, db, options.filter.provider);
-    errdefer if (cloudflare_accounts) |*rows| rows.deinit(gpa);
-    var cloudflare_zones = try loadActualCaptureCloudflareZoneHints(gpa, db, options.filter.provider);
-    errdefer if (cloudflare_zones) |*rows| rows.deinit(gpa);
-    var cloudflare_resources = try loadActualCaptureCloudflareResourceHints(gpa, db, options.filter.provider);
-    errdefer if (cloudflare_resources) |*rows| rows.deinit(gpa);
-    var cloudflare_inventory = try loadActualCaptureCloudflareInventoryHints(gpa, db, options.filter.provider);
-    errdefer if (cloudflare_inventory) |*rows| rows.deinit(gpa);
-    var hostinger_vps = try loadActualCaptureHostingerHints(gpa, db, options.filter.provider);
-    errdefer if (hostinger_vps) |*rows| rows.deinit(gpa);
-    var hostinger_resources = try loadActualCaptureHostingerResourceHints(gpa, db, options.filter.provider);
-    errdefer if (hostinger_resources) |*rows| rows.deinit(gpa);
-    var hostinger_inventory = try loadActualCaptureHostingerInventoryHints(gpa, db, options.filter.provider);
-    errdefer if (hostinger_inventory) |*rows| rows.deinit(gpa);
-    return .{
-        .options = options,
-        .routes = routes,
-        .captures = captures,
-        .source_evidence = source_evidence,
-        .cloudflare_accounts = cloudflare_accounts,
-        .cloudflare_zones = cloudflare_zones,
-        .cloudflare_resources = cloudflare_resources,
-        .cloudflare_inventory = cloudflare_inventory,
-        .hostinger_vps = hostinger_vps,
-        .hostinger_resources = hostinger_resources,
-        .hostinger_inventory = hostinger_inventory,
-    };
 }
 
 fn writeActualMissingInputsText(writer: anytype, route: provider_routes.Route, hints: ActualCaptureHints) !void {
