@@ -471,6 +471,15 @@ fn appendInventoryRowsFromValue(gpa: Allocator, rows: *std.ArrayList(InventoryRo
                 "user",
                 "organizations",
                 "configuration",
+                "parameters",
+                "components",
+                "component_values",
+                "rate_plan",
+                "zone",
+                "app",
+                "environments",
+                "position",
+                "configurations",
             })) {
                 return;
             } else if (object.get("rules")) |nested| {
@@ -564,11 +573,11 @@ fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: 
     errdefer if (related_id) |value| gpa.free(value);
     const flag = try resourceFlag(gpa, item);
     errdefer if (flag) |value| gpa.free(value);
-    const created_at = try dupeOptional(gpa, firstStringField(item, &.{ "created_at", "created_on", "created", "created_time" }));
+    const created_at = try dupeOptional(gpa, firstStringField(item, &.{ "created_at", "created_on", "created", "created_time", "created_date", "current_period_start" }));
     errdefer if (created_at) |value| gpa.free(value);
     const updated_at = try dupeOptional(gpa, firstStringField(item, &.{ "updated_at", "updated_on", "modified_on", "modified", "last_updated", "last_seen", "last_active_at", "last_authenticated_at", "checked_time", "last_transferred_time" }));
     errdefer if (updated_at) |value| gpa.free(value);
-    const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expiration", "not_after", "expires" }));
+    const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expiration", "not_after", "expires", "current_period_end" }));
     errdefer if (expires_at) |value| gpa.free(value);
     const raw = try core_json.stringifyValue(gpa, item);
     errdefer gpa.free(raw);
@@ -727,6 +736,7 @@ fn resourceName(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "name",
         "hostname",
         "domain",
+        "common_name",
         "title",
         "zone_name",
         "account_name",
@@ -737,6 +747,7 @@ fn resourceName(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "description",
         "comment",
         "title",
+        "ref",
         "Name",
         "email",
         "aud",
@@ -789,11 +800,14 @@ fn resourceType(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "decision",
         "protocol",
         "service",
+        "provider",
         "scheme",
         "mechanism",
         "ui_readable_name",
         "key_type",
         "algo",
+        "frequency",
+        "currency",
         "zone_mode",
         "access",
         "target",
@@ -805,7 +819,7 @@ fn resourceType(gpa: Allocator, item: std.json.Value) !?[]u8 {
 }
 
 fn resourceDomain(gpa: Allocator, item: std.json.Value, name: ?[]const u8, scope: ?[]const u8, scope_id: ?[]const u8) !?[]u8 {
-    const fields = [_][]const u8{ "domain", "domain_name", "hostname", "zone_name", "host", "address", "target" };
+    const fields = [_][]const u8{ "domain", "domain_name", "hostname", "common_name", "zone_name", "host", "address", "target" };
     for (fields) |field_name| {
         if (core_json.fieldString(item, field_name)) |value| {
             if (isDomainLike(value)) return try gpa.dupe(u8, value);
@@ -851,6 +865,9 @@ fn resourceZoneId(gpa: Allocator, item: std.json.Value, scope: ?[]const u8, scop
 }
 
 fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
+    if (core_json.field(item, "locked_on_deployment") != null) {
+        if (core_json.fieldAnyString(gpa, item, "expression")) |value| return value;
+    }
     const fields = [_][]const u8{
         "ruleset_id",
         "rule_id",
@@ -883,7 +900,17 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "profile_id",
         "dataset_id",
         "ray_id",
+        "subscription_id",
+        "plan_id",
+        "rate_plan_id",
+        "legacy_id",
+        "custom_csr_id",
+        "environment_id",
+        "account_tag",
+        "install_id",
+        "http_application_id",
         "version",
+        "ref",
         "phase",
         "expression",
         "endpoint",
@@ -914,6 +941,8 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "sender",
         "email",
         "username",
+        "price",
+        "duration",
     };
     for (fields) |field_name| {
         if (core_json.fieldAnyString(gpa, item, field_name)) |value| return value;
@@ -960,6 +989,12 @@ fn resourceFlag(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldBool(item, "deleted")) |deleted| return try gpa.dupe(u8, if (deleted) "deleted" else "not_deleted");
     if (core_json.fieldBool(item, "temporary")) |temporary| return try gpa.dupe(u8, if (temporary) "temporary" else "persistent");
     if (core_json.fieldBool(item, "required")) |required| return try gpa.dupe(u8, if (required) "required" else "optional");
+    if (core_json.fieldBool(item, "is_subscribed")) |subscribed| return try gpa.dupe(u8, if (subscribed) "subscribed" else "not_subscribed");
+    if (core_json.fieldBool(item, "can_subscribe")) |allowed| return try gpa.dupe(u8, if (allowed) "can_subscribe" else "cannot_subscribe");
+    if (core_json.fieldBool(item, "externally_managed")) |managed| return try gpa.dupe(u8, if (managed) "externally_managed" else "cloudflare_managed");
+    if (core_json.fieldBool(item, "hold")) |hold| return try gpa.dupe(u8, if (hold) "hold" else "not_held");
+    if (core_json.fieldBool(item, "include_subdomains")) |include| return try gpa.dupe(u8, if (include) "include_subdomains" else "zone_only");
+    if (core_json.fieldBool(item, "locked_on_deployment")) |locked| return try gpa.dupe(u8, if (locked) "locked_on_deployment" else "deployment_editable");
     return null;
 }
 
@@ -1045,6 +1080,11 @@ fn isDomainLike(value: []const u8) bool {
 }
 
 fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    if (core_json.fieldString(item, "target")) |target| {
+        if (std.mem.eql(u8, target, "ip") or std.mem.eql(u8, target, "ip_range")) {
+            if (core_json.fieldAnyString(gpa, item, "value")) |value| return value;
+        }
+    }
     const fields = [_][]const u8{
         "id",
         "uid",
@@ -1068,15 +1108,24 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "client_certificate_id",
         "detection_id",
         "expression_id",
+        "subscription_id",
+        "plan_id",
+        "rate_plan_id",
+        "legacy_id",
+        "custom_csr_id",
+        "environment_id",
         "uuid",
         "dataset_id",
         "dataset",
+        "ref",
         "hostname",
+        "common_name",
         "Name",
         "key",
         "network",
         "cidr",
         "prefix",
+        "host",
         "name",
         "tag",
         "address",
@@ -1110,7 +1159,25 @@ fn fallbackInventoryResourceId(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.field(item, "primary_ns") != null) return try gpa.dupe(u8, "soa");
     if (core_json.field(item, "DNSKEY") != null) return try gpa.dupe(u8, "dnskey");
     if (core_json.field(item, "SigningKey") != null) return try gpa.dupe(u8, "signing-key");
+    if (isArgoAnalyticsShape(item)) return try gpa.dupe(u8, "argo-analytics");
+    if (isZoneHoldShape(item)) return try gpa.dupe(u8, "zone-hold");
+    if (core_json.field(item, "environments") != null) return try gpa.dupe(u8, "zone-environments");
+    if (core_json.field(item, "component_values") != null) return try gpa.dupe(u8, "subscription-components");
+    if (core_json.field(item, "components") != null) return try gpa.dupe(u8, "plan-components");
     return null;
+}
+
+fn isArgoAnalyticsShape(item: std.json.Value) bool {
+    return core_json.field(item, "traffic") != null or
+        core_json.field(item, "latency") != null or
+        core_json.field(item, "colo_id") != null or
+        core_json.field(item, "colo_name") != null;
+}
+
+fn isZoneHoldShape(item: std.json.Value) bool {
+    return core_json.field(item, "hold") != null and
+        (core_json.field(item, "hold_after") != null or
+            core_json.field(item, "include_subdomains") != null);
 }
 
 fn isDnsAnalyticsShape(item: std.json.Value) bool {
@@ -1521,6 +1588,70 @@ test "parses typed Cloudflare account IAM inventory shapes" {
     try std.testing.expectEqualStrings("2fa_enabled", rows.items[17].flag orelse "");
     try std.testing.expectEqualStrings("org-1", rows.items[18].resource_id);
     try std.testing.expectEqualStrings("active", rows.items[18].status orelse "");
+}
+
+test "parses typed Cloudflare zone lifecycle and cache inventory shapes" {
+    const allocator = std.testing.allocator;
+    var rows = try parseInventoryRows(allocator, "cloudflare-zone-lifecycle", "zone", "zone-1",
+        \\{"result":[
+        \\  {"id":"free","legacy_id":"free_legacy","name":"Free Website","price":0,"currency":"USD","frequency":"monthly","is_subscribed":false,"can_subscribe":true},
+        \\  {"id":"pro","name":"Pro Website","currency":"USD","frequency":"monthly","duration":30,"components":[{"name":"page_rules","value":20,"price":5}]},
+        \\  {"id":"sub-1","state":"active","currency":"USD","frequency":"monthly","current_period_start":"2026-06-01T00:00:00Z","current_period_end":"2026-07-01T00:00:00Z","rate_plan":{"id":"pro","name":"Pro Plan","frequency":"monthly"},"zone":{"id":"zone-1","name":"plosca.ru"},"component_values":[{"name":"page_rules","value":20}]},
+        \\  {"id":"csr-1","common_name":"*.plosca.ru","key_type":"rsa2048","created_at":"2026-06-17T00:00:00Z","sans":["plosca.ru","*.plosca.ru"]},
+        \\  {"name":"maintenance.html","description":"Maintenance page","url":"https://assets.example/maintenance.html","last_updated":"2026-06-17T01:00:00Z"},
+        \\  {"id":"cc-rule-1","description":"S3 origin","enabled":true,"provider":"aws_s3","expression":"http.host eq \"static.plosca.ru\"","parameters":{"host":"bucket.s3.example.com"}},
+        \\  {"environments":[{"name":"Production","ref":"production","version":3,"expression":"http.host eq \"plosca.ru\"","locked_on_deployment":true,"position":{"after":"staging"}}]},
+        \\  {"hold":true,"include_subdomains":true,"hold_after":"2026-06-18T00:00:00Z"},
+        \\  {"id":"lock-1","description":"Admin only","paused":false,"urls":["https://plosca.ru/admin*"],"configurations":[{"target":"ip","value":"203.0.113.10"}]},
+        \\  {"traffic":{"smart_routing":{"optimized":12}},"latency":{"p50":20},"colo_name":"WAW"},
+        \\  {"id":"smart_routing","value":"on","editable":true,"modified_on":"2026-06-17T02:00:00Z"}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 18), rows.items.len);
+    try std.testing.expectEqualStrings("free", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("Free Website", rows.items[0].name orelse "");
+    try std.testing.expectEqualStrings("monthly", rows.items[0].category orelse "");
+    try std.testing.expectEqualStrings("free_legacy", rows.items[0].related_id orelse "");
+    try std.testing.expectEqualStrings("not_subscribed", rows.items[0].flag orelse "");
+    try std.testing.expectEqualStrings("pro", rows.items[1].resource_id);
+    try std.testing.expectEqualStrings("page_rules", rows.items[2].resource_id);
+    try std.testing.expectEqualStrings("20", rows.items[2].related_id orelse "");
+    try std.testing.expectEqualStrings("sub-1", rows.items[3].resource_id);
+    try std.testing.expectEqualStrings("active", rows.items[3].status orelse "");
+    try std.testing.expectEqualStrings("2026-06-01T00:00:00Z", rows.items[3].created_at orelse "");
+    try std.testing.expectEqualStrings("2026-07-01T00:00:00Z", rows.items[3].expires_at orelse "");
+    try std.testing.expectEqualStrings("page_rules", rows.items[4].resource_id);
+    try std.testing.expectEqualStrings("pro", rows.items[5].resource_id);
+    try std.testing.expectEqualStrings("zone-1", rows.items[6].resource_id);
+    try std.testing.expectEqualStrings("csr-1", rows.items[7].resource_id);
+    try std.testing.expectEqualStrings("*.plosca.ru", rows.items[7].name orelse "");
+    try std.testing.expectEqualStrings("rsa2048", rows.items[7].category orelse "");
+    try std.testing.expectEqualStrings("*.plosca.ru", rows.items[7].domain orelse "");
+    try std.testing.expectEqualStrings("maintenance.html", rows.items[8].resource_id);
+    try std.testing.expectEqualStrings("https://assets.example/maintenance.html", rows.items[8].related_id orelse "");
+    try std.testing.expectEqualStrings("cc-rule-1", rows.items[9].resource_id);
+    try std.testing.expectEqualStrings("aws_s3", rows.items[9].category orelse "");
+    try std.testing.expectEqualStrings("enabled", rows.items[9].flag orelse "");
+    try std.testing.expectEqualStrings("bucket.s3.example.com", rows.items[10].resource_id);
+    try std.testing.expectEqualStrings("bucket.s3.example.com", rows.items[10].domain orelse "");
+    try std.testing.expectEqualStrings("zone-environments", rows.items[11].resource_id);
+    try std.testing.expectEqualStrings("production", rows.items[12].resource_id);
+    try std.testing.expectEqualStrings("Production", rows.items[12].name orelse "");
+    try std.testing.expectEqualStrings("http.host eq \"plosca.ru\"", rows.items[12].related_id orelse "");
+    try std.testing.expectEqualStrings("locked_on_deployment", rows.items[12].flag orelse "");
+    try std.testing.expectEqualStrings("zone-hold", rows.items[13].resource_id);
+    try std.testing.expectEqualStrings("hold", rows.items[13].flag orelse "");
+    try std.testing.expectEqualStrings("lock-1", rows.items[14].resource_id);
+    try std.testing.expectEqualStrings("active", rows.items[14].status orelse "");
+    try std.testing.expectEqualStrings("203.0.113.10", rows.items[15].resource_id);
+    try std.testing.expectEqualStrings("ip", rows.items[15].category orelse "");
+    try std.testing.expectEqualStrings("argo-analytics", rows.items[16].resource_id);
+    try std.testing.expectEqualStrings("WAW", rows.items[16].name orelse "");
+    try std.testing.expectEqualStrings("smart_routing", rows.items[17].resource_id);
+    try std.testing.expectEqualStrings("on", rows.items[17].related_id orelse "");
+    try std.testing.expectEqualStrings("2026-06-17T02:00:00Z", rows.items[17].updated_at orelse "");
 }
 
 test "parses typed Cloudflare security rows from broad security result shapes" {
