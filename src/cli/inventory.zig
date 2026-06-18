@@ -25,23 +25,14 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         std.debug.print("invalid inventory command: {s}\n", .{@errorName(err)});
         return err;
     };
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
     const app_ctx = app_inventory.Context{
         .gpa = ctx.gpa,
         .db = ctx.db,
     };
     switch (command) {
-        .list => |parsed| switch (parsed.format) {
-            .text => try app_inventory.writeText(app_ctx, parsed.options, &out.writer),
-            .json => try app_inventory.writeJson(app_ctx, parsed.options, &out.writer),
-        },
-        .summary => |parsed| switch (parsed.format) {
-            .text => try app_inventory.writeSummaryText(app_ctx, parsed.options, &out.writer),
-            .json => try app_inventory.writeSummaryJson(app_ctx, parsed.options, &out.writer),
-        },
+        .list => |parsed| return try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_inventory.writeText, app_inventory.writeJson, .{ app_ctx, parsed.options }),
+        .summary => |parsed| return try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_inventory.writeSummaryText, app_inventory.writeSummaryJson, .{ app_ctx, parsed.options }),
     }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 pub const Command = union(enum) {

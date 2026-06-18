@@ -757,123 +757,51 @@ fn parseDryRunCandidates(args: []const []const u8) Command {
 }
 
 fn commandSummary(ctx: Context, command: SummaryCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeTextFromFiles(ctx.io, ctx.gpa, ctx.paths, &out.writer),
-        .json => try app_coverage.writeJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeTextFromFiles, app_coverage.writeJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths });
 }
 
 fn commandTags(ctx: Context, command: TagCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeTagsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
-        .json => try app_coverage.writeTagsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeTagsTextFromFiles, app_coverage.writeTagsJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.provider });
 }
 
 fn commandL1(ctx: Context, command: L1Command) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeL1AuditTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
-        .json => try app_coverage.writeL1AuditJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeL1AuditTextFromFiles, app_coverage.writeL1AuditJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.provider });
 }
 
 fn commandGaps(ctx: Context, command: GapCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeGapsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-        .json => try app_coverage.writeGapsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeGapsTextFromFiles, app_coverage.writeGapsJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.options });
 }
 
 fn commandLevels(ctx: Context, command: LevelCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeLevelsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
-        .json => try app_coverage.writeLevelsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.provider, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeLevelsTextFromFiles, app_coverage.writeLevelsJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.provider });
 }
 
 fn commandLevelTags(ctx: Context, command: LevelTagCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeLevelTagsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-        .json => try app_coverage.writeLevelTagsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeLevelTagsTextFromFiles, app_coverage.writeLevelTagsJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.options });
 }
 
 fn commandFamilies(ctx: Context, command: FamilyCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeFamiliesTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-        .json => try app_coverage.writeFamiliesJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeFamiliesTextFromFiles, app_coverage.writeFamiliesJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.options });
 }
 
 fn commandTypedModels(ctx: Context, command: TypedModelsCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeTypedModelsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-        .json => try app_coverage.writeTypedModelsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeTypedModelsTextFromFiles, app_coverage.writeTypedModelsJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.options });
 }
 
 fn commandWorkplan(ctx: Context, command: WorkplanCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeWorkplanTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-        .json => try app_coverage.writeWorkplanJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeWorkplanTextFromFiles, app_coverage.writeWorkplanJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.options });
 }
 
 fn commandRoutes(ctx: Context, command: RouteCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeRoutesTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.filter, &out.writer),
-        .json => try app_coverage.writeRoutesJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.filter, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeRoutesTextFromFiles, app_coverage.writeRoutesJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.filter });
 }
 
 fn commandCaptureCandidates(ctx: Context, command: CaptureCandidateCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeCaptureCandidatesTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-        .json => try app_coverage.writeCaptureCandidatesJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeCaptureCandidatesTextFromFiles, app_coverage.writeCaptureCandidatesJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.options });
 }
 
 fn commandDryRunCandidates(ctx: Context, command: DryRunCandidateCommand) !void {
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    switch (command.format) {
-        .text => try app_coverage.writeDryRunCandidatesTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-        .json => try app_coverage.writeDryRunCandidatesJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
-    }
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeDryRunCandidatesTextFromFiles, app_coverage.writeDryRunCandidatesJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.options });
 }
 
 fn commandPlan(ctx: Context, args: []const []const u8) !void {
@@ -883,13 +811,10 @@ fn commandPlan(ctx: Context, args: []const []const u8) !void {
     };
     defer input.deinit(ctx.gpa);
 
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    app_coverage.writeRoutePlanTextFromFiles(ctx.io, ctx.gpa, ctx.paths, input.plan, &out.writer) catch |err| {
+    cli_render.printRendered(ctx.io, ctx.gpa, app_coverage.writeRoutePlanTextFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, input.plan }) catch |err| {
         std.debug.print("coverage plan failed: {s}\n", .{@errorName(err)});
         return;
     };
-    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
 pub const ParsedPlan = struct {

@@ -414,13 +414,7 @@ fn commandOverview(io: Io, gpa: Allocator, db: *Db, args: []const []const u8) !v
         std.debug.print("invalid overview command: {s}\n", .{@errorName(err)});
         return err;
     };
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    switch (format) {
-        .text => try app_overview.writeText(gpa, db, &out.writer),
-        .json => try app_overview.writeJson(gpa, db, &out.writer),
-    }
-    try cli_render.printOwned(io, gpa, &out);
+    try cli_render.printFormatted(io, gpa, format, app_overview.writeText, app_overview.writeJson, .{ gpa, db });
 }
 
 fn parseOverviewFormat(args: []const []const u8) !cli_render.RenderFormat {
