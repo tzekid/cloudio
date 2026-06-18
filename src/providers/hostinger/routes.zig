@@ -53,6 +53,44 @@ pub fn vpsApiRouteTotals() VpsApiFamily {
     return out;
 }
 
+pub const AccountApiFamily = struct {
+    label: []const u8,
+    official_routes: usize,
+    read_routes: usize,
+    dry_run_routes: usize,
+    not_applicable_routes: usize = 0,
+};
+
+pub const account_api_families = [_]AccountApiFamily{
+    .{ .label = "billing", .official_routes = 7, .read_routes = 3, .dry_run_routes = 4 },
+    .{ .label = "dns", .official_routes = 8, .read_routes = 3, .dry_run_routes = 5 },
+    .{ .label = "domains", .official_routes = 17, .read_routes = 6, .dry_run_routes = 11 },
+    .{ .label = "hosting", .official_routes = 23, .read_routes = 10, .dry_run_routes = 13 },
+    .{ .label = "ecommerce", .official_routes = 2, .read_routes = 1, .dry_run_routes = 1 },
+    .{ .label = "horizons", .official_routes = 2, .read_routes = 1, .dry_run_routes = 1 },
+    .{ .label = "reach", .official_routes = 11, .read_routes = 7, .dry_run_routes = 4 },
+    .{ .label = "domain_access_verifier", .official_routes = 1, .read_routes = 0, .dry_run_routes = 0, .not_applicable_routes = 1 },
+};
+
+pub const account_api_family_count = account_api_families.len;
+
+pub fn accountApiRouteTotals() AccountApiFamily {
+    var out = AccountApiFamily{
+        .label = "total",
+        .official_routes = 0,
+        .read_routes = 0,
+        .dry_run_routes = 0,
+        .not_applicable_routes = 0,
+    };
+    for (account_api_families) |family| {
+        out.official_routes += family.official_routes;
+        out.read_routes += family.read_routes;
+        out.dry_run_routes += family.dry_run_routes;
+        out.not_applicable_routes += family.not_applicable_routes;
+    }
+    return out;
+}
+
 pub const base_url = "https://developers.hostinger.com";
 pub const virtual_machines_path = "/api/vps/v1/virtual-machines";
 pub const data_centers_path = "/api/vps/v1/data-centers";
@@ -2325,6 +2363,21 @@ test "Hostinger VPS API families summarize current official route groups" {
     try std.testing.expectEqual(@as(usize, 4), vps_api_families[0].read_routes);
     try std.testing.expectEqual(@as(usize, 11), vps_api_families[0].dry_run_routes);
     try std.testing.expectEqualStrings("data_centers", vps_api_families[vps_api_families.len - 1].label);
+}
+
+test "Hostinger account API families summarize current official non-VPS route groups" {
+    const totals = accountApiRouteTotals();
+    try std.testing.expectEqual(@as(usize, 8), account_api_family_count);
+    try std.testing.expectEqual(@as(usize, 71), totals.official_routes);
+    try std.testing.expectEqual(@as(usize, 31), totals.read_routes);
+    try std.testing.expectEqual(@as(usize, 39), totals.dry_run_routes);
+    try std.testing.expectEqual(@as(usize, 1), totals.not_applicable_routes);
+    try std.testing.expectEqualStrings("billing", account_api_families[0].label);
+    try std.testing.expectEqual(@as(usize, 7), account_api_families[0].official_routes);
+    try std.testing.expectEqual(@as(usize, 3), account_api_families[0].read_routes);
+    try std.testing.expectEqual(@as(usize, 4), account_api_families[0].dry_run_routes);
+    try std.testing.expectEqualStrings("domain_access_verifier", account_api_families[account_api_families.len - 1].label);
+    try std.testing.expectEqual(@as(usize, 1), account_api_families[account_api_families.len - 1].not_applicable_routes);
 }
 
 test "vps mutation endpoints map to official operation metadata" {

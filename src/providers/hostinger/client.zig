@@ -70,6 +70,10 @@ pub const VpsApiFamily = routes.VpsApiFamily;
 pub const vps_api_families = routes.vps_api_families;
 pub const vps_api_family_count = routes.vps_api_family_count;
 pub const vpsApiRouteTotals = routes.vpsApiRouteTotals;
+pub const AccountApiFamily = routes.AccountApiFamily;
+pub const account_api_families = routes.account_api_families;
+pub const account_api_family_count = routes.account_api_family_count;
+pub const accountApiRouteTotals = routes.accountApiRouteTotals;
 
 pub const virtualMachinesUrl = routes.virtualMachinesUrl;
 pub const virtualMachineDetailsUrl = routes.virtualMachineDetailsUrl;
