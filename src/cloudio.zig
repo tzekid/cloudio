@@ -92,6 +92,7 @@ test "facade exposes stable integration modules" {
     _ = app.provider_list.Options;
     _ = app.refresh.Selection;
     _ = app.route_catalog.Catalog;
+    _ = app.route_catalog.GroupReport;
     _ = app.system.Context;
     _ = app.topology.Topology;
     _ = db.schema.Migration;
