@@ -80,32 +80,7 @@ pub const Paths = struct {
     hostinger_manifest: []const u8 = "coverage/generated/hostinger.jsonl",
 };
 
-pub const ProviderFilter = enum {
-    all,
-    cloudflare,
-    hostinger,
-
-    pub fn parse(value: []const u8) ?ProviderFilter {
-        if (std.mem.eql(u8, value, "all")) return .all;
-        return switch (provider_routes.Provider.parse(value) orelse return null) {
-            .cloudflare => .cloudflare,
-            .hostinger => .hostinger,
-        };
-    }
-
-    pub fn includes(self: ProviderFilter, provider: []const u8) bool {
-        const parsed = provider_routes.Provider.parse(provider) orelse return false;
-        return switch (self) {
-            .all => true,
-            .cloudflare => parsed == .cloudflare,
-            .hostinger => parsed == .hostinger,
-        };
-    }
-
-    pub fn name(self: ProviderFilter) []const u8 {
-        return @tagName(self);
-    }
-};
+pub const ProviderFilter = provider_routes.ProviderFilter;
 
 pub const SupportFilter = enum {
     implemented,

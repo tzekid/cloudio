@@ -42,6 +42,36 @@ pub const Provider = enum {
     }
 };
 
+pub const ProviderFilter = enum {
+    all,
+    cloudflare,
+    hostinger,
+
+    pub fn parse(value: []const u8) ?ProviderFilter {
+        if (std.mem.eql(u8, value, "all")) return .all;
+        return switch (Provider.parse(value) orelse return null) {
+            .cloudflare => .cloudflare,
+            .hostinger => .hostinger,
+        };
+    }
+
+    pub fn includes(self: ProviderFilter, provider: []const u8) bool {
+        return self.includesProvider(Provider.parse(provider) orelse return false);
+    }
+
+    pub fn includesProvider(self: ProviderFilter, provider: Provider) bool {
+        return switch (self) {
+            .all => true,
+            .cloudflare => provider == .cloudflare,
+            .hostinger => provider == .hostinger,
+        };
+    }
+
+    pub fn name(self: ProviderFilter) []const u8 {
+        return @tagName(self);
+    }
+};
+
 pub const Method = enum {
     GET,
     POST,
@@ -1169,6 +1199,20 @@ test "loads generated route metadata for both providers" {
     try std.testing.expectEqual(Method.GET, hostinger_vps.method);
     try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines", hostinger_vps.path_template);
     try std.testing.expect(hostinger_vps.responses.len > 0);
+}
+
+test "provider filter parses and matches canonical providers" {
+    try std.testing.expectEqual(ProviderFilter.all, ProviderFilter.parse("all").?);
+    try std.testing.expectEqual(ProviderFilter.cloudflare, ProviderFilter.parse("cloudflare").?);
+    try std.testing.expectEqual(ProviderFilter.hostinger, ProviderFilter.parse("hostinger").?);
+    try std.testing.expect(ProviderFilter.all.includesProvider(.cloudflare));
+    try std.testing.expect(ProviderFilter.all.includesProvider(.hostinger));
+    try std.testing.expect(ProviderFilter.cloudflare.includesProvider(.cloudflare));
+    try std.testing.expect(ProviderFilter.cloudflare.includes("cloudflare"));
+    try std.testing.expect(!ProviderFilter.cloudflare.includes("hostinger"));
+    try std.testing.expect(!ProviderFilter.hostinger.includes("cloudflare"));
+    try std.testing.expect(ProviderFilter.parse("other") == null);
+    try std.testing.expect(!ProviderFilter.all.includes("other"));
 }
 
 test "body-required GET routes are not generic read-routable" {

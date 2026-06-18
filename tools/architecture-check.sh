@@ -65,9 +65,9 @@ check_no_matches \
     src/app/cloudflare.zig src/app/hostinger.zig
 
 check_no_matches \
-    "app provider identity must reuse provider_routes.Provider" \
-    'pub const Provider = enum' \
-    src/app/provider_list.zig src/app/inventory.zig
+    "app provider identity and filters must reuse provider_routes" \
+    'pub const Provider(Filter)? = enum' \
+    src/app/provider_list.zig src/app/inventory.zig src/app/coverage.zig
 
 check_no_matches \
     "collector output container belongs in core/output.zig" \
