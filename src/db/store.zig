@@ -727,6 +727,35 @@ pub const RouteCaptureEvidenceRows = struct {
     }
 };
 
+pub const RouteSourceEvidenceRow = struct {
+    provider: []u8,
+    operation_id: []u8,
+    status: []u8,
+    target: []u8,
+    summary: []u8,
+    raw_json: []u8,
+    captured_at: []u8,
+
+    pub fn deinit(self: RouteSourceEvidenceRow, allocator: Allocator) void {
+        allocator.free(self.provider);
+        allocator.free(self.operation_id);
+        allocator.free(self.status);
+        allocator.free(self.target);
+        allocator.free(self.summary);
+        allocator.free(self.raw_json);
+        allocator.free(self.captured_at);
+    }
+};
+
+pub const RouteSourceEvidenceRows = struct {
+    items: []RouteSourceEvidenceRow,
+
+    pub fn deinit(self: *RouteSourceEvidenceRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const Db = struct {
     handle: *sqlite.sqlite3,
 
@@ -2039,6 +2068,36 @@ pub const Db = struct {
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
 
+    pub fn routeSourceEvidence(self: *Db, gpa: Allocator, filter: RouteCaptureEvidenceFilter) !RouteSourceEvidenceRows {
+        const stmt = try self.prepare(
+            \\SELECT source,
+            \\       kind,
+            \\       status,
+            \\       COALESCE(target, ''),
+            \\       COALESCE(summary, ''),
+            \\       COALESCE(raw_json, ''),
+            \\       captured_at
+            \\FROM snapshots
+            \\WHERE (? IS NULL OR source = ?)
+            \\ORDER BY id DESC
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindTextOpt(stmt, 1, filter.provider);
+        try bindTextOpt(stmt, 2, filter.provider);
+        try bindI64(stmt, 3, positiveLimit(filter.limit, 200));
+        var rows = std.ArrayList(RouteSourceEvidenceRow).empty;
+        errdefer deinitRouteSourceEvidenceList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try routeSourceEvidenceFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
     pub fn projectDetails(self: *Db, gpa: Allocator, name: []const u8) !?ProjectDetails {
         const stmt = try self.prepare(
             \\SELECT name, source, COALESCE(path,''), COALESCE(host,''), COALESCE(upstream,''), COALESCE(service,''), COALESCE(container,'')
@@ -2240,6 +2299,11 @@ fn deinitRouteCaptureEvidenceList(rows: *std.ArrayList(RouteCaptureEvidenceRow),
     rows.deinit(allocator);
 }
 
+fn deinitRouteSourceEvidenceList(rows: *std.ArrayList(RouteSourceEvidenceRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
 fn snapshotSummaryFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !SnapshotSummary {
     const id = sqlite.sqlite3_column_int64(stmt, 0);
     const source = try dupeColumn(allocator, stmt, 1);
@@ -2351,6 +2415,32 @@ fn routeCaptureEvidenceFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt
         .endpoint_sample = endpoint_sample,
         .count = sqlite.sqlite3_column_int64(stmt, 4),
         .latest_at = latest_at,
+    };
+}
+
+fn routeSourceEvidenceFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !RouteSourceEvidenceRow {
+    const provider = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(provider);
+    const operation_id = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(operation_id);
+    const status = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(status);
+    const target = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(target);
+    const summary = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(summary);
+    const raw_json = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(raw_json);
+    const captured_at = try dupeColumn(allocator, stmt, 6);
+    errdefer allocator.free(captured_at);
+    return .{
+        .provider = provider,
+        .operation_id = operation_id,
+        .status = status,
+        .target = target,
+        .summary = summary,
+        .raw_json = raw_json,
+        .captured_at = captured_at,
     };
 }
 
@@ -3112,6 +3202,30 @@ test "route capture evidence extracts operation ids from audit detail" {
     }
     try std.testing.expect(saw_accounts);
     try std.testing.expect(saw_rulesets);
+}
+
+test "route source evidence exposes snapshot bodies by operation id" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudio-route-source-evidence.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    _ = try db.insertSnapshot("hostinger", "domains_getWHOISProfileListV1", "/api/domains/v1/whois", "ok", "HTTP 200", "[]", null);
+    _ = try db.insertSnapshot("cloudflare", "accounts-list-accounts", "/accounts", "ok", "HTTP 200", "{\"result\":[]}", null);
+
+    var rows = try db.routeSourceEvidence(allocator, .{ .provider = "hostinger", .limit = 20 });
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), rows.items.len);
+    try std.testing.expectEqualStrings("hostinger", rows.items[0].provider);
+    try std.testing.expectEqualStrings("domains_getWHOISProfileListV1", rows.items[0].operation_id);
+    try std.testing.expectEqualStrings("/api/domains/v1/whois", rows.items[0].target);
+    try std.testing.expectEqualStrings("ok", rows.items[0].status);
+    try std.testing.expectEqualStrings("[]", rows.items[0].raw_json);
 }
 
 test "provider inventory read model joins and filters typed inventory" {

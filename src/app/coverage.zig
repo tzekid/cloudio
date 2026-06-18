@@ -19,6 +19,7 @@ const actual_capture_cloudflare_scope_hint_limit: i64 = 200;
 const actual_capture_cloudflare_resource_hint_limit: i64 = 5000;
 const actual_capture_hostinger_vps_hint_limit: i64 = 50;
 const actual_capture_hostinger_hint_limit: i64 = 5000;
+const actual_capture_source_evidence_limit: i64 = 5000;
 
 pub const support_names = [_][]const u8{
     "implemented",
@@ -958,6 +959,12 @@ const ActualCaptureInputSource = struct {
     purpose: []const u8,
 };
 
+const ActualCaptureSourceBodyEvidence = struct {
+    shape: []const u8 = "no_evidence",
+    item_count: ?usize = null,
+    body_bytes: usize = 0,
+};
+
 const hostinger_domain_sources = [_]ActualCaptureInputSource{.{
     .operation_id = "domains_getDomainListV1",
     .hint_kind = "domains_getDomainListV1",
@@ -1065,6 +1072,7 @@ const ActualCapturePlan = struct {
     options: ActualCaptureOptions,
     routes: CoverageRoutes,
     captures: db_store.RouteCaptureEvidenceRows,
+    source_evidence: db_store.RouteSourceEvidenceRows,
     cloudflare_accounts: ?db_store.CloudflareAccountRows,
     cloudflare_zones: ?db_store.CloudflareZoneRows,
     cloudflare_resources: ?db_store.CloudflareResourceHintRows,
@@ -1081,6 +1089,7 @@ const ActualCapturePlan = struct {
         if (self.cloudflare_resources) |*rows| rows.deinit(gpa);
         if (self.cloudflare_zones) |*rows| rows.deinit(gpa);
         if (self.cloudflare_accounts) |*rows| rows.deinit(gpa);
+        self.source_evidence.deinit(gpa);
         self.captures.deinit(gpa);
         self.routes.deinit(gpa);
     }
@@ -1173,7 +1182,7 @@ const ActualCapturePlan = struct {
         } else {
             try writer.print("{d}\n", .{self.options.limit});
         }
-        try writer.print("loaded_capture_operation_status_rows={d} configured_domain_hints={d} cloudflare_account_hints={d} cloudflare_zone_hints={d} cloudflare_resource_hints={d} cloudflare_inventory_hints={d} hostinger_vps_hints={d} hostinger_resource_hints={d} hostinger_inventory_hints={d}\n", .{ self.captures.items.len, self.options.configured_domains.len, self.cloudflareAccountRows().len, self.cloudflareZoneRows().len, self.cloudflareResourceRows().len, self.cloudflareInventoryRows().len, self.hostingerVpsRows().len, self.hostingerResourceRows().len, self.hostingerInventoryRows().len });
+        try writer.print("loaded_capture_operation_status_rows={d} loaded_source_evidence_rows={d} configured_domain_hints={d} cloudflare_account_hints={d} cloudflare_zone_hints={d} cloudflare_resource_hints={d} cloudflare_inventory_hints={d} hostinger_vps_hints={d} hostinger_resource_hints={d} hostinger_inventory_hints={d}\n", .{ self.captures.items.len, self.source_evidence.items.len, self.options.configured_domains.len, self.cloudflareAccountRows().len, self.cloudflareZoneRows().len, self.cloudflareResourceRows().len, self.cloudflareInventoryRows().len, self.hostingerVpsRows().len, self.hostingerResourceRows().len, self.hostingerInventoryRows().len });
         try writer.print("summary official_read_routes={d} ok_read_routes={d} non_ok_read_routes={d} missing_read_routes={d} candidate_routes={d} ready_candidates={d} capture_events={d}\n", .{
             totals_value.official_read_routes,
             totals_value.ok_read_routes,
@@ -1232,7 +1241,7 @@ const ActualCapturePlan = struct {
             try writeActualMissingInputsText(writer, row.route, hints_value);
             try writer.writeByte('\n');
             if (actualCaptureMissingInputCount(row.route, hints_value) != 0) {
-                try writeActualMissingInputSourcesText(gpa, writer, row.route, self.routes.items, self.captures.items, hints_value);
+                try writeActualMissingInputSourcesText(gpa, writer, row.route, self.routes.items, self.captures.items, self.source_evidence.items, hints_value);
             }
             const command = try actualCaptureCommand(gpa, row.route, hints_value);
             defer gpa.free(command);
@@ -1262,6 +1271,7 @@ const ActualCapturePlan = struct {
         try writeJsonBoolField(writer, "include_plans", self.options.include_plans, true);
         try writeJsonField(writer, "rank", "official GET/read routes missing an OK route.capture audit event", true);
         try writeJsonCountField(writer, "loaded_capture_operation_status_rows", self.captures.items.len, true);
+        try writeJsonCountField(writer, "loaded_source_evidence_rows", self.source_evidence.items.len, true);
         try writeJsonCountField(writer, "configured_domain_hints", self.options.configured_domains.len, true);
         try writeJsonCountField(writer, "cloudflare_account_hints", self.cloudflareAccountRows().len, true);
         try writeJsonCountField(writer, "cloudflare_zone_hints", self.cloudflareZoneRows().len, true);
@@ -1287,7 +1297,7 @@ const ActualCapturePlan = struct {
             }
             visible += 1;
             try writeMaybeJsonComma(writer, &first);
-            try writeActualCaptureCandidateJson(gpa, row, state, self.routes.items, self.captures.items, hints_value, self.options, writer);
+            try writeActualCaptureCandidateJson(gpa, row, state, self.routes.items, self.captures.items, self.source_evidence.items, hints_value, self.options, writer);
         }
 
         try writer.writeAll("],");
@@ -1909,6 +1919,11 @@ fn loadActualCapturePlanFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db,
         .limit = actual_capture_load_limit,
     });
     errdefer captures.deinit(gpa);
+    var source_evidence = try db.routeSourceEvidence(gpa, .{
+        .provider = actualCaptureProviderDbValue(options.filter.provider),
+        .limit = actual_capture_source_evidence_limit,
+    });
+    errdefer source_evidence.deinit(gpa);
     var cloudflare_accounts = try loadActualCaptureCloudflareAccountHints(gpa, db, options.filter.provider);
     errdefer if (cloudflare_accounts) |*rows| rows.deinit(gpa);
     var cloudflare_zones = try loadActualCaptureCloudflareZoneHints(gpa, db, options.filter.provider);
@@ -1927,6 +1942,7 @@ fn loadActualCapturePlanFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db,
         .options = options,
         .routes = routes,
         .captures = captures,
+        .source_evidence = source_evidence,
         .cloudflare_accounts = cloudflare_accounts,
         .cloudflare_zones = cloudflare_zones,
         .cloudflare_resources = cloudflare_resources,
@@ -1945,6 +1961,11 @@ fn loadActualCapturePlanFromText(gpa: Allocator, cloudflare_text: []const u8, ho
         .limit = actual_capture_load_limit,
     });
     errdefer captures.deinit(gpa);
+    var source_evidence = try db.routeSourceEvidence(gpa, .{
+        .provider = actualCaptureProviderDbValue(options.filter.provider),
+        .limit = actual_capture_source_evidence_limit,
+    });
+    errdefer source_evidence.deinit(gpa);
     var cloudflare_accounts = try loadActualCaptureCloudflareAccountHints(gpa, db, options.filter.provider);
     errdefer if (cloudflare_accounts) |*rows| rows.deinit(gpa);
     var cloudflare_zones = try loadActualCaptureCloudflareZoneHints(gpa, db, options.filter.provider);
@@ -1963,6 +1984,7 @@ fn loadActualCapturePlanFromText(gpa: Allocator, cloudflare_text: []const u8, ho
         .options = options,
         .routes = routes,
         .captures = captures,
+        .source_evidence = source_evidence,
         .cloudflare_accounts = cloudflare_accounts,
         .cloudflare_zones = cloudflare_zones,
         .cloudflare_resources = cloudflare_resources,
@@ -3164,22 +3186,23 @@ fn writeActualMissingInputSourcesText(
     route: provider_routes.Route,
     routes: []const CoverageRoute,
     captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
     hints: ActualCaptureHints,
 ) !void {
     var wrote = false;
     for (route.path_params) |param| {
         if (!param.required) continue;
         if (actualCapturePathParamHint(route, param.name, hints) != null) continue;
-        try writeActualMissingInputSourceRowsText(gpa, writer, route, routes, captures, hints, "path", param.name, &wrote);
+        try writeActualMissingInputSourceRowsText(gpa, writer, route, routes, captures, source_evidence, hints, "path", param.name, &wrote);
     }
     for (route.query_params) |param| {
         if (!param.required) continue;
         if (actualCaptureHasQueryParamHint(route, param.name, hints)) continue;
-        try writeActualMissingInputSourceRowsText(gpa, writer, route, routes, captures, hints, "query", param.name, &wrote);
+        try writeActualMissingInputSourceRowsText(gpa, writer, route, routes, captures, source_evidence, hints, "query", param.name, &wrote);
     }
     for (route.header_params) |param| {
         if (!param.required) continue;
-        try writeActualMissingInputSourceRowsText(gpa, writer, route, routes, captures, hints, "header", param.name, &wrote);
+        try writeActualMissingInputSourceRowsText(gpa, writer, route, routes, captures, source_evidence, hints, "header", param.name, &wrote);
     }
     if (!wrote) try writer.writeAll("      source: -\n");
 }
@@ -3190,6 +3213,7 @@ fn writeActualMissingInputSourceRowsText(
     route: provider_routes.Route,
     routes: []const CoverageRoute,
     captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
     hints: ActualCaptureHints,
     input_source: []const u8,
     input_name: []const u8,
@@ -3209,27 +3233,36 @@ fn writeActualMissingInputSourceRowsText(
             const command = try actualCaptureCommand(gpa, found, hints);
             defer gpa.free(command);
             const hint_count = actualCaptureSourceHintCount(route, hints, input_source, input_name, source);
-            try writer.print("      source: {s}:{s} <- {s} state={s} result={s} ready={s} diagnostic_ready={s} hint_count={d} next=\"{s}\" capture: {s}\n", .{
+            const evidence = actualCaptureFindSourceEvidence(source_evidence, route.provider.name(), source.operation_id);
+            const body = try actualCaptureSourceBodyEvidence(gpa, evidence);
+            try writer.print("      source: {s}:{s} <- {s} state={s} result={s} ready={s} diagnostic_ready={s} hint_count={d} evidence={s} items=", .{
                 input_source,
                 input_name,
                 source.operation_id,
                 if (source_state) |state| state.name() else "unknown",
-                actualCaptureSourceResult(found, source_state, hints, hint_count),
+                actualCaptureSourceResult(found, source_state, hints, hint_count, body),
                 if (actualCaptureReady(found, hints)) "true" else "false",
                 if (actualCaptureReadyWithPolicy(found, hints, true)) "true" else "false",
                 hint_count,
-                actualCaptureSourceNextAction(found, source_state, hints, hint_count),
+                body.shape,
+            });
+            if (body.item_count) |count| try writer.print("{d}", .{count}) else try writer.writeAll("-");
+            try writer.print(" bytes={d} next=\"{s}\" capture: {s}\n", .{
+                body.body_bytes,
+                actualCaptureSourceNextAction(found, source_state, hints, hint_count, body),
                 command,
             });
         } else {
             const hint_count = actualCaptureSourceHintCount(route, hints, input_source, input_name, source);
-            try writer.print("      source: {s}:{s} <- {s} state=not_in_catalog result=not_in_catalog hint_kind={s} hint_count={d} next=\"{s}\" purpose=", .{
+            const body = ActualCaptureSourceBodyEvidence{};
+            try writer.print("      source: {s}:{s} <- {s} state=not_in_catalog result=not_in_catalog hint_kind={s} hint_count={d} evidence={s} items=- bytes=0 next=\"{s}\" purpose=", .{
                 input_source,
                 input_name,
                 source.operation_id,
                 source.hint_kind,
                 hint_count,
-                actualCaptureSourceNextAction(null, null, hints, hint_count),
+                body.shape,
+                actualCaptureSourceNextAction(null, null, hints, hint_count, body),
             });
             try writer.writeAll(source.purpose);
             try writer.writeByte('\n');
@@ -3243,6 +3276,7 @@ fn writeActualMissingInputSourcesJson(
     route: provider_routes.Route,
     routes: []const CoverageRoute,
     captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
     hints: ActualCaptureHints,
 ) !void {
     try writer.writeByte('[');
@@ -3250,16 +3284,16 @@ fn writeActualMissingInputSourcesJson(
     for (route.path_params) |param| {
         if (!param.required) continue;
         if (actualCapturePathParamHint(route, param.name, hints) != null) continue;
-        try writeActualMissingInputSourceRowsJson(gpa, writer, route, routes, captures, hints, "path", param.name, &first);
+        try writeActualMissingInputSourceRowsJson(gpa, writer, route, routes, captures, source_evidence, hints, "path", param.name, &first);
     }
     for (route.query_params) |param| {
         if (!param.required) continue;
         if (actualCaptureHasQueryParamHint(route, param.name, hints)) continue;
-        try writeActualMissingInputSourceRowsJson(gpa, writer, route, routes, captures, hints, "query", param.name, &first);
+        try writeActualMissingInputSourceRowsJson(gpa, writer, route, routes, captures, source_evidence, hints, "query", param.name, &first);
     }
     for (route.header_params) |param| {
         if (!param.required) continue;
-        try writeActualMissingInputSourceRowsJson(gpa, writer, route, routes, captures, hints, "header", param.name, &first);
+        try writeActualMissingInputSourceRowsJson(gpa, writer, route, routes, captures, source_evidence, hints, "header", param.name, &first);
     }
     try writer.writeByte(']');
 }
@@ -3270,6 +3304,7 @@ fn writeActualMissingInputSourceRowsJson(
     route: provider_routes.Route,
     routes: []const CoverageRoute,
     captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
     hints: ActualCaptureHints,
     input_source: []const u8,
     input_name: []const u8,
@@ -3286,6 +3321,12 @@ fn writeActualMissingInputSourceRowsJson(
         try writeJsonCountField(writer, "hint_count", 0, true);
         try writeJsonField(writer, "result", "unmapped", true);
         try writeJsonField(writer, "next_action", "add a source mapping before this input can be planned", true);
+        try writeJsonNullableStringField(writer, "source_status", null, true);
+        try writeJsonNullableStringField(writer, "source_target", null, true);
+        try writeJsonNullableStringField(writer, "source_captured_at", null, true);
+        try writeJsonField(writer, "body_shape", "no_evidence", true);
+        try writeJsonNullableCountField(writer, "body_item_count", null, true);
+        try writeJsonCountField(writer, "body_bytes", 0, true);
         try writeJsonField(writer, "purpose", "no source mapping", true);
         try writeJsonField(writer, "catalog_state", "unmapped", true);
         try writeJsonNullableStringField(writer, "actual_state", null, true);
@@ -3300,7 +3341,7 @@ fn writeActualMissingInputSourceRowsJson(
 
     for (sources) |source| {
         try writeMaybeJsonComma(writer, first);
-        try writeActualMissingInputSourceJson(gpa, writer, route, routes, captures, hints, input_source, input_name, source);
+        try writeActualMissingInputSourceJson(gpa, writer, route, routes, captures, source_evidence, hints, input_source, input_name, source);
     }
 }
 
@@ -3310,6 +3351,7 @@ fn writeActualMissingInputSourceJson(
     route: provider_routes.Route,
     routes: []const CoverageRoute,
     captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
     hints: ActualCaptureHints,
     input_source: []const u8,
     input_name: []const u8,
@@ -3321,6 +3363,8 @@ fn writeActualMissingInputSourceJson(
     if (source_route) |found| command = try actualCaptureCommand(gpa, found, hints);
     const source_state = if (source_route) |found| actualCaptureState(found, captures) else null;
     const hint_count = actualCaptureSourceHintCount(route, hints, input_source, input_name, source);
+    const evidence = actualCaptureFindSourceEvidence(source_evidence, route.provider.name(), source.operation_id);
+    const body = try actualCaptureSourceBodyEvidence(gpa, evidence);
 
     try writer.writeByte('{');
     try writeJsonField(writer, "input_source", input_source, true);
@@ -3328,8 +3372,14 @@ fn writeActualMissingInputSourceJson(
     try writeJsonNullableStringField(writer, "source_operation_id", source.operation_id, true);
     try writeJsonNullableStringField(writer, "hint_kind", source.hint_kind, true);
     try writeJsonCountField(writer, "hint_count", hint_count, true);
-    try writeJsonField(writer, "result", actualCaptureSourceResult(source_route, source_state, hints, hint_count), true);
-    try writeJsonField(writer, "next_action", actualCaptureSourceNextAction(source_route, source_state, hints, hint_count), true);
+    try writeJsonField(writer, "result", actualCaptureSourceResult(source_route, source_state, hints, hint_count, body), true);
+    try writeJsonField(writer, "next_action", actualCaptureSourceNextAction(source_route, source_state, hints, hint_count, body), true);
+    try writeJsonNullableStringField(writer, "source_status", if (evidence) |row| row.status else null, true);
+    try writeJsonNullableStringField(writer, "source_target", if (evidence) |row| row.target else null, true);
+    try writeJsonNullableStringField(writer, "source_captured_at", if (evidence) |row| row.captured_at else null, true);
+    try writeJsonField(writer, "body_shape", body.shape, true);
+    try writeJsonNullableCountField(writer, "body_item_count", body.item_count, true);
+    try writeJsonCountField(writer, "body_bytes", body.body_bytes, true);
     try writeJsonField(writer, "purpose", source.purpose, true);
     try writeJsonField(writer, "catalog_state", if (source_route != null) "present" else "not_in_catalog", true);
     try writeJsonNullableStringField(writer, "actual_state", if (source_state) |state| state.name() else null, true);
@@ -3350,24 +3400,85 @@ fn actualCaptureFindRouteByOperationId(routes: []const CoverageRoute, provider: 
     return null;
 }
 
-fn actualCaptureSourceResult(route: ?provider_routes.Route, state: ?ActualCaptureState, hints: ActualCaptureHints, hint_count: usize) []const u8 {
+fn actualCaptureFindSourceEvidence(source_evidence: []const db_store.RouteSourceEvidenceRow, provider: []const u8, operation_id: []const u8) ?db_store.RouteSourceEvidenceRow {
+    for (source_evidence) |row| {
+        if (!std.mem.eql(u8, row.provider, provider)) continue;
+        if (!std.mem.eql(u8, row.operation_id, operation_id)) continue;
+        return row;
+    }
+    return null;
+}
+
+fn actualCaptureSourceBodyEvidence(gpa: Allocator, evidence: ?db_store.RouteSourceEvidenceRow) !ActualCaptureSourceBodyEvidence {
+    const row = evidence orelse return .{};
+    if (row.raw_json.len == 0) return .{ .shape = "no_body" };
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, row.raw_json, .{}) catch return .{
+        .shape = "invalid_json",
+        .body_bytes = row.raw_json.len,
+    };
+    defer parsed.deinit();
+    return actualCaptureSourceBodyEvidenceFromValue(parsed.value, row.raw_json.len);
+}
+
+fn actualCaptureSourceBodyEvidenceFromValue(value: std.json.Value, body_bytes: usize) ActualCaptureSourceBodyEvidence {
+    return switch (value) {
+        .array => |array| .{ .shape = "array", .item_count = array.items.len, .body_bytes = body_bytes },
+        .object => |object| blk: {
+            if (object.get("data")) |data| {
+                break :blk switch (data) {
+                    .array => |array| .{ .shape = "data_array", .item_count = array.items.len, .body_bytes = body_bytes },
+                    .object => .{ .shape = "data_object", .item_count = 1, .body_bytes = body_bytes },
+                    else => .{ .shape = "data_scalar", .body_bytes = body_bytes },
+                };
+            }
+            if (object.get("message") != null or object.get("error") != null) {
+                break :blk .{ .shape = "error_object", .body_bytes = body_bytes };
+            }
+            break :blk .{ .shape = "object", .item_count = 1, .body_bytes = body_bytes };
+        },
+        else => .{ .shape = "scalar", .body_bytes = body_bytes },
+    };
+}
+
+fn actualCaptureSourceBodyIsEmptyCollection(body: ActualCaptureSourceBodyEvidence) bool {
+    if (body.item_count == null or body.item_count.? != 0) return false;
+    return std.mem.eql(u8, body.shape, "array") or std.mem.eql(u8, body.shape, "data_array");
+}
+
+fn actualCaptureSourceBodyHasItems(body: ActualCaptureSourceBodyEvidence) bool {
+    if (body.item_count) |count| return count > 0;
+    return false;
+}
+
+fn actualCaptureSourceResult(route: ?provider_routes.Route, state: ?ActualCaptureState, hints: ActualCaptureHints, hint_count: usize, body: ActualCaptureSourceBodyEvidence) []const u8 {
     const source_route = route orelse return "not_in_catalog";
     const source_state = state orelse return "not_eligible";
     return switch (source_state) {
-        .ok => if (hint_count != 0) "captured_with_hints" else "captured_no_hints",
+        .ok => if (hint_count != 0)
+            "captured_with_hints"
+        else if (actualCaptureSourceBodyIsEmptyCollection(body))
+            "captured_empty"
+        else if (actualCaptureSourceBodyHasItems(body))
+            "captured_without_hints"
+        else
+            "captured_unknown_body",
         .missing => if (actualCaptureReadyWithPolicy(source_route, hints, true)) "ready_to_capture" else "waiting_for_inputs",
         .non_ok => if (!provider_dispatch.routeLiveCallSupported(source_route) and provider_dispatch.routeDiagnosticReadSupported(source_route)) "diagnostic_blocked" else "captured_error",
     };
 }
 
-fn actualCaptureSourceNextAction(route: ?provider_routes.Route, state: ?ActualCaptureState, hints: ActualCaptureHints, hint_count: usize) []const u8 {
+fn actualCaptureSourceNextAction(route: ?provider_routes.Route, state: ?ActualCaptureState, hints: ActualCaptureHints, hint_count: usize, body: ActualCaptureSourceBodyEvidence) []const u8 {
     const source_route = route orelse return "update the route catalog or remove the stale hint mapping";
     const source_state = state orelse return "source route is not an eligible read route";
     return switch (source_state) {
         .ok => if (hint_count != 0)
             "use collected identifiers for child captures"
+        else if (actualCaptureSourceBodyIsEmptyCollection(body))
+            "source collection is empty; no child identifiers are available"
+        else if (actualCaptureSourceBodyHasItems(body))
+            "extend normalization for this non-empty source response"
         else
-            "inspect raw response and normalizer; current account may have an empty collection",
+            "inspect raw source evidence; body shape does not prove an empty collection",
         .missing => if (actualCaptureReadyWithPolicy(source_route, hints, true))
             "capture the source route to discover identifiers"
         else
@@ -3488,6 +3599,7 @@ fn writeActualCaptureCandidateJson(
     state: ActualCaptureState,
     routes: []const CoverageRoute,
     captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
     hints: ActualCaptureHints,
     options: ActualCaptureOptions,
     writer: anytype,
@@ -3523,7 +3635,7 @@ fn writeActualCaptureCandidateJson(
     try writeActualMissingInputsJson(writer, route, hints);
     try writer.writeByte(',');
     try writer.writeAll("\"missing_input_sources\":");
-    try writeActualMissingInputSourcesJson(gpa, writer, route, routes, captures, hints);
+    try writeActualMissingInputSourcesJson(gpa, writer, route, routes, captures, source_evidence, hints);
     try writer.writeByte(',');
     try writeJsonField(writer, "capture_command", command, options.include_plans);
     if (options.include_plans) {
@@ -5623,6 +5735,17 @@ fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing
     if (trailing_comma) try writer.writeByte(',');
 }
 
+fn writeJsonNullableCountField(writer: anytype, name: []const u8, value: ?usize, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    if (value) |count| {
+        try writer.print("{d}", .{count});
+    } else {
+        try writer.writeAll("null");
+    }
+    if (trailing_comma) try writer.writeByte(',');
+}
+
 fn writeJsonBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
     try core_json.writeString(writer, name);
     try writer.writeByte(':');
@@ -6820,6 +6943,9 @@ test "explains Hostinger missing input source routes for broad child groups" {
     try db.initSchema();
     try db.upsertHostingerVps("1307809", "srv1307809.hstgr.cloud", "running", "76.13.130.170", "KVM 4", "{\"id\":1307809}");
     try db.insertAudit("route.capture", "ok", "hostinger/domains_getWHOISProfileListV1 /api/domains/v1/whois");
+    _ = try db.insertSnapshot("hostinger", "domains_getWHOISProfileListV1", "/api/domains/v1/whois", "ok", "domains_getWHOISProfileListV1 HTTP 200", "[]", null);
+    try db.insertAudit("route.capture", "ok", "hostinger/hosting_listAccountDatabasesV1 /api/hosting/v1/accounts/u123/databases");
+    _ = try db.insertSnapshot("hostinger", "hosting_listAccountDatabasesV1", "/api/hosting/v1/accounts/u123/databases", "ok", "hosting_listAccountDatabasesV1 HTTP 200", "{\"data\":[{\"unsupported\":\"db-main\"}],\"meta\":{\"total\":1}}", null);
     try db.insertAudit("route.capture", "permission", "hostinger/reach_listProfilesV1 /api/reach/v1/profiles");
     try db.insertAudit("route.capture", "http_error", "hostinger/VPS_getProjectListV1 /api/vps/v1/virtual-machines/1307809/docker");
 
@@ -6862,11 +6988,13 @@ test "explains Hostinger missing input source routes for broad child groups" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"snapshotId\",\"source_operation_id\":\"DNS_getDNSSnapshotListV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"ready_to_capture\",\"next_action\":\"capture the source route to discover identifiers\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"whoisId\",\"source_operation_id\":\"domains_getWHOISProfileListV1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"captured_no_hints\",\"next_action\":\"inspect raw response and normalizer; current account may have an empty collection\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"captured_empty\",\"next_action\":\"source collection is empty; no child identifiers are available\",\"source_status\":\"ok\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"body_shape\":\"array\",\"body_item_count\":0,\"body_bytes\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"websiteId\",\"source_operation_id\":\"horizons_getWebsitesV1\",\"hint_kind\":\"horizons_getWebsitesV1\",\"hint_count\":0,\"result\":\"not_in_catalog\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"username\",\"source_operation_id\":\"hosting_listWebsitesV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"name\",\"source_operation_id\":\"hosting_listAccountDatabasesV1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"waiting_for_inputs\",\"next_action\":\"capture the source route prerequisites first\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"captured_without_hints\",\"next_action\":\"extend normalization for this non-empty source response\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"body_shape\":\"data_array\",\"body_item_count\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"order_id\",\"source_operation_id\":\"hosting_listOrdersV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"uuid\",\"source_operation_id\":\"hosting_listNodeJSBuildsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"profileUuid\",\"source_operation_id\":\"reach_listProfilesV1\"") != null);
@@ -6891,6 +7019,8 @@ test "explains Hostinger missing input source routes for broad child groups" {
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:snapshotId <- DNS_getDNSSnapshotListV1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:websiteId <- horizons_getWebsitesV1 state=not_in_catalog") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:projectName <- VPS_getProjectListV1 state=non_ok result=diagnostic_blocked ready=false diagnostic_ready=true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "source: path:whoisId <- domains_getWHOISProfileListV1 state=ok result=captured_empty") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "source: path:name <- hosting_listAccountDatabasesV1 state=ok result=captured_without_hints") != null);
 }
 
 test "closed Cloudflare security read slice has no capture candidates" {
