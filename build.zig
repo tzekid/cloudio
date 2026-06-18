@@ -226,6 +226,20 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
+    const collector_route_capture_mod = b.createModule(.{
+        .root_source_file = b.path("src/collectors/route_capture.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "collector_capture", .module = collector_capture_mod },
+            .{ .name = "collector_capture_normalize", .module = collector_capture_normalize_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "net_pagination", .module = net_pagination_mod },
+            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+    linkSqlite(collector_route_capture_mod);
     const collector_hostinger_mod = b.createModule(.{
         .root_source_file = b.path("src/collectors/hostinger.zig"),
         .target = target,
@@ -344,11 +358,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_provider_route_plan", .module = app_provider_route_plan_mod },
-            .{ .name = "collector_capture", .module = collector_capture_mod },
-            .{ .name = "collector_capture_normalize", .module = collector_capture_normalize_mod },
+            .{ .name = "collector_route_capture", .module = collector_route_capture_mod },
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "net_pagination", .module = net_pagination_mod },
             .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
@@ -977,6 +989,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, db_store_mod);
     addModuleTest(b, test_step, collector_capture_mod);
     addModuleTest(b, test_step, collector_capture_normalize_mod);
+    addModuleTest(b, test_step, collector_route_capture_mod);
     addModuleTest(b, test_step, collector_caddy_mod);
     addModuleTest(b, test_step, collector_projects_mod);
     addModuleTest(b, test_step, collector_system_mod);
