@@ -389,6 +389,24 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const app_provider_coverage_actual_captures_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/provider_coverage_actual_captures.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
+            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
+            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
+            .{ .name = "app_provider_route_capture", .module = app_provider_route_capture_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_time", .module = core_time_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+    linkSqlite(app_provider_coverage_actual_captures_mod);
+
     const app_provider_coverage_workplan_mod = b.createModule(.{
         .root_source_file = b.path("src/app/provider_coverage_workplan.zig"),
         .target = target,
@@ -456,18 +474,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_provider_l1", .module = app_provider_l1_mod },
+            .{ .name = "app_provider_coverage_actual_captures", .module = app_provider_coverage_actual_captures_mod },
             .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
             .{ .name = "app_provider_coverage_families", .module = app_provider_coverage_families_mod },
             .{ .name = "app_provider_coverage_levels", .module = app_provider_coverage_levels_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
             .{ .name = "app_provider_coverage_rollups", .module = app_provider_coverage_rollups_mod },
             .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
             .{ .name = "app_provider_coverage_typed_models", .module = app_provider_coverage_typed_models_mod },
             .{ .name = "app_provider_coverage_workplan", .module = app_provider_coverage_workplan_mod },
             .{ .name = "app_provider_route_capture", .module = app_provider_route_capture_mod },
             .{ .name = "app_provider_route_plan", .module = app_provider_route_plan_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
@@ -906,6 +922,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_topology_mod);
     addModuleTest(b, test_step, app_provider_api_mod);
     addModuleTest(b, test_step, app_provider_l1_mod);
+    addModuleTest(b, test_step, app_provider_coverage_actual_captures_mod);
     addModuleTest(b, test_step, app_provider_coverage_candidates_mod);
     addModuleTest(b, test_step, app_provider_coverage_families_mod);
     addModuleTest(b, test_step, app_provider_coverage_levels_mod);
