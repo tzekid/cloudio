@@ -63,11 +63,15 @@ test "facade exposes stable integration modules" {
     _ = core.output.Output;
     _ = app.caddy.Context;
     _ = app.cloudflare.Context;
+    _ = app.cloudflare.AccountEndpoint;
+    _ = app.cloudflare.DnsRecordMutationArgs;
     _ = app.coverage.Summary;
     _ = app.coverage.CaptureOptions;
     _ = app.doctor.Report;
     _ = app.exports.writeRecentSnapshotsJson;
     _ = app.hostinger.Context;
+    _ = app.hostinger.HostingArgs;
+    _ = app.hostinger.VmEndpoint;
     _ = app.init.Result;
     _ = app.inventory.Context;
     _ = app.log.Context;

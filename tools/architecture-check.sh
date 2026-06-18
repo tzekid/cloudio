@@ -55,6 +55,11 @@ check_no_matches \
     src/app
 
 check_no_matches \
+    "provider app modules must expose provider contracts directly, not through collectors" \
+    'pub const [A-Za-z0-9_]+ = collector_(cloudflare|hostinger)\.' \
+    src/app/cloudflare.zig src/app/hostinger.zig
+
+check_no_matches \
     "collector output container belongs in core/output.zig" \
     'pub const Output = struct' \
     src/collectors
