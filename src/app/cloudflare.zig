@@ -1,5 +1,6 @@
 const std = @import("std");
 const collector_cloudflare = @import("collector_cloudflare");
+const app_provider_list = @import("app_provider_list");
 const core_output = @import("core_output");
 const db_store = @import("db_store");
 const provider_cloudflare = @import("provider_cloudflare");
@@ -512,30 +513,23 @@ pub fn diagnose(ctx: Context, domain: []const u8) !Output {
 }
 
 pub fn listResources(ctx: Context) !Output {
-    var rows = try ctx.db.cloudflareResourceList(ctx.gpa);
-    defer rows.deinit(ctx.gpa);
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    for (rows.items) |row| {
-        try out.writer.print("{s}\t{s}\n", .{ row.name, row.value });
-    }
-    return .{ .text = try out.toOwnedSlice() };
+    return try app_provider_list.resources(providerListContext(ctx), .cloudflare);
 }
 
 pub fn listInventoryItems(ctx: Context) !Output {
-    var rows = try ctx.db.cloudflareInventoryItemList(ctx.gpa);
-    defer rows.deinit(ctx.gpa);
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    for (rows.items) |row| {
-        try out.writer.print("{s}\t{s}\n", .{ row.name, row.value });
-    }
-    return .{ .text = try out.toOwnedSlice() };
+    return try app_provider_list.inventoryItems(providerListContext(ctx), .cloudflare);
 }
 
 pub fn selectedDomain(domains: []const []const u8, args: []const []const u8) []const u8 {
     if (args.len > 1) return args[1];
     return domains[0];
+}
+
+fn providerListContext(ctx: Context) app_provider_list.Context {
+    return .{
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+    };
 }
 
 test "cloudflare app domain selection uses explicit or default domain" {

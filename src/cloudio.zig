@@ -32,6 +32,7 @@ pub const app = struct {
     pub const log = @import("app_log");
     pub const overview = @import("app_overview");
     pub const projects = @import("app_projects");
+    pub const provider_list = @import("app_provider_list");
     pub const refresh = @import("app_refresh");
     pub const system = @import("app_system");
 };
@@ -77,6 +78,7 @@ test "facade exposes stable integration modules" {
     _ = app.log.Context;
     _ = app.overview.Overview;
     _ = app.projects.Context;
+    _ = app.provider_list.Options;
     _ = app.refresh.Selection;
     _ = app.system.Context;
     _ = db.schema.Migration;

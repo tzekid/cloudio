@@ -1,5 +1,6 @@
 const std = @import("std");
 const collector_hostinger = @import("collector_hostinger");
+const app_provider_list = @import("app_provider_list");
 const core_output = @import("core_output");
 const db_store = @import("db_store");
 const provider_hostinger = @import("provider_hostinger");
@@ -152,29 +153,22 @@ pub fn collectVpsInventoryDetail(ctx: Context, endpoint: VpsInventoryDetailEndpo
 }
 
 pub fn listResources(ctx: Context) !Output {
-    var rows = try ctx.db.hostingerResourceList(ctx.gpa);
-    defer rows.deinit(ctx.gpa);
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    for (rows.items) |row| {
-        try out.writer.print("{s}\t{s}\n", .{ row.name, row.value });
-    }
-    return .{ .text = try out.toOwnedSlice() };
+    return try app_provider_list.resources(providerListContext(ctx), .hostinger);
 }
 
 pub fn listInventoryItems(ctx: Context) !Output {
-    var rows = try ctx.db.hostingerInventoryItemList(ctx.gpa);
-    defer rows.deinit(ctx.gpa);
-    var out = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer out.deinit();
-    for (rows.items) |row| {
-        try out.writer.print("{s}\t{s}\n", .{ row.name, row.value });
-    }
-    return .{ .text = try out.toOwnedSlice() };
+    return try app_provider_list.inventoryItems(providerListContext(ctx), .hostinger);
 }
 
 pub fn defaultDomain(ctx: Context) []const u8 {
     return ctx.domains[0];
+}
+
+fn providerListContext(ctx: Context) app_provider_list.Context {
+    return .{
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+    };
 }
 
 test "hostinger app default domain uses first configured domain" {

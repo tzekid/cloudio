@@ -60,6 +60,11 @@ check_no_matches \
     src/app/cloudflare.zig src/app/hostinger.zig
 
 check_no_matches \
+    "provider-specific app row lists must use app/provider_list.zig" \
+    '(cloudflare|hostinger)(Resource|InventoryItem)List' \
+    src/app/cloudflare.zig src/app/hostinger.zig
+
+check_no_matches \
     "collector output container belongs in core/output.zig" \
     'pub const Output = struct' \
     src/collectors

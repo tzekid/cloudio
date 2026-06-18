@@ -364,12 +364,24 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_system_mod);
 
+    const app_provider_list_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/provider_list.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_output", .module = core_output_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_provider_list_mod);
+
     const app_cloudflare_mod = b.createModule(.{
         .root_source_file = b.path("src/app/cloudflare.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "collector_cloudflare", .module = collector_cloudflare_mod },
+            .{ .name = "app_provider_list", .module = app_provider_list_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
@@ -383,6 +395,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "collector_hostinger", .module = collector_hostinger_mod },
+            .{ .name = "app_provider_list", .module = app_provider_list_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
@@ -417,6 +430,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_log", .module = app_log_mod },
             .{ .name = "app_overview", .module = app_overview_mod },
             .{ .name = "app_projects", .module = app_projects_mod },
+            .{ .name = "app_provider_list", .module = app_provider_list_mod },
             .{ .name = "app_refresh", .module = app_refresh_mod },
             .{ .name = "app_system", .module = app_system_mod },
             .{ .name = "core_config", .module = core_config_mod },
@@ -602,6 +616,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_caddy_mod);
     addModuleTest(b, test_step, app_projects_mod);
     addModuleTest(b, test_step, app_system_mod);
+    addModuleTest(b, test_step, app_provider_list_mod);
     addModuleTest(b, test_step, app_cloudflare_mod);
     addModuleTest(b, test_step, app_hostinger_mod);
     addModuleTest(b, test_step, app_inventory_mod);
