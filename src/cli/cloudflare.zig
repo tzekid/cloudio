@@ -128,23 +128,9 @@ fn commandOverview(ctx: Context, args: []const []const u8) !void {
 
 fn parseOverviewArgs(args: []const []const u8) !OverviewParsed {
     var parsed = OverviewParsed{};
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        switch (cli_render.parseFormatArg(args, &i)) {
-            .matched => |format| {
-                parsed.format = format;
-                continue;
-            },
-            .missing_value => return error.MissingFormat,
-            .invalid_value => return error.InvalidFormat,
-            .no_match => {},
-        }
-        if (try cli_args.parsePositiveI64Arg(args, &i, .{"--limit"}, error.MissingLimit, error.InvalidLimit)) |limit| {
-            parsed.options.limit = limit;
-            continue;
-        }
-        return error.UnexpectedArgument;
-    }
+    const common = try cli_args.parseFormatPositiveLimit(args, parsed.options.limit, .{"--limit"}, error.MissingLimit, error.InvalidLimit, error.UnexpectedArgument);
+    parsed.format = common.format;
+    parsed.options.limit = common.limit;
     return parsed;
 }
 

@@ -346,7 +346,7 @@ fn commandInit(io: Io, gpa: Allocator, cfg: Config, db: *Db) !void {
 }
 
 fn commandDoctor(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []const u8) !void {
-    const format = parseFormatOnly(args, error.UnexpectedDoctorArgument) catch |err| {
+    const format = cli_args.parseFormatOnly(args, error.UnexpectedDoctorArgument) catch |err| {
         std.debug.print("invalid doctor command: {s}\n", .{@errorName(err)});
         return err;
     };
@@ -385,7 +385,7 @@ fn commandRefresh(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []
 }
 
 fn commandLog(io: Io, gpa: Allocator, cfg: Config, args: []const []const u8) !void {
-    const format = parseFormatOnly(args, error.UnexpectedLogArgument) catch |err| {
+    const format = cli_args.parseFormatOnly(args, error.UnexpectedLogArgument) catch |err| {
         std.debug.print("invalid log command: {s}\n", .{@errorName(err)});
         return err;
     };
@@ -441,7 +441,7 @@ fn commandHistory(io: Io, gpa: Allocator, db: *Db, args: []const []const u8) !vo
 }
 
 fn parseOverviewFormat(args: []const []const u8) !cli_render.RenderFormat {
-    return try parseFormatOnly(args, error.UnexpectedOverviewArgument);
+    return try cli_args.parseFormatOnly(args, error.UnexpectedOverviewArgument);
 }
 
 const ParsedHistoryOptions = struct {
@@ -453,15 +453,7 @@ fn parseHistoryOptions(args: []const []const u8) !ParsedHistoryOptions {
     var parsed = ParsedHistoryOptions{};
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (cli_render.parseFormatArg(args, &index)) {
-            .matched => |format| {
-                parsed.format = format;
-                continue;
-            },
-            .missing_value => return error.MissingFormat,
-            .invalid_value => return error.InvalidFormat,
-            .no_match => {},
-        }
+        if (try cli_args.parseFormatOption(args, &index, &parsed.format, error.MissingFormat, error.InvalidFormat)) continue;
         if (try cli_args.parsePositiveI64Arg(args, &index, .{"--limit"}, error.MissingHistoryLimit, error.InvalidHistoryLimit)) |limit| {
             parsed.options.audit_limit = limit;
             parsed.options.snapshot_limit = limit;
@@ -495,14 +487,10 @@ fn parseExportOptions(args: []const []const u8) !ParsedExportOptions {
     var saw_kind = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (cli_render.parseFormatArg(args, &index)) {
-            .matched => |format| {
-                if (format != .json) return error.InvalidExportFormat;
-                continue;
-            },
-            .missing_value => return error.MissingFormat,
-            .invalid_value => return error.InvalidFormat,
-            .no_match => {},
+        var format = cli_render.RenderFormat.json;
+        if (try cli_args.parseFormatOption(args, &index, &format, error.MissingFormat, error.InvalidFormat)) {
+            if (format != .json) return error.InvalidExportFormat;
+            continue;
         }
         if (try cli_args.parsePositiveI64Arg(args, &index, .{"--limit"}, error.MissingExportLimit, error.InvalidExportLimit)) |limit| {
             parsed.history_options.audit_limit = limit;
@@ -532,23 +520,6 @@ fn parseExportOptions(args: []const []const u8) !ParsedExportOptions {
         return error.UnexpectedExportArgument;
     }
     return parsed;
-}
-
-fn parseFormatOnly(args: []const []const u8, comptime unexpected_error: anyerror) !cli_render.RenderFormat {
-    var format: cli_render.RenderFormat = .text;
-    var index: usize = 0;
-    while (index < args.len) : (index += 1) {
-        switch (cli_render.parseFormatArg(args, &index)) {
-            .matched => |parsed| {
-                format = parsed;
-                continue;
-            },
-            .missing_value => return error.MissingFormat,
-            .invalid_value => return error.InvalidFormat,
-            .no_match => return unexpected_error,
-        }
-    }
-    return format;
 }
 
 fn cloudflareAuth(cfg: Config) app_cloudflare.Auth {
@@ -585,8 +556,8 @@ test "overview parser supports text and json formats" {
 
     const unexpected_args = [_][]const u8{"json"};
     try std.testing.expectError(error.UnexpectedOverviewArgument, parseOverviewFormat(unexpected_args[0..]));
-    try std.testing.expectEqual(cli_render.RenderFormat.json, try parseFormatOnly(json_args[0..], error.UnexpectedDoctorArgument));
-    try std.testing.expectError(error.UnexpectedLogArgument, parseFormatOnly(unexpected_args[0..], error.UnexpectedLogArgument));
+    try std.testing.expectEqual(cli_render.RenderFormat.json, try cli_args.parseFormatOnly(json_args[0..], error.UnexpectedDoctorArgument));
+    try std.testing.expectError(error.UnexpectedLogArgument, cli_args.parseFormatOnly(unexpected_args[0..], error.UnexpectedLogArgument));
 }
 
 test "history parser supports shared format and limit options" {

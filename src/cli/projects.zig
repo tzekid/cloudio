@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_projects = @import("app_projects");
+const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
 const db_store = @import("db_store");
 
@@ -76,20 +77,7 @@ fn parseCommand(args: []const []const u8) Command {
 }
 
 fn parseCorrelationFormat(args: []const []const u8) !cli_render.RenderFormat {
-    var format: cli_render.RenderFormat = .text;
-    var index: usize = 0;
-    while (index < args.len) : (index += 1) {
-        switch (cli_render.parseFormatArg(args, &index)) {
-            .matched => |parsed| {
-                format = parsed;
-                continue;
-            },
-            .missing_value => return error.MissingFormat,
-            .invalid_value => return error.InvalidFormat,
-            .no_match => return error.UnexpectedProjectsCorrelateArgument,
-        }
-    }
-    return format;
+    return try cli_args.parseFormatOnly(args, error.UnexpectedProjectsCorrelateArgument);
 }
 
 test "projects command parser maps list show and correlation commands" {

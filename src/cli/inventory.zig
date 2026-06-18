@@ -56,15 +56,7 @@ pub fn parseParsed(args: []const []const u8) !Parsed {
     var parsed = Parsed{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
-        switch (cli_render.parseFormatArg(args, &i)) {
-            .matched => |format| {
-                parsed.format = format;
-                continue;
-            },
-            .missing_value => return error.MissingFormat,
-            .invalid_value => return error.InvalidFormat,
-            .no_match => {},
-        }
+        if (try cli_args.parseFormatOption(args, &i, &parsed.format, error.MissingFormat, error.InvalidFormat)) continue;
         const arg = args[i];
         if (try cli_args.parseRequiredValueArg(args, &i, .{"--provider"}, error.MissingProvider)) |value| {
             parsed.options.provider = try parseProvider(value);

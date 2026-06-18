@@ -500,6 +500,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/cli/args.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "cli_render", .module = cli_render_mod },
+        },
     });
     const cli_coverage_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/coverage.zig"),
@@ -575,6 +578,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_projects", .module = app_projects_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
