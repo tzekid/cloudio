@@ -234,6 +234,7 @@ fn redactInlineVerificationValues(allocator: Allocator, input: []const u8) ![]u8
         "stripe-verification=",
         "apple-domain-verification=",
         "atlassian-domain-verification=",
+        "cloudflare_dashboard_sso=",
     };
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(allocator);
@@ -369,6 +370,18 @@ test "redaction hides DNS verification TXT values inside JSON" {
     try std.testing.expect(std.mem.indexOf(u8, redacted, "google-site-verification=[REDACTED]") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "v=spf1 include:spf.messagingengine.com ?all") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"success\":true") != null);
+}
+
+test "redaction hides Cloudflare dashboard SSO verification TXT values inside JSON" {
+    const allocator = std.testing.allocator;
+    const input =
+        \\{"result":{"verification":{"code":"cloudflare_dashboard_sso=023e105f4ecef8ad9ca31a8372d0c353","status":"pending"}},"success":true}
+    ;
+    const redacted = try secrets(allocator, input);
+    defer allocator.free(redacted);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "023e105f4ecef8ad9ca31a8372d0c353") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "cloudflare_dashboard_sso=[REDACTED]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"status\":\"pending\"") != null);
 }
 
 test "redaction hides JSON private key material without hiding DNSSEC public keys" {
