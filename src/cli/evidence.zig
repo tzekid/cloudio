@@ -24,6 +24,7 @@ const Command = union(enum) {
     matrix: Parsed,
     routes: Parsed,
     coverage: Parsed,
+    capture_summary: Parsed,
 };
 
 pub fn run(ctx: Context, args: []const []const u8) !void {
@@ -36,6 +37,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .matrix => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeMatrixText, app_evidence.writeMatrixJson, .{ appContext(ctx), parsed.options }),
         .routes => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeRouteCapturesText, app_evidence.writeRouteCapturesJson, .{ appContext(ctx), parsed.options }),
         .coverage => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeRouteCoverageText, app_evidence.writeRouteCoverageJson, .{ appContext(ctx), parsed.options }),
+        .capture_summary => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeRouteCaptureSummaryText, app_evidence.writeRouteCaptureSummaryJson, .{ appContext(ctx), parsed.options }),
     }
 }
 
@@ -57,6 +59,9 @@ fn parseCommand(args: []const []const u8) !Command {
         }
         if (std.mem.eql(u8, args[0], "coverage") or std.mem.eql(u8, args[0], "route-coverage") or std.mem.eql(u8, args[0], "covered-routes")) {
             return .{ .coverage = try parseOptions(args[1..]) };
+        }
+        if (std.mem.eql(u8, args[0], "capture-summary") or std.mem.eql(u8, args[0], "actual") or std.mem.eql(u8, args[0], "actual-routes") or std.mem.eql(u8, args[0], "route-summary") or std.mem.eql(u8, args[0], "read-coverage")) {
+            return .{ .capture_summary = try parseOptions(args[1..]) };
         }
         if (std.mem.eql(u8, args[0], "events") or std.mem.eql(u8, args[0], "recent")) {
             return .{ .events = try parseOptions(args[1..]) };
@@ -128,6 +133,12 @@ test "evidence parser accepts provider limit and format" {
     try std.testing.expectEqual(app_evidence.ProviderFilter.cloudflare, coverage.options.provider);
     try std.testing.expectEqual(@as(i64, 9), coverage.options.limit);
     try std.testing.expectEqual(cli_render.RenderFormat.json, coverage.format);
+
+    const summary_args = [_][]const u8{ "capture-summary", "hostinger", "--limit=4", "--json" };
+    const summary = (try parseCommand(summary_args[0..])).capture_summary;
+    try std.testing.expectEqual(app_evidence.ProviderFilter.hostinger, summary.options.provider);
+    try std.testing.expectEqual(@as(i64, 4), summary.options.limit);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, summary.format);
 }
 
 test "evidence parser rejects invalid options" {

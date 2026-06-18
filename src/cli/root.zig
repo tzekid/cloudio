@@ -152,7 +152,7 @@ fn usage() void {
         \\  cloudio overview [--json|--format json]
         \\  cloudio topology [--limit <n>] [--json|--format json]
         \\  cloudio history|audit [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json|--format json]
-        \\  cloudio evidence [events|matrix|routes|coverage] [all|cloudflare|hostinger|caddy|system|projects|route] [--provider <scope>] [--limit <n>] [--json|--format json]
+        \\  cloudio evidence [events|matrix|routes|coverage|capture-summary] [all|cloudflare|hostinger|caddy|system|projects|route] [--provider <scope>] [--limit <n>] [--json|--format json]
         \\  cloudio inventory [summary|facets] [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>] [--json|--format json]
         \\  cloudio export [snapshots|history] [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json]
         \\  cloudio coverage summary [--json|--format json]

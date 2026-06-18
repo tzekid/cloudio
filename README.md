@@ -28,6 +28,8 @@ zig build run -- evidence matrix cloudflare --limit 25
 zig build run -- evidence routes hostinger --json
 zig build run -- evidence coverage all --json
 zig build run -- evidence coverage hostinger --limit 25
+zig build run -- evidence capture-summary all --json
+zig build run -- evidence actual hostinger --limit 10
 zig build run -- inventory
 zig build run -- routes --json
 zig build run -- routes cloudflare dns --limit 25
@@ -81,9 +83,11 @@ zig build run -- evidence routes
 zig build run -- evidence routes hostinger --json
 zig build run -- evidence coverage
 zig build run -- evidence coverage cloudflare --json
+zig build run -- evidence capture-summary
+zig build run -- evidence capture-summary hostinger --json
 ```
 
-`evidence matrix` rolls stored evidence into provider family/status/source groups for broad review. `evidence routes` reads `route.capture` audit rows and extracts provider operation IDs, so L2 route-capture proof can be inspected without scraping recent logs or calling provider APIs. `evidence coverage` joins those DB captures to the generated Cloudflare/Hostinger route manifests and prints official tag, method, path, support, mode, deprecation, and test metadata for each captured operation without making live provider calls.
+`evidence matrix` rolls stored evidence into provider family/status/source groups for broad review. `evidence routes` reads `route.capture` audit rows and extracts provider operation IDs, so L2 route-capture proof can be inspected without scraping recent logs or calling provider APIs. `evidence coverage` joins those DB captures to the generated Cloudflare/Hostinger route manifests and prints official tag, method, path, support, mode, deprecation, and test metadata for each captured operation without making live provider calls. `evidence capture-summary` compares official non-deprecated read routes with actual SQLite route-capture evidence by provider family, so generated coverage claims are not confused with live L2 collection proof.
 
 Topology reads SQLite only and connects Cloudflare DNS records, Caddy routes, project metadata, listening sockets, systemd service state, and Docker container state:
 
