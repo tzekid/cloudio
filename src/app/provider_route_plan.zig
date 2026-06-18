@@ -1,5 +1,6 @@
 const std = @import("std");
 const provider_dispatch = @import("provider_dispatch");
+const provider_route_plan = @import("provider_route_plan");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -109,7 +110,7 @@ pub fn planJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput) ![]
     var routes = try loadCandidateRoutes(io, gpa, paths, input.filter.provider);
     defer routes.deinit(gpa);
     const route = try selectSingleRoute(routes.items, input.filter);
-    return try provider_dispatch.planRouteJsonRequest(gpa, route.*, input.request);
+    return try provider_route_plan.planRouteJsonRequest(gpa, route.*, input.request);
 }
 
 pub fn loadRoute(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput) !provider_routes.Route {
@@ -122,7 +123,7 @@ pub fn planJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_t
     var routes = try loadCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, input.filter.provider);
     defer routes.deinit(gpa);
     const route = try selectSingleRoute(routes.items, input.filter);
-    return try provider_dispatch.planRouteJsonRequest(gpa, route.*, input.request);
+    return try provider_route_plan.planRouteJsonRequest(gpa, route.*, input.request);
 }
 
 pub fn loadRouteFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, input: RoutePlanInput) !provider_routes.Route {

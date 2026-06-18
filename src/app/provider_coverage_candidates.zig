@@ -3,7 +3,7 @@ const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
 const core_json = @import("core_json");
 const provider_capabilities = @import("provider_capabilities");
-const provider_dispatch = @import("provider_dispatch");
+const provider_route_plan = @import("provider_route_plan");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -418,13 +418,13 @@ pub fn writeCaptureCandidateJson(gpa: Allocator, row: CoverageRoute, options: Ca
 pub fn dryRunPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
     const example = try route.exampleRequest(gpa);
     defer example.deinit(gpa);
-    return try provider_dispatch.dryRunPlanJsonRequest(gpa, route, example.request);
+    return try provider_route_plan.dryRunPlanJsonRequest(gpa, route, example.request);
 }
 
 pub fn readPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
     const example = try route.exampleRequest(gpa);
     defer example.deinit(gpa);
-    return try provider_dispatch.planRouteJsonRequest(gpa, route, example.request);
+    return try provider_route_plan.planRouteJsonRequest(gpa, route, example.request);
 }
 
 pub fn captureCommand(gpa: Allocator, route: provider_routes.Route) ![]u8 {

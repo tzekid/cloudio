@@ -4,6 +4,7 @@ const net_http = @import("net_http");
 const provider_capabilities = @import("provider_capabilities");
 const provider_cloudflare = @import("provider_cloudflare");
 const provider_hostinger = @import("provider_hostinger");
+const provider_route_plan = @import("provider_route_plan");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -109,7 +110,7 @@ pub const Client = struct {
 
     pub fn dryRunRouteRequest(self: Client, gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
         if (route.provider != self.provider()) return error.ProviderRouteAuthMismatch;
-        return try dryRunPlanJsonRequestWithBase(gpa, route, request, self.baseUrl(route.provider));
+        return try provider_route_plan.dryRunPlanJsonRequestWithBase(gpa, route, request, self.baseUrl(route.provider));
     }
 
     fn baseUrl(self: Client, target_provider: provider_routes.Provider) ?[]const u8 {
@@ -177,242 +178,25 @@ pub fn readRouteResultMetadataJson(gpa: Allocator, route: provider_routes.Route,
 }
 
 pub fn dryRunPlanJson(gpa: Allocator, route: provider_routes.Route, params: []const provider_routes.PathParam) ![]u8 {
-    return try dryRunPlanJsonWithQuery(gpa, route, params, &.{});
+    return try provider_route_plan.dryRunPlanJson(gpa, route, params);
 }
 
 pub fn dryRunPlanJsonWithQuery(gpa: Allocator, route: provider_routes.Route, path_params: []const provider_routes.PathParam, query_params: []const provider_routes.QueryParam) ![]u8 {
-    return try dryRunPlanJsonRequest(gpa, route, .{ .path_params = path_params, .query_params = query_params });
+    return try provider_route_plan.dryRunPlanJsonWithQuery(gpa, route, path_params, query_params);
 }
 
 pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
-    if (!route.isRoutable()) return error.UnsupportedProviderRoute;
-    if (route.isDryRunMutation()) return try dryRunPlanJsonRequest(gpa, route, request);
-    if (route.mode != .read or route.method != .GET) return error.UnsupportedProviderRoutePlan;
-    if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
-    try route.validateRequestHeaders(request);
-
-    const path = try route.renderRequestPath(gpa, request);
-    defer gpa.free(path);
-    const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ route.provider.baseUrl(), path });
-    defer gpa.free(url);
-
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    try writer.writeAll("{");
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "group", route.tag, true);
-    try writeJsonField(writer, "operation", route.operation_id orelse route.path_template, true);
-    if (route.operation_id) |id| {
-        try writeJsonField(writer, "operation_id", id, true);
-    } else {
-        try writer.writeAll("\"operation_id\":null,");
-    }
-    try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "path", path, true);
-    try writeJsonField(writer, "url", url, true);
-    try writeJsonField(writer, "support", @tagName(route.support), true);
-    try writeSecurityField(writer, "security", route, true);
-    try writeDispatchField(writer, "dispatch", route, true);
-    try writeRouteParamShapeField(writer, "path_param_shapes", route.path_params, true);
-    try writeRouteParamShapeField(writer, "query_param_shapes", route.query_params, true);
-    try writeRouteParamShapeField(writer, "header_param_shapes", route.header_params, true);
-    try writeRouteParamField(writer, "header_params", route.header_params, true);
-    try writeHeaderInputField(writer, "header_params_input", request.header_params, true);
-    try writeRequestBodyField(writer, "request_body", route.request_body, true);
-    try writeRequestBodyInputField(writer, "request_body_input", route.request_body, request.body, true);
-    try writeResponsesField(writer, "responses", route.responses, true);
-    try writer.writeAll("\"mode\":\"read\",");
-    try writer.writeAll("\"will_execute\":false,");
-    const safety = if (routeLiveCallSupported(route))
-        "No provider API request is sent. This is a generic request plan for a live read route."
-    else
-        "No provider API request is sent. This read route is planned for metadata review, but Cloudio will not execute it live with the current support policy.";
-    try writeJsonField(writer, "safety", safety, false);
-    try writer.writeAll("}");
-    return try out.toOwnedSlice();
+    return try provider_route_plan.planRouteJsonRequest(gpa, route, request);
 }
 
 pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
-    return try dryRunPlanJsonRequestWithBase(gpa, route, request, null);
-}
-
-fn dryRunPlanJsonRequestWithBase(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request, base_url_override: ?[]const u8) ![]u8 {
-    if (!route.isRoutable()) return error.UnsupportedProviderRoute;
-    if (route.mode != .dry_run or route.method == .GET or route.method == .HEAD) return error.ProviderRouteIsNotMutation;
-    try route.validateRequestHeaders(request);
-    try route.validateProvidedBodyInput(request);
-
-    const path = try route.renderRequestPath(gpa, request);
-    defer gpa.free(path);
-    const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ base_url_override orelse route.provider.baseUrl(), path });
-    defer gpa.free(url);
-
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    try writer.writeAll("{");
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "group", route.tag, true);
-    try writeJsonField(writer, "operation", route.operation_id orelse route.path_template, true);
-    if (route.operation_id) |id| {
-        try writeJsonField(writer, "operation_id", id, true);
-    } else {
-        try writer.writeAll("\"operation_id\":null,");
-    }
-    try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "path", path, true);
-    try writeJsonField(writer, "url", url, true);
-    try writeJsonField(writer, "support", @tagName(route.support), true);
-    try writeSecurityField(writer, "security", route, true);
-    try writeDispatchField(writer, "dispatch", route, true);
-    try writeRouteParamShapeField(writer, "path_param_shapes", route.path_params, true);
-    try writeRouteParamShapeField(writer, "query_param_shapes", route.query_params, true);
-    try writeRouteParamShapeField(writer, "header_param_shapes", route.header_params, true);
-    try writeRouteParamField(writer, "header_params", route.header_params, true);
-    try writeHeaderInputField(writer, "header_params_input", request.header_params, true);
-    try writeRequestBodyField(writer, "request_body", route.request_body, true);
-    try writeRequestBodyInputField(writer, "request_body_input", route.request_body, request.body, true);
-    try writeResponsesField(writer, "responses", route.responses, true);
-    try writer.writeAll("\"mode\":\"dry_run\",");
-    try writer.writeAll("\"will_execute\":false,");
-    try writeJsonField(writer, "safety", "No provider API request is sent. This is a generic dry-run plan for a live mutation route.", false);
-    try writer.writeAll("}");
-    return try out.toOwnedSlice();
+    return try provider_route_plan.dryRunPlanJsonRequest(gpa, route, request);
 }
 
 fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
     try core_json.writeString(writer, name);
     try writer.writeByte(':');
     try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeRequestBodyField(writer: anytype, name: []const u8, body: provider_routes.RequestBody, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":{");
-    try writer.writeAll("\"required\":");
-    try writer.writeAll(if (body.required) "true" else "false");
-    try writer.writeByte(',');
-    try writeStringArrayField(writer, "content_types", body.content_types, true);
-    try writeStringArrayField(writer, "schema_refs", body.schema_refs, false);
-    try writer.writeByte('}');
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeRouteParamField(writer: anytype, name: []const u8, params: []const provider_routes.RouteParam, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":[");
-    for (params, 0..) |param, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.writeByte('{');
-        try writeJsonField(writer, "name", param.name, true);
-        try writer.writeAll("\"required\":");
-        try writer.writeAll(if (param.required) "true" else "false");
-        try writer.writeByte('}');
-    }
-    try writer.writeByte(']');
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeSecurityField(writer: anytype, name: []const u8, route: provider_routes.Route, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":{");
-    try writer.writeAll("\"required\":");
-    try writer.writeAll(if (route.security.required) "true" else "false");
-    try writer.writeByte(',');
-    try writer.writeAll("\"cloudio_supported\":");
-    try writer.writeAll(if (cloudioSupportsRouteAuth(route)) "true" else "false");
-    try writer.writeByte(',');
-    try writer.writeAll("\"alternatives\":[");
-    for (route.security.alternatives, 0..) |alternative, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.writeByte('[');
-        for (alternative.schemes, 0..) |scheme, scheme_index| {
-            if (scheme_index != 0) try writer.writeByte(',');
-            try core_json.writeString(writer, scheme);
-        }
-        try writer.writeByte(']');
-    }
-    try writer.writeAll("]}");
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeDispatchField(writer: anytype, name: []const u8, route: provider_routes.Route, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":{");
-    try writer.writeAll("\"live_call_supported\":");
-    try writer.writeAll(if (routeLiveCallSupported(route)) "true" else "false");
-    try writer.writeByte(',');
-    try writer.writeAll("\"diagnostic_read_supported\":");
-    try writer.writeAll(if (routeDiagnosticReadSupported(route)) "true" else "false");
-    try writer.writeByte(',');
-    try writer.writeAll("\"dry_run_supported\":");
-    try writer.writeAll(if (routeDryRunSupported(route)) "true" else "false");
-    try writer.writeByte('}');
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeRouteParamShapeField(writer: anytype, name: []const u8, params: []const provider_routes.RouteParam, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":[");
-    for (params, 0..) |param, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.writeByte('{');
-        try writeJsonField(writer, "name", param.name, true);
-        try writer.writeAll("\"required\":");
-        try writer.writeAll(if (param.required) "true" else "false");
-        try writer.writeByte(',');
-        if (param.style) |style| {
-            try writeJsonField(writer, "style", style, true);
-        } else {
-            try writer.writeAll("\"style\":null,");
-        }
-        if (param.explode) |explode| {
-            try writer.writeAll("\"explode\":");
-            try writer.writeAll(if (explode) "true" else "false");
-            try writer.writeByte(',');
-        } else {
-            try writer.writeAll("\"explode\":null,");
-        }
-        try writer.writeAll("\"schema\":{");
-        try writeStringArrayField(writer, "schema_refs", param.schema.schema_refs, true);
-        try writeStringArrayField(writer, "types", param.schema.types, true);
-        try writeStringArrayField(writer, "formats", param.schema.formats, true);
-        try writeStringArrayField(writer, "enum_values", param.schema.enum_values, false);
-        try writer.writeAll("}}");
-    }
-    try writer.writeByte(']');
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeHeaderInputField(writer: anytype, name: []const u8, params: []const provider_routes.HeaderParam, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":[");
-    for (params, 0..) |param, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.writeByte('{');
-        try writeJsonField(writer, "name", param.name, true);
-        try writer.writeAll("\"provided\":true}");
-    }
-    try writer.writeByte(']');
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeRequestBodyInputField(writer: anytype, name: []const u8, body: provider_routes.RequestBody, input: provider_routes.BodyInput, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":{");
-    try writer.writeAll("\"present\":");
-    try writer.writeAll(if (input.present) "true" else "false");
-    try writer.writeByte(',');
-    if (input.content_type) |content_type| {
-        try writeJsonField(writer, "content_type", content_type, true);
-    } else {
-        try writer.writeAll("\"content_type\":null,");
-    }
-    try writer.writeAll("\"required_missing\":");
-    try writer.writeAll(if (body.required and !input.present) "true" else "false");
-    try writer.writeByte('}');
     if (trailing_comma) try writer.writeByte(',');
 }
 

@@ -90,6 +90,16 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
+    const provider_route_plan_mod = b.createModule(.{
+        .root_source_file = b.path("src/providers/route_plan.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
     const db_schema_mod = b.createModule(.{
         .root_source_file = b.path("src/db/schema.zig"),
         .target = target,
@@ -232,6 +242,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
             .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
+            .{ .name = "provider_route_plan", .module = provider_route_plan_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
@@ -358,6 +369,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
+            .{ .name = "provider_route_plan", .module = provider_route_plan_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
@@ -407,7 +419,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
+            .{ .name = "provider_route_plan", .module = provider_route_plan_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
@@ -731,6 +743,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "net_pagination", .module = net_pagination_mod },
             .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
             .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
+            .{ .name = "provider_route_plan", .module = provider_route_plan_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
             .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
@@ -993,6 +1006,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, net_http_mod);
     addModuleTest(b, test_step, net_pagination_mod);
     addModuleTest(b, test_step, provider_capabilities_mod);
+    addModuleTest(b, test_step, provider_route_plan_mod);
     addModuleTest(b, test_step, provider_dispatch_mod);
     addModuleTest(b, test_step, provider_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_mod);
