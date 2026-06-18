@@ -5,6 +5,58 @@ const Io = std.Io;
 
 const max_config_bytes = 256 * 1024;
 
+const Setting = enum {
+    db_path,
+    log_path,
+    domains,
+    caddyfile_path,
+    caddy_sites_path,
+    caddy_admin_socket,
+    projects_root,
+    cloudflare_api_token,
+    cloudflare_email,
+    cloudflare_api_key,
+    hostinger_api_token,
+};
+
+const EnvBinding = struct {
+    key: []const u8,
+    setting: Setting,
+};
+
+const ConfigBinding = struct {
+    section: []const u8,
+    key: []const u8,
+    setting: Setting,
+};
+
+const env_bindings = [_]EnvBinding{
+    .{ .key = "CLOUDIO_DB", .setting = .db_path },
+    .{ .key = "CLOUDIO_LOG", .setting = .log_path },
+    .{ .key = "CLOUDIO_DOMAINS", .setting = .domains },
+    .{ .key = "DOMAINS", .setting = .domains },
+    .{ .key = "DOMAIN", .setting = .domains },
+    .{ .key = "CLOUDFLARE_API_TOKEN", .setting = .cloudflare_api_token },
+    .{ .key = "CLOUDFLARE_EMAIL", .setting = .cloudflare_email },
+    .{ .key = "CLOUDFLARE_API_KEY", .setting = .cloudflare_api_key },
+    .{ .key = "HOSTINGER_API_TOKEN", .setting = .hostinger_api_token },
+    .{ .key = "HAPI_API_TOKEN", .setting = .hostinger_api_token },
+};
+
+const config_bindings = [_]ConfigBinding{
+    .{ .section = "", .key = "db_path", .setting = .db_path },
+    .{ .section = "", .key = "log_path", .setting = .log_path },
+    .{ .section = "", .key = "domains", .setting = .domains },
+    .{ .section = "", .key = "caddyfile_path", .setting = .caddyfile_path },
+    .{ .section = "", .key = "caddy_sites_path", .setting = .caddy_sites_path },
+    .{ .section = "", .key = "caddy_admin_socket", .setting = .caddy_admin_socket },
+    .{ .section = "", .key = "projects_root", .setting = .projects_root },
+    .{ .section = "cloudflare", .key = "api_token", .setting = .cloudflare_api_token },
+    .{ .section = "cloudflare", .key = "email", .setting = .cloudflare_email },
+    .{ .section = "cloudflare", .key = "api_key", .setting = .cloudflare_api_key },
+    .{ .section = "hostinger", .key = "api_token", .setting = .hostinger_api_token },
+};
+
 pub const Config = struct {
     db_path: []const u8 = ".cloudio/cloudio.db",
     log_path: []const u8 = ".cloudio/latest-run.log",
@@ -48,16 +100,9 @@ pub const Config = struct {
 const EnvFileKind = enum { dotenv, fish };
 
 fn applyProcessEnv(arena: Allocator, cfg: *Config, env: *std.process.Environ.Map) !void {
-    if (env.get("CLOUDIO_DB")) |value| try applyEnvSetting(arena, cfg, "CLOUDIO_DB", value);
-    if (env.get("CLOUDIO_LOG")) |value| try applyEnvSetting(arena, cfg, "CLOUDIO_LOG", value);
-    if (env.get("CLOUDIO_DOMAINS")) |value| try applyEnvSetting(arena, cfg, "CLOUDIO_DOMAINS", value);
-    if (env.get("DOMAINS")) |value| try applyEnvSetting(arena, cfg, "DOMAINS", value);
-    if (env.get("DOMAIN")) |value| try applyEnvSetting(arena, cfg, "DOMAIN", value);
-    if (env.get("CLOUDFLARE_API_TOKEN")) |value| try applyEnvSetting(arena, cfg, "CLOUDFLARE_API_TOKEN", value);
-    if (env.get("CLOUDFLARE_EMAIL")) |value| try applyEnvSetting(arena, cfg, "CLOUDFLARE_EMAIL", value);
-    if (env.get("CLOUDFLARE_API_KEY")) |value| try applyEnvSetting(arena, cfg, "CLOUDFLARE_API_KEY", value);
-    if (env.get("HOSTINGER_API_TOKEN")) |value| try applyEnvSetting(arena, cfg, "HOSTINGER_API_TOKEN", value);
-    if (env.get("HAPI_API_TOKEN")) |value| try applyEnvSetting(arena, cfg, "HAPI_API_TOKEN", value);
+    for (env_bindings) |binding| {
+        if (env.get(binding.key)) |value| try applySetting(arena, cfg, binding.setting, value);
+    }
 }
 
 fn applyEnvFileIfPresent(io: Io, arena: Allocator, cfg: *Config, path: []const u8, kind: EnvFileKind) !bool {
@@ -99,24 +144,7 @@ fn applyEnvFileText(arena: Allocator, cfg: *Config, text: []const u8, kind: EnvF
 }
 
 fn applyEnvSetting(arena: Allocator, cfg: *Config, key: []const u8, raw_value: []const u8) !void {
-    const value = trim(raw_value);
-    if (value.len == 0) return;
-    const owned = try arena.dupe(u8, value);
-    if (std.mem.eql(u8, key, "CLOUDIO_DB")) {
-        cfg.db_path = owned;
-    } else if (std.mem.eql(u8, key, "CLOUDIO_LOG")) {
-        cfg.log_path = owned;
-    } else if (std.mem.eql(u8, key, "DOMAINS") or std.mem.eql(u8, key, "DOMAIN") or std.mem.eql(u8, key, "CLOUDIO_DOMAINS")) {
-        cfg.domains = try parseList(arena, owned);
-    } else if (std.mem.eql(u8, key, "CLOUDFLARE_API_TOKEN")) {
-        cfg.cloudflare_api_token = owned;
-    } else if (std.mem.eql(u8, key, "CLOUDFLARE_EMAIL")) {
-        cfg.cloudflare_email = owned;
-    } else if (std.mem.eql(u8, key, "CLOUDFLARE_API_KEY")) {
-        cfg.cloudflare_api_key = owned;
-    } else if (std.mem.eql(u8, key, "HOSTINGER_API_TOKEN") or std.mem.eql(u8, key, "HAPI_API_TOKEN")) {
-        cfg.hostinger_api_token = owned;
-    }
+    if (envSetting(key)) |setting| try applySetting(arena, cfg, setting, raw_value);
 }
 
 fn applyConfigText(arena: Allocator, cfg: *Config, text: []const u8) !void {
@@ -132,23 +160,40 @@ fn applyConfigText(arena: Allocator, cfg: *Config, text: []const u8) !void {
         }
         const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
         const key = trim(line[0..eq]);
-        const value = try arena.dupe(u8, parseConfigValue(trim(line[eq + 1 ..])));
-        if (value.len == 0) continue;
-        if (std.mem.eql(u8, section, "")) {
-            if (std.mem.eql(u8, key, "db_path")) cfg.db_path = value;
-            if (std.mem.eql(u8, key, "log_path")) cfg.log_path = value;
-            if (std.mem.eql(u8, key, "domains")) cfg.domains = try parseList(arena, value);
-            if (std.mem.eql(u8, key, "caddyfile_path")) cfg.caddyfile_path = value;
-            if (std.mem.eql(u8, key, "caddy_sites_path")) cfg.caddy_sites_path = value;
-            if (std.mem.eql(u8, key, "caddy_admin_socket")) cfg.caddy_admin_socket = value;
-            if (std.mem.eql(u8, key, "projects_root")) cfg.projects_root = value;
-        } else if (std.mem.eql(u8, section, "cloudflare")) {
-            if (std.mem.eql(u8, key, "api_token")) cfg.cloudflare_api_token = value;
-            if (std.mem.eql(u8, key, "email")) cfg.cloudflare_email = value;
-            if (std.mem.eql(u8, key, "api_key")) cfg.cloudflare_api_key = value;
-        } else if (std.mem.eql(u8, section, "hostinger")) {
-            if (std.mem.eql(u8, key, "api_token")) cfg.hostinger_api_token = value;
-        }
+        const value = parseConfigValue(trim(line[eq + 1 ..]));
+        if (configSetting(section, key)) |setting| try applySetting(arena, cfg, setting, value);
+    }
+}
+
+fn envSetting(key: []const u8) ?Setting {
+    for (env_bindings) |binding| {
+        if (std.mem.eql(u8, key, binding.key)) return binding.setting;
+    }
+    return null;
+}
+
+fn configSetting(section: []const u8, key: []const u8) ?Setting {
+    for (config_bindings) |binding| {
+        if (std.mem.eql(u8, section, binding.section) and std.mem.eql(u8, key, binding.key)) return binding.setting;
+    }
+    return null;
+}
+
+fn applySetting(arena: Allocator, cfg: *Config, setting: Setting, raw_value: []const u8) !void {
+    const value = trim(raw_value);
+    if (value.len == 0) return;
+    switch (setting) {
+        .domains => cfg.domains = try parseList(arena, value),
+        .db_path => cfg.db_path = try arena.dupe(u8, value),
+        .log_path => cfg.log_path = try arena.dupe(u8, value),
+        .caddyfile_path => cfg.caddyfile_path = try arena.dupe(u8, value),
+        .caddy_sites_path => cfg.caddy_sites_path = try arena.dupe(u8, value),
+        .caddy_admin_socket => cfg.caddy_admin_socket = try arena.dupe(u8, value),
+        .projects_root => cfg.projects_root = try arena.dupe(u8, value),
+        .cloudflare_api_token => cfg.cloudflare_api_token = try arena.dupe(u8, value),
+        .cloudflare_email => cfg.cloudflare_email = try arena.dupe(u8, value),
+        .cloudflare_api_key => cfg.cloudflare_api_key = try arena.dupe(u8, value),
+        .hostinger_api_token => cfg.hostinger_api_token = try arena.dupe(u8, value),
     }
 }
 
@@ -240,6 +285,22 @@ test "config parser reads provider settings" {
     try std.testing.expect(cfg.hasHostingerAuth());
 }
 
+test "config parser reads path and project settings through shared bindings" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var cfg = Config{ .domains = try parseList(arena.allocator(), "plosca.ru") };
+    try applyConfigText(arena.allocator(), &cfg,
+        \\caddyfile_path = "/tmp/Caddyfile"
+        \\caddy_sites_path = "/tmp/sites.caddy"
+        \\caddy_admin_socket = "/tmp/admin.sock"
+        \\projects_root = "/srv/projects"
+    );
+    try std.testing.expectEqualStrings("/tmp/Caddyfile", cfg.caddyfile_path);
+    try std.testing.expectEqualStrings("/tmp/sites.caddy", cfg.caddy_sites_path);
+    try std.testing.expectEqualStrings("/tmp/admin.sock", cfg.caddy_admin_socket);
+    try std.testing.expectEqualStrings("/srv/projects", cfg.projects_root);
+}
+
 test "empty provider config values do not configure auth" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -271,6 +332,27 @@ test "dotenv parser reads canonical env names" {
     try std.testing.expect(cfg.hasHostingerAuth());
     try std.testing.expectEqual(@as(usize, 2), cfg.domains.len);
     try std.testing.expectEqualStrings(".cloudio/test-run.log", cfg.log_path);
+}
+
+test "process env parser uses shared aliases with later aliases taking precedence" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var env = std.process.Environ.Map.init(arena.allocator());
+    defer env.deinit();
+    try env.put("CLOUDIO_DB", ".cloudio/env.db");
+    try env.put("CLOUDIO_DOMAINS", "one.example two.example");
+    try env.put("CLOUDFLARE_API_TOKEN", "cf-token");
+    try env.put("HOSTINGER_API_TOKEN", "hostinger-primary");
+    try env.put("HAPI_API_TOKEN", "hostinger-alias");
+
+    var cfg = Config{ .domains = try parseList(arena.allocator(), "plosca.ru") };
+    try applyProcessEnv(arena.allocator(), &cfg, &env);
+
+    try std.testing.expectEqualStrings(".cloudio/env.db", cfg.db_path);
+    try std.testing.expectEqual(@as(usize, 2), cfg.domains.len);
+    try std.testing.expectEqualStrings("one.example", cfg.domains[0]);
+    try std.testing.expectEqualStrings("cf-token", cfg.cloudflare_api_token.?);
+    try std.testing.expectEqualStrings("hostinger-alias", cfg.hostinger_api_token.?);
 }
 
 test "fish env parser reads set exports" {
