@@ -385,18 +385,28 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const app_provider_route_capture_result_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/provider_route_capture_result.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "provider_route_result", .module = provider_route_result_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+
     const app_provider_route_capture_mod = b.createModule(.{
         .root_source_file = b.path("src/app/provider_route_capture.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_provider_route_capture_result", .module = app_provider_route_capture_result_mod },
             .{ .name = "app_provider_route_plan", .module = app_provider_route_plan_mod },
             .{ .name = "collector_route_capture", .module = collector_route_capture_mod },
-            .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
             .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
-            .{ .name = "provider_route_result", .module = provider_route_result_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
@@ -736,6 +746,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_overview", .module = app_overview_mod },
             .{ .name = "app_projects", .module = app_projects_mod },
             .{ .name = "app_provider_list", .module = app_provider_list_mod },
+            .{ .name = "app_provider_route_capture_result", .module = app_provider_route_capture_result_mod },
             .{ .name = "app_refresh", .module = app_refresh_mod },
             .{ .name = "app_route_catalog", .module = app_route_catalog_mod },
             .{ .name = "app_system", .module = app_system_mod },
@@ -999,6 +1010,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_provider_coverage_workplan_mod);
     addModuleTest(b, test_step, app_provider_coverage_routes_mod);
     addModuleTest(b, test_step, app_provider_route_plan_mod);
+    addModuleTest(b, test_step, app_provider_route_capture_result_mod);
     addModuleTest(b, test_step, app_provider_route_capture_mod);
     addModuleTest(b, test_step, app_provider_list_mod);
     addModuleTest(b, test_step, app_render_mod);
