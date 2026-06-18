@@ -474,13 +474,46 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_provider_coverage_actual_plan_mod);
 
+    const app_provider_coverage_actual_commands_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/provider_coverage_actual_commands.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_provider_coverage_actual_inputs", .module = app_provider_coverage_actual_inputs_mod },
+            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
+            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+
+    const app_provider_coverage_actual_ready_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/provider_coverage_actual_ready.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_provider_coverage_actual_commands", .module = app_provider_coverage_actual_commands_mod },
+            .{ .name = "app_provider_coverage_actual_inputs", .module = app_provider_coverage_actual_inputs_mod },
+            .{ .name = "app_provider_coverage_actual_plan", .module = app_provider_coverage_actual_plan_mod },
+            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
+            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
+            .{ .name = "app_provider_route_capture", .module = app_provider_route_capture_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
+            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+    linkSqlite(app_provider_coverage_actual_ready_mod);
+
     const app_provider_coverage_actual_captures_mod = b.createModule(.{
         .root_source_file = b.path("src/app/provider_coverage_actual_captures.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_provider_coverage_actual_commands", .module = app_provider_coverage_actual_commands_mod },
             .{ .name = "app_provider_coverage_actual_inputs", .module = app_provider_coverage_actual_inputs_mod },
             .{ .name = "app_provider_coverage_actual_plan", .module = app_provider_coverage_actual_plan_mod },
+            .{ .name = "app_provider_coverage_actual_ready", .module = app_provider_coverage_actual_ready_mod },
             .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
             .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
             .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
@@ -562,6 +595,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "app_provider_l1", .module = app_provider_l1_mod },
             .{ .name = "app_provider_coverage_actual_captures", .module = app_provider_coverage_actual_captures_mod },
+            .{ .name = "app_provider_coverage_actual_ready", .module = app_provider_coverage_actual_ready_mod },
             .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
             .{ .name = "app_provider_coverage_families", .module = app_provider_coverage_families_mod },
             .{ .name = "app_provider_coverage_levels", .module = app_provider_coverage_levels_mod },
@@ -761,6 +795,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_projects", .module = app_projects_mod },
             .{ .name = "app_provider_list", .module = app_provider_list_mod },
             .{ .name = "app_provider_coverage_actual_plan", .module = app_provider_coverage_actual_plan_mod },
+            .{ .name = "app_provider_coverage_actual_ready", .module = app_provider_coverage_actual_ready_mod },
             .{ .name = "app_provider_route_capture_result", .module = app_provider_route_capture_result_mod },
             .{ .name = "app_refresh", .module = app_refresh_mod },
             .{ .name = "app_route_catalog", .module = app_route_catalog_mod },
@@ -1015,8 +1050,10 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_provider_api_mod);
     addModuleTest(b, test_step, app_provider_l1_mod);
     addModuleTest(b, test_step, app_provider_coverage_actual_captures_mod);
+    addModuleTest(b, test_step, app_provider_coverage_actual_commands_mod);
     addModuleTest(b, test_step, app_provider_coverage_actual_inputs_mod);
     addModuleTest(b, test_step, app_provider_coverage_actual_plan_mod);
+    addModuleTest(b, test_step, app_provider_coverage_actual_ready_mod);
     addModuleTest(b, test_step, app_provider_coverage_candidates_mod);
     addModuleTest(b, test_step, app_provider_coverage_families_mod);
     addModuleTest(b, test_step, app_provider_coverage_levels_mod);

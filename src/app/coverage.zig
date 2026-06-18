@@ -2,6 +2,7 @@ const std = @import("std");
 const app_provider_l1 = @import("app_provider_l1");
 const app_provider_coverage_candidates = @import("app_provider_coverage_candidates");
 const app_provider_coverage_actual_captures = @import("app_provider_coverage_actual_captures");
+const app_provider_coverage_actual_ready = @import("app_provider_coverage_actual_ready");
 const app_provider_coverage_families = @import("app_provider_coverage_families");
 const app_provider_coverage_levels = @import("app_provider_coverage_levels");
 const app_provider_coverage_rollups = @import("app_provider_coverage_rollups");
@@ -85,7 +86,7 @@ pub const CaptureCandidateOptions = app_provider_coverage_candidates.CaptureCand
 
 pub const ActualCaptureOptions = app_provider_coverage_actual_captures.ActualCaptureOptions;
 
-pub const ActualReadyCaptureOptions = app_provider_coverage_actual_captures.ActualReadyCaptureOptions;
+pub const ActualReadyCaptureOptions = app_provider_coverage_actual_ready.ActualReadyCaptureOptions;
 
 pub const DryRunCandidateOptions = app_provider_coverage_candidates.DryRunCandidateOptions;
 
@@ -336,11 +337,11 @@ pub fn writeActualCapturesJsonFromText(gpa: Allocator, cloudflare_text: []const 
 }
 
 pub fn actualReadyCaptureJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, auth: Auth, options: ActualReadyCaptureOptions) ![]u8 {
-    return try app_provider_coverage_actual_captures.actualReadyCaptureJsonFromFiles(io, gpa, paths, db, auth, options);
+    return try app_provider_coverage_actual_ready.actualReadyCaptureJsonFromFiles(io, gpa, paths, db, auth, options);
 }
 
 pub fn actualReadyCaptureJsonFromText(io: Io, gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, db: *Db, auth: Auth, options: ActualReadyCaptureOptions) ![]u8 {
-    return try app_provider_coverage_actual_captures.actualReadyCaptureJsonFromText(io, gpa, cloudflare_text, hostinger_text, db, auth, options);
+    return try app_provider_coverage_actual_ready.actualReadyCaptureJsonFromText(io, gpa, cloudflare_text, hostinger_text, db, auth, options);
 }
 
 pub fn writeDryRunCandidatesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: DryRunCandidateOptions, writer: anytype) !void {

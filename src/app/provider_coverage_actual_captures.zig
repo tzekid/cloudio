@@ -1,7 +1,9 @@
 const std = @import("std");
 const app_provider_coverage_candidates = @import("app_provider_coverage_candidates");
+const app_provider_coverage_actual_commands = @import("app_provider_coverage_actual_commands");
 const app_provider_coverage_actual_inputs = @import("app_provider_coverage_actual_inputs");
 const app_provider_coverage_actual_plan = @import("app_provider_coverage_actual_plan");
+const app_provider_coverage_actual_ready = @import("app_provider_coverage_actual_ready");
 const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
 const app_provider_route_capture = @import("app_provider_route_capture");
@@ -21,7 +23,6 @@ const writeJsonNullableBoolField = app_provider_coverage_render.writeJsonNullabl
 const writeJsonNullableCountField = app_provider_coverage_render.writeJsonNullableCountField;
 const writeJsonNullableStringField = app_provider_coverage_render.writeJsonNullableStringField;
 const writeMaybeJsonComma = app_provider_coverage_render.writeMaybeJsonComma;
-const writeShellArg = app_provider_coverage_render.writeShellArg;
 
 const default_capture_max_pages = 25;
 
@@ -30,9 +31,6 @@ pub const ProviderFilter = provider_routes.ProviderFilter;
 pub const RouteFilter = app_provider_coverage_routes.RouteFilter;
 pub const CoverageRoute = app_provider_coverage_routes.CoverageRoute;
 pub const CoverageRoutes = app_provider_coverage_routes.CoverageRoutes;
-pub const PathParam = provider_routes.PathParam;
-pub const QueryParam = provider_routes.QueryParam;
-pub const Request = provider_routes.Request;
 pub const Auth = provider_dispatch.Auth;
 pub const CaptureOptions = app_provider_route_capture.CaptureOptions;
 
@@ -67,16 +65,9 @@ const actualCaptureSourceBodyEvidence = app_provider_coverage_actual_inputs.actu
 const actualCaptureSourceResult = app_provider_coverage_actual_inputs.actualCaptureSourceResult;
 const actualCaptureSourceNextAction = app_provider_coverage_actual_inputs.actualCaptureSourceNextAction;
 const actualCaptureSourceHintCount = app_provider_coverage_actual_inputs.actualCaptureSourceHintCount;
+const actualCaptureCommand = app_provider_coverage_actual_commands.actualCaptureCommand;
 
-pub const ActualReadyCaptureOptions = struct {
-    filter: RouteFilter = .{},
-    limit: usize = 25,
-    max_pages: usize = default_capture_max_pages,
-    execute: bool = false,
-    include_blocked: bool = false,
-    diagnostic_only: bool = false,
-    configured_domains: []const []const u8 = &.{},
-};
+pub const ActualReadyCaptureOptions = app_provider_coverage_actual_ready.ActualReadyCaptureOptions;
 
 fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
     const totals_value = plan.totals();
@@ -267,27 +258,11 @@ pub fn writeActualCapturesJsonFromText(gpa: Allocator, cloudflare_text: []const 
 }
 
 pub fn actualReadyCaptureJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, auth: Auth, options: ActualReadyCaptureOptions) ![]u8 {
-    try validateActualReadyCaptureProvider(auth, options.filter.provider);
-    var plan = try loadActualCapturePlanFromFiles(io, gpa, paths, db, .{
-        .filter = options.filter,
-        .limit = 0,
-        .include_plans = false,
-        .configured_domains = options.configured_domains,
-    });
-    defer plan.deinit(gpa);
-    return try actualReadyCaptureJson(io, gpa, db, auth, plan, options);
+    return try app_provider_coverage_actual_ready.actualReadyCaptureJsonFromFiles(io, gpa, paths, db, auth, options);
 }
 
 pub fn actualReadyCaptureJsonFromText(io: Io, gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, db: *Db, auth: Auth, options: ActualReadyCaptureOptions) ![]u8 {
-    try validateActualReadyCaptureProvider(auth, options.filter.provider);
-    var plan = try loadActualCapturePlanFromText(gpa, cloudflare_text, hostinger_text, db, .{
-        .filter = options.filter,
-        .limit = 0,
-        .include_plans = false,
-        .configured_domains = options.configured_domains,
-    });
-    defer plan.deinit(gpa);
-    return try actualReadyCaptureJson(io, gpa, db, auth, plan, options);
+    return try app_provider_coverage_actual_ready.actualReadyCaptureJsonFromText(io, gpa, cloudflare_text, hostinger_text, db, auth, options);
 }
 
 fn writeActualMissingInputsText(writer: anytype, route: provider_routes.Route, hints: ActualCaptureHints) !void {
@@ -657,260 +632,6 @@ fn writeActualCaptureCandidateJson(
         try writer.writeAll(plan);
     }
     try writer.writeByte('}');
-}
-
-fn actualCaptureCommand(gpa: Allocator, route: provider_routes.Route, hints: ActualCaptureHints) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    try writer.print("cloudio route capture {s}", .{route.provider.name()});
-    if (route.operation_id) |id| {
-        try writer.print(" --operation {s}", .{id});
-    } else {
-        try writer.print(" --method {s} --path ", .{route.method.name()});
-        try writeShellArg(writer, route.path_template);
-    }
-    try writeActualPathParams(writer, route, hints);
-    try writeActualQueryParams(gpa, writer, route, hints);
-    try writeActualRequiredParamPlaceholders(writer, "--header-param", route.header_params);
-    if (routePaginationKind(route) != null) try writer.writeAll(" --paginate");
-    if (provider_capabilities.routeDiagnosticReadSupported(route)) try writer.writeAll(" --diagnostic");
-    return try out.toOwnedSlice();
-}
-
-fn writeActualPathParams(writer: anytype, route: provider_routes.Route, hints: ActualCaptureHints) !void {
-    for (route.path_params) |param| {
-        if (!param.required) continue;
-        try writer.print(" --path-param {s}=", .{param.name});
-        if (actualCapturePathParamHint(route, param.name, hints)) |hint| {
-            try writeShellArg(writer, hint);
-        } else {
-            try writer.print("REPLACE_{s}", .{param.name});
-        }
-    }
-}
-
-fn writeActualQueryParams(gpa: Allocator, writer: anytype, route: provider_routes.Route, hints: ActualCaptureHints) !void {
-    for (route.query_params) |param| {
-        if (!param.required) continue;
-        try writer.print(" --query-param {s}=", .{param.name});
-        if (try actualCaptureQueryParamHint(gpa, route, param.name, hints)) |hint| {
-            defer gpa.free(hint);
-            try writeShellArg(writer, hint);
-        } else {
-            try writer.print("REPLACE_{s}", .{param.name});
-        }
-    }
-}
-
-fn writeActualRequiredParamPlaceholders(writer: anytype, option: []const u8, params: []const provider_routes.RouteParam) !void {
-    for (params) |param| {
-        if (!param.required) continue;
-        try writer.print(" {s} {s}=REPLACE_{s}", .{ option, param.name, param.name });
-    }
-}
-
-const ActualReadyCaptureSummary = struct {
-    candidate_routes: usize = 0,
-    ready_routes: usize = 0,
-    skipped_unready: usize = 0,
-    skipped_non_diagnostic: usize = 0,
-    omitted_ready: usize = 0,
-    planned: usize = 0,
-    attempted: usize = 0,
-    captured: usize = 0,
-    failed: usize = 0,
-};
-
-const ActualReadyRequest = struct {
-    request: Request,
-    path_params: []PathParam,
-    query_params: []QueryParam,
-    query_values: [][]u8,
-
-    fn deinit(self: ActualReadyRequest, gpa: Allocator) void {
-        for (self.query_values) |value| gpa.free(value);
-        gpa.free(self.query_values);
-        gpa.free(self.query_params);
-        gpa.free(self.path_params);
-    }
-};
-
-fn validateActualReadyCaptureProvider(auth: Auth, provider: ProviderFilter) !void {
-    if (provider == .all) return error.ActualReadyCaptureProviderRequired;
-    if (!provider.includes(auth.provider().name())) return error.ProviderRouteAuthMismatch;
-}
-
-fn actualReadyCaptureJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, plan: ActualCapturePlan, options: ActualReadyCaptureOptions) ![]u8 {
-    const hints = plan.hints();
-    var summary = ActualReadyCaptureSummary{};
-    var items_out = std.Io.Writer.Allocating.init(gpa);
-    defer items_out.deinit();
-    const items_writer = &items_out.writer;
-    try items_writer.writeByte('[');
-    var first = true;
-
-    for (plan.routes.items) |row| {
-        const state = actualCaptureState(row.route, plan.captures.items) orelse continue;
-        if (state == .ok) continue;
-        summary.candidate_routes += 1;
-        if (!actualCaptureReadyWithPolicy(row.route, hints, options.include_blocked)) {
-            summary.skipped_unready += 1;
-            continue;
-        }
-        summary.ready_routes += 1;
-        if (options.diagnostic_only and !actualCaptureUsesDiagnosticRead(row.route, options.include_blocked)) {
-            summary.skipped_non_diagnostic += 1;
-            continue;
-        }
-        if (options.limit != 0 and summary.planned + summary.attempted >= options.limit) {
-            summary.omitted_ready += 1;
-            continue;
-        }
-        try writeMaybeJsonComma(items_writer, &first);
-        if (options.execute) {
-            summary.attempted += 1;
-        } else {
-            summary.planned += 1;
-        }
-        try writeActualReadyCaptureItemJson(io, gpa, db, auth, row.route, state, hints, options, &summary, items_writer);
-    }
-
-    try items_writer.writeByte(']');
-    const items_json = try items_out.toOwnedSlice();
-    defer gpa.free(items_json);
-
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    try writer.writeByte('{');
-    try writeJsonField(writer, "kind", "actual_ready_capture_run", true);
-    try writeJsonBoolField(writer, "execute", options.execute, true);
-    try writeJsonBoolField(writer, "include_blocked", options.include_blocked, true);
-    try writeJsonBoolField(writer, "diagnostic_only", options.diagnostic_only, true);
-    try writer.writeAll("\"filter\":");
-    try writeRouteFilterJson(actualCaptureRouteFilter(options.filter), writer);
-    try writer.writeByte(',');
-    try writeJsonCountField(writer, "limit", options.limit, true);
-    try writeJsonCountField(writer, "max_pages", options.max_pages, true);
-    try writer.writeAll("\"summary\":");
-    try writeActualReadyCaptureSummaryJson(summary, writer);
-    try writer.writeAll(",\"items\":");
-    try writer.writeAll(items_json);
-    try writer.writeByte('}');
-    return try out.toOwnedSlice();
-}
-
-fn writeActualReadyCaptureSummaryJson(summary: ActualReadyCaptureSummary, writer: anytype) !void {
-    try writer.writeByte('{');
-    try writeJsonCountField(writer, "candidate_routes", summary.candidate_routes, true);
-    try writeJsonCountField(writer, "ready_routes", summary.ready_routes, true);
-    try writeJsonCountField(writer, "skipped_unready", summary.skipped_unready, true);
-    try writeJsonCountField(writer, "skipped_non_diagnostic", summary.skipped_non_diagnostic, true);
-    try writeJsonCountField(writer, "omitted_ready", summary.omitted_ready, true);
-    try writeJsonCountField(writer, "planned", summary.planned, true);
-    try writeJsonCountField(writer, "attempted", summary.attempted, true);
-    try writeJsonCountField(writer, "captured", summary.captured, true);
-    try writeJsonCountField(writer, "failed", summary.failed, false);
-    try writer.writeByte('}');
-}
-
-fn writeActualReadyCaptureItemJson(
-    io: Io,
-    gpa: Allocator,
-    db: *Db,
-    auth: Auth,
-    route: provider_routes.Route,
-    state: ActualCaptureState,
-    hints: ActualCaptureHints,
-    options: ActualReadyCaptureOptions,
-    summary: *ActualReadyCaptureSummary,
-    writer: anytype,
-) !void {
-    const command = try actualCaptureCommand(gpa, route, hints);
-    defer gpa.free(command);
-    try writer.writeByte('{');
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "tag", route.tag, true);
-    try writeJsonField(writer, "operation_id", route.operation_id orelse route.path_template, true);
-    try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "path_template", route.path_template, true);
-    try writeJsonField(writer, "actual_state", state.name(), true);
-    try writeJsonNullableStringField(writer, "pagination", routePaginationKind(route), true);
-    try writeJsonBoolField(writer, "live_read_supported", provider_capabilities.routeLiveReadSupported(route), true);
-    try writeJsonBoolField(writer, "diagnostic_read", actualCaptureUsesDiagnosticRead(route, options.include_blocked), true);
-    try writeJsonField(writer, "capture_command", command, true);
-    if (!options.execute) {
-        try writeJsonField(writer, "status", "planned", false);
-        try writer.writeByte('}');
-        return;
-    }
-
-    const result_json = actualReadyCaptureRouteJson(io, gpa, db, auth, route, hints, options) catch |err| {
-        summary.failed += 1;
-        try writeJsonField(writer, "status", "error", true);
-        try writeJsonField(writer, "error", @errorName(err), false);
-        try writer.writeByte('}');
-        return;
-    };
-    defer gpa.free(result_json);
-    summary.captured += 1;
-    try writeJsonField(writer, "status", "captured", true);
-    try writer.writeAll("\"capture_result\":");
-    try writer.writeAll(result_json);
-    try writer.writeByte('}');
-}
-
-fn actualReadyCaptureRouteJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, route: provider_routes.Route, hints: ActualCaptureHints, options: ActualReadyCaptureOptions) ![]u8 {
-    if (!actualCaptureReadyWithPolicy(route, hints, options.include_blocked)) return error.ActualCaptureRouteNotReady;
-    const owned_request = try actualReadyCaptureRequest(gpa, route, hints);
-    defer owned_request.deinit(gpa);
-    const client = provider_dispatch.Client.init(auth);
-    const capture_options = CaptureOptions{
-        .paginate = routePaginationKind(route) != null,
-        .max_pages = options.max_pages,
-        .diagnostic_read = actualCaptureUsesDiagnosticRead(route, options.include_blocked),
-    };
-    return try app_provider_route_capture.readRouteMetadataJson(io, gpa, db, client, route, owned_request.request, capture_options);
-}
-
-fn actualReadyCaptureRequest(gpa: Allocator, route: provider_routes.Route, hints: ActualCaptureHints) !ActualReadyRequest {
-    var path_params = std.ArrayList(PathParam).empty;
-    errdefer path_params.deinit(gpa);
-    for (route.path_params) |param| {
-        if (!param.required) continue;
-        const value = actualCapturePathParamHint(route, param.name, hints) orelse return error.ActualCaptureRouteNotReady;
-        try path_params.append(gpa, .{ .name = param.name, .value = value });
-    }
-    var query_params = std.ArrayList(QueryParam).empty;
-    errdefer query_params.deinit(gpa);
-    var query_values = std.ArrayList([]u8).empty;
-    errdefer {
-        for (query_values.items) |value| gpa.free(value);
-        query_values.deinit(gpa);
-    }
-    for (route.query_params) |param| {
-        if (!param.required) continue;
-        const value = (try actualCaptureQueryParamHint(gpa, route, param.name, hints)) orelse return error.ActualCaptureRouteNotReady;
-        try query_values.append(gpa, value);
-        try query_params.append(gpa, .{ .name = param.name, .value = value });
-    }
-    const owned_path_params = try path_params.toOwnedSlice(gpa);
-    errdefer gpa.free(owned_path_params);
-    const owned_query_params = try query_params.toOwnedSlice(gpa);
-    errdefer gpa.free(owned_query_params);
-    const owned_query_values = try query_values.toOwnedSlice(gpa);
-    return .{
-        .request = .{
-            .path_params = owned_path_params,
-            .query_params = owned_query_params,
-            .header_params = &.{},
-            .body = .{},
-        },
-        .path_params = owned_path_params,
-        .query_params = owned_query_params,
-        .query_values = owned_query_values,
-    };
 }
 
 fn routeReadPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
