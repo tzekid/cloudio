@@ -2,6 +2,7 @@ const std = @import("std");
 const app_provider_l1 = @import("app_provider_l1");
 const app_provider_coverage_candidates = @import("app_provider_coverage_candidates");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
+const app_provider_coverage_workplan = @import("app_provider_coverage_workplan");
 const app_provider_route_capture = @import("app_provider_route_capture");
 const app_provider_route_plan = @import("app_provider_route_plan");
 const core_json = @import("core_json");
@@ -317,36 +318,11 @@ pub const FamilyOptions = struct {
     focus: WorkplanFocus = .control_plane,
 };
 
-pub const WorkplanFocus = enum {
-    all,
-    control_plane,
+pub const WorkplanFocus = app_provider_coverage_workplan.WorkplanFocus;
 
-    pub fn parse(value: []const u8) ?WorkplanFocus {
-        if (std.mem.eql(u8, value, "all")) return .all;
-        if (std.mem.eql(u8, value, "control-plane") or std.mem.eql(u8, value, "control_plane")) return .control_plane;
-        if (std.mem.eql(u8, value, "cloudio") or std.mem.eql(u8, value, "cloudio-relevant")) return .control_plane;
-        return null;
-    }
+pub const WorkplanFamily = app_provider_coverage_workplan.WorkplanFamily;
 
-    pub fn name(self: WorkplanFocus) []const u8 {
-        return switch (self) {
-            .all => "all",
-            .control_plane => "control-plane",
-        };
-    }
-};
-
-pub const WorkplanFamily = app_provider_coverage_routes.WorkplanFamily;
-
-pub const WorkplanOptions = struct {
-    provider: ProviderFilter = .all,
-    limit: usize = 10,
-    focus: WorkplanFocus = .all,
-    family: WorkplanFamily = .all,
-    include_plans: bool = false,
-    bundle_candidates: bool = false,
-    candidate_limit: usize = 25,
-};
+pub const WorkplanOptions = app_provider_coverage_workplan.WorkplanOptions;
 
 pub const TypedModelOptions = struct {
     provider: ProviderFilter = .all,
@@ -1354,49 +1330,33 @@ pub fn writeTypedModelsJsonFromText(gpa: Allocator, cloudflare_text: []const u8,
 pub fn writeWorkplanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions, writer: anytype) !void {
     var report = try loadLevelTags(io, gpa, paths, options.provider);
     defer report.deinit(gpa);
-    var bundle_routes = try loadWorkplanBundleRoutesFromFiles(io, gpa, paths, options);
+    var bundle_routes = try app_provider_coverage_workplan.loadBundleRoutesFromFiles(io, gpa, paths, options);
     defer if (bundle_routes) |*routes| routes.deinit(gpa);
-    try writeWorkplanText(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
+    try app_provider_coverage_workplan.writeText(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
 }
 
 pub fn writeWorkplanJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions, writer: anytype) !void {
     var report = try loadLevelTags(io, gpa, paths, options.provider);
     defer report.deinit(gpa);
-    var bundle_routes = try loadWorkplanBundleRoutesFromFiles(io, gpa, paths, options);
+    var bundle_routes = try app_provider_coverage_workplan.loadBundleRoutesFromFiles(io, gpa, paths, options);
     defer if (bundle_routes) |*routes| routes.deinit(gpa);
-    try writeWorkplanJson(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
+    try app_provider_coverage_workplan.writeJson(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
 }
 
 pub fn writeWorkplanTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: WorkplanOptions, writer: anytype) !void {
     var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
     defer report.deinit(gpa);
-    var bundle_routes = try loadWorkplanBundleRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
+    var bundle_routes = try app_provider_coverage_workplan.loadBundleRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
     defer if (bundle_routes) |*routes| routes.deinit(gpa);
-    try writeWorkplanText(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
+    try app_provider_coverage_workplan.writeText(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
 }
 
 pub fn writeWorkplanJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: WorkplanOptions, writer: anytype) !void {
     var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
     defer report.deinit(gpa);
-    var bundle_routes = try loadWorkplanBundleRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
+    var bundle_routes = try app_provider_coverage_workplan.loadBundleRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
     defer if (bundle_routes) |*routes| routes.deinit(gpa);
-    try writeWorkplanJson(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
-}
-
-fn loadWorkplanBundleRoutesFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions) !?CoverageRoutes {
-    if (!options.bundle_candidates) return null;
-    return try loadRoutes(io, gpa, paths, .{
-        .provider = options.provider,
-        .family = options.family,
-    });
-}
-
-fn loadWorkplanBundleRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: WorkplanOptions) !?CoverageRoutes {
-    if (!options.bundle_candidates) return null;
-    return try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, .{
-        .provider = options.provider,
-        .family = options.family,
-    });
+    try app_provider_coverage_workplan.writeJson(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
 }
 
 pub fn auditL1(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !L1Audit {
@@ -3551,363 +3511,20 @@ fn typedModelLessThan(_: void, lhs: LevelTagEvidence, rhs: LevelTagEvidence) boo
     return std.mem.order(u8, lhs.tag, rhs.tag) == .lt;
 }
 
-fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, bundle_routes: ?[]const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
-    const effective_focus = workplanEffectiveFocus(options);
-    try writer.writeAll("Cloudio provider coverage workplan\n");
-    try writer.writeAll("rank: pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence\n");
-    try writer.writeAll("scope: broad provider tag slices with exact no-execute planning commands\n");
-    try writer.print("filter={s} focus={s} family={s}", .{ options.provider.name(), effective_focus.name(), options.family.name() });
-    if (options.include_plans) try writer.writeAll(" plans=true");
-    if (options.bundle_candidates) try writer.writeAll(" bundle_candidates=true");
-    try writer.writeAll(" limit=");
-    if (options.limit == 0) {
-        try writer.writeAll("all\n");
-    } else {
-        try writer.print("{d}\n", .{options.limit});
-    }
-
-    var visible: usize = 0;
-    var omitted: usize = 0;
-    var hidden_closed: usize = 0;
-    var hidden_focus: usize = 0;
-    var hidden_family: usize = 0;
-    for (rows) |row| {
-        const priority = row.priority();
-        if (priority == 0) {
-            hidden_closed += 1;
-            continue;
-        }
-        if (!workplanFocusIncludes(effective_focus, row)) {
-            hidden_focus += 1;
-            continue;
-        }
-        if (!workplanFamilyIncludes(options.family, row)) {
-            hidden_family += 1;
-            continue;
-        }
-        if (options.limit != 0 and visible >= options.limit) {
-            omitted += 1;
-            continue;
-        }
-        visible += 1;
-        try writeWorkplanTextRow(gpa, row, bundle_routes, options, writer);
-    }
-
-    if (visible == 0) {
-        try writer.writeAll("no unresolved provider tag slices for filter\n");
-    } else {
-        if (omitted != 0) try writer.print("omitted={d}\n", .{omitted});
-        if (hidden_focus != 0) try writer.print("focus_filtered_rows_hidden={d}\n", .{hidden_focus});
-        if (hidden_family != 0) try writer.print("family_filtered_rows_hidden={d}\n", .{hidden_family});
-        if (hidden_closed != 0) try writer.print("closed_or_evidence_only_rows_hidden={d}\n", .{hidden_closed});
-    }
-}
-
-fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, bundle_routes: ?[]const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
-    const effective_focus = workplanEffectiveFocus(options);
-    try writer.writeByte('{');
-    try writeJsonField(writer, "kind", "coverage_workplan", true);
-    try writeJsonField(writer, "filter", options.provider.name(), true);
-    try writeJsonField(writer, "focus", effective_focus.name(), true);
-    try writeJsonField(writer, "family", options.family.name(), true);
-    try writeJsonCountField(writer, "limit", options.limit, true);
-    try writeJsonBoolField(writer, "include_plans", options.include_plans, true);
-    try writeJsonBoolField(writer, "bundle_candidates", options.bundle_candidates, true);
-    try writeJsonCountField(writer, "candidate_limit", options.candidate_limit, true);
-    try writeJsonField(writer, "rank", "pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence", true);
-    try writeJsonField(writer, "scope", "broad provider tag slices with exact no-execute planning commands", true);
-    try writer.writeAll("\"items\":[");
-
-    var visible: usize = 0;
-    var omitted: usize = 0;
-    var hidden_closed: usize = 0;
-    var hidden_focus: usize = 0;
-    var hidden_family: usize = 0;
-    var first = true;
-    for (rows) |row| {
-        const priority = row.priority();
-        if (priority == 0) {
-            hidden_closed += 1;
-            continue;
-        }
-        if (!workplanFocusIncludes(effective_focus, row)) {
-            hidden_focus += 1;
-            continue;
-        }
-        if (!workplanFamilyIncludes(options.family, row)) {
-            hidden_family += 1;
-            continue;
-        }
-        if (options.limit != 0 and visible >= options.limit) {
-            omitted += 1;
-            continue;
-        }
-        visible += 1;
-        try writeMaybeJsonComma(writer, &first);
-        try writeWorkplanRowJson(gpa, row, bundle_routes, options, writer);
-    }
-
-    try writer.writeAll("],");
-    try writeJsonCountField(writer, "visible", visible, true);
-    try writeJsonCountField(writer, "omitted", omitted, true);
-    try writeJsonCountField(writer, "focus_filtered_rows_hidden", hidden_focus, true);
-    try writeJsonCountField(writer, "family_filtered_rows_hidden", hidden_family, true);
-    try writeJsonCountField(writer, "closed_or_evidence_only_rows_hidden", hidden_closed, false);
-    try writer.writeByte('}');
-    try writer.writeByte('\n');
-}
-
-fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, bundle_routes: ?[]const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
-    const evidence = row.evidence;
-    const family = workplanTagFamily(row.provider, row.tag);
-    try writer.print("{s} | {s}: priority={d} pending_reads={d} diagnostic_blocked_reads={d} pending_mutation_dry_runs={d} L2_read_evidence={d} dry_run_evidence={d} generated_dry_run_policy_evidence={d} L3_generic={d} typed={d} family={s}\n", .{
-        row.provider,
-        row.tag,
-        row.priority(),
-        evidence.pending_reads,
-        evidence.l2_diagnostic_reads,
-        evidence.pending_mutation_dry_runs,
-        evidence.l2_read_evidence,
-        evidence.dry_run_evidence,
-        evidence.generated_dry_run_policy_evidence,
-        evidence.l3_generic_inventory_candidates,
-        evidence.l3_typed_table_evidence,
-        if (family) |value| value.name() else "-",
-    });
-    const routes = try workplanRoutesCommand(gpa, row);
-    defer gpa.free(routes);
-    try writer.print("  routes: {s}\n", .{routes});
-    if (workplanNeedsCapture(row)) {
-        const capture = try workplanCaptureCommand(gpa, row, options.include_plans);
-        defer gpa.free(capture);
-        try writer.print("  capture-candidates: {s}\n", .{capture});
-    }
-    if (workplanNeedsDryRun(row)) {
-        const dry_run = try workplanDryRunCommand(gpa, row, options.include_plans);
-        defer gpa.free(dry_run);
-        try writer.print("  dry-run-candidates: {s}\n", .{dry_run});
-    }
-    if (options.bundle_candidates) {
-        const counts = workplanCandidateBundleCounts(row, bundle_routes orelse &.{}, options);
-        try writer.writeAll("  candidate-bundle: candidate_limit=");
-        if (options.candidate_limit == 0) {
-            try writer.writeAll("all");
-        } else {
-            try writer.print("{d}", .{options.candidate_limit});
-        }
-        try writer.print(" capture_visible={d} capture_omitted={d} dry_run_visible={d} dry_run_omitted={d}\n", .{
-            counts.capture.visible,
-            counts.capture.omitted,
-            counts.dry_run.visible,
-            counts.dry_run.omitted,
-        });
-    }
-}
-
-fn writeWorkplanRowJson(gpa: Allocator, row: LevelTagEvidence, bundle_routes: ?[]const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
-    const family = workplanTagFamily(row.provider, row.tag);
-    try writer.writeByte('{');
-    try writeJsonField(writer, "provider", row.provider, true);
-    try writeJsonField(writer, "tag", row.tag, true);
-    try writeJsonNullableStringField(writer, "focus_family", if (family) |value| value.name() else null, true);
-    try writeJsonCountField(writer, "priority", row.priority(), true);
-    try writer.writeAll("\"evidence\":");
-    try writeLevelProviderEvidenceJson(row.evidence, writer);
-    try writer.writeByte(',');
-    try writer.writeAll("\"commands\":[");
-    var first = true;
-    const routes = try workplanRoutesCommand(gpa, row);
-    defer gpa.free(routes);
-    try writeWorkplanCommandJson(writer, &first, "routes_detail", routes);
-    if (workplanNeedsCapture(row)) {
-        const capture = try workplanCaptureCommand(gpa, row, options.include_plans);
-        defer gpa.free(capture);
-        try writeWorkplanCommandJson(writer, &first, "capture_candidates", capture);
-    }
-    if (workplanNeedsDryRun(row)) {
-        const dry_run = try workplanDryRunCommand(gpa, row, options.include_plans);
-        defer gpa.free(dry_run);
-        try writeWorkplanCommandJson(writer, &first, "dry_run_candidates", dry_run);
-    }
-    try writer.writeByte(']');
-    if (options.bundle_candidates) {
-        try writer.writeByte(',');
-        try writeWorkplanCandidateBundleJson(gpa, row, bundle_routes orelse &.{}, options, writer);
-    }
-    try writer.writeByte('}');
-}
-
 fn writeWorkplanCommandJson(writer: anytype, first: *bool, kind: []const u8, command: []const u8) !void {
-    try writeMaybeJsonComma(writer, first);
-    try writer.writeByte('{');
-    try writeJsonField(writer, "kind", kind, true);
-    try writeJsonField(writer, "command", command, false);
-    try writer.writeByte('}');
-}
-
-const WorkplanCandidateKind = enum {
-    capture,
-    dry_run,
-};
-
-const WorkplanCandidateSetCounts = struct {
-    total: usize = 0,
-    visible: usize = 0,
-    omitted: usize = 0,
-};
-
-const WorkplanCandidateBundleCounts = struct {
-    capture: WorkplanCandidateSetCounts = .{},
-    dry_run: WorkplanCandidateSetCounts = .{},
-};
-
-fn writeWorkplanCandidateBundleJson(gpa: Allocator, row: LevelTagEvidence, routes: []const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
-    try writer.writeAll("\"candidate_bundle\":{");
-    try writeJsonCountField(writer, "candidate_limit", options.candidate_limit, true);
-    try writeJsonBoolField(writer, "include_plans", options.include_plans, true);
-    try writeWorkplanCandidateSetJson(gpa, row, routes, options, .capture, writer);
-    try writer.writeByte(',');
-    try writeWorkplanCandidateSetJson(gpa, row, routes, options, .dry_run, writer);
-    try writer.writeByte('}');
-}
-
-fn writeWorkplanCandidateSetJson(gpa: Allocator, row: LevelTagEvidence, routes: []const CoverageRoute, options: WorkplanOptions, kind: WorkplanCandidateKind, writer: anytype) !void {
-    const counts = workplanCandidateSetCounts(row, routes, options, kind);
-    try core_json.writeString(writer, switch (kind) {
-        .capture => "capture",
-        .dry_run => "dry_run",
-    });
-    try writer.writeAll(":{");
-    try writeJsonCountField(writer, "total", counts.total, true);
-    try writeJsonCountField(writer, "visible", counts.visible, true);
-    try writeJsonCountField(writer, "omitted", counts.omitted, true);
-    try writer.writeAll("\"candidates\":[");
-    var first = true;
-    var visible: usize = 0;
-    for (routes) |route_row| {
-        if (!routeMatchesWorkplanRow(route_row, row)) continue;
-        if (!routeIsWorkplanCandidate(route_row, options, kind)) continue;
-        if (options.candidate_limit != 0 and visible >= options.candidate_limit) continue;
-        visible += 1;
-        try writeMaybeJsonComma(writer, &first);
-        switch (kind) {
-            .capture => try writeCaptureCandidateJson(gpa, route_row, .{
-                .filter = .{},
-                .limit = options.candidate_limit,
-                .include_plans = options.include_plans,
-            }, writer),
-            .dry_run => try writeDryRunCandidateJson(gpa, route_row, .{
-                .filter = .{},
-                .limit = options.candidate_limit,
-                .include_plans = options.include_plans,
-            }, writer),
-        }
-    }
-    try writer.writeAll("]}");
-}
-
-fn workplanCandidateBundleCounts(row: LevelTagEvidence, routes: []const CoverageRoute, options: WorkplanOptions) WorkplanCandidateBundleCounts {
-    return .{
-        .capture = workplanCandidateSetCounts(row, routes, options, .capture),
-        .dry_run = workplanCandidateSetCounts(row, routes, options, .dry_run),
-    };
-}
-
-fn workplanCandidateSetCounts(row: LevelTagEvidence, routes: []const CoverageRoute, options: WorkplanOptions, kind: WorkplanCandidateKind) WorkplanCandidateSetCounts {
-    var counts = WorkplanCandidateSetCounts{};
-    for (routes) |route_row| {
-        if (!routeMatchesWorkplanRow(route_row, row)) continue;
-        if (!routeIsWorkplanCandidate(route_row, options, kind)) continue;
-        counts.total += 1;
-        if (options.candidate_limit == 0 or counts.visible < options.candidate_limit) {
-            counts.visible += 1;
-        } else {
-            counts.omitted += 1;
-        }
-    }
-    return counts;
-}
-
-fn routeIsWorkplanCandidate(route_row: CoverageRoute, options: WorkplanOptions, kind: WorkplanCandidateKind) bool {
-    return switch (kind) {
-        .capture => routeIsCaptureCandidate(route_row, .{
-            .filter = .{},
-            .limit = options.candidate_limit,
-            .include_plans = options.include_plans,
-        }),
-        .dry_run => routeIsDryRunCandidate(route_row, .{
-            .filter = .{},
-            .limit = options.candidate_limit,
-            .include_plans = options.include_plans,
-        }),
-    };
-}
-
-fn routeMatchesWorkplanRow(route_row: CoverageRoute, row: LevelTagEvidence) bool {
-    return std.mem.eql(u8, route_row.route.provider.name(), row.provider) and
-        std.mem.eql(u8, route_row.route.tag, row.tag);
-}
-
-fn workplanNeedsCapture(row: LevelTagEvidence) bool {
-    return row.evidence.pending_reads != 0;
-}
-
-fn workplanNeedsDryRun(row: LevelTagEvidence) bool {
-    return row.evidence.pending_mutation_dry_runs != 0;
-}
-
-fn workplanEffectiveFocus(options: WorkplanOptions) WorkplanFocus {
-    if (options.family != .all) return .control_plane;
-    return options.focus;
+    try app_provider_coverage_workplan.writeCommandJson(writer, first, kind, command);
 }
 
 fn workplanFocusIncludes(focus: WorkplanFocus, row: LevelTagEvidence) bool {
-    return switch (focus) {
-        .all => true,
-        .control_plane => workplanTagIsControlPlane(row.provider, row.tag),
-    };
+    return app_provider_coverage_workplan.focusIncludes(focus, row);
 }
 
 fn workplanFamilyIncludes(family: WorkplanFamily, row: LevelTagEvidence) bool {
-    if (family == .all) return true;
-    return (workplanTagFamily(row.provider, row.tag) orelse return false) == family;
-}
-
-fn workplanTagIsControlPlane(provider: []const u8, tag: []const u8) bool {
-    return app_provider_coverage_routes.tagIsControlPlane(provider, tag);
+    return app_provider_coverage_workplan.familyIncludes(family, row);
 }
 
 fn workplanTagFamily(provider: []const u8, tag: []const u8) ?WorkplanFamily {
-    return app_provider_coverage_routes.tagFamily(provider, tag);
-}
-
-fn workplanRoutesCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    try out.writer.print("cloudio coverage routes {s} ", .{row.provider});
-    try writeShellArg(&out.writer, row.tag);
-    try out.writer.writeAll(" --detail");
-    return try out.toOwnedSlice();
-}
-
-fn workplanCaptureCommand(gpa: Allocator, row: LevelTagEvidence, include_plans: bool) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    try out.writer.print("cloudio coverage capture-candidates {s} ", .{row.provider});
-    try writeShellArg(&out.writer, row.tag);
-    try out.writer.writeAll(" --limit 25");
-    if (include_plans) try out.writer.writeAll(" --plans");
-    return try out.toOwnedSlice();
-}
-
-fn workplanDryRunCommand(gpa: Allocator, row: LevelTagEvidence, include_plans: bool) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    try out.writer.print("cloudio coverage dry-run-candidates {s} ", .{row.provider});
-    try writeShellArg(&out.writer, row.tag);
-    try out.writer.writeAll(" --limit 25");
-    if (include_plans) try out.writer.writeAll(" --plans");
-    return try out.toOwnedSlice();
+    return app_provider_coverage_workplan.tagFamily(provider, tag);
 }
 
 fn writeDryRunCandidateJson(gpa: Allocator, row: CoverageRoute, options: DryRunCandidateOptions, writer: anytype) !void {
