@@ -463,12 +463,18 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const cli_args_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/args.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const cli_coverage_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/coverage.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_coverage", .module = app_coverage_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
         },
     });
@@ -521,6 +527,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_inventory", .module = app_inventory_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
@@ -599,6 +606,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     addModuleTest(b, test_step, cli_root_mod);
+    addModuleTest(b, test_step, cli_args_mod);
     addModuleTest(b, test_step, cli_render_mod);
     addModuleTest(b, test_step, cli_coverage_mod);
     addModuleTest(b, test_step, cli_route_mod);

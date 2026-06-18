@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_inventory = @import("app_inventory");
+const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
 const db_store = @import("db_store");
 
@@ -65,22 +66,14 @@ pub fn parseParsed(args: []const []const u8) !Parsed {
             .no_match => {},
         }
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--provider")) {
-            i += 1;
-            if (i >= args.len) return error.MissingProvider;
-            parsed.options.provider = try parseProvider(args[i]);
-        } else if (std.mem.eql(u8, arg, "--domain")) {
-            i += 1;
-            if (i >= args.len) return error.MissingDomain;
-            parsed.options.domain = args[i];
-        } else if (std.mem.eql(u8, arg, "--query")) {
-            i += 1;
-            if (i >= args.len) return error.MissingQuery;
-            parsed.options.query = args[i];
-        } else if (std.mem.eql(u8, arg, "--limit")) {
-            i += 1;
-            if (i >= args.len) return error.MissingLimit;
-            parsed.options.limit = try parseLimit(args[i]);
+        if (try parseInventoryValueArg(args, &i, .{"--provider"}, error.MissingProvider)) |value| {
+            parsed.options.provider = try parseProvider(value);
+        } else if (try parseInventoryValueArg(args, &i, .{"--domain"}, error.MissingDomain)) |value| {
+            parsed.options.domain = value;
+        } else if (try parseInventoryValueArg(args, &i, .{"--query"}, error.MissingQuery)) |value| {
+            parsed.options.query = value;
+        } else if (try parseInventoryValueArg(args, &i, .{"--limit"}, error.MissingLimit)) |value| {
+            parsed.options.limit = try parseLimit(value);
         } else if (isProvider(arg) and parsed.options.provider == null) {
             parsed.options.provider = try parseProvider(arg);
         } else if (parsed.options.query == null) {
@@ -90,6 +83,14 @@ pub fn parseParsed(args: []const []const u8) !Parsed {
         }
     }
     return parsed;
+}
+
+fn parseInventoryValueArg(args: []const []const u8, index: *usize, comptime names: anytype, missing_error: anyerror) !?[]const u8 {
+    return switch (cli_args.parseValueArg(args, index, names)) {
+        .no_match => null,
+        .matched => |value| value,
+        .missing_value => missing_error,
+    };
 }
 
 fn parseProvider(value: []const u8) !app_inventory.Provider {
@@ -145,6 +146,17 @@ test "inventory parser accepts json output for list commands" {
             try std.testing.expectEqual(app_inventory.Provider.hostinger, parsed.options.provider.?);
             try std.testing.expectEqual(RenderFormat.json, parsed.format);
             try std.testing.expectEqual(@as(i64, 5), parsed.options.limit);
+        },
+        .summary => return error.ExpectedInventoryList,
+    }
+
+    const inline_args = [_][]const u8{ "--provider=cloudflare", "--domain=plosca.ru", "--query=dns", "--limit=3" };
+    switch (try parseCommand(inline_args[0..])) {
+        .list => |parsed| {
+            try std.testing.expectEqual(app_inventory.Provider.cloudflare, parsed.options.provider.?);
+            try std.testing.expectEqualStrings("plosca.ru", parsed.options.domain.?);
+            try std.testing.expectEqualStrings("dns", parsed.options.query.?);
+            try std.testing.expectEqual(@as(i64, 3), parsed.options.limit);
         },
         .summary => return error.ExpectedInventoryList,
     }

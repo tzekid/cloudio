@@ -95,6 +95,11 @@ check_no_matches \
     src/cli/root.zig src/cli/coverage.zig src/cli/inventory.zig
 
 check_no_matches \
+    "coverage and inventory CLI value options must use cli_args.parseValueArg" \
+    'std\.mem\.eql\(u8, arg, "--(limit|provider|domain|query|support|family|control-plane-family|focus-family|operation|operation-id|method|path|path-template|mode|focus|candidate-limit|path-param|param|query-param|header-param|header|body-content-type|content-type)"\)|std\.mem\.startsWith\(u8, arg, "--(limit|provider|domain|query|support|family|control-plane-family|focus-family|operation|operation-id|method|path|path-template|mode|focus|candidate-limit|path-param|param|query-param|header-param|header|body-content-type|content-type)="\)' \
+    src/cli/coverage.zig src/cli/inventory.zig
+
+check_no_matches \
     "coverage and inventory CLI output must use cli_render render helpers" \
     'Writer\.Allocating\.init\(ctx\.gpa\)' \
     src/cli/coverage.zig src/cli/inventory.zig

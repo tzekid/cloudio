@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_coverage = @import("app_coverage");
+const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
 
 const Allocator = std.mem.Allocator;
@@ -154,13 +155,13 @@ fn parseCommand(args: []const []const u8) Command {
     return .{ .unknown = args[0] };
 }
 
-const CoverageFormatArg = union(enum) {
+const CoverageArg = union(enum) {
     no_match,
     matched,
     unknown: []const u8,
 };
 
-fn parseCoverageFormatArg(args: []const []const u8, index: *usize, format: *RenderFormat) CoverageFormatArg {
+fn parseCoverageArg(args: []const []const u8, index: *usize, format: *RenderFormat) CoverageArg {
     return switch (cli_render.parseFormatArg(args, index)) {
         .no_match => .no_match,
         .matched => |parsed| blk: {
@@ -172,11 +173,113 @@ fn parseCoverageFormatArg(args: []const []const u8, index: *usize, format: *Rend
     };
 }
 
+const CoverageValueArg = union(enum) {
+    no_match,
+    matched: []const u8,
+    unknown: []const u8,
+};
+
+fn parseCoverageValueArg(args: []const []const u8, index: *usize, comptime names: anytype) CoverageValueArg {
+    return switch (cli_args.parseValueArg(args, index, names)) {
+        .no_match => .no_match,
+        .matched => |value| .{ .matched = value },
+        .missing_value => |name| .{ .unknown = name },
+    };
+}
+
+fn parseCoverageUnsignedArg(args: []const []const u8, index: *usize, comptime names: anytype, value_out: *usize) CoverageArg {
+    return switch (parseCoverageValueArg(args, index, names)) {
+        .no_match => .no_match,
+        .matched => |value| blk: {
+            value_out.* = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
+            break :blk .matched;
+        },
+        .unknown => |value| .{ .unknown = value },
+    };
+}
+
+fn parseCoverageFocusArg(args: []const []const u8, index: *usize, focus: *app_coverage.WorkplanFocus) CoverageArg {
+    return switch (parseCoverageValueArg(args, index, .{"--focus"})) {
+        .no_match => .no_match,
+        .matched => |value| blk: {
+            focus.* = app_coverage.WorkplanFocus.parse(value) orelse return .{ .unknown = value };
+            break :blk .matched;
+        },
+        .unknown => |value| .{ .unknown = value },
+    };
+}
+
+fn parseCoverageFamilyArg(args: []const []const u8, index: *usize, family: *app_coverage.WorkplanFamily) CoverageArg {
+    return switch (parseCoverageValueArg(args, index, .{ "--family", "--control-plane-family", "--focus-family" })) {
+        .no_match => .no_match,
+        .matched => |value| blk: {
+            family.* = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+            break :blk .matched;
+        },
+        .unknown => |value| .{ .unknown = value },
+    };
+}
+
+fn parseCoverageSupportArg(args: []const []const u8, index: *usize, support: *?app_coverage.SupportFilter) CoverageArg {
+    return switch (parseCoverageValueArg(args, index, .{"--support"})) {
+        .no_match => .no_match,
+        .matched => |value| blk: {
+            support.* = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
+            break :blk .matched;
+        },
+        .unknown => |value| .{ .unknown = value },
+    };
+}
+
+fn parseCoverageOperationArg(args: []const []const u8, index: *usize, operation_id: *?[]const u8) CoverageArg {
+    return switch (parseCoverageValueArg(args, index, .{ "--operation", "--operation-id" })) {
+        .no_match => .no_match,
+        .matched => |value| blk: {
+            operation_id.* = value;
+            break :blk .matched;
+        },
+        .unknown => |value| .{ .unknown = value },
+    };
+}
+
+fn parseCoverageMethodArg(args: []const []const u8, index: *usize, method: anytype) CoverageArg {
+    return switch (parseCoverageValueArg(args, index, .{"--method"})) {
+        .no_match => .no_match,
+        .matched => |value| blk: {
+            method.* = app_coverage.parseRouteMethod(value) orelse return .{ .unknown = value };
+            break :blk .matched;
+        },
+        .unknown => |value| .{ .unknown = value },
+    };
+}
+
+fn parseCoveragePathArg(args: []const []const u8, index: *usize, path_template: *?[]const u8) CoverageArg {
+    return switch (parseCoverageValueArg(args, index, .{ "--path", "--path-template" })) {
+        .no_match => .no_match,
+        .matched => |value| blk: {
+            path_template.* = value;
+            break :blk .matched;
+        },
+        .unknown => |value| .{ .unknown = value },
+    };
+}
+
+fn parseCoverageModeArg(args: []const []const u8, index: *usize, mode: *?app_coverage.ModeFilter) CoverageArg {
+    return switch (parseCoverageValueArg(args, index, .{"--mode"})) {
+        .no_match => .no_match,
+        .matched => |value| blk: {
+            mode.* = app_coverage.ModeFilter.parse(value) orelse return .{ .unknown = value };
+            break :blk .matched;
+        },
+        .unknown => |value| .{ .unknown = value },
+    };
+}
+
 fn parseSummary(args: []const []const u8) Command {
     var command = SummaryCommand{};
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
@@ -192,7 +295,7 @@ fn parseTags(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
@@ -213,7 +316,7 @@ fn parseL1(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
@@ -234,20 +337,18 @@ fn parseGaps(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageUnsignedArg(args, &index, .{"--limit"}, &command.options.limit)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--limit")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--limit" };
-            command.options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
-            const value = arg["--limit=".len..];
-            command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (!provider_set) {
+        if (!provider_set) {
             command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
         } else {
@@ -262,7 +363,7 @@ fn parseLevels(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
@@ -283,20 +384,18 @@ fn parseLevelTags(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageUnsignedArg(args, &index, .{"--limit"}, &command.options.limit)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--limit")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--limit" };
-            command.options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
-            const value = arg["--limit=".len..];
-            command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (!provider_set) {
+        if (!provider_set) {
             command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
         } else {
@@ -311,27 +410,23 @@ fn parseFamilies(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageUnsignedArg(args, &index, .{"--limit"}, &command.options.limit)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageFocusArg(args, &index, &command.options.focus)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--limit")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--limit" };
-            command.options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
-            const value = arg["--limit=".len..];
-            command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--focus")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--focus" };
-            command.options.focus = app_coverage.WorkplanFocus.parse(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--focus=")) {
-            const value = arg["--focus=".len..];
-            command.options.focus = app_coverage.WorkplanFocus.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--control-plane") or std.mem.eql(u8, arg, "--cloudio-relevant")) {
+        if (std.mem.eql(u8, arg, "--control-plane") or std.mem.eql(u8, arg, "--cloudio-relevant")) {
             command.options.focus = .control_plane;
         } else if (app_coverage.WorkplanFocus.parse(arg)) |focus| {
             command.options.focus = focus;
@@ -350,33 +445,23 @@ fn parseTypedModels(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageUnsignedArg(args, &index, .{"--limit"}, &command.options.limit)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageFamilyArg(args, &index, &command.options.family)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--limit")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--limit" };
-            command.options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
-            const value = arg["--limit=".len..];
-            command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = arg };
-            command.options.family = app_coverage.WorkplanFamily.parse(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--family=")) {
-            const value = arg["--family=".len..];
-            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.startsWith(u8, arg, "--control-plane-family=")) {
-            const value = arg["--control-plane-family=".len..];
-            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.startsWith(u8, arg, "--focus-family=")) {
-            const value = arg["--focus-family=".len..];
-            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--include-complete") or std.mem.eql(u8, arg, "--include-typed") or std.mem.eql(u8, arg, "--all")) {
+        if (std.mem.eql(u8, arg, "--include-complete") or std.mem.eql(u8, arg, "--include-typed") or std.mem.eql(u8, arg, "--all")) {
             command.options.include_complete = true;
         } else if (!provider_set) {
             command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
@@ -393,56 +478,41 @@ fn parseWorkplan(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
+        switch (parseCoverageUnsignedArg(args, &index, .{"--limit"}, &command.options.limit)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageUnsignedArg(args, &index, .{"--candidate-limit"}, &command.options.candidate_limit)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageFocusArg(args, &index, &command.options.focus)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageFamilyArg(args, &index, &command.options.family)) {
+            .matched => {
+                if (command.options.family != .all) command.options.focus = .control_plane;
+                continue;
+            },
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--limit")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--limit" };
-            command.options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
-            const value = arg["--limit=".len..];
-            command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
+        if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
             command.options.include_plans = true;
         } else if (std.mem.eql(u8, arg, "--bundle") or std.mem.eql(u8, arg, "--include-candidates") or std.mem.eql(u8, arg, "--with-candidates")) {
             command.options.bundle_candidates = true;
-        } else if (std.mem.eql(u8, arg, "--candidate-limit")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--candidate-limit" };
-            command.options.candidate_limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--candidate-limit=")) {
-            const value = arg["--candidate-limit=".len..];
-            command.options.candidate_limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--focus")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--focus" };
-            command.options.focus = app_coverage.WorkplanFocus.parse(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--focus=")) {
-            const value = arg["--focus=".len..];
-            command.options.focus = app_coverage.WorkplanFocus.parse(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--control-plane") or std.mem.eql(u8, arg, "--cloudio-relevant")) {
             command.options.focus = .control_plane;
-        } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = arg };
-            command.options.family = app_coverage.WorkplanFamily.parse(args[index]) orelse return .{ .unknown = args[index] };
-            if (command.options.family != .all) command.options.focus = .control_plane;
-        } else if (std.mem.startsWith(u8, arg, "--family=")) {
-            const value = arg["--family=".len..];
-            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-            if (command.options.family != .all) command.options.focus = .control_plane;
-        } else if (std.mem.startsWith(u8, arg, "--control-plane-family=")) {
-            const value = arg["--control-plane-family=".len..];
-            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-            if (command.options.family != .all) command.options.focus = .control_plane;
-        } else if (std.mem.startsWith(u8, arg, "--focus-family=")) {
-            const value = arg["--focus-family=".len..];
-            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-            if (command.options.family != .all) command.options.focus = .control_plane;
         } else if (app_coverage.WorkplanFocus.parse(arg)) |focus| {
             command.options.focus = focus;
         } else if (app_coverage.WorkplanFamily.parse(arg)) |family| {
@@ -493,64 +563,44 @@ fn parseRoutes(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageSupportArg(args, &index, &command.filter.support)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageFamilyArg(args, &index, &command.filter.family)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageOperationArg(args, &index, &command.filter.operation_id)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageMethodArg(args, &index, &command.filter.method)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoveragePathArg(args, &index, &command.filter.path_template)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageModeArg(args, &index, &command.filter.mode)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--support")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--support" };
-            command.filter.support = app_coverage.SupportFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.eql(u8, arg, "--detail") or std.mem.eql(u8, arg, "--details")) {
+        if (std.mem.eql(u8, arg, "--detail") or std.mem.eql(u8, arg, "--details")) {
             command.filter.detail = true;
-        } else if (std.mem.startsWith(u8, arg, "--support=")) {
-            const value = arg["--support=".len..];
-            command.filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = arg };
-            command.filter.family = app_coverage.WorkplanFamily.parse(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--family=")) {
-            const value = arg["--family=".len..];
-            command.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.startsWith(u8, arg, "--control-plane-family=")) {
-            const value = arg["--control-plane-family=".len..];
-            command.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.startsWith(u8, arg, "--focus-family=")) {
-            const value = arg["--focus-family=".len..];
-            command.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--operation") or std.mem.eql(u8, arg, "--operation-id")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--operation" };
-            command.filter.operation_id = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--operation=")) {
-            command.filter.operation_id = arg["--operation=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--operation-id=")) {
-            command.filter.operation_id = arg["--operation-id=".len..];
-        } else if (std.mem.eql(u8, arg, "--method")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--method" };
-            command.filter.method = app_coverage.parseRouteMethod(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--method=")) {
-            const value = arg["--method=".len..];
-            command.filter.method = app_coverage.parseRouteMethod(value) orelse return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--path") or std.mem.eql(u8, arg, "--path-template")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--path" };
-            command.filter.path_template = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--path=")) {
-            command.filter.path_template = arg["--path=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--path-template=")) {
-            command.filter.path_template = arg["--path-template=".len..];
-        } else if (std.mem.eql(u8, arg, "--mode")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--mode" };
-            command.filter.mode = app_coverage.ModeFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--mode=")) {
-            const value = arg["--mode=".len..];
-            command.filter.mode = app_coverage.ModeFilter.parse(value) orelse return .{ .unknown = value };
         } else if (!provider_set) {
             if (app_coverage.ProviderFilter.parse(arg)) |provider| {
                 command.filter.provider = provider;
@@ -574,57 +624,39 @@ fn parseCaptureCandidates(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageUnsignedArg(args, &index, .{"--limit"}, &command.options.limit)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageSupportArg(args, &index, &command.options.filter.support)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageFamilyArg(args, &index, &command.options.filter.family)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageOperationArg(args, &index, &command.options.filter.operation_id)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoveragePathArg(args, &index, &command.options.filter.path_template)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--limit")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--limit" };
-            command.options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
-            const value = arg["--limit=".len..];
-            command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
+        if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
             command.options.include_plans = true;
-        } else if (std.mem.eql(u8, arg, "--support")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--support" };
-            command.options.filter.support = app_coverage.SupportFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--support=")) {
-            const value = arg["--support=".len..];
-            command.options.filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = arg };
-            command.options.filter.family = app_coverage.WorkplanFamily.parse(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--family=")) {
-            const value = arg["--family=".len..];
-            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.startsWith(u8, arg, "--control-plane-family=")) {
-            const value = arg["--control-plane-family=".len..];
-            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.startsWith(u8, arg, "--focus-family=")) {
-            const value = arg["--focus-family=".len..];
-            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--operation") or std.mem.eql(u8, arg, "--operation-id")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--operation" };
-            command.options.filter.operation_id = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--operation=")) {
-            command.options.filter.operation_id = arg["--operation=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--operation-id=")) {
-            command.options.filter.operation_id = arg["--operation-id=".len..];
-        } else if (std.mem.eql(u8, arg, "--path") or std.mem.eql(u8, arg, "--path-template")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--path" };
-            command.options.filter.path_template = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--path=")) {
-            command.options.filter.path_template = arg["--path=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--path-template=")) {
-            command.options.filter.path_template = arg["--path-template=".len..];
         } else if (!provider_set) {
             if (app_coverage.ProviderFilter.parse(arg)) |provider| {
                 command.options.filter.provider = provider;
@@ -648,64 +680,44 @@ fn parseDryRunCandidates(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageUnsignedArg(args, &index, .{"--limit"}, &command.options.limit)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageSupportArg(args, &index, &command.options.filter.support)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageFamilyArg(args, &index, &command.options.filter.family)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageOperationArg(args, &index, &command.options.filter.operation_id)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageMethodArg(args, &index, &command.options.filter.method)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoveragePathArg(args, &index, &command.options.filter.path_template)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--limit")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--limit" };
-            command.options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
-            const value = arg["--limit=".len..];
-            command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
+        if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
             command.options.include_plans = true;
-        } else if (std.mem.eql(u8, arg, "--support")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--support" };
-            command.options.filter.support = app_coverage.SupportFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--support=")) {
-            const value = arg["--support=".len..];
-            command.options.filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = arg };
-            command.options.filter.family = app_coverage.WorkplanFamily.parse(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--family=")) {
-            const value = arg["--family=".len..];
-            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.startsWith(u8, arg, "--control-plane-family=")) {
-            const value = arg["--control-plane-family=".len..];
-            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.startsWith(u8, arg, "--focus-family=")) {
-            const value = arg["--focus-family=".len..];
-            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--operation") or std.mem.eql(u8, arg, "--operation-id")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--operation" };
-            command.options.filter.operation_id = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--operation=")) {
-            command.options.filter.operation_id = arg["--operation=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--operation-id=")) {
-            command.options.filter.operation_id = arg["--operation-id=".len..];
-        } else if (std.mem.eql(u8, arg, "--method")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--method" };
-            command.options.filter.method = app_coverage.parseRouteMethod(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--method=")) {
-            const value = arg["--method=".len..];
-            command.options.filter.method = app_coverage.parseRouteMethod(value) orelse return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--path") or std.mem.eql(u8, arg, "--path-template")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--path" };
-            command.options.filter.path_template = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--path=")) {
-            command.options.filter.path_template = arg["--path=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--path-template=")) {
-            command.options.filter.path_template = arg["--path-template=".len..];
         } else if (!provider_set) {
             if (app_coverage.ProviderFilter.parse(arg)) |provider| {
                 command.options.filter.provider = provider;
@@ -798,6 +810,14 @@ pub const ParsedPlan = struct {
     }
 };
 
+fn parsePlanValueArg(args: []const []const u8, index: *usize, comptime names: anytype) !?[]const u8 {
+    return switch (cli_args.parseValueArg(args, index, names)) {
+        .no_match => null,
+        .matched => |value| value,
+        .missing_value => error.MissingCoveragePlanOptionValue,
+    };
+}
+
 pub fn parsePlan(gpa: Allocator, args: []const []const u8) !ParsedPlan {
     if (args.len == 0) return error.MissingCoveragePlanProvider;
 
@@ -815,86 +835,29 @@ pub fn parsePlan(gpa: Allocator, args: []const []const u8) !ParsedPlan {
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--operation") or std.mem.eql(u8, arg, "--operation-id")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
-            filter.operation_id = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--operation=")) {
-            filter.operation_id = arg["--operation=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--operation-id=")) {
-            filter.operation_id = arg["--operation-id=".len..];
-        } else if (std.mem.eql(u8, arg, "--method")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
-            filter.method = app_coverage.parseRouteMethod(args[index]) orelse return error.InvalidCoveragePlanMethod;
-        } else if (std.mem.startsWith(u8, arg, "--method=")) {
-            const value = arg["--method=".len..];
+        if (try parsePlanValueArg(args, &index, .{ "--operation", "--operation-id" })) |value| {
+            filter.operation_id = value;
+        } else if (try parsePlanValueArg(args, &index, .{"--method"})) |value| {
             filter.method = app_coverage.parseRouteMethod(value) orelse return error.InvalidCoveragePlanMethod;
-        } else if (std.mem.eql(u8, arg, "--path") or std.mem.eql(u8, arg, "--path-template")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
-            filter.path_template = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--path=")) {
-            filter.path_template = arg["--path=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--path-template=")) {
-            filter.path_template = arg["--path-template=".len..];
-        } else if (std.mem.eql(u8, arg, "--tag")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
-            filter.tag_query = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--tag=")) {
-            filter.tag_query = arg["--tag=".len..];
-        } else if (std.mem.eql(u8, arg, "--support")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
-            filter.support = app_coverage.SupportFilter.parse(args[index]) orelse return error.InvalidCoveragePlanSupport;
-        } else if (std.mem.startsWith(u8, arg, "--support=")) {
-            const value = arg["--support=".len..];
+        } else if (try parsePlanValueArg(args, &index, .{ "--path", "--path-template" })) |value| {
+            filter.path_template = value;
+        } else if (try parsePlanValueArg(args, &index, .{"--tag"})) |value| {
+            filter.tag_query = value;
+        } else if (try parsePlanValueArg(args, &index, .{"--support"})) |value| {
             filter.support = app_coverage.SupportFilter.parse(value) orelse return error.InvalidCoveragePlanSupport;
-        } else if (std.mem.eql(u8, arg, "--mode")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
-            filter.mode = app_coverage.ModeFilter.parse(args[index]) orelse return error.InvalidCoveragePlanMode;
-        } else if (std.mem.startsWith(u8, arg, "--mode=")) {
-            const value = arg["--mode=".len..];
+        } else if (try parsePlanValueArg(args, &index, .{"--mode"})) |value| {
             filter.mode = app_coverage.ModeFilter.parse(value) orelse return error.InvalidCoveragePlanMode;
-        } else if (std.mem.eql(u8, arg, "--path-param") or std.mem.eql(u8, arg, "--param")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
-            try path_params.append(gpa, try app_coverage.parsePathParamAssignment(args[index]));
-        } else if (std.mem.startsWith(u8, arg, "--path-param=")) {
-            try path_params.append(gpa, try app_coverage.parsePathParamAssignment(arg["--path-param=".len..]));
-        } else if (std.mem.startsWith(u8, arg, "--param=")) {
-            try path_params.append(gpa, try app_coverage.parsePathParamAssignment(arg["--param=".len..]));
-        } else if (std.mem.eql(u8, arg, "--query-param") or std.mem.eql(u8, arg, "--query")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
-            try query_params.append(gpa, try app_coverage.parseQueryParamAssignment(args[index]));
-        } else if (std.mem.startsWith(u8, arg, "--query-param=")) {
-            try query_params.append(gpa, try app_coverage.parseQueryParamAssignment(arg["--query-param=".len..]));
-        } else if (std.mem.startsWith(u8, arg, "--query=")) {
-            try query_params.append(gpa, try app_coverage.parseQueryParamAssignment(arg["--query=".len..]));
-        } else if (std.mem.eql(u8, arg, "--header-param") or std.mem.eql(u8, arg, "--header")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
-            try header_params.append(gpa, try app_coverage.parseHeaderParamAssignment(args[index]));
-        } else if (std.mem.startsWith(u8, arg, "--header-param=")) {
-            try header_params.append(gpa, try app_coverage.parseHeaderParamAssignment(arg["--header-param=".len..]));
-        } else if (std.mem.startsWith(u8, arg, "--header=")) {
-            try header_params.append(gpa, try app_coverage.parseHeaderParamAssignment(arg["--header=".len..]));
-        } else if (std.mem.eql(u8, arg, "--body-present")) {
+        } else if (try parsePlanValueArg(args, &index, .{ "--path-param", "--param" })) |value| {
+            try path_params.append(gpa, try app_coverage.parsePathParamAssignment(value));
+        } else if (try parsePlanValueArg(args, &index, .{ "--query-param", "--query" })) |value| {
+            try query_params.append(gpa, try app_coverage.parseQueryParamAssignment(value));
+        } else if (try parsePlanValueArg(args, &index, .{ "--header-param", "--header" })) |value| {
+            try header_params.append(gpa, try app_coverage.parseHeaderParamAssignment(value));
+        } else if (cli_args.matches(arg, .{"--body-present"})) {
             body.present = true;
-        } else if (std.mem.eql(u8, arg, "--body-content-type") or std.mem.eql(u8, arg, "--content-type")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCoveragePlanOptionValue;
+        } else if (try parsePlanValueArg(args, &index, .{ "--body-content-type", "--content-type" })) |value| {
             body.present = true;
-            body.content_type = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--body-content-type=")) {
-            body.present = true;
-            body.content_type = arg["--body-content-type=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--content-type=")) {
-            body.present = true;
-            body.content_type = arg["--content-type=".len..];
+            body.content_type = value;
         } else {
             return error.UnknownCoveragePlanOption;
         }
