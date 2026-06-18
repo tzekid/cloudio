@@ -1,11 +1,11 @@
 const std = @import("std");
 const collector_cloudflare = @import("collector_cloudflare");
+const app_provider_api = @import("app_provider_api");
 const app_provider_list = @import("app_provider_list");
 const app_render = @import("app_render");
 const core_output = @import("core_output");
 const db_store = @import("db_store");
 const provider_cloudflare = @import("provider_cloudflare");
-const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
@@ -200,47 +200,22 @@ pub const CloudflareFamily = enum {
     }
 };
 
-const cloudflare_family_count = std.meta.fields(CloudflareFamily).len;
-
-pub const CloudflareApiFamilySummary = struct {
-    label: []const u8,
-    official_routes: usize = 0,
-    read_routes: usize = 0,
-    dry_run_routes: usize = 0,
-    write_routes: usize = 0,
-    not_applicable_routes: usize = 0,
-    deprecated_routes: usize = 0,
-    blocked_permission_routes: usize = 0,
-    observed_items: i64 = 0,
-    observed_kinds: usize = 0,
-
-    fn addRoute(self: *CloudflareApiFamilySummary, route: provider_routes.Route) void {
-        self.official_routes += 1;
-        if (route.deprecated or route.support == .deprecated) self.deprecated_routes += 1;
-        if (route.support == .not_applicable) self.not_applicable_routes += 1;
-        if (route.support == .blocked_permission) self.blocked_permission_routes += 1;
-        switch (route.mode) {
-            .read => self.read_routes += 1,
-            .dry_run => self.dry_run_routes += 1,
-            .write => self.write_routes += 1,
-            .none => {},
-        }
-    }
-
-    fn addObserved(self: *CloudflareApiFamilySummary, count: i64) void {
-        if (count <= 0) return;
-        self.observed_items += count;
-        self.observed_kinds += 1;
-    }
-
-    fn status(self: CloudflareApiFamilySummary) []const u8 {
-        if (self.official_routes == 0 and self.observed_items != 0) return "observed_unmapped";
-        if (self.read_routes == 0 and self.dry_run_routes != 0) return "dry_run_only";
-        if (self.not_applicable_routes != 0 and self.read_routes == 0 and self.dry_run_routes == 0 and self.write_routes == 0) return "not_applicable";
-        if (self.observed_items != 0) return "observed";
-        if (self.blocked_permission_routes != 0) return "blocked_or_missing";
-        return "missing_read";
-    }
+const cloudflare_api_family_labels = [_][]const u8{
+    "accounts",
+    "zones",
+    "dns",
+    "tls",
+    "access",
+    "tunnels",
+    "rulesets",
+    "logs",
+    "cache",
+    "security",
+    "email",
+    "load_balancing",
+    "health",
+    "tokens_memberships",
+    "other",
 };
 
 pub const CloudflareFamilySummary = struct {
@@ -327,7 +302,7 @@ pub const Overview = struct {
     summary_security_kinds: db_store.CloudflareKindCounts,
     summary_inventory_facets: db_store.InventoryFacets,
     summary_snapshots: db_store.SnapshotSummaries,
-    api_family_summaries: [cloudflare_family_count]CloudflareApiFamilySummary,
+    api_family_summaries: app_provider_api.ApiFamilySummaries,
     account_count: i64,
     resource_count: i64,
     inventory_count: i64,
@@ -371,7 +346,16 @@ pub const Overview = struct {
         errdefer summary_inventory_facets.deinit(ctx.gpa);
         var summary_snapshots = try ctx.db.snapshotsForSource(ctx.gpa, "cloudflare", 5000);
         errdefer summary_snapshots.deinit(ctx.gpa);
-        const api_family_summaries = try loadCloudflareApiFamilySummaries(ctx.io, ctx.gpa);
+        var api_family_summaries = try loadCloudflareApiFamilySummaries(ctx.io, ctx.gpa);
+        errdefer api_family_summaries.deinit(ctx.gpa);
+        const account_count = try ctx.db.countTable("cloudflare_accounts");
+        addCloudflareObserved(&api_family_summaries, .accounts, account_count);
+        addCloudflareObserved(&api_family_summaries, .zones, @intCast(summary_zones.items.len));
+        addCloudflareObserved(&api_family_summaries, .dns, @intCast(summary_dns_records.items.len));
+        for (summary_resource_kinds.items) |row| addCloudflareObservedForKind(&api_family_summaries, row.kind, row.count);
+        for (summary_inventory_facets.items) |row| addCloudflareObservedForKind(&api_family_summaries, row.kind, row.count);
+        for (summary_security_kinds.items) |row| addCloudflareObservedForKind(&api_family_summaries, row.kind, row.count);
+        for (summary_snapshots.items) |row| addCloudflareObservedForKind(&api_family_summaries, row.kind, 1);
         return .{
             .accounts = accounts,
             .zones = zones,
@@ -389,7 +373,7 @@ pub const Overview = struct {
             .summary_inventory_facets = summary_inventory_facets,
             .summary_snapshots = summary_snapshots,
             .api_family_summaries = api_family_summaries,
-            .account_count = try ctx.db.countTable("cloudflare_accounts"),
+            .account_count = account_count,
             .resource_count = try ctx.db.countTable("cloudflare_resources"),
             .inventory_count = try ctx.db.countTable("cloudflare_inventory_items"),
             .security_count = try ctx.db.countTable("cloudflare_security_items"),
@@ -412,10 +396,12 @@ pub const Overview = struct {
         self.summary_security_kinds.deinit(allocator);
         self.summary_inventory_facets.deinit(allocator);
         self.summary_snapshots.deinit(allocator);
+        self.api_family_summaries.deinit(allocator);
     }
 
     pub fn summary(self: Overview) OverviewSummary {
-        const api_families = self.apiFamilySummaries();
+        const api_totals = self.api_family_summaries.routeTotals();
+        const status_totals = self.api_family_summaries.statusTotals();
         var out = OverviewSummary{
             .accounts = self.account_count,
             .zones = @intCast(self.summary_zones.items.len),
@@ -428,7 +414,17 @@ pub const Overview = struct {
             .security_kinds = self.summary_security_kinds.items.len,
             .inventory_facets = self.summary_inventory_facets.items.len,
             .recent_snapshots = self.recent_snapshots.items.len,
-            .api_families = api_families.len,
+            .api_routes = api_totals.official_routes,
+            .api_read_routes = api_totals.read_routes,
+            .api_dry_run_routes = api_totals.dry_run_routes,
+            .api_write_routes = api_totals.write_routes,
+            .api_not_applicable_routes = api_totals.not_applicable_routes,
+            .api_deprecated_routes = api_totals.deprecated_routes,
+            .api_blocked_permission_routes = api_totals.blocked_permission_routes,
+            .api_families = self.api_family_summaries.items.len,
+            .observed_read_families = status_totals.observed_read_families,
+            .missing_read_families = status_totals.missing_read_families,
+            .blocked_or_missing_families = status_totals.blocked_or_missing_families,
         };
         for (self.summary_zones.items) |row| {
             if (std.ascii.eqlIgnoreCase(row.status, "active")) out.active_zones += 1;
@@ -450,34 +446,6 @@ pub const Overview = struct {
         for (self.summary_security_kinds.items) |row| {
             out.families.add(cloudflareFamilyForKind(row.kind), row.count);
         }
-        for (api_families) |row| {
-            out.api_routes += row.official_routes;
-            out.api_read_routes += row.read_routes;
-            out.api_dry_run_routes += row.dry_run_routes;
-            out.api_write_routes += row.write_routes;
-            out.api_not_applicable_routes += row.not_applicable_routes;
-            out.api_deprecated_routes += row.deprecated_routes;
-            out.api_blocked_permission_routes += row.blocked_permission_routes;
-            if (row.read_routes != 0 and row.observed_items != 0) {
-                out.observed_read_families += 1;
-            } else if (row.read_routes != 0 and row.blocked_permission_routes != 0) {
-                out.blocked_or_missing_families += 1;
-            } else if (row.read_routes != 0) {
-                out.missing_read_families += 1;
-            }
-        }
-        return out;
-    }
-
-    fn apiFamilySummaries(self: Overview) [cloudflare_family_count]CloudflareApiFamilySummary {
-        var out = self.api_family_summaries;
-        addCloudflareObserved(&out, .accounts, self.account_count);
-        addCloudflareObserved(&out, .zones, @intCast(self.summary_zones.items.len));
-        addCloudflareObserved(&out, .dns, @intCast(self.summary_dns_records.items.len));
-        for (self.summary_resource_kinds.items) |row| addCloudflareObservedForKind(&out, row.kind, row.count);
-        for (self.summary_inventory_facets.items) |row| addCloudflareObservedForKind(&out, row.kind, row.count);
-        for (self.summary_security_kinds.items) |row| addCloudflareObservedForKind(&out, row.kind, row.count);
-        for (self.summary_snapshots.items) |row| addCloudflareObservedForKind(&out, row.kind, 1);
         return out;
     }
 
@@ -535,7 +503,7 @@ pub const Overview = struct {
         }
 
         try writer.writeAll("api families\n");
-        for (self.apiFamilySummaries()) |row| try writeCloudflareApiFamilySummaryText(row, writer);
+        for (self.api_family_summaries.items) |row| try app_provider_api.writeApiFamilySummaryText(row, writer);
 
         try writer.writeAll("recent snapshots\n");
         if (self.recent_snapshots.items.len == 0) {
@@ -584,9 +552,9 @@ pub const Overview = struct {
             try writeKindCountJson(row, writer);
         }
         try writer.writeAll("],\"api_families\":[");
-        for (self.apiFamilySummaries(), 0..) |row, index| {
+        for (self.api_family_summaries.items, 0..) |row, index| {
             if (index != 0) try writer.writeByte(',');
-            try writeCloudflareApiFamilySummaryJson(row, writer);
+            try app_provider_api.writeApiFamilySummaryJson(row, writer);
         }
         try writer.writeAll("],\"recent_snapshots\":[");
         for (self.recent_snapshots.items, 0..) |row, index| {
@@ -1049,63 +1017,30 @@ fn writeSnapshotText(row: db_store.SnapshotSummary, writer: anytype) !void {
     try writer.writeByte('\n');
 }
 
-fn emptyCloudflareApiFamilySummaries() [cloudflare_family_count]CloudflareApiFamilySummary {
-    var out: [cloudflare_family_count]CloudflareApiFamilySummary = undefined;
-    inline for (std.meta.fields(CloudflareFamily)) |field| {
-        const family: CloudflareFamily = @enumFromInt(field.value);
-        out[field.value] = .{ .label = family.label() };
-    }
-    return out;
+fn loadCloudflareApiFamilySummaries(io: Io, gpa: Allocator) !app_provider_api.ApiFamilySummaries {
+    return try app_provider_api.loadProvider(io, gpa, .{}, .cloudflare, .{
+        .seed_labels = cloudflare_api_family_labels[0..],
+        .classifier = cloudflareApiFamilyLabelForRoute,
+    });
 }
 
-fn loadCloudflareApiFamilySummaries(io: Io, gpa: Allocator) ![cloudflare_family_count]CloudflareApiFamilySummary {
-    var out = emptyCloudflareApiFamilySummaries();
-    var routes = try provider_routes.loadProvider(io, gpa, .{}, .cloudflare);
-    defer routes.deinit(gpa);
-    for (routes.items) |route| {
-        out[cloudflareFamilyIndex(cloudflareFamilyForRoute(route))].addRoute(route);
-    }
-    return out;
-}
-
-fn cloudflareFamilyIndex(family: CloudflareFamily) usize {
-    return @intFromEnum(family);
-}
-
-fn cloudflareFamilyForRoute(route: provider_routes.Route) CloudflareFamily {
+fn cloudflareApiFamilyLabelForRoute(route: app_provider_api.Route) ?[]const u8 {
     const tag_family = cloudflareFamilyForKind(route.tag);
-    if (tag_family != .other) return tag_family;
+    if (tag_family != .other) return tag_family.label();
     if (route.operation_id) |operation_id| {
         const operation_family = cloudflareFamilyForKind(operation_id);
-        if (operation_family != .other) return operation_family;
+        if (operation_family != .other) return operation_family.label();
     }
     const path_family = cloudflareFamilyForKind(route.path_template);
-    if (path_family != .other) return path_family;
-    return .other;
+    return path_family.label();
 }
 
-fn addCloudflareObserved(summaries: *[cloudflare_family_count]CloudflareApiFamilySummary, family: CloudflareFamily, count: i64) void {
-    summaries[cloudflareFamilyIndex(family)].addObserved(count);
+fn addCloudflareObserved(summaries: *app_provider_api.ApiFamilySummaries, family: CloudflareFamily, count: i64) void {
+    _ = summaries.addObservedByLabel(family.label(), count);
 }
 
-fn addCloudflareObservedForKind(summaries: *[cloudflare_family_count]CloudflareApiFamilySummary, kind: []const u8, count: i64) void {
+fn addCloudflareObservedForKind(summaries: *app_provider_api.ApiFamilySummaries, kind: []const u8, count: i64) void {
     addCloudflareObserved(summaries, cloudflareFamilyForKind(kind), count);
-}
-
-fn writeCloudflareApiFamilySummaryText(row: CloudflareApiFamilySummary, writer: anytype) !void {
-    try writer.print("{s}\tofficial_routes={d}\tread_routes={d}\tdry_run_routes={d}\twrite_routes={d}\tnot_applicable_routes={d}\tdeprecated_routes={d}\tblocked_permission_routes={d}\tobserved_items={d}\tobserved_kinds={d}\tstatus={s}\n", .{
-        row.label,
-        row.official_routes,
-        row.read_routes,
-        row.dry_run_routes,
-        row.write_routes,
-        row.not_applicable_routes,
-        row.deprecated_routes,
-        row.blocked_permission_routes,
-        row.observed_items,
-        row.observed_kinds,
-        row.status(),
-    });
 }
 
 fn writeOverviewSummaryText(summary: OverviewSummary, writer: anytype) !void {
@@ -1244,22 +1179,6 @@ fn writeOverviewSummaryJson(summary: OverviewSummary, writer: anytype) !void {
     try app_render.writeJsonIntField(writer, "blocked_or_missing_families", summary.blocked_or_missing_families, true);
     try writer.writeAll("\"families\":");
     try writeFamilySummaryJson(summary.families, writer);
-    try writer.writeByte('}');
-}
-
-fn writeCloudflareApiFamilySummaryJson(row: CloudflareApiFamilySummary, writer: anytype) !void {
-    try writer.writeByte('{');
-    try writeJsonStringField(writer, "label", row.label, true);
-    try app_render.writeJsonIntField(writer, "official_routes", row.official_routes, true);
-    try app_render.writeJsonIntField(writer, "read_routes", row.read_routes, true);
-    try app_render.writeJsonIntField(writer, "dry_run_routes", row.dry_run_routes, true);
-    try app_render.writeJsonIntField(writer, "write_routes", row.write_routes, true);
-    try app_render.writeJsonIntField(writer, "not_applicable_routes", row.not_applicable_routes, true);
-    try app_render.writeJsonIntField(writer, "deprecated_routes", row.deprecated_routes, true);
-    try app_render.writeJsonIntField(writer, "blocked_permission_routes", row.blocked_permission_routes, true);
-    try app_render.writeJsonIntField(writer, "observed_items", row.observed_items, true);
-    try app_render.writeJsonIntField(writer, "observed_kinds", row.observed_kinds, true);
-    try writeJsonStringField(writer, "status", row.status(), false);
     try writer.writeByte('}');
 }
 
@@ -1509,7 +1428,7 @@ test "cloudflare app renders account zone DNS overview from normalized storage" 
     try std.testing.expectEqual(@as(i64, 1), summary.families.health);
     try std.testing.expectEqual(@as(i64, 2), summary.families.tokens_memberships);
     try std.testing.expectEqual(@as(i64, 2), summary.families.other);
-    try std.testing.expectEqual(@as(usize, cloudflare_family_count), summary.api_families);
+    try std.testing.expectEqual(@as(usize, cloudflare_api_family_labels.len), summary.api_families);
     try std.testing.expect(summary.api_routes > 1000);
     try std.testing.expect(summary.api_read_routes > 0);
     try std.testing.expect(summary.api_dry_run_routes > 0);

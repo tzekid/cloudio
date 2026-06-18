@@ -1,5 +1,6 @@
 const std = @import("std");
 const collector_hostinger = @import("collector_hostinger");
+const app_provider_api = @import("app_provider_api");
 const app_provider_list = @import("app_provider_list");
 const app_render = @import("app_render");
 const core_output = @import("core_output");
@@ -126,6 +127,33 @@ pub const HostingerFamilySummary = struct {
     }
 };
 
+const hostinger_account_api_family_labels = [_][]const u8{
+    "billing",
+    "dns",
+    "domains",
+    "hosting",
+    "ecommerce",
+    "horizons",
+    "reach",
+    "domain_access_verifier",
+};
+
+const hostinger_vps_api_family_labels = [_][]const u8{
+    "virtual_machine",
+    "firewall",
+    "docker",
+    "post_install_scripts",
+    "snapshots",
+    "public_keys",
+    "malware_scanner",
+    "actions",
+    "backups",
+    "os_templates",
+    "ptr_records",
+    "recovery",
+    "data_centers",
+};
+
 pub const AccountOverviewSummary = struct {
     vps: usize = 0,
     running_vps: usize = 0,
@@ -142,11 +170,15 @@ pub const AccountOverviewSummary = struct {
     api_routes: usize = 0,
     api_read_routes: usize = 0,
     api_dry_run_routes: usize = 0,
+    api_write_routes: usize = 0,
     api_not_applicable_routes: usize = 0,
+    api_deprecated_routes: usize = 0,
+    api_blocked_permission_routes: usize = 0,
     api_families: usize = 0,
     observed_read_families: usize = 0,
     missing_read_families: usize = 0,
     not_applicable_families: usize = 0,
+    blocked_or_missing_families: usize = 0,
 };
 
 pub const VpsOverviewSummary = struct {
@@ -176,41 +208,16 @@ pub const VpsOverviewSummary = struct {
     api_routes: usize = 0,
     api_read_routes: usize = 0,
     api_dry_run_routes: usize = 0,
+    api_write_routes: usize = 0,
+    api_not_applicable_routes: usize = 0,
+    api_deprecated_routes: usize = 0,
+    api_blocked_permission_routes: usize = 0,
     api_families: usize = 0,
     observed_read_families: usize = 0,
     missing_read_families: usize = 0,
     dry_run_only_families: usize = 0,
-};
-
-pub const VpsApiFamilySummary = struct {
-    label: []const u8,
-    official_routes: usize,
-    read_routes: usize,
-    dry_run_routes: usize,
-    observed_items: i64 = 0,
-    observed_kinds: usize = 0,
-
-    fn status(self: VpsApiFamilySummary) []const u8 {
-        if (self.read_routes == 0 and self.dry_run_routes != 0) return "dry_run_only";
-        if (self.observed_items != 0) return "observed";
-        return "missing_read";
-    }
-};
-
-pub const AccountApiFamilySummary = struct {
-    label: []const u8,
-    official_routes: usize,
-    read_routes: usize,
-    dry_run_routes: usize,
-    not_applicable_routes: usize,
-    observed_items: i64 = 0,
-    observed_kinds: usize = 0,
-
-    fn status(self: AccountApiFamilySummary) []const u8 {
-        if (self.not_applicable_routes != 0 and self.read_routes == 0 and self.dry_run_routes == 0) return "not_applicable";
-        if (self.observed_items != 0) return "observed";
-        return "missing_read";
-    }
+    not_applicable_families: usize = 0,
+    blocked_or_missing_families: usize = 0,
 };
 
 const VpsCoverage = struct {
@@ -234,6 +241,7 @@ pub const AccountOverview = struct {
     family_facets: db_store.InventoryFacets,
     recent_snapshots: db_store.SnapshotSummaries,
     summary_snapshots: db_store.SnapshotSummaries,
+    api_family_summaries: app_provider_api.ApiFamilySummaries,
     resource_count: i64,
     inventory_count: i64,
 
@@ -254,12 +262,21 @@ pub const AccountOverview = struct {
         errdefer recent_snapshots.deinit(ctx.gpa);
         var summary_snapshots = try ctx.db.snapshotsForSource(ctx.gpa, "hostinger", 5000);
         errdefer summary_snapshots.deinit(ctx.gpa);
+        var api_family_summaries = try loadHostingerAccountApiFamilySummaries(ctx.io, ctx.gpa);
+        errdefer api_family_summaries.deinit(ctx.gpa);
+        for (family_facets.items) |facet| {
+            addAccountApiFamilyObserved(&api_family_summaries, facet.kind, facet.count);
+        }
+        for (summary_snapshots.items) |snapshot| {
+            addAccountApiFamilyObserved(&api_family_summaries, snapshot.kind, 1);
+        }
         return .{
             .vps_overview = vps_overview,
             .inventory_facets = inventory_facets,
             .family_facets = family_facets,
             .recent_snapshots = recent_snapshots,
             .summary_snapshots = summary_snapshots,
+            .api_family_summaries = api_family_summaries,
             .resource_count = try ctx.db.countTable("hostinger_resources"),
             .inventory_count = try ctx.db.countTable("hostinger_inventory_items"),
         };
@@ -271,11 +288,13 @@ pub const AccountOverview = struct {
         self.family_facets.deinit(allocator);
         self.recent_snapshots.deinit(allocator);
         self.summary_snapshots.deinit(allocator);
+        self.api_family_summaries.deinit(allocator);
     }
 
     pub fn summary(self: AccountOverview) AccountOverviewSummary {
         const vps_summary = self.vps_overview.summary();
-        const route_totals = provider_hostinger.accountApiRouteTotals();
+        const route_totals = self.api_family_summaries.routeTotals();
+        const status_totals = self.api_family_summaries.statusTotals();
         var out = AccountOverviewSummary{
             .vps = vps_summary.vps,
             .running_vps = vps_summary.running,
@@ -291,40 +310,18 @@ pub const AccountOverview = struct {
             .api_routes = route_totals.official_routes,
             .api_read_routes = route_totals.read_routes,
             .api_dry_run_routes = route_totals.dry_run_routes,
+            .api_write_routes = route_totals.write_routes,
             .api_not_applicable_routes = route_totals.not_applicable_routes,
-            .api_families = provider_hostinger.account_api_family_count,
+            .api_deprecated_routes = route_totals.deprecated_routes,
+            .api_blocked_permission_routes = route_totals.blocked_permission_routes,
+            .api_families = self.api_family_summaries.items.len,
+            .observed_read_families = status_totals.observed_read_families,
+            .missing_read_families = status_totals.missing_read_families,
+            .not_applicable_families = status_totals.not_applicable_families,
+            .blocked_or_missing_families = status_totals.blocked_or_missing_families,
         };
         for (self.family_facets.items) |facet| {
             out.families.add(hostingerFamilyForKind(facet.kind), facet.count);
-        }
-        for (self.apiFamilySummaries()) |family| {
-            if (family.not_applicable_routes != 0 and family.read_routes == 0) {
-                out.not_applicable_families += 1;
-            } else if (family.read_routes != 0 and family.observed_items != 0) {
-                out.observed_read_families += 1;
-            } else if (family.read_routes != 0) {
-                out.missing_read_families += 1;
-            }
-        }
-        return out;
-    }
-
-    fn apiFamilySummaries(self: AccountOverview) [provider_hostinger.account_api_family_count]AccountApiFamilySummary {
-        var out: [provider_hostinger.account_api_family_count]AccountApiFamilySummary = undefined;
-        for (provider_hostinger.account_api_families, 0..) |family, index| {
-            out[index] = .{
-                .label = family.label,
-                .official_routes = family.official_routes,
-                .read_routes = family.read_routes,
-                .dry_run_routes = family.dry_run_routes,
-                .not_applicable_routes = family.not_applicable_routes,
-            };
-        }
-        for (self.family_facets.items) |facet| {
-            addAccountApiFamilyObserved(&out, facet.kind, facet.count);
-        }
-        for (self.summary_snapshots.items) |snapshot| {
-            addAccountApiFamilyObserved(&out, snapshot.kind, 1);
         }
         return out;
     }
@@ -363,7 +360,7 @@ pub const AccountOverview = struct {
         }
 
         try writer.writeAll("api families\n");
-        for (self.apiFamilySummaries()) |row| try writeAccountApiFamilySummaryText(row, writer);
+        for (self.api_family_summaries.items) |row| try app_provider_api.writeApiFamilySummaryText(row, writer);
 
         try writer.writeAll("recent snapshots\n");
         if (self.recent_snapshots.items.len == 0) {
@@ -397,9 +394,9 @@ pub const AccountOverview = struct {
             try writeKindCountJson(row, writer);
         }
         try writer.writeAll("],\"api_families\":[");
-        for (self.apiFamilySummaries(), 0..) |row, index| {
+        for (self.api_family_summaries.items, 0..) |row, index| {
             if (index != 0) try writer.writeByte(',');
-            try writeAccountApiFamilySummaryJson(row, writer);
+            try app_provider_api.writeApiFamilySummaryJson(row, writer);
         }
         try writer.writeAll("],\"recent_snapshots\":[");
         for (self.recent_snapshots.items, 0..) |row, index| {
@@ -423,6 +420,8 @@ pub const VpsOverview = struct {
     summary_inventory_kinds: db_store.HostingerKindCounts,
     summary_metric_summaries: db_store.HostingerMetricSummaries,
     summary_family_summaries: db_store.HostingerVpsFamilySummaries,
+    summary_snapshots: db_store.SnapshotSummaries,
+    api_family_summaries: app_provider_api.ApiFamilySummaries,
 
     pub fn load(ctx: Context, options: VpsOverviewOptions) !VpsOverview {
         const limit = positiveLimit(options.limit, 20);
@@ -448,6 +447,25 @@ pub const VpsOverview = struct {
         errdefer summary_metric_summaries.deinit(ctx.gpa);
         var summary_family_summaries = try ctx.db.hostingerVpsFamilySummaries(ctx.gpa, 5000);
         errdefer summary_family_summaries.deinit(ctx.gpa);
+        var summary_snapshots = try ctx.db.snapshotsForSource(ctx.gpa, "hostinger", 5000);
+        errdefer summary_snapshots.deinit(ctx.gpa);
+        var api_family_summaries = try loadHostingerVpsApiFamilySummaries(ctx.io, ctx.gpa);
+        errdefer api_family_summaries.deinit(ctx.gpa);
+        if (summary_vps.items.len != 0) {
+            addVpsApiFamilyObserved(&api_family_summaries, "vps", @intCast(summary_vps.items.len));
+        }
+        for (summary_resource_kinds.items) |row| {
+            addVpsApiFamilyObserved(&api_family_summaries, row.kind, row.count);
+        }
+        for (summary_inventory_kinds.items) |row| {
+            addVpsApiFamilyObserved(&api_family_summaries, row.kind, row.count);
+        }
+        for (summary_metric_summaries.items) |row| {
+            addVpsApiFamilyObserved(&api_family_summaries, "metrics", row.count);
+        }
+        for (summary_snapshots.items) |row| {
+            addVpsApiFamilyObserved(&api_family_summaries, row.kind, 1);
+        }
         return .{
             .vps = vps,
             .resource_kinds = resource_kinds,
@@ -460,6 +478,8 @@ pub const VpsOverview = struct {
             .summary_inventory_kinds = summary_inventory_kinds,
             .summary_metric_summaries = summary_metric_summaries,
             .summary_family_summaries = summary_family_summaries,
+            .summary_snapshots = summary_snapshots,
+            .api_family_summaries = api_family_summaries,
         };
     }
 
@@ -475,10 +495,13 @@ pub const VpsOverview = struct {
         self.summary_inventory_kinds.deinit(allocator);
         self.summary_metric_summaries.deinit(allocator);
         self.summary_family_summaries.deinit(allocator);
+        self.summary_snapshots.deinit(allocator);
+        self.api_family_summaries.deinit(allocator);
     }
 
     pub fn summary(self: VpsOverview) VpsOverviewSummary {
-        const route_totals = provider_hostinger.vpsApiRouteTotals();
+        const route_totals = self.api_family_summaries.routeTotals();
+        const status_totals = self.api_family_summaries.statusTotals();
         var out = VpsOverviewSummary{
             .vps = self.summary_vps.items.len,
             .resource_kinds = self.summary_resource_kinds.items.len,
@@ -489,7 +512,16 @@ pub const VpsOverview = struct {
             .api_routes = route_totals.official_routes,
             .api_read_routes = route_totals.read_routes,
             .api_dry_run_routes = route_totals.dry_run_routes,
-            .api_families = provider_hostinger.vps_api_family_count,
+            .api_write_routes = route_totals.write_routes,
+            .api_not_applicable_routes = route_totals.not_applicable_routes,
+            .api_deprecated_routes = route_totals.deprecated_routes,
+            .api_blocked_permission_routes = route_totals.blocked_permission_routes,
+            .api_families = self.api_family_summaries.items.len,
+            .observed_read_families = status_totals.observed_read_families,
+            .missing_read_families = status_totals.missing_read_families,
+            .dry_run_only_families = status_totals.dry_run_only_families,
+            .not_applicable_families = status_totals.not_applicable_families,
+            .blocked_or_missing_families = status_totals.blocked_or_missing_families,
         };
         for (self.summary_vps.items) |row| {
             if (stateLooksRunning(row.status)) {
@@ -512,15 +544,6 @@ pub const VpsOverview = struct {
             if (coverage.security) out.with_security += 1;
             if (coverage.docker) out.with_docker += 1;
         }
-        for (self.apiFamilySummaries()) |family| {
-            if (family.read_routes == 0 and family.dry_run_routes != 0) {
-                out.dry_run_only_families += 1;
-            } else if (family.read_routes != 0 and family.observed_items != 0) {
-                out.observed_read_families += 1;
-            } else if (family.read_routes != 0) {
-                out.missing_read_families += 1;
-            }
-        }
         return out;
     }
 
@@ -532,32 +555,6 @@ pub const VpsOverview = struct {
         for (self.summary_family_summaries.items) |row| {
             if (!std.mem.eql(u8, row.vm_id, vm_id) or row.count <= 0) continue;
             addCoverageKind(&out, row.kind);
-        }
-        return out;
-    }
-
-    fn apiFamilySummaries(self: VpsOverview) [provider_hostinger.vps_api_family_count]VpsApiFamilySummary {
-        var out: [provider_hostinger.vps_api_family_count]VpsApiFamilySummary = undefined;
-        for (provider_hostinger.vps_api_families, 0..) |family, index| {
-            out[index] = .{
-                .label = family.label,
-                .official_routes = family.official_routes,
-                .read_routes = family.read_routes,
-                .dry_run_routes = family.dry_run_routes,
-            };
-        }
-
-        if (self.summary_vps.items.len != 0) {
-            addVpsApiFamilyObserved(&out, "vps", @intCast(self.summary_vps.items.len));
-        }
-        for (self.summary_resource_kinds.items) |row| {
-            addVpsApiFamilyObserved(&out, row.kind, row.count);
-        }
-        for (self.summary_inventory_kinds.items) |row| {
-            addVpsApiFamilyObserved(&out, row.kind, row.count);
-        }
-        for (self.summary_metric_summaries.items) |row| {
-            addVpsApiFamilyObserved(&out, "metrics", row.count);
         }
         return out;
     }
@@ -590,14 +587,20 @@ pub const VpsOverview = struct {
             counts.family_summaries,
             counts.recent_snapshots,
         });
-        try writer.print("api_routes total={d} read={d} dry_run={d} families={d} observed_read_families={d} missing_read_families={d} dry_run_only_families={d}\n", .{
+        try writer.print("api_routes total={d} read={d} dry_run={d} write={d} not_applicable={d} deprecated={d} blocked_permission={d} families={d} observed_read_families={d} missing_read_families={d} dry_run_only_families={d} not_applicable_families={d} blocked_or_missing_families={d}\n", .{
             counts.api_routes,
             counts.api_read_routes,
             counts.api_dry_run_routes,
+            counts.api_write_routes,
+            counts.api_not_applicable_routes,
+            counts.api_deprecated_routes,
+            counts.api_blocked_permission_routes,
             counts.api_families,
             counts.observed_read_families,
             counts.missing_read_families,
             counts.dry_run_only_families,
+            counts.not_applicable_families,
+            counts.blocked_or_missing_families,
         });
         try writer.writeAll("vps\n");
         if (self.vps.items.len == 0) {
@@ -635,7 +638,7 @@ pub const VpsOverview = struct {
         }
 
         try writer.writeAll("api families\n");
-        for (self.apiFamilySummaries()) |row| try writeVpsApiFamilySummaryText(row, writer);
+        for (self.api_family_summaries.items) |row| try app_provider_api.writeApiFamilySummaryText(row, writer);
 
         try writer.writeAll("recent snapshots\n");
         if (self.recent_snapshots.items.len == 0) {
@@ -674,9 +677,9 @@ pub const VpsOverview = struct {
             try writeVpsFamilySummaryJson(row, writer);
         }
         try writer.writeAll("],\"api_families\":[");
-        for (self.apiFamilySummaries(), 0..) |row, index| {
+        for (self.api_family_summaries.items, 0..) |row, index| {
             if (index != 0) try writer.writeByte(',');
-            try writeVpsApiFamilySummaryJson(row, writer);
+            try app_provider_api.writeApiFamilySummaryJson(row, writer);
         }
         try writer.writeAll("],\"recent_snapshots\":[");
         for (self.recent_snapshots.items, 0..) |row, index| {
@@ -918,19 +921,64 @@ fn hostingerFamilyForKind(kind: []const u8) HostingerFamily {
     return .other;
 }
 
-fn addAccountApiFamilyObserved(summaries: *[provider_hostinger.account_api_family_count]AccountApiFamilySummary, kind: []const u8, count: i64) void {
-    const index = accountApiFamilyIndexForKind(kind) orelse return;
-    summaries[index].observed_items += count;
-    summaries[index].observed_kinds += 1;
+fn loadHostingerAccountApiFamilySummaries(io: Io, gpa: Allocator) !app_provider_api.ApiFamilySummaries {
+    return try app_provider_api.loadProvider(io, gpa, .{}, .hostinger, .{
+        .seed_labels = hostinger_account_api_family_labels[0..],
+        .classifier = hostingerAccountApiFamilyLabelForRoute,
+    });
 }
 
-fn accountApiFamilyIndexForKind(kind: []const u8) ?usize {
-    if (containsIgnoreCase(kind, "domain-access") or containsIgnoreCase(kind, "verifications") or containsIgnoreCase(kind, "v2_getdomainverificationsdirect")) return accountApiFamilyIndexByLabel("domain_access_verifier");
-    if (containsIgnoreCase(kind, "billing")) return accountApiFamilyIndexByLabel("billing");
-    if (containsIgnoreCase(kind, "dns")) return accountApiFamilyIndexByLabel("dns");
-    if (containsIgnoreCase(kind, "ecommerce") or containsIgnoreCase(kind, "store")) return accountApiFamilyIndexByLabel("ecommerce");
-    if (containsIgnoreCase(kind, "horizons")) return accountApiFamilyIndexByLabel("horizons");
-    if (containsIgnoreCase(kind, "reach") or containsIgnoreCase(kind, "contact") or containsIgnoreCase(kind, "segment") or containsIgnoreCase(kind, "profile")) return accountApiFamilyIndexByLabel("reach");
+fn loadHostingerVpsApiFamilySummaries(io: Io, gpa: Allocator) !app_provider_api.ApiFamilySummaries {
+    return try app_provider_api.loadProvider(io, gpa, .{}, .hostinger, .{
+        .seed_labels = hostinger_vps_api_family_labels[0..],
+        .classifier = hostingerVpsApiFamilyLabelForRoute,
+    });
+}
+
+fn hostingerAccountApiFamilyLabelForRoute(route: app_provider_api.Route) ?[]const u8 {
+    const tag = route.tag;
+    if (containsIgnoreCase(tag, "billing:")) return "billing";
+    if (containsIgnoreCase(tag, "dns:")) return "dns";
+    if (containsIgnoreCase(tag, "domains:")) return "domains";
+    if (containsIgnoreCase(tag, "hosting:")) return "hosting";
+    if (containsIgnoreCase(tag, "ecommerce:")) return "ecommerce";
+    if (containsIgnoreCase(tag, "horizons:")) return "horizons";
+    if (containsIgnoreCase(tag, "reach:")) return "reach";
+    if (containsIgnoreCase(tag, "domain access verifier:")) return "domain_access_verifier";
+    return null;
+}
+
+fn hostingerVpsApiFamilyLabelForRoute(route: app_provider_api.Route) ?[]const u8 {
+    const tag = route.tag;
+    if (!containsIgnoreCase(tag, "vps:")) return null;
+    if (containsIgnoreCase(tag, "virtual machine")) return "virtual_machine";
+    if (containsIgnoreCase(tag, "firewall")) return "firewall";
+    if (containsIgnoreCase(tag, "docker")) return "docker";
+    if (containsIgnoreCase(tag, "post-install")) return "post_install_scripts";
+    if (containsIgnoreCase(tag, "snapshot")) return "snapshots";
+    if (containsIgnoreCase(tag, "public key")) return "public_keys";
+    if (containsIgnoreCase(tag, "malware")) return "malware_scanner";
+    if (containsIgnoreCase(tag, "action")) return "actions";
+    if (containsIgnoreCase(tag, "backup")) return "backups";
+    if (containsIgnoreCase(tag, "os template")) return "os_templates";
+    if (containsIgnoreCase(tag, "ptr")) return "ptr_records";
+    if (containsIgnoreCase(tag, "recovery")) return "recovery";
+    if (containsIgnoreCase(tag, "data center")) return "data_centers";
+    return null;
+}
+
+fn addAccountApiFamilyObserved(summaries: *app_provider_api.ApiFamilySummaries, kind: []const u8, count: i64) void {
+    const label = accountApiFamilyLabelForKind(kind) orelse return;
+    _ = summaries.addObservedByLabel(label, count);
+}
+
+fn accountApiFamilyLabelForKind(kind: []const u8) ?[]const u8 {
+    if (containsIgnoreCase(kind, "domain-access") or containsIgnoreCase(kind, "verifications") or containsIgnoreCase(kind, "v2_getdomainverificationsdirect")) return "domain_access_verifier";
+    if (containsIgnoreCase(kind, "billing")) return "billing";
+    if (containsIgnoreCase(kind, "dns")) return "dns";
+    if (containsIgnoreCase(kind, "ecommerce") or containsIgnoreCase(kind, "store")) return "ecommerce";
+    if (containsIgnoreCase(kind, "horizons")) return "horizons";
+    if (containsIgnoreCase(kind, "reach") or containsIgnoreCase(kind, "contact") or containsIgnoreCase(kind, "segment") or containsIgnoreCase(kind, "profile")) return "reach";
     if (containsIgnoreCase(kind, "hosting") or
         containsIgnoreCase(kind, "wordpress") or
         containsIgnoreCase(kind, "nodejs") or
@@ -939,46 +987,31 @@ fn accountApiFamilyIndexForKind(kind: []const u8) ?usize {
         containsIgnoreCase(kind, "parked") or
         containsIgnoreCase(kind, "subdomain"))
     {
-        return accountApiFamilyIndexByLabel("hosting");
+        return "hosting";
     }
-    if (containsIgnoreCase(kind, "domain") or containsIgnoreCase(kind, "whois") or containsIgnoreCase(kind, "forwarding") or containsIgnoreCase(kind, "availability")) return accountApiFamilyIndexByLabel("domains");
+    if (containsIgnoreCase(kind, "domain") or containsIgnoreCase(kind, "whois") or containsIgnoreCase(kind, "forwarding") or containsIgnoreCase(kind, "availability")) return "domains";
     return null;
 }
 
-fn accountApiFamilyIndexByLabel(label: []const u8) ?usize {
-    for (provider_hostinger.account_api_families, 0..) |family, index| {
-        if (std.mem.eql(u8, family.label, label)) return index;
-    }
-    return null;
+fn addVpsApiFamilyObserved(summaries: *app_provider_api.ApiFamilySummaries, kind: []const u8, count: i64) void {
+    const label = vpsApiFamilyLabelForKind(kind) orelse return;
+    _ = summaries.addObservedByLabel(label, count);
 }
 
-fn addVpsApiFamilyObserved(summaries: *[provider_hostinger.vps_api_family_count]VpsApiFamilySummary, kind: []const u8, count: i64) void {
-    const index = vpsApiFamilyIndexForKind(kind) orelse return;
-    summaries[index].observed_items += count;
-    summaries[index].observed_kinds += 1;
-}
-
-fn vpsApiFamilyIndexForKind(kind: []const u8) ?usize {
-    if (std.ascii.eqlIgnoreCase(kind, "data-centers") or containsIgnoreCase(kind, "data-center") or containsIgnoreCase(kind, "datacenter")) return vpsApiFamilyIndexByLabel("data_centers");
-    if (std.ascii.eqlIgnoreCase(kind, "firewalls") or std.ascii.eqlIgnoreCase(kind, "firewall-detail") or containsIgnoreCase(kind, "firewall")) return vpsApiFamilyIndexByLabel("firewall");
-    if (kindLooksLikeDocker(kind) or containsIgnoreCase(kind, "project") or containsIgnoreCase(kind, "container")) return vpsApiFamilyIndexByLabel("docker");
-    if (containsIgnoreCase(kind, "post-install") or containsIgnoreCase(kind, "post_install")) return vpsApiFamilyIndexByLabel("post_install_scripts");
-    if (kindLooksLikeSnapshot(kind)) return vpsApiFamilyIndexByLabel("snapshots");
-    if (std.ascii.eqlIgnoreCase(kind, "public-keys-global")) return vpsApiFamilyIndexByLabel("public_keys");
-    if (kindLooksLikeSecurity(kind) or containsIgnoreCase(kind, "scanmetrics")) return vpsApiFamilyIndexByLabel("malware_scanner");
-    if (kindLooksLikeActions(kind)) return vpsApiFamilyIndexByLabel("actions");
-    if (kindLooksLikeBackups(kind)) return vpsApiFamilyIndexByLabel("backups");
-    if (std.ascii.eqlIgnoreCase(kind, "templates") or std.ascii.eqlIgnoreCase(kind, "template-detail") or containsIgnoreCase(kind, "template")) return vpsApiFamilyIndexByLabel("os_templates");
-    if (containsIgnoreCase(kind, "ptr")) return vpsApiFamilyIndexByLabel("ptr_records");
-    if (containsIgnoreCase(kind, "recovery")) return vpsApiFamilyIndexByLabel("recovery");
-    if (std.ascii.eqlIgnoreCase(kind, "vps") or kindLooksLikeDetails(kind) or kindLooksLikeMetrics(kind) or std.ascii.eqlIgnoreCase(kind, "public-keys")) return vpsApiFamilyIndexByLabel("virtual_machine");
-    return null;
-}
-
-fn vpsApiFamilyIndexByLabel(label: []const u8) ?usize {
-    for (provider_hostinger.vps_api_families, 0..) |family, index| {
-        if (std.mem.eql(u8, family.label, label)) return index;
-    }
+fn vpsApiFamilyLabelForKind(kind: []const u8) ?[]const u8 {
+    if (std.ascii.eqlIgnoreCase(kind, "data-centers") or containsIgnoreCase(kind, "data-center") or containsIgnoreCase(kind, "datacenter")) return "data_centers";
+    if (std.ascii.eqlIgnoreCase(kind, "firewalls") or std.ascii.eqlIgnoreCase(kind, "firewall-detail") or containsIgnoreCase(kind, "firewall")) return "firewall";
+    if (kindLooksLikeDocker(kind) or containsIgnoreCase(kind, "project") or containsIgnoreCase(kind, "container")) return "docker";
+    if (containsIgnoreCase(kind, "post-install") or containsIgnoreCase(kind, "post_install")) return "post_install_scripts";
+    if (kindLooksLikeSnapshot(kind)) return "snapshots";
+    if (std.ascii.eqlIgnoreCase(kind, "public-keys-global")) return "public_keys";
+    if (kindLooksLikeSecurity(kind) or containsIgnoreCase(kind, "scanmetrics")) return "malware_scanner";
+    if (kindLooksLikeActions(kind)) return "actions";
+    if (kindLooksLikeBackups(kind)) return "backups";
+    if (std.ascii.eqlIgnoreCase(kind, "templates") or std.ascii.eqlIgnoreCase(kind, "template-detail") or containsIgnoreCase(kind, "template")) return "os_templates";
+    if (containsIgnoreCase(kind, "ptr")) return "ptr_records";
+    if (containsIgnoreCase(kind, "recovery")) return "recovery";
+    if (std.ascii.eqlIgnoreCase(kind, "vps") or kindLooksLikeDetails(kind) or kindLooksLikeMetrics(kind) or std.ascii.eqlIgnoreCase(kind, "public-keys")) return "virtual_machine";
     return null;
 }
 
@@ -1039,31 +1072,6 @@ fn writeVpsFamilySummaryText(row: db_store.HostingerVpsFamilySummary, writer: an
     try writer.writeByte('\n');
 }
 
-fn writeAccountApiFamilySummaryText(row: AccountApiFamilySummary, writer: anytype) !void {
-    try writer.print("{s}\tofficial_routes={d}\tread_routes={d}\tdry_run_routes={d}\tnot_applicable_routes={d}\tobserved_items={d}\tobserved_kinds={d}\tstatus={s}\n", .{
-        row.label,
-        row.official_routes,
-        row.read_routes,
-        row.dry_run_routes,
-        row.not_applicable_routes,
-        row.observed_items,
-        row.observed_kinds,
-        row.status(),
-    });
-}
-
-fn writeVpsApiFamilySummaryText(row: VpsApiFamilySummary, writer: anytype) !void {
-    try writer.print("{s}\tofficial_routes={d}\tread_routes={d}\tdry_run_routes={d}\tobserved_items={d}\tobserved_kinds={d}\tstatus={s}\n", .{
-        row.label,
-        row.official_routes,
-        row.read_routes,
-        row.dry_run_routes,
-        row.observed_items,
-        row.observed_kinds,
-        row.status(),
-    });
-}
-
 fn writeAccountOverviewSummaryText(summary: AccountOverviewSummary, writer: anytype) !void {
     try writer.print("summary vps={d} running_vps={d} stopped_or_other_vps={d} complete_vps_core_coverage={d} partial_vps_core_coverage={d} resources={d} inventory_items={d} resource_kinds={d} inventory_kinds={d} inventory_facets={d} recent_snapshots={d}\n", .{
         summary.vps,
@@ -1078,15 +1086,19 @@ fn writeAccountOverviewSummaryText(summary: AccountOverviewSummary, writer: anyt
         summary.inventory_facets,
         summary.recent_snapshots,
     });
-    try writer.print("api_routes total={d} read={d} dry_run={d} not_applicable={d} families={d} observed_read_families={d} missing_read_families={d} not_applicable_families={d}\n", .{
+    try writer.print("api_routes total={d} read={d} dry_run={d} write={d} not_applicable={d} deprecated={d} blocked_permission={d} families={d} observed_read_families={d} missing_read_families={d} not_applicable_families={d} blocked_or_missing_families={d}\n", .{
         summary.api_routes,
         summary.api_read_routes,
         summary.api_dry_run_routes,
+        summary.api_write_routes,
         summary.api_not_applicable_routes,
+        summary.api_deprecated_routes,
+        summary.api_blocked_permission_routes,
         summary.api_families,
         summary.observed_read_families,
         summary.missing_read_families,
         summary.not_applicable_families,
+        summary.blocked_or_missing_families,
     });
     try writer.print("families billing={d} dns={d} domains={d} hosting={d} vps={d} docker={d} security={d} reach={d} ecommerce={d} horizons={d} other={d}\n", .{
         summary.families.billing,
@@ -1131,10 +1143,16 @@ fn writeVpsOverviewSummaryJson(summary: VpsOverviewSummary, writer: anytype) !vo
     try app_render.writeJsonIntField(writer, "api_routes", summary.api_routes, true);
     try app_render.writeJsonIntField(writer, "api_read_routes", summary.api_read_routes, true);
     try app_render.writeJsonIntField(writer, "api_dry_run_routes", summary.api_dry_run_routes, true);
+    try app_render.writeJsonIntField(writer, "api_write_routes", summary.api_write_routes, true);
+    try app_render.writeJsonIntField(writer, "api_not_applicable_routes", summary.api_not_applicable_routes, true);
+    try app_render.writeJsonIntField(writer, "api_deprecated_routes", summary.api_deprecated_routes, true);
+    try app_render.writeJsonIntField(writer, "api_blocked_permission_routes", summary.api_blocked_permission_routes, true);
     try app_render.writeJsonIntField(writer, "api_families", summary.api_families, true);
     try app_render.writeJsonIntField(writer, "observed_read_families", summary.observed_read_families, true);
     try app_render.writeJsonIntField(writer, "missing_read_families", summary.missing_read_families, true);
-    try app_render.writeJsonIntField(writer, "dry_run_only_families", summary.dry_run_only_families, false);
+    try app_render.writeJsonIntField(writer, "dry_run_only_families", summary.dry_run_only_families, true);
+    try app_render.writeJsonIntField(writer, "not_applicable_families", summary.not_applicable_families, true);
+    try app_render.writeJsonIntField(writer, "blocked_or_missing_families", summary.blocked_or_missing_families, false);
     try writer.writeByte('}');
 }
 
@@ -1154,11 +1172,15 @@ fn writeAccountOverviewSummaryJson(summary: AccountOverviewSummary, writer: anyt
     try app_render.writeJsonIntField(writer, "api_routes", summary.api_routes, true);
     try app_render.writeJsonIntField(writer, "api_read_routes", summary.api_read_routes, true);
     try app_render.writeJsonIntField(writer, "api_dry_run_routes", summary.api_dry_run_routes, true);
+    try app_render.writeJsonIntField(writer, "api_write_routes", summary.api_write_routes, true);
     try app_render.writeJsonIntField(writer, "api_not_applicable_routes", summary.api_not_applicable_routes, true);
+    try app_render.writeJsonIntField(writer, "api_deprecated_routes", summary.api_deprecated_routes, true);
+    try app_render.writeJsonIntField(writer, "api_blocked_permission_routes", summary.api_blocked_permission_routes, true);
     try app_render.writeJsonIntField(writer, "api_families", summary.api_families, true);
     try app_render.writeJsonIntField(writer, "observed_read_families", summary.observed_read_families, true);
     try app_render.writeJsonIntField(writer, "missing_read_families", summary.missing_read_families, true);
     try app_render.writeJsonIntField(writer, "not_applicable_families", summary.not_applicable_families, true);
+    try app_render.writeJsonIntField(writer, "blocked_or_missing_families", summary.blocked_or_missing_families, true);
     try writer.writeAll("\"families\":");
     try writeFamilySummaryJson(summary.families, writer);
     try writer.writeByte('}');
@@ -1292,31 +1314,6 @@ fn writeVpsFamilySummaryJson(row: db_store.HostingerVpsFamilySummary, writer: an
     try writeJsonStringField(writer, "kind", row.kind, true);
     try app_render.writeJsonIntField(writer, "count", row.count, true);
     try writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
-    try writer.writeByte('}');
-}
-
-fn writeAccountApiFamilySummaryJson(row: AccountApiFamilySummary, writer: anytype) !void {
-    try writer.writeByte('{');
-    try writeJsonStringField(writer, "label", row.label, true);
-    try app_render.writeJsonIntField(writer, "official_routes", row.official_routes, true);
-    try app_render.writeJsonIntField(writer, "read_routes", row.read_routes, true);
-    try app_render.writeJsonIntField(writer, "dry_run_routes", row.dry_run_routes, true);
-    try app_render.writeJsonIntField(writer, "not_applicable_routes", row.not_applicable_routes, true);
-    try app_render.writeJsonIntField(writer, "observed_items", row.observed_items, true);
-    try app_render.writeJsonIntField(writer, "observed_kinds", row.observed_kinds, true);
-    try writeJsonStringField(writer, "status", row.status(), false);
-    try writer.writeByte('}');
-}
-
-fn writeVpsApiFamilySummaryJson(row: VpsApiFamilySummary, writer: anytype) !void {
-    try writer.writeByte('{');
-    try writeJsonStringField(writer, "label", row.label, true);
-    try app_render.writeJsonIntField(writer, "official_routes", row.official_routes, true);
-    try app_render.writeJsonIntField(writer, "read_routes", row.read_routes, true);
-    try app_render.writeJsonIntField(writer, "dry_run_routes", row.dry_run_routes, true);
-    try app_render.writeJsonIntField(writer, "observed_items", row.observed_items, true);
-    try app_render.writeJsonIntField(writer, "observed_kinds", row.observed_kinds, true);
-    try writeJsonStringField(writer, "status", row.status(), false);
     try writer.writeByte('}');
 }
 
@@ -1466,9 +1463,12 @@ test "hostinger app renders account overview across provider families" {
     try std.testing.expectEqual(@as(usize, 11), summary.inventory_facets);
     try std.testing.expectEqual(@as(usize, 2), summary.recent_snapshots);
     try std.testing.expectEqual(@as(usize, 71), summary.api_routes);
-    try std.testing.expectEqual(@as(usize, 31), summary.api_read_routes);
-    try std.testing.expectEqual(@as(usize, 39), summary.api_dry_run_routes);
+    try std.testing.expectEqual(@as(usize, 30), summary.api_read_routes);
+    try std.testing.expectEqual(@as(usize, 38), summary.api_dry_run_routes);
+    try std.testing.expectEqual(@as(usize, 0), summary.api_write_routes);
     try std.testing.expectEqual(@as(usize, 1), summary.api_not_applicable_routes);
+    try std.testing.expectEqual(@as(usize, 2), summary.api_deprecated_routes);
+    try std.testing.expectEqual(@as(usize, 6), summary.api_blocked_permission_routes);
     try std.testing.expectEqual(@as(usize, 8), summary.api_families);
     try std.testing.expectEqual(@as(usize, 7), summary.observed_read_families);
     try std.testing.expectEqual(@as(usize, 0), summary.missing_read_families);
@@ -1492,13 +1492,13 @@ test "hostinger app renders account overview across provider families" {
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Hostinger account overview\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "summary vps=1 running_vps=1 stopped_or_other_vps=0 complete_vps_core_coverage=0 partial_vps_core_coverage=1 resources=1 inventory_items=12 resource_kinds=1 inventory_kinds=11 inventory_facets=11 recent_snapshots=2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "api_routes total=71 read=31 dry_run=39 not_applicable=1 families=8 observed_read_families=7 missing_read_families=0 not_applicable_families=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "api_routes total=71 read=30 dry_run=38 write=0 not_applicable=1 deprecated=2 blocked_permission=6 families=8 observed_read_families=7 missing_read_families=0 not_applicable_families=1 blocked_or_missing_families=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "families billing=1 dns=2 domains=1 hosting=1 vps=1 docker=1 security=1 reach=1 ecommerce=1 horizons=1 other=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "VPS_getProjectListV1\tfamily=docker\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "horizons_getWebsitesV1\tfamily=horizons\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "api families\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "billing\tofficial_routes=7\tread_routes=3\tdry_run_routes=4\tnot_applicable_routes=0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "domain_access_verifier\tofficial_routes=1\tread_routes=0\tdry_run_routes=0\tnot_applicable_routes=1\tobserved_items=0\tobserved_kinds=0\tstatus=not_applicable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "billing\tofficial_routes=7\tread_routes=3\tdry_run_routes=4\twrite_routes=0\tnot_applicable_routes=0\tdeprecated_routes=0\tblocked_permission_routes=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "domain_access_verifier\tofficial_routes=1\tread_routes=0\tdry_run_routes=0\twrite_routes=0\tnot_applicable_routes=1\tdeprecated_routes=0\tblocked_permission_routes=0\tobserved_items=0\tobserved_kinds=0\tstatus=not_applicable") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "recent snapshots\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger/dns\ttarget=plosca.ru\tstatus=ok\tsummary=dns zone") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare/zone") == null);
@@ -1510,14 +1510,14 @@ test "hostinger app renders account overview across provider families" {
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"hostinger_account_overview\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"summary\":{\"vps\":1,\"running_vps\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"api_routes\":71,\"api_read_routes\":31,\"api_dry_run_routes\":39,\"api_not_applicable_routes\":1,\"api_families\":8,\"observed_read_families\":7,\"missing_read_families\":0,\"not_applicable_families\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"api_routes\":71,\"api_read_routes\":30,\"api_dry_run_routes\":38,\"api_write_routes\":0,\"api_not_applicable_routes\":1,\"api_deprecated_routes\":2,\"api_blocked_permission_routes\":6,\"api_families\":8,\"observed_read_families\":7,\"missing_read_families\":0,\"not_applicable_families\":1,\"blocked_or_missing_families\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"families\":{\"billing\":1,\"dns\":2,\"domains\":1,\"hosting\":1,\"vps\":1,\"docker\":1,\"security\":1,\"reach\":1,\"ecommerce\":1,\"horizons\":1,\"other\":1}") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"inventory_facets\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"VPS_getProjectListV1\",\"family\":\"docker\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"horizons_getWebsitesV1\",\"family\":\"horizons\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"api_families\":[") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"label\":\"billing\",\"official_routes\":7,\"read_routes\":3,\"dry_run_routes\":4,\"not_applicable_routes\":0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"label\":\"domain_access_verifier\",\"official_routes\":1,\"read_routes\":0,\"dry_run_routes\":0,\"not_applicable_routes\":1,\"observed_items\":0,\"observed_kinds\":0,\"status\":\"not_applicable\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"label\":\"billing\",\"official_routes\":7,\"read_routes\":3,\"dry_run_routes\":4,\"write_routes\":0,\"not_applicable_routes\":0,\"deprecated_routes\":0,\"blocked_permission_routes\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"label\":\"domain_access_verifier\",\"official_routes\":1,\"read_routes\":0,\"dry_run_routes\":0,\"write_routes\":0,\"not_applicable_routes\":1,\"deprecated_routes\":0,\"blocked_permission_routes\":0,\"observed_items\":0,\"observed_kinds\":0,\"status\":\"not_applicable\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"recent_snapshots\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"hostinger\",\"kind\":\"dns\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"cloudflare\"") == null);
@@ -1603,10 +1603,16 @@ test "hostinger app renders VPS overview from normalized storage" {
     try std.testing.expectEqual(@as(usize, 62), summary.api_routes);
     try std.testing.expectEqual(@as(usize, 21), summary.api_read_routes);
     try std.testing.expectEqual(@as(usize, 41), summary.api_dry_run_routes);
+    try std.testing.expectEqual(@as(usize, 0), summary.api_write_routes);
+    try std.testing.expectEqual(@as(usize, 0), summary.api_not_applicable_routes);
+    try std.testing.expectEqual(@as(usize, 0), summary.api_deprecated_routes);
+    try std.testing.expectEqual(@as(usize, 6), summary.api_blocked_permission_routes);
     try std.testing.expectEqual(@as(usize, 13), summary.api_families);
     try std.testing.expectEqual(@as(usize, 11), summary.observed_read_families);
     try std.testing.expectEqual(@as(usize, 0), summary.missing_read_families);
     try std.testing.expectEqual(@as(usize, 2), summary.dry_run_only_families);
+    try std.testing.expectEqual(@as(usize, 0), summary.not_applicable_families);
+    try std.testing.expectEqual(@as(usize, 0), summary.blocked_or_missing_families);
 
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
@@ -1615,7 +1621,7 @@ test "hostinger app renders VPS overview from normalized storage" {
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Hostinger VPS overview\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "summary vps=2 running=1 stopped_or_other=1 complete_core_coverage=1 partial_core_coverage=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "api_routes total=62 read=21 dry_run=41 families=13 observed_read_families=11 missing_read_families=0 dry_run_only_families=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "api_routes total=62 read=21 dry_run=41 write=0 not_applicable=0 deprecated=0 blocked_permission=6 families=13 observed_read_families=11 missing_read_families=0 dry_run_only_families=2 not_applicable_families=0 blocked_or_missing_families=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "12345\tname=srv12345.hstgr.cloud\tstatus=running\tipv4=76.13.130.170\tplan=KVM 2\tcoverage=complete\tdetails=true\tmetrics=true\tactions=true\tbackups=true\tsnapshot=true\tpublic_keys=true\tsecurity=true\tdocker=true") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "67890\tname=srv67890.hstgr.cloud\tstatus=stopped\tplan=KVM 1\tcoverage=partial\tdetails=false\tmetrics=false\tactions=false\tbackups=false\tsnapshot=false") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "coverage_issues=missing_details,missing_metrics,missing_actions,missing_backups,missing_snapshot") != null);
@@ -1629,8 +1635,10 @@ test "hostinger app renders VPS overview from normalized storage" {
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/inventory/snapshot\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/metric/cpu\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "api families\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "virtual_machine\tofficial_routes=15\tread_routes=4\tdry_run_routes=11\tobserved_items=5\tobserved_kinds=4\tstatus=observed") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "ptr_records\tofficial_routes=2\tread_routes=0\tdry_run_routes=2\tobserved_items=0\tobserved_kinds=0\tstatus=dry_run_only") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "virtual_machine\tofficial_routes=15\tread_routes=4\tdry_run_routes=11\twrite_routes=0\tnot_applicable_routes=0\tdeprecated_routes=0\tblocked_permission_routes=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "virtual_machine\tofficial_routes=15") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\tstatus=observed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "ptr_records\tofficial_routes=2\tread_routes=0\tdry_run_routes=2\twrite_routes=0\tnot_applicable_routes=0\tdeprecated_routes=0\tblocked_permission_routes=0\tobserved_items=0\tobserved_kinds=0\tstatus=dry_run_only") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "recent snapshots\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger/monarx\ttarget=12345\tstatus=ok\tsummary=scan metrics") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare/zone") == null);
@@ -1642,7 +1650,7 @@ test "hostinger app renders VPS overview from normalized storage" {
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"hostinger_vps_overview\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"summary\":{\"vps\":2,\"running\":1,\"stopped_or_other\":1,\"complete_core_coverage\":1,\"partial_core_coverage\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"api_routes\":62,\"api_read_routes\":21,\"api_dry_run_routes\":41,\"api_families\":13,\"observed_read_families\":11,\"missing_read_families\":0,\"dry_run_only_families\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"api_routes\":62,\"api_read_routes\":21,\"api_dry_run_routes\":41,\"api_write_routes\":0,\"api_not_applicable_routes\":0,\"api_deprecated_routes\":0,\"api_blocked_permission_routes\":6,\"api_families\":13,\"observed_read_families\":11,\"missing_read_families\":0,\"dry_run_only_families\":2,\"not_applicable_families\":0,\"blocked_or_missing_families\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\":\"12345\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"coverage_status\":\"complete\",\"coverage\":{\"details\":true,\"metrics\":true,\"actions\":true,\"backups\":true,\"snapshot\":true,\"public_keys\":true,\"security\":true,\"docker\":true}") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\":\"67890\"") != null);
@@ -1658,8 +1666,8 @@ test "hostinger app renders VPS overview from normalized storage" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"inventory\",\"kind\":\"hostinger-vps-backups\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"inventory\",\"kind\":\"snapshot\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"api_families\":[") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"label\":\"virtual_machine\",\"official_routes\":15,\"read_routes\":4,\"dry_run_routes\":11,\"observed_items\":5,\"observed_kinds\":4,\"status\":\"observed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"label\":\"recovery\",\"official_routes\":2,\"read_routes\":0,\"dry_run_routes\":2,\"observed_items\":0,\"observed_kinds\":0,\"status\":\"dry_run_only\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"label\":\"virtual_machine\",\"official_routes\":15,\"read_routes\":4,\"dry_run_routes\":11,\"write_routes\":0,\"not_applicable_routes\":0,\"deprecated_routes\":0,\"blocked_permission_routes\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"label\":\"recovery\",\"official_routes\":2,\"read_routes\":0,\"dry_run_routes\":2,\"write_routes\":0,\"not_applicable_routes\":0,\"deprecated_routes\":0,\"blocked_permission_routes\":0,\"observed_items\":0,\"observed_kinds\":0,\"status\":\"dry_run_only\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"recent_snapshots\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"hostinger\",\"kind\":\"monarx\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"cloudflare\"") == null);

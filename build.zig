@@ -420,18 +420,29 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_provider_list_mod);
 
+    const app_provider_api_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/provider_api.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+    linkSqlite(app_provider_api_mod);
+
     const app_cloudflare_mod = b.createModule(.{
         .root_source_file = b.path("src/app/cloudflare.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "collector_cloudflare", .module = collector_cloudflare_mod },
+            .{ .name = "app_provider_api", .module = app_provider_api_mod },
             .{ .name = "app_provider_list", .module = app_provider_list_mod },
             .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
     linkSqlite(app_cloudflare_mod);
@@ -442,6 +453,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "collector_hostinger", .module = collector_hostinger_mod },
+            .{ .name = "app_provider_api", .module = app_provider_api_mod },
             .{ .name = "app_provider_list", .module = app_provider_list_mod },
             .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "core_output", .module = core_output_mod },
@@ -751,6 +763,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_projects_mod);
     addModuleTest(b, test_step, app_system_mod);
     addModuleTest(b, test_step, app_topology_mod);
+    addModuleTest(b, test_step, app_provider_api_mod);
     addModuleTest(b, test_step, app_provider_list_mod);
     addModuleTest(b, test_step, app_render_mod);
     addModuleTest(b, test_step, app_route_catalog_mod);

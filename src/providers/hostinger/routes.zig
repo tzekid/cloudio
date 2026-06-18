@@ -13,84 +13,6 @@ const DryRunPlan = struct {
     request_body_schema: ?[]const u8,
 };
 
-pub const VpsApiFamily = struct {
-    label: []const u8,
-    official_routes: usize,
-    read_routes: usize,
-    dry_run_routes: usize,
-};
-
-pub const vps_api_families = [_]VpsApiFamily{
-    .{ .label = "virtual_machine", .official_routes = 15, .read_routes = 4, .dry_run_routes = 11 },
-    .{ .label = "firewall", .official_routes = 10, .read_routes = 2, .dry_run_routes = 8 },
-    .{ .label = "docker", .official_routes = 10, .read_routes = 4, .dry_run_routes = 6 },
-    .{ .label = "post_install_scripts", .official_routes = 5, .read_routes = 2, .dry_run_routes = 3 },
-    .{ .label = "snapshots", .official_routes = 4, .read_routes = 1, .dry_run_routes = 3 },
-    .{ .label = "public_keys", .official_routes = 4, .read_routes = 1, .dry_run_routes = 3 },
-    .{ .label = "malware_scanner", .official_routes = 3, .read_routes = 1, .dry_run_routes = 2 },
-    .{ .label = "actions", .official_routes = 2, .read_routes = 2, .dry_run_routes = 0 },
-    .{ .label = "backups", .official_routes = 2, .read_routes = 1, .dry_run_routes = 1 },
-    .{ .label = "os_templates", .official_routes = 2, .read_routes = 2, .dry_run_routes = 0 },
-    .{ .label = "ptr_records", .official_routes = 2, .read_routes = 0, .dry_run_routes = 2 },
-    .{ .label = "recovery", .official_routes = 2, .read_routes = 0, .dry_run_routes = 2 },
-    .{ .label = "data_centers", .official_routes = 1, .read_routes = 1, .dry_run_routes = 0 },
-};
-
-pub const vps_api_family_count = vps_api_families.len;
-
-pub fn vpsApiRouteTotals() VpsApiFamily {
-    var out = VpsApiFamily{
-        .label = "total",
-        .official_routes = 0,
-        .read_routes = 0,
-        .dry_run_routes = 0,
-    };
-    for (vps_api_families) |family| {
-        out.official_routes += family.official_routes;
-        out.read_routes += family.read_routes;
-        out.dry_run_routes += family.dry_run_routes;
-    }
-    return out;
-}
-
-pub const AccountApiFamily = struct {
-    label: []const u8,
-    official_routes: usize,
-    read_routes: usize,
-    dry_run_routes: usize,
-    not_applicable_routes: usize = 0,
-};
-
-pub const account_api_families = [_]AccountApiFamily{
-    .{ .label = "billing", .official_routes = 7, .read_routes = 3, .dry_run_routes = 4 },
-    .{ .label = "dns", .official_routes = 8, .read_routes = 3, .dry_run_routes = 5 },
-    .{ .label = "domains", .official_routes = 17, .read_routes = 6, .dry_run_routes = 11 },
-    .{ .label = "hosting", .official_routes = 23, .read_routes = 10, .dry_run_routes = 13 },
-    .{ .label = "ecommerce", .official_routes = 2, .read_routes = 1, .dry_run_routes = 1 },
-    .{ .label = "horizons", .official_routes = 2, .read_routes = 1, .dry_run_routes = 1 },
-    .{ .label = "reach", .official_routes = 11, .read_routes = 7, .dry_run_routes = 4 },
-    .{ .label = "domain_access_verifier", .official_routes = 1, .read_routes = 0, .dry_run_routes = 0, .not_applicable_routes = 1 },
-};
-
-pub const account_api_family_count = account_api_families.len;
-
-pub fn accountApiRouteTotals() AccountApiFamily {
-    var out = AccountApiFamily{
-        .label = "total",
-        .official_routes = 0,
-        .read_routes = 0,
-        .dry_run_routes = 0,
-        .not_applicable_routes = 0,
-    };
-    for (account_api_families) |family| {
-        out.official_routes += family.official_routes;
-        out.read_routes += family.read_routes;
-        out.dry_run_routes += family.dry_run_routes;
-        out.not_applicable_routes += family.not_applicable_routes;
-    }
-    return out;
-}
-
 pub const base_url = "https://developers.hostinger.com";
 pub const virtual_machines_path = "/api/vps/v1/virtual-machines";
 pub const data_centers_path = "/api/vps/v1/data-centers";
@@ -2350,34 +2272,6 @@ test "vm endpoint labels match official path segments used by the POC" {
     try std.testing.expectEqualStrings("docker", VmEndpoint.docker.label());
     try std.testing.expectEqual(VmEndpoint.public_keys, VmEndpoint.parse("public-keys").?);
     try std.testing.expect(VmEndpoint.parse("recreate") == null);
-}
-
-test "Hostinger VPS API families summarize current official route groups" {
-    const totals = vpsApiRouteTotals();
-    try std.testing.expectEqual(@as(usize, 13), vps_api_family_count);
-    try std.testing.expectEqual(@as(usize, 62), totals.official_routes);
-    try std.testing.expectEqual(@as(usize, 21), totals.read_routes);
-    try std.testing.expectEqual(@as(usize, 41), totals.dry_run_routes);
-    try std.testing.expectEqualStrings("virtual_machine", vps_api_families[0].label);
-    try std.testing.expectEqual(@as(usize, 15), vps_api_families[0].official_routes);
-    try std.testing.expectEqual(@as(usize, 4), vps_api_families[0].read_routes);
-    try std.testing.expectEqual(@as(usize, 11), vps_api_families[0].dry_run_routes);
-    try std.testing.expectEqualStrings("data_centers", vps_api_families[vps_api_families.len - 1].label);
-}
-
-test "Hostinger account API families summarize current official non-VPS route groups" {
-    const totals = accountApiRouteTotals();
-    try std.testing.expectEqual(@as(usize, 8), account_api_family_count);
-    try std.testing.expectEqual(@as(usize, 71), totals.official_routes);
-    try std.testing.expectEqual(@as(usize, 31), totals.read_routes);
-    try std.testing.expectEqual(@as(usize, 39), totals.dry_run_routes);
-    try std.testing.expectEqual(@as(usize, 1), totals.not_applicable_routes);
-    try std.testing.expectEqualStrings("billing", account_api_families[0].label);
-    try std.testing.expectEqual(@as(usize, 7), account_api_families[0].official_routes);
-    try std.testing.expectEqual(@as(usize, 3), account_api_families[0].read_routes);
-    try std.testing.expectEqual(@as(usize, 4), account_api_families[0].dry_run_routes);
-    try std.testing.expectEqualStrings("domain_access_verifier", account_api_families[account_api_families.len - 1].label);
-    try std.testing.expectEqual(@as(usize, 1), account_api_families[account_api_families.len - 1].not_applicable_routes);
 }
 
 test "vps mutation endpoints map to official operation metadata" {
