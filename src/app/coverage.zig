@@ -15,6 +15,7 @@ const Io = std.Io;
 const max_manifest_bytes = 8 * 1024 * 1024;
 const default_capture_max_pages = 25;
 const actual_capture_load_limit: i64 = 100_000;
+const actual_capture_cloudflare_scope_hint_limit: i64 = 200;
 const actual_capture_hostinger_vps_hint_limit: i64 = 50;
 const actual_capture_hostinger_hint_limit: i64 = 5000;
 
@@ -938,6 +939,8 @@ const ActualCaptureTotals = struct {
 
 const ActualCaptureHints = struct {
     configured_domains: []const []const u8 = &.{},
+    cloudflare_accounts: []const db_store.CloudflareAccountRow = &.{},
+    cloudflare_zones: []const db_store.CloudflareZoneRow = &.{},
     hostinger_vps: []const db_store.HostingerVpsRow = &.{},
     hostinger_resources: []const db_store.HostingerResourceHintRow = &.{},
     hostinger_inventory: []const db_store.HostingerInventoryHintRow = &.{},
@@ -947,6 +950,8 @@ const ActualCapturePlan = struct {
     options: ActualCaptureOptions,
     routes: CoverageRoutes,
     captures: db_store.RouteCaptureEvidenceRows,
+    cloudflare_accounts: ?db_store.CloudflareAccountRows,
+    cloudflare_zones: ?db_store.CloudflareZoneRows,
     hostinger_vps: ?db_store.HostingerVpsRows,
     hostinger_resources: ?db_store.HostingerResourceHintRows,
     hostinger_inventory: ?db_store.HostingerInventoryHintRows,
@@ -955,8 +960,20 @@ const ActualCapturePlan = struct {
         if (self.hostinger_inventory) |*rows| rows.deinit(gpa);
         if (self.hostinger_resources) |*rows| rows.deinit(gpa);
         if (self.hostinger_vps) |*rows| rows.deinit(gpa);
+        if (self.cloudflare_zones) |*rows| rows.deinit(gpa);
+        if (self.cloudflare_accounts) |*rows| rows.deinit(gpa);
         self.captures.deinit(gpa);
         self.routes.deinit(gpa);
+    }
+
+    fn cloudflareAccountRows(self: ActualCapturePlan) []const db_store.CloudflareAccountRow {
+        if (self.cloudflare_accounts) |rows| return rows.items;
+        return &.{};
+    }
+
+    fn cloudflareZoneRows(self: ActualCapturePlan) []const db_store.CloudflareZoneRow {
+        if (self.cloudflare_zones) |rows| return rows.items;
+        return &.{};
     }
 
     fn hostingerVpsRows(self: ActualCapturePlan) []const db_store.HostingerVpsRow {
@@ -977,6 +994,8 @@ const ActualCapturePlan = struct {
     fn hints(self: ActualCapturePlan) ActualCaptureHints {
         return .{
             .configured_domains = self.options.configured_domains,
+            .cloudflare_accounts = self.cloudflareAccountRows(),
+            .cloudflare_zones = self.cloudflareZoneRows(),
             .hostinger_vps = self.hostingerVpsRows(),
             .hostinger_resources = self.hostingerResourceRows(),
             .hostinger_inventory = self.hostingerInventoryRows(),
@@ -1023,7 +1042,7 @@ const ActualCapturePlan = struct {
         } else {
             try writer.print("{d}\n", .{self.options.limit});
         }
-        try writer.print("loaded_capture_operation_status_rows={d} configured_domain_hints={d} hostinger_vps_hints={d} hostinger_resource_hints={d} hostinger_inventory_hints={d}\n", .{ self.captures.items.len, self.options.configured_domains.len, self.hostingerVpsRows().len, self.hostingerResourceRows().len, self.hostingerInventoryRows().len });
+        try writer.print("loaded_capture_operation_status_rows={d} configured_domain_hints={d} cloudflare_account_hints={d} cloudflare_zone_hints={d} hostinger_vps_hints={d} hostinger_resource_hints={d} hostinger_inventory_hints={d}\n", .{ self.captures.items.len, self.options.configured_domains.len, self.cloudflareAccountRows().len, self.cloudflareZoneRows().len, self.hostingerVpsRows().len, self.hostingerResourceRows().len, self.hostingerInventoryRows().len });
         try writer.print("summary official_read_routes={d} ok_read_routes={d} non_ok_read_routes={d} missing_read_routes={d} candidate_routes={d} ready_candidates={d} capture_events={d}\n", .{
             totals_value.official_read_routes,
             totals_value.ok_read_routes,
@@ -1110,6 +1129,8 @@ const ActualCapturePlan = struct {
         try writeJsonField(writer, "rank", "official GET/read routes missing an OK route.capture audit event", true);
         try writeJsonCountField(writer, "loaded_capture_operation_status_rows", self.captures.items.len, true);
         try writeJsonCountField(writer, "configured_domain_hints", self.options.configured_domains.len, true);
+        try writeJsonCountField(writer, "cloudflare_account_hints", self.cloudflareAccountRows().len, true);
+        try writeJsonCountField(writer, "cloudflare_zone_hints", self.cloudflareZoneRows().len, true);
         try writeJsonCountField(writer, "hostinger_vps_hints", self.hostingerVpsRows().len, true);
         try writeJsonCountField(writer, "hostinger_resource_hints", self.hostingerResourceRows().len, true);
         try writeJsonCountField(writer, "hostinger_inventory_hints", self.hostingerInventoryRows().len, true);
@@ -1752,6 +1773,10 @@ fn loadActualCapturePlanFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db,
         .limit = actual_capture_load_limit,
     });
     errdefer captures.deinit(gpa);
+    var cloudflare_accounts = try loadActualCaptureCloudflareAccountHints(gpa, db, options.filter.provider);
+    errdefer if (cloudflare_accounts) |*rows| rows.deinit(gpa);
+    var cloudflare_zones = try loadActualCaptureCloudflareZoneHints(gpa, db, options.filter.provider);
+    errdefer if (cloudflare_zones) |*rows| rows.deinit(gpa);
     var hostinger_vps = try loadActualCaptureHostingerHints(gpa, db, options.filter.provider);
     errdefer if (hostinger_vps) |*rows| rows.deinit(gpa);
     var hostinger_resources = try loadActualCaptureHostingerResourceHints(gpa, db, options.filter.provider);
@@ -1762,6 +1787,8 @@ fn loadActualCapturePlanFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db,
         .options = options,
         .routes = routes,
         .captures = captures,
+        .cloudflare_accounts = cloudflare_accounts,
+        .cloudflare_zones = cloudflare_zones,
         .hostinger_vps = hostinger_vps,
         .hostinger_resources = hostinger_resources,
         .hostinger_inventory = hostinger_inventory,
@@ -1776,6 +1803,10 @@ fn loadActualCapturePlanFromText(gpa: Allocator, cloudflare_text: []const u8, ho
         .limit = actual_capture_load_limit,
     });
     errdefer captures.deinit(gpa);
+    var cloudflare_accounts = try loadActualCaptureCloudflareAccountHints(gpa, db, options.filter.provider);
+    errdefer if (cloudflare_accounts) |*rows| rows.deinit(gpa);
+    var cloudflare_zones = try loadActualCaptureCloudflareZoneHints(gpa, db, options.filter.provider);
+    errdefer if (cloudflare_zones) |*rows| rows.deinit(gpa);
     var hostinger_vps = try loadActualCaptureHostingerHints(gpa, db, options.filter.provider);
     errdefer if (hostinger_vps) |*rows| rows.deinit(gpa);
     var hostinger_resources = try loadActualCaptureHostingerResourceHints(gpa, db, options.filter.provider);
@@ -1786,10 +1817,22 @@ fn loadActualCapturePlanFromText(gpa: Allocator, cloudflare_text: []const u8, ho
         .options = options,
         .routes = routes,
         .captures = captures,
+        .cloudflare_accounts = cloudflare_accounts,
+        .cloudflare_zones = cloudflare_zones,
         .hostinger_vps = hostinger_vps,
         .hostinger_resources = hostinger_resources,
         .hostinger_inventory = hostinger_inventory,
     };
+}
+
+fn loadActualCaptureCloudflareAccountHints(gpa: Allocator, db: *Db, provider: ProviderFilter) !?db_store.CloudflareAccountRows {
+    if (!provider.includes("cloudflare")) return null;
+    return try db.cloudflareAccountRows(gpa, actual_capture_cloudflare_scope_hint_limit);
+}
+
+fn loadActualCaptureCloudflareZoneHints(gpa: Allocator, db: *Db, provider: ProviderFilter) !?db_store.CloudflareZoneRows {
+    if (!provider.includes("cloudflare")) return null;
+    return try db.cloudflareZoneRows(gpa, actual_capture_cloudflare_scope_hint_limit);
 }
 
 fn loadActualCaptureHostingerHints(gpa: Allocator, db: *Db, provider: ProviderFilter) !?db_store.HostingerVpsRows {
@@ -2368,7 +2411,57 @@ fn actualCaptureMissingInputCount(route: provider_routes.Route, hints: ActualCap
 }
 
 fn actualCapturePathParamHint(route: provider_routes.Route, name: []const u8, hints: ActualCaptureHints) ?[]const u8 {
-    if (route.provider != .hostinger) return null;
+    return switch (route.provider) {
+        .cloudflare => actualCaptureCloudflarePathParamHint(route, name, hints),
+        .hostinger => actualCaptureHostingerPathParamHint(route, name, hints),
+    };
+}
+
+fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []const u8, hints: ActualCaptureHints) ?[]const u8 {
+    _ = route;
+    if (std.mem.eql(u8, name, "account_id") or std.mem.eql(u8, name, "account_identifier")) return actualCaptureCloudflareAccountIdHint(hints);
+    if (std.mem.eql(u8, name, "zone_id") or std.mem.eql(u8, name, "zone_identifier")) return actualCaptureCloudflareZoneIdHint(hints);
+    return null;
+}
+
+fn actualCaptureCloudflareAccountIdHint(hints: ActualCaptureHints) ?[]const u8 {
+    if (actualCaptureSelectedCloudflareZoneAccountId(hints)) |account_id| return account_id;
+    for (hints.cloudflare_accounts) |row| {
+        if (row.id.len != 0) return row.id;
+    }
+    for (hints.cloudflare_zones) |row| {
+        if (row.account_id.len != 0) return row.account_id;
+    }
+    return null;
+}
+
+fn actualCaptureCloudflareZoneIdHint(hints: ActualCaptureHints) ?[]const u8 {
+    if (actualCaptureSelectedCloudflareZoneId(hints)) |zone_id| return zone_id;
+    for (hints.cloudflare_zones) |row| {
+        if (row.id.len != 0) return row.id;
+    }
+    return null;
+}
+
+fn actualCaptureSelectedCloudflareZoneId(hints: ActualCaptureHints) ?[]const u8 {
+    for (hints.configured_domains) |domain| {
+        for (hints.cloudflare_zones) |row| {
+            if (row.id.len != 0 and eqlIgnoreCase(row.name, domain)) return row.id;
+        }
+    }
+    return null;
+}
+
+fn actualCaptureSelectedCloudflareZoneAccountId(hints: ActualCaptureHints) ?[]const u8 {
+    for (hints.configured_domains) |domain| {
+        for (hints.cloudflare_zones) |row| {
+            if (row.account_id.len != 0 and eqlIgnoreCase(row.name, domain)) return row.account_id;
+        }
+    }
+    return null;
+}
+
+fn actualCaptureHostingerPathParamHint(route: provider_routes.Route, name: []const u8, hints: ActualCaptureHints) ?[]const u8 {
     if (std.mem.eql(u8, name, "virtualMachineId") and hints.hostinger_vps.len != 0) return hints.hostinger_vps[0].id;
     if (std.mem.eql(u8, name, "domain")) return actualCaptureHostingerDomainHint(route, hints);
     if (std.mem.eql(u8, name, "username")) return actualCaptureHostingerUsernameHint(route, hints);
@@ -5459,6 +5552,67 @@ test "plans derived Hostinger VPS detail captures from captured resource hints" 
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getMetricsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getFirewallDetailsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getPostInstallScriptV1\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "test-token") == null);
+}
+
+test "plans Cloudflare account and zone captures from configured scope hints" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-capture-cloudflare-scope-hints.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertCloudflareAccount("acct-1", "Main account", "standard", "active", "{\"id\":\"acct-1\"}");
+    try db.upsertCloudflareZone("zone-other", "sparkdate.love", "acct-1", "active", false, "full", "ns1.example,ns2.example", "{\"id\":\"zone-other\"}");
+    try db.upsertCloudflareZone("zone-plosca", "plosca.ru", "acct-1", "active", false, "full", "ns1.example,ns2.example", "{\"id\":\"zone-plosca\"}");
+
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Accounts Logs Audit","method":"GET","path":"/accounts/{account_id}/logs/audit","operation_id":"audit-logs-get-account-audit-logs","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"account scoped"}
+        \\{"provider":"cloudflare","tag":"Custom pages for an account","method":"GET","path":"/accounts/{account_identifier}/custom_pages","operation_id":"custom-pages-for-an-account-list-custom-pages","path_params":[{"name":"account_identifier","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"account identifier spelling"}
+        \\{"provider":"cloudflare","tag":"DNS Records","method":"GET","path":"/zones/{zone_id}/dns_records","operation_id":"dns-records-for-a-zone-list-dns-records","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"zone scoped"}
+        \\{"provider":"cloudflare","tag":"Zones Settings","method":"GET","path":"/zones/{zone_id}/settings","operation_id":"zone-settings-get-all","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"zone settings"}
+        \\{"provider":"cloudflare","tag":"Cache Cache Reserve","method":"GET","path":"/zones/{zone_id}/cache/cache_reserve","operation_id":"cache-cache-reserve-get-cache-reserve-setting","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"cache setting"}
+        \\{"provider":"cloudflare","tag":"SSL Universal","method":"GET","path":"/zones/{zone_id}/ssl/universal/settings","operation_id":"universal-ssl-settings-for-a-zone-get-universal-ssl-settings","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ssl setting"}
+        \\{"provider":"cloudflare","tag":"Custom pages for a zone","method":"GET","path":"/zones/{zone_identifier}/custom_pages","operation_id":"custom-pages-for-a-zone-list-custom-pages","path_params":[{"name":"zone_identifier","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"zone identifier spelling"}
+        \\
+    ;
+    const configured_domains = [_][]const u8{"plosca.ru"};
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, cloudflare, "", &db, .{
+        .filter = .{ .provider = .cloudflare },
+        .limit = 0,
+        .configured_domains = configured_domains[0..],
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"configured_domain_hints\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"cloudflare_account_hints\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"cloudflare_zone_hints\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"official_read_routes\":7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation audit-logs-get-account-audit-logs --path-param account_id='acct-1'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation custom-pages-for-an-account-list-custom-pages --path-param account_identifier='acct-1'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation dns-records-for-a-zone-list-dns-records --path-param zone_id='zone-plosca'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation custom-pages-for-a-zone-list-custom-pages --path-param zone_identifier='zone-plosca'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "zone-other") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_") == null);
+
+    const planned = try actualReadyCaptureJsonFromText(std.testing.io, allocator, cloudflare, "", &db, .{ .cloudflare = .{ .token = "test-token" } }, .{
+        .filter = .{ .provider = .cloudflare },
+        .limit = 0,
+        .execute = false,
+        .configured_domains = configured_domains[0..],
+    });
+    defer allocator.free(planned);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"candidate_routes\":7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"ready_routes\":7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"planned\":7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"cache-cache-reserve-get-cache-reserve-setting\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"universal-ssl-settings-for-a-zone-get-universal-ssl-settings\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "test-token") == null);
 }
 
