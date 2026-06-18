@@ -189,6 +189,75 @@ pub const MetricRows = struct {
     }
 };
 
+pub const HostingerVpsRow = struct {
+    id: []u8,
+    name: []u8,
+    status: []u8,
+    ipv4: []u8,
+    plan: []u8,
+    updated_at: []u8,
+
+    pub fn deinit(self: HostingerVpsRow, allocator: Allocator) void {
+        allocator.free(self.id);
+        allocator.free(self.name);
+        allocator.free(self.status);
+        allocator.free(self.ipv4);
+        allocator.free(self.plan);
+        allocator.free(self.updated_at);
+    }
+};
+
+pub const HostingerVpsRows = struct {
+    items: []HostingerVpsRow,
+
+    pub fn deinit(self: *HostingerVpsRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const HostingerKindCount = struct {
+    kind: []u8,
+    count: i64,
+    latest_updated: []u8,
+
+    pub fn deinit(self: HostingerKindCount, allocator: Allocator) void {
+        allocator.free(self.kind);
+        allocator.free(self.latest_updated);
+    }
+};
+
+pub const HostingerKindCounts = struct {
+    items: []HostingerKindCount,
+
+    pub fn deinit(self: *HostingerKindCounts, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const HostingerMetricSummary = struct {
+    vm_id: []u8,
+    metric: []u8,
+    count: i64,
+    latest_captured: []u8,
+
+    pub fn deinit(self: HostingerMetricSummary, allocator: Allocator) void {
+        allocator.free(self.vm_id);
+        allocator.free(self.metric);
+        allocator.free(self.latest_captured);
+    }
+};
+
+pub const HostingerMetricSummaries = struct {
+    items: []HostingerMetricSummary,
+
+    pub fn deinit(self: *HostingerMetricSummaries, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const AuditEvent = struct {
     id: i64,
     action: []u8,
@@ -765,6 +834,69 @@ pub const Db = struct {
         );
     }
 
+    pub fn hostingerVpsRows(self: *Db, gpa: Allocator, limit: i64) !HostingerVpsRows {
+        const stmt = try self.prepare(
+            \\SELECT id, COALESCE(name,''), COALESCE(status,''), COALESCE(ipv4,''), COALESCE(plan,''), updated_at
+            \\FROM hostinger_vps
+            \\ORDER BY updated_at DESC, id
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 200));
+        var rows = std.ArrayList(HostingerVpsRow).empty;
+        errdefer deinitHostingerVpsRowList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try hostingerVpsRowFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
+    pub fn hostingerResourceKindCounts(self: *Db, gpa: Allocator, limit: i64) !HostingerKindCounts {
+        return try self.hostingerKindCounts(gpa,
+            \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
+            \\FROM hostinger_resources
+            \\GROUP BY kind
+            \\ORDER BY item_count DESC, kind
+            \\LIMIT ?
+        , limit);
+    }
+
+    pub fn hostingerInventoryKindCounts(self: *Db, gpa: Allocator, limit: i64) !HostingerKindCounts {
+        return try self.hostingerKindCounts(gpa,
+            \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
+            \\FROM hostinger_inventory_items
+            \\GROUP BY kind
+            \\ORDER BY item_count DESC, kind
+            \\LIMIT ?
+        , limit);
+    }
+
+    pub fn hostingerMetricSummaries(self: *Db, gpa: Allocator, limit: i64) !HostingerMetricSummaries {
+        const stmt = try self.prepare(
+            \\SELECT COALESCE(vm_id,''), metric, COUNT(*) AS sample_count, COALESCE(MAX(captured_at), '') AS latest_captured
+            \\FROM hostinger_metrics
+            \\GROUP BY vm_id, metric
+            \\ORDER BY latest_captured DESC, vm_id, metric
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 200));
+        var rows = std.ArrayList(HostingerMetricSummary).empty;
+        errdefer deinitHostingerMetricSummaryList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try hostingerMetricSummaryFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
     pub fn inventoryItems(self: *Db, gpa: Allocator, filter: InventoryFilter) !InventoryItems {
         const stmt = try self.prepare(
             \\SELECT provider, kind, resource_id, scope, scope_id, display_name, status, category, domain, username, account_id, zone_id, related_id, flag, created_at_source, updated_at_source, expires_at_source, updated_at
@@ -828,6 +960,22 @@ pub const Db = struct {
         errdefer deinitInventoryItemList(&rows, gpa);
         while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
             var row = try inventoryItemFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
+    fn hostingerKindCounts(self: *Db, gpa: Allocator, sql: []const u8, limit: i64) !HostingerKindCounts {
+        const stmt = try self.prepare(sql);
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 200));
+        var rows = std.ArrayList(HostingerKindCount).empty;
+        errdefer deinitHostingerKindCountList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try hostingerKindCountFromStmt(gpa, stmt);
             rows.append(gpa, row) catch |err| {
                 row.deinit(gpa);
                 return err;
@@ -1062,6 +1210,21 @@ fn deinitMetricList(rows: *std.ArrayList(MetricRow), allocator: Allocator) void 
     rows.deinit(allocator);
 }
 
+fn deinitHostingerVpsRowList(rows: *std.ArrayList(HostingerVpsRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
+fn deinitHostingerKindCountList(rows: *std.ArrayList(HostingerKindCount), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
+fn deinitHostingerMetricSummaryList(rows: *std.ArrayList(HostingerMetricSummary), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
 fn deinitAuditEventList(rows: *std.ArrayList(AuditEvent), allocator: Allocator) void {
     for (rows.items) |row| row.deinit(allocator);
     rows.deinit(allocator);
@@ -1125,6 +1288,56 @@ fn metricRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !MetricRo
         .value = value,
         .unit = unit,
         .captured_at = captured_at,
+    };
+}
+
+fn hostingerVpsRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !HostingerVpsRow {
+    const id = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(id);
+    const name = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(name);
+    const status = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(status);
+    const ipv4 = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(ipv4);
+    const plan = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(plan);
+    const updated_at = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(updated_at);
+    return .{
+        .id = id,
+        .name = name,
+        .status = status,
+        .ipv4 = ipv4,
+        .plan = plan,
+        .updated_at = updated_at,
+    };
+}
+
+fn hostingerKindCountFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !HostingerKindCount {
+    const kind = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(kind);
+    const latest_updated = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(latest_updated);
+    return .{
+        .kind = kind,
+        .count = sqlite.sqlite3_column_int64(stmt, 1),
+        .latest_updated = latest_updated,
+    };
+}
+
+fn hostingerMetricSummaryFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !HostingerMetricSummary {
+    const vm_id = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(vm_id);
+    const metric = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(metric);
+    const latest_captured = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(latest_captured);
+    return .{
+        .vm_id = vm_id,
+        .metric = metric,
+        .count = sqlite.sqlite3_column_int64(stmt, 2),
+        .latest_captured = latest_captured,
     };
 }
 
@@ -1248,6 +1461,10 @@ fn projectDetailsFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !Pro
 
 fn dupeColumn(allocator: Allocator, stmt: *sqlite.sqlite3_stmt, idx: c_int) ![]u8 {
     return try allocator.dupe(u8, columnText(stmt, idx) orelse "");
+}
+
+fn positiveLimit(value: i64, fallback: i64) i64 {
+    return if (value > 0) value else fallback;
 }
 
 pub fn columnText(stmt: *sqlite.sqlite3_stmt, idx: c_int) ?[]const u8 {

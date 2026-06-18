@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_hostinger = @import("app_hostinger");
+const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
 const db_store = @import("db_store");
 
@@ -22,6 +23,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     }
     const sub = args[0];
     if (std.mem.eql(u8, sub, "vps")) {
+        if (args.len > 1 and isVpsOverviewCommand(args[1])) return try commandVpsOverview(ctx, args[2..]);
         switch (parseVpsSelection(args[1..])) {
             .list => try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectVps(appContext(ctx))),
             .detail => |vm_id| try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectVpsDetails(appContext(ctx), vm_id)),
@@ -37,6 +39,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandActionDetails(ctx, args);
     } else if (std.mem.eql(u8, sub, "security")) {
         try commandVmEndpoint(ctx, args, .monarx);
+    } else if (isVpsOverviewCommand(sub)) {
+        try commandVpsOverview(ctx, args[1..]);
     } else if (std.mem.eql(u8, sub, "inventory")) {
         try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.listInventoryItems(appContext(ctx)));
     } else if (std.mem.eql(u8, sub, "resources")) {
@@ -72,6 +76,11 @@ const VpsSelection = union(enum) {
     missing_id,
 };
 
+const VpsOverviewParsed = struct {
+    options: app_hostinger.VpsOverviewOptions = .{},
+    format: cli_render.RenderFormat = .text,
+};
+
 fn parseVpsSelection(args: []const []const u8) VpsSelection {
     if (args.len == 0) return .list;
     if (std.mem.eql(u8, args[0], "list")) return .list;
@@ -80,6 +89,50 @@ fn parseVpsSelection(args: []const []const u8) VpsSelection {
         return .{ .detail = args[1] };
     }
     return .{ .detail = args[0] };
+}
+
+fn commandVpsOverview(ctx: Context, args: []const []const u8) !void {
+    const parsed = parseVpsOverviewArgs(args) catch |err| {
+        std.debug.print("invalid hostinger vps overview command: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_hostinger.writeVpsOverviewText, app_hostinger.writeVpsOverviewJson, .{ appContext(ctx), parsed.options });
+}
+
+fn parseVpsOverviewArgs(args: []const []const u8) !VpsOverviewParsed {
+    var parsed = VpsOverviewParsed{};
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        switch (cli_render.parseFormatArg(args, &i)) {
+            .matched => |format| {
+                parsed.format = format;
+                continue;
+            },
+            .missing_value => return error.MissingFormat,
+            .invalid_value => return error.InvalidFormat,
+            .no_match => {},
+        }
+        switch (cli_args.parseValueArg(args, &i, .{"--limit"})) {
+            .matched => |value| {
+                parsed.options.limit = try parseLimit(value);
+                continue;
+            },
+            .missing_value => return error.MissingLimit,
+            .no_match => {},
+        }
+        return error.UnexpectedArgument;
+    }
+    return parsed;
+}
+
+fn parseLimit(value: []const u8) !i64 {
+    const parsed = try std.fmt.parseInt(i64, value, 10);
+    if (parsed < 1) return error.InvalidLimit;
+    return parsed;
+}
+
+fn isVpsOverviewCommand(value: []const u8) bool {
+    return std.mem.eql(u8, value, "overview") or std.mem.eql(u8, value, "summary") or std.mem.eql(u8, value, "vps-overview");
 }
 
 fn commandVmEndpoint(ctx: Context, args: []const []const u8, endpoint: app_hostinger.VmEndpoint) !void {
@@ -517,4 +570,35 @@ test "hostinger vps command accepts list and show aliases" {
         .missing_id => {},
         else => return error.ExpectedMissingVpsId,
     }
+}
+
+test "hostinger vps overview parser accepts format and limit" {
+    const default_args = [_][]const u8{};
+    const defaults = try parseVpsOverviewArgs(default_args[0..]);
+    try std.testing.expectEqual(cli_render.RenderFormat.text, defaults.format);
+    try std.testing.expectEqual(@as(i64, 20), defaults.options.limit);
+
+    const args = [_][]const u8{ "--json", "--limit=5" };
+    const parsed = try parseVpsOverviewArgs(args[0..]);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, parsed.format);
+    try std.testing.expectEqual(@as(i64, 5), parsed.options.limit);
+
+    const split_args = [_][]const u8{ "--format", "json", "--limit", "3" };
+    const split = try parseVpsOverviewArgs(split_args[0..]);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, split.format);
+    try std.testing.expectEqual(@as(i64, 3), split.options.limit);
+}
+
+test "hostinger vps overview parser rejects invalid values" {
+    const missing_limit = [_][]const u8{"--limit"};
+    try std.testing.expectError(error.MissingLimit, parseVpsOverviewArgs(missing_limit[0..]));
+
+    const invalid_limit = [_][]const u8{"--limit=0"};
+    try std.testing.expectError(error.InvalidLimit, parseVpsOverviewArgs(invalid_limit[0..]));
+
+    const invalid_format = [_][]const u8{"--format=yaml"};
+    try std.testing.expectError(error.InvalidFormat, parseVpsOverviewArgs(invalid_format[0..]));
+
+    const extra = [_][]const u8{"unexpected"};
+    try std.testing.expectError(error.UnexpectedArgument, parseVpsOverviewArgs(extra[0..]));
 }
