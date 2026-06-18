@@ -128,9 +128,19 @@ fn commandOverview(ctx: Context, args: []const []const u8) !void {
 
 fn parseOverviewArgs(args: []const []const u8) !OverviewParsed {
     var parsed = OverviewParsed{};
-    const common = try cli_args.parseFormatPositiveLimit(args, parsed.options.limit, .{"--limit"}, error.MissingLimit, error.InvalidLimit, error.UnexpectedArgument);
-    parsed.format = common.format;
-    parsed.options.limit = common.limit;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        if (try cli_args.parseFormatOption(args, &index, &parsed.format, error.MissingFormat, error.InvalidFormat)) continue;
+        if (try cli_args.parsePositiveI64Arg(args, &index, .{"--limit"}, error.MissingLimit, error.InvalidLimit)) |limit| {
+            parsed.options.limit = limit;
+            continue;
+        }
+        if (try cli_args.parsePositiveI64Arg(args, &index, .{ "--snapshot-limit", "--snapshots" }, error.MissingSnapshotLimit, error.InvalidSnapshotLimit)) |limit| {
+            parsed.options.snapshot_limit = limit;
+            continue;
+        }
+        return error.UnexpectedArgument;
+    }
     return parsed;
 }
 
@@ -2554,16 +2564,19 @@ test "cloudflare overview parser accepts format and limit" {
     const defaults = try parseOverviewArgs(default_args[0..]);
     try std.testing.expectEqual(cli_render.RenderFormat.text, defaults.format);
     try std.testing.expectEqual(@as(i64, 20), defaults.options.limit);
+    try std.testing.expectEqual(@as(i64, 12), defaults.options.snapshot_limit);
 
-    const args = [_][]const u8{ "--json", "--limit=5" };
+    const args = [_][]const u8{ "--json", "--limit=5", "--snapshot-limit", "2" };
     const parsed = try parseOverviewArgs(args[0..]);
     try std.testing.expectEqual(cli_render.RenderFormat.json, parsed.format);
     try std.testing.expectEqual(@as(i64, 5), parsed.options.limit);
+    try std.testing.expectEqual(@as(i64, 2), parsed.options.snapshot_limit);
 
-    const split_args = [_][]const u8{ "--format", "json", "--limit", "3" };
+    const split_args = [_][]const u8{ "--format", "json", "--limit", "3", "--snapshots=4" };
     const split = try parseOverviewArgs(split_args[0..]);
     try std.testing.expectEqual(cli_render.RenderFormat.json, split.format);
     try std.testing.expectEqual(@as(i64, 3), split.options.limit);
+    try std.testing.expectEqual(@as(i64, 4), split.options.snapshot_limit);
 
     try std.testing.expect(isOverviewCommand("overview"));
     try std.testing.expect(isOverviewCommand("summary"));
@@ -2574,8 +2587,14 @@ test "cloudflare overview parser rejects invalid values" {
     const missing_limit = [_][]const u8{"--limit"};
     try std.testing.expectError(error.MissingLimit, parseOverviewArgs(missing_limit[0..]));
 
+    const missing_snapshot_limit = [_][]const u8{"--snapshot-limit"};
+    try std.testing.expectError(error.MissingSnapshotLimit, parseOverviewArgs(missing_snapshot_limit[0..]));
+
     const invalid_limit = [_][]const u8{"--limit=0"};
     try std.testing.expectError(error.InvalidLimit, parseOverviewArgs(invalid_limit[0..]));
+
+    const invalid_snapshot_limit = [_][]const u8{"--snapshots=0"};
+    try std.testing.expectError(error.InvalidSnapshotLimit, parseOverviewArgs(invalid_snapshot_limit[0..]));
 
     const invalid_format = [_][]const u8{"--format=yaml"};
     try std.testing.expectError(error.InvalidFormat, parseOverviewArgs(invalid_format[0..]));
