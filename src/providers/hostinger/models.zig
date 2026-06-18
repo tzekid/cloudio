@@ -410,6 +410,12 @@ fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: 
 fn resourceId(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldAnyString(gpa, item, "id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "uuid")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "project_name")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "projectName")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "profile_uuid")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "profileUuid")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "segment_uuid")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "segmentUuid")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "website_id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "websiteId")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "snapshot_id")) |value| return value;
@@ -461,6 +467,8 @@ fn resourceKey(gpa: Allocator, kind: []const u8, target: ?[]const u8, resource_i
 
 fn resourceName(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldString(item, "name")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "project_name")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "projectName")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "domain")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "hostname")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "site_title")) |value| return try gpa.dupe(u8, value);
@@ -535,6 +543,10 @@ fn resourceUsername(gpa: Allocator, item: std.json.Value) !?[]u8 {
 }
 
 fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
+    if (core_json.fieldAnyString(gpa, item, "profile_uuid")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "profileUuid")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "segment_uuid")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "segmentUuid")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "subscription_id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "order_id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "client_id")) |value| return value;
@@ -846,6 +858,50 @@ test "parses official Hostinger ecommerce and Horizons website shapes" {
     try std.testing.expectEqualStrings("site-id-1", rows.items[3].resource_id);
     try std.testing.expectEqualStrings("https://horizons.hostinger.com/123e4567-e89b-12d3-a456-426614174000?location=chatgpt", rows.items[3].name orelse "");
     try std.testing.expectEqualStrings("https://horizons.hostinger.com/123e4567-e89b-12d3-a456-426614174000?location=chatgpt", rows.items[3].related_id orelse "");
+}
+
+test "parses Hostinger Docker and Reach child identifier spellings" {
+    const allocator = std.testing.allocator;
+    var rows = try parseResourceRows(allocator, "hostinger-child-resources", "1307809",
+        \\{"data":[
+        \\  {"projectName":"cloudio-stack","status":"running"},
+        \\  {"project_name":"worker-stack","status":"stopped"},
+        \\  {"profileUuid":"profile-1","name":"Main profile","status":"active"},
+        \\  {"segmentUuid":"segment-1","name":"Customers","status":"enabled"},
+        \\  {"profile_uuid":"profile-2","segment_uuid":"segment-2","name":"Dormant contacts"}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 5), rows.items.len);
+    try std.testing.expectEqualStrings("cloudio-stack", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("cloudio-stack", rows.items[0].name orelse "");
+    try std.testing.expectEqualStrings("running", rows.items[0].status orelse "");
+    try std.testing.expectEqualStrings("worker-stack", rows.items[1].resource_id);
+    try std.testing.expectEqualStrings("worker-stack", rows.items[1].name orelse "");
+    try std.testing.expectEqualStrings("profile-1", rows.items[2].resource_id);
+    try std.testing.expectEqualStrings("1307809", rows.items[2].target orelse "");
+    try std.testing.expectEqualStrings("segment-1", rows.items[3].resource_id);
+    try std.testing.expectEqualStrings("1307809", rows.items[3].target orelse "");
+    try std.testing.expectEqualStrings("profile-2", rows.items[4].resource_id);
+    try std.testing.expectEqualStrings("1307809", rows.items[4].target orelse "");
+
+    var inventory = try parseInventoryRows(allocator, "hostinger-child-inventory", "1307809",
+        \\{"data":[
+        \\  {"profileUuid":"profile-1","name":"Main profile","status":"active"},
+        \\  {"segmentUuid":"segment-1","name":"Customers","status":"enabled"},
+        \\  {"profile_uuid":"profile-2","segment_uuid":"segment-2","name":"Dormant contacts"}
+        \\]}
+    );
+    defer inventory.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), inventory.items.len);
+    try std.testing.expectEqualStrings("profile-1", inventory.items[0].resource_id);
+    try std.testing.expectEqualStrings("profile-1", inventory.items[0].related_id orelse "");
+    try std.testing.expectEqualStrings("segment-1", inventory.items[1].resource_id);
+    try std.testing.expectEqualStrings("segment-1", inventory.items[1].related_id orelse "");
+    try std.testing.expectEqualStrings("profile-2", inventory.items[2].resource_id);
+    try std.testing.expectEqualStrings("profile-2", inventory.items[2].related_id orelse "");
 }
 
 fn isVirtualMachineResource(value: std.json.Value) bool {

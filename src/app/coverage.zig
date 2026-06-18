@@ -2715,20 +2715,36 @@ fn actualCaptureHostingerPathParamHint(route: provider_routes.Route, name: []con
     if (std.mem.eql(u8, name, "websiteId")) return actualCaptureHostingerResourceHint(route, hints, "horizons_getWebsiteV1", "horizons_getWebsitesV1");
     if (std.mem.eql(u8, name, "name")) return actualCaptureHostingerResourceHint(route, hints, "hosting_getPhpMyAdminLinkV1", "hosting_listAccountDatabasesV1");
     if (std.mem.eql(u8, name, "uuid")) return actualCaptureHostingerResourceHint(route, hints, "hosting_getNodeJSBuildLogsV1", "hosting_listNodeJSBuildsV1");
+    if (std.mem.eql(u8, name, "projectName")) return actualCaptureHostingerResourceHintForAny(route, hints, &.{ "VPS_getProjectContentsV1", "VPS_getProjectContainersV1", "VPS_getProjectLogsV1" }, "VPS_getProjectListV1");
+    if (std.mem.eql(u8, name, "profileUuid")) return actualCaptureHostingerResourceHint(route, hints, "reach_listProfileSegmentContactsV1", "reach_listProfilesV1");
+    if (std.mem.eql(u8, name, "segmentUuid")) return actualCaptureHostingerResourceHintForAny(route, hints, &.{ "reach_getSegmentDetailsV1", "reach_listSegmentContactsV1", "reach_listProfileSegmentContactsV1" }, "reach_listSegmentsV1");
     return null;
 }
 
 fn actualCaptureHostingerResourceHint(route: provider_routes.Route, hints: ActualCaptureHints, detail_operation_id: []const u8, list_kind: []const u8) ?[]const u8 {
     if (route.operation_id == null or !std.mem.eql(u8, route.operation_id.?, detail_operation_id)) return null;
-    return actualCaptureHostingerResourceKindHint(hints, list_kind);
+    return actualCaptureHostingerScopedResourceKindHint(route, hints, list_kind);
 }
 
 fn actualCaptureHostingerResourceHintForAny(route: provider_routes.Route, hints: ActualCaptureHints, detail_operation_ids: []const []const u8, list_kind: []const u8) ?[]const u8 {
     const operation_id = route.operation_id orelse return null;
     for (detail_operation_ids) |detail_operation_id| {
-        if (std.mem.eql(u8, operation_id, detail_operation_id)) return actualCaptureHostingerResourceKindHint(hints, list_kind);
+        if (std.mem.eql(u8, operation_id, detail_operation_id)) return actualCaptureHostingerScopedResourceKindHint(route, hints, list_kind);
     }
     return null;
+}
+
+fn actualCaptureHostingerScopedResourceKindHint(route: provider_routes.Route, hints: ActualCaptureHints, list_kind: []const u8) ?[]const u8 {
+    for (hints.hostinger_resources) |row| {
+        if (!std.mem.eql(u8, row.kind, list_kind) or row.resource_id.len == 0) continue;
+        if (actualCaptureHostingerResourceMatchesRouteScope(route, hints, row)) return row.resource_id;
+    }
+    for (hints.hostinger_inventory) |row| {
+        if (!std.mem.eql(u8, row.kind, list_kind) or row.resource_id.len == 0) continue;
+        if (actualCaptureHostingerInventoryMatchesRouteScope(route, hints, row)) return row.resource_id;
+    }
+    if (!actualCaptureHostingerUnscopedFallbackAllowed(route, hints, list_kind)) return null;
+    return actualCaptureHostingerResourceKindHint(hints, list_kind);
 }
 
 fn actualCaptureHostingerResourceKindHint(hints: ActualCaptureHints, list_kind: []const u8) ?[]const u8 {
@@ -2739,6 +2755,97 @@ fn actualCaptureHostingerResourceKindHint(hints: ActualCaptureHints, list_kind: 
         if (std.mem.eql(u8, row.kind, list_kind) and row.resource_id.len != 0) return row.resource_id;
     }
     return null;
+}
+
+fn actualCaptureHostingerResourceMatchesRouteScope(route: provider_routes.Route, hints: ActualCaptureHints, row: db_store.HostingerResourceHintRow) bool {
+    if (actualCaptureHostingerRouteNeedsVps(route)) {
+        const vm_id = actualCaptureHostingerVpsIdHint(hints) orelse return false;
+        return actualCaptureHostingerTargetHasParent(row.target, vm_id);
+    }
+    if (actualCaptureHostingerRouteNeedsUsername(route)) {
+        if (actualCaptureHostingerUsernameHint(route, hints)) |username| {
+            if (actualCaptureHostingerTargetHasParent(row.target, username)) return true;
+        }
+    }
+    if (actualCaptureHostingerRouteNeedsDomain(route)) {
+        if (actualCaptureHostingerDomainHint(route, hints)) |domain| {
+            if (eqlIgnoreCase(row.domain, domain)) return true;
+            if (actualCaptureHostingerTargetHasParent(row.target, domain)) return true;
+        }
+    }
+    return true;
+}
+
+fn actualCaptureHostingerInventoryMatchesRouteScope(route: provider_routes.Route, hints: ActualCaptureHints, row: db_store.HostingerInventoryHintRow) bool {
+    if (actualCaptureHostingerRouteNeedsUsername(route)) {
+        if (actualCaptureHostingerUsernameHint(route, hints)) |username| {
+            if (eqlIgnoreCase(row.username, username)) return true;
+        }
+    }
+    if (actualCaptureHostingerRouteNeedsDomain(route)) {
+        if (actualCaptureHostingerDomainHint(route, hints)) |domain| {
+            if (eqlIgnoreCase(row.domain, domain)) return true;
+            if (eqlIgnoreCase(row.display_name, domain)) return true;
+            if (eqlIgnoreCase(row.resource_id, domain)) return true;
+        }
+    }
+    return true;
+}
+
+fn actualCaptureHostingerUnscopedFallbackAllowed(route: provider_routes.Route, hints: ActualCaptureHints, list_kind: []const u8) bool {
+    if (actualCaptureHostingerRouteNeedsVps(route)) {
+        if (actualCaptureHostingerVpsIdHint(hints)) |vm_id| {
+            var saw_scoped_row = false;
+            for (hints.hostinger_resources) |row| {
+                if (!std.mem.eql(u8, row.kind, list_kind) or row.resource_id.len == 0) continue;
+                if (actualCaptureHostingerTargetLooksUnscoped(row.target, list_kind)) continue;
+                saw_scoped_row = true;
+                if (actualCaptureHostingerTargetHasParent(row.target, vm_id)) return true;
+            }
+            if (saw_scoped_row) return false;
+        }
+    }
+    if (actualCaptureHostingerRouteNeedsUsername(route)) {
+        if (actualCaptureHostingerUsernameHint(route, hints)) |username| {
+            var saw_scoped_row = false;
+            for (hints.hostinger_resources) |row| {
+                if (!std.mem.eql(u8, row.kind, list_kind) or row.resource_id.len == 0) continue;
+                if (actualCaptureHostingerTargetLooksUnscoped(row.target, list_kind)) continue;
+                saw_scoped_row = true;
+                if (actualCaptureHostingerTargetHasParent(row.target, username)) return true;
+            }
+            for (hints.hostinger_inventory) |row| {
+                if (!std.mem.eql(u8, row.kind, list_kind) or row.resource_id.len == 0 or row.username.len == 0) continue;
+                saw_scoped_row = true;
+                if (eqlIgnoreCase(row.username, username)) return true;
+            }
+            if (saw_scoped_row) return false;
+        }
+    }
+    if (actualCaptureHostingerRouteNeedsDomain(route)) {
+        if (actualCaptureHostingerDomainHint(route, hints)) |domain| {
+            var saw_scoped_row = false;
+            for (hints.hostinger_resources) |row| {
+                if (!std.mem.eql(u8, row.kind, list_kind) or row.resource_id.len == 0) continue;
+                if (row.domain.len != 0) {
+                    saw_scoped_row = true;
+                    if (eqlIgnoreCase(row.domain, domain)) return true;
+                }
+                if (!actualCaptureHostingerTargetLooksUnscoped(row.target, list_kind)) {
+                    saw_scoped_row = true;
+                    if (actualCaptureHostingerTargetHasParent(row.target, domain)) return true;
+                }
+            }
+            for (hints.hostinger_inventory) |row| {
+                if (!std.mem.eql(u8, row.kind, list_kind) or row.resource_id.len == 0) continue;
+                if (row.domain.len == 0 and row.display_name.len == 0) continue;
+                saw_scoped_row = true;
+                if (eqlIgnoreCase(row.domain, domain) or eqlIgnoreCase(row.display_name, domain)) return true;
+            }
+            if (saw_scoped_row) return false;
+        }
+    }
+    return true;
 }
 
 fn actualCaptureHostingerDomainHint(route: provider_routes.Route, hints: ActualCaptureHints) ?[]const u8 {
@@ -2764,6 +2871,12 @@ fn actualCaptureHostingerDomainHint(route: provider_routes.Route, hints: ActualC
 fn actualCaptureHostingerUsernameHint(route: provider_routes.Route, hints: ActualCaptureHints) ?[]const u8 {
     const operation_id = route.operation_id orelse return null;
     if (!containsIgnoreCase(operation_id, "hosting_")) return null;
+    if (actualCaptureHostingerDomainHint(route, hints)) |domain| {
+        for (hints.hostinger_inventory) |row| {
+            if (row.username.len == 0) continue;
+            if (eqlIgnoreCase(row.domain, domain) or eqlIgnoreCase(row.resource_id, domain) or eqlIgnoreCase(row.display_name, domain)) return row.username;
+        }
+    }
     for (hints.hostinger_inventory) |row| {
         if (row.username.len != 0) return row.username;
     }
@@ -2786,6 +2899,37 @@ fn actualCaptureHostingerKindCanCarryDomain(kind: []const u8) bool {
         containsIgnoreCase(kind, "domain") or
         containsIgnoreCase(kind, "website") or
         containsIgnoreCase(kind, "wordpress");
+}
+
+fn actualCaptureHostingerVpsIdHint(hints: ActualCaptureHints) ?[]const u8 {
+    if (hints.hostinger_vps.len != 0 and hints.hostinger_vps[0].id.len != 0) return hints.hostinger_vps[0].id;
+    return actualCaptureHostingerResourceKindHint(hints, "VPS_getVirtualMachinesV1") orelse
+        actualCaptureHostingerResourceKindHint(hints, "vps") orelse
+        actualCaptureHostingerResourceKindHint(hints, "route-hostinger-vps");
+}
+
+fn actualCaptureHostingerRouteNeedsVps(route: provider_routes.Route) bool {
+    return actualCaptureRoutePathContains(route, "{virtualMachineId}");
+}
+
+fn actualCaptureHostingerRouteNeedsUsername(route: provider_routes.Route) bool {
+    return actualCaptureRoutePathContains(route, "{username}");
+}
+
+fn actualCaptureHostingerRouteNeedsDomain(route: provider_routes.Route) bool {
+    return actualCaptureRoutePathContains(route, "{domain}");
+}
+
+fn actualCaptureHostingerTargetHasParent(target: []const u8, parent: []const u8) bool {
+    if (parent.len == 0) return false;
+    if (eqlIgnoreCase(target, parent)) return true;
+    if (target.len <= parent.len) return false;
+    if (target[parent.len] != '/') return false;
+    return eqlIgnoreCase(target[0..parent.len], parent);
+}
+
+fn actualCaptureHostingerTargetLooksUnscoped(target: []const u8, list_kind: []const u8) bool {
+    return target.len == 0 or eqlIgnoreCase(target, list_kind);
 }
 
 fn actualCaptureLooksLikeDomain(value: []const u8) bool {
@@ -6008,6 +6152,91 @@ test "plans Hostinger DNS domain hosting and Horizons captures from domain and i
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"hosting_listWebsiteSubdomainsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"horizons_getWebsiteV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "test-token") == null);
+}
+
+test "plans Hostinger Docker and Reach child captures from scoped resource hints" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-capture-hostinger-child-hints.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertHostingerVps("1307809", "srv1307809.hstgr.cloud", "running", "76.13.130.170", "KVM 4", "{\"id\":1307809}");
+    try db.upsertHostingerResource("VPS_getProjectListV1/999999/wrong-project", "VPS_getProjectListV1", "wrong-project", "999999", "wrong-project", "running", null, "{\"projectName\":\"wrong-project\"}");
+    try db.upsertHostingerResource("VPS_getProjectListV1/1307809/cloudio-stack", "VPS_getProjectListV1", "cloudio-stack", "1307809", "cloudio-stack", "running", null, "{\"projectName\":\"cloudio-stack\"}");
+    try db.upsertHostingerResource("reach_listProfilesV1/profile-1", "reach_listProfilesV1", "profile-1", "reach_listProfilesV1", "Main profile", "active", null, "{\"profileUuid\":\"profile-1\"}");
+    try db.upsertHostingerResource("reach_listSegmentsV1/segment-1", "reach_listSegmentsV1", "segment-1", "reach_listSegmentsV1", "Customers", "enabled", null, "{\"segmentUuid\":\"segment-1\"}");
+
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker","operation_id":"VPS_getProjectListV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"project list"}
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker/{projectName}","operation_id":"VPS_getProjectContentsV1","path_params":[{"name":"virtualMachineId","required":true},{"name":"projectName","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"project contents"}
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker/{projectName}/containers","operation_id":"VPS_getProjectContainersV1","path_params":[{"name":"virtualMachineId","required":true},{"name":"projectName","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"project containers"}
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker/{projectName}/logs","operation_id":"VPS_getProjectLogsV1","path_params":[{"name":"virtualMachineId","required":true},{"name":"projectName","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"project logs"}
+        \\{"provider":"hostinger","tag":"Reach: Profiles","method":"GET","path":"/api/reach/v1/profiles","operation_id":"reach_listProfilesV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"profile list"}
+        \\{"provider":"hostinger","tag":"Reach: Segmentation","method":"GET","path":"/api/reach/v1/segmentation/segments","operation_id":"reach_listSegmentsV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"segment list"}
+        \\{"provider":"hostinger","tag":"Reach: Segmentation","method":"GET","path":"/api/reach/v1/segmentation/segments/{segmentUuid}","operation_id":"reach_getSegmentDetailsV1","path_params":[{"name":"segmentUuid","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"segment detail"}
+        \\{"provider":"hostinger","tag":"Reach: Segmentation","method":"GET","path":"/api/reach/v1/segmentation/segments/{segmentUuid}/contacts","operation_id":"reach_listSegmentContactsV1","path_params":[{"name":"segmentUuid","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"segment contacts"}
+        \\{"provider":"hostinger","tag":"Reach: Segmentation","method":"GET","path":"/api/reach/v1/profiles/{profileUuid}/segmentation/segments/{segmentUuid}/contacts","operation_id":"reach_listProfileSegmentContactsV1","path_params":[{"name":"profileUuid","required":true},{"name":"segmentUuid","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"profile segment contacts"}
+        \\
+    ;
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, "", hostinger, &db, .{
+        .filter = .{ .provider = .hostinger },
+        .limit = 0,
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"hostinger_vps_hints\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"hostinger_resource_hints\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"official_read_routes\":9") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":9") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getProjectContentsV1 --path-param virtualMachineId='1307809' --path-param projectName='cloudio-stack'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getProjectContainersV1 --path-param virtualMachineId='1307809' --path-param projectName='cloudio-stack'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getProjectLogsV1 --path-param virtualMachineId='1307809' --path-param projectName='cloudio-stack'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation reach_getSegmentDetailsV1 --path-param segmentUuid='segment-1'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation reach_listProfileSegmentContactsV1 --path-param profileUuid='profile-1' --path-param segmentUuid='segment-1'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "wrong-project") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_") == null);
+
+    const planned = try actualReadyCaptureJsonFromText(std.testing.io, allocator, "", hostinger, &db, .{ .hostinger = "test-token" }, .{
+        .filter = .{ .provider = .hostinger },
+        .limit = 0,
+        .execute = false,
+    });
+    defer allocator.free(planned);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"candidate_routes\":9") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"ready_routes\":9") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"planned\":9") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getProjectContentsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"reach_listProfileSegmentContactsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "wrong-project") == null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "test-token") == null);
+
+    const wrong_db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-capture-hostinger-wrong-child-hints.db", .{tmp.sub_path});
+    defer allocator.free(wrong_db_path);
+    var wrong_db = try Db.open(std.testing.io, wrong_db_path);
+    defer wrong_db.close();
+    try wrong_db.initSchema();
+    try wrong_db.upsertHostingerVps("1307809", "srv1307809.hstgr.cloud", "running", "76.13.130.170", "KVM 4", "{\"id\":1307809}");
+    try wrong_db.upsertHostingerResource("VPS_getProjectListV1/999999/wrong-project", "VPS_getProjectListV1", "wrong-project", "999999", "wrong-project", "running", null, "{\"projectName\":\"wrong-project\"}");
+
+    var wrong_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer wrong_json_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, "", hostinger, &wrong_db, .{
+        .filter = .{ .provider = .hostinger },
+        .limit = 0,
+    }, &wrong_json_out.writer);
+    const wrong_json = try wrong_json_out.toOwnedSlice();
+    defer allocator.free(wrong_json);
+    try std.testing.expect(std.mem.indexOf(u8, wrong_json, "\"candidate_routes\":9") != null);
+    try std.testing.expect(std.mem.indexOf(u8, wrong_json, "\"ready_candidates\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, wrong_json, "\"operation_id\":\"VPS_getProjectContentsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, wrong_json, "\"missing_inputs\":[{\"source\":\"path\",\"name\":\"projectName\"}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, wrong_json, "cloudio route capture hostinger --operation VPS_getProjectContentsV1 --path-param virtualMachineId='1307809' --path-param projectName='wrong-project'") == null);
 }
 
 test "closed Cloudflare security read slice has no capture candidates" {
