@@ -762,6 +762,7 @@ pub const LevelReport = struct {
 pub const RouteFilter = struct {
     provider: ProviderFilter = .all,
     tag_query: ?[]const u8 = null,
+    family: WorkplanFamily = .all,
     operation_id: ?[]const u8 = null,
     method: ?provider_routes.Method = null,
     path_template: ?[]const u8 = null,
@@ -1862,6 +1863,7 @@ fn writeCaptureCandidatesText(gpa: Allocator, routes: []const CoverageRoute, opt
     try writer.writeAll("rank: generated bodyless GET/read routes missing L2 capture evidence\n");
     try writer.print("filter provider={s}", .{options.filter.provider.name()});
     if (options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
+    if (options.filter.family != .all) try writer.print(" family={s}", .{options.filter.family.name()});
     if (options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
     try writer.writeAll(" limit=");
     if (options.limit == 0) {
@@ -2310,6 +2312,7 @@ fn writeDryRunCandidatesText(gpa: Allocator, routes: []const CoverageRoute, opti
     try writer.writeAll("rank: generated mutation routes missing dry-run review evidence\n");
     try writer.print("filter provider={s}", .{options.filter.provider.name()});
     if (options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
+    if (options.filter.family != .all) try writer.print(" family={s}", .{options.filter.family.name()});
     if (options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
     try writer.writeAll(" limit=");
     if (options.limit == 0) {
@@ -2721,6 +2724,10 @@ fn appendProviderRoutes(gpa: Allocator, provider: []const u8, text: []const u8, 
         const mode = core_json.fieldString(parsed.value, "mode") orelse return error.InvalidCoverageRow;
         if (filter.tag_query) |query| {
             if (!containsIgnoreCase(tag, query)) continue;
+        }
+        if (filter.family != .all) {
+            const family = workplanTagFamily(provider, tag) orelse continue;
+            if (family != filter.family) continue;
         }
         if (filter.operation_id) |expected| {
             const actual = operation_id orelse continue;
@@ -3151,6 +3158,7 @@ fn writeRouteFilterJson(filter: RouteFilter, writer: anytype) !void {
     try writer.writeByte('{');
     try writeJsonField(writer, "provider", filter.provider.name(), true);
     try writeJsonNullableStringField(writer, "tag_query", filter.tag_query, true);
+    try writeJsonField(writer, "family", filter.family.name(), true);
     try writeJsonNullableStringField(writer, "operation_id", filter.operation_id, true);
     try writeJsonNullableStringField(writer, "method", if (filter.method) |method| method.name() else null, true);
     try writeJsonNullableStringField(writer, "path_template", filter.path_template, true);
@@ -3782,6 +3790,19 @@ test "lists route capture candidates for missing L2 read evidence" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"capture_command\":\"cloudio route capture cloudflare --operation logs-blocked --path-param account_id=<account_id> --query-param since=<since>\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "logs-ready") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "VPS_getVirtualMachinesV1") == null);
+
+    var family_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer family_json_out.deinit();
+    try writeCaptureCandidatesJsonFromText(allocator, cloudflare, hostinger, .{
+        .filter = .{ .provider = .all, .family = .logs },
+        .limit = 0,
+    }, &family_json_out.writer);
+    const family_json = try family_json_out.toOwnedSlice();
+    defer allocator.free(family_json);
+    try std.testing.expect(std.mem.indexOf(u8, family_json, "\"family\":\"logs\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_json, "\"total_candidates\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_json, "\"operation_id\":\"logs-list\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_json, "VPS_getVirtualMachinesV1") == null);
 }
 
 test "lists route dry-run candidates for missing mutation review evidence" {
@@ -3832,6 +3853,18 @@ test "lists route dry-run candidates for missing mutation review evidence" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"dry_run_command\":\"cloudio route dry-run cloudflare --operation logs-create --path-param account_id=<account_id> --body-content-type application/json\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "logs-patch") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "VPS_purchaseNewVirtualMachineV1") == null);
+
+    var family_text_out = std.Io.Writer.Allocating.init(allocator);
+    defer family_text_out.deinit();
+    try writeDryRunCandidatesTextFromText(allocator, cloudflare, hostinger, .{
+        .filter = .{ .provider = .all, .family = .logs },
+        .limit = 0,
+    }, &family_text_out.writer);
+    const family_text = try family_text_out.toOwnedSlice();
+    defer allocator.free(family_text);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "filter provider=all family=logs limit=all") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "logs-create") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "VPS_purchaseNewVirtualMachineV1") == null);
 }
 
 test "summarizes manifest-backed provider coverage levels" {
@@ -4243,6 +4276,7 @@ test "lists provider coverage routes by provider and tag query" {
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_routes\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"filter\":{\"provider\":\"hostinger\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"family\":\"all\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"count\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getMetricsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"path_params\":[{\"name\":\"virtualMachineId\"") != null);
@@ -4255,6 +4289,13 @@ test "lists provider coverage routes by provider and tag query" {
     defer mutations.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), mutations.items.len);
     try std.testing.expectEqual(provider_routes.Method.POST, mutations.items[0].route.method);
+
+    var family_routes = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .family = .hostinger_vps });
+    defer family_routes.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), family_routes.items.len);
+    for (family_routes.items) |row| {
+        try std.testing.expectEqualStrings("VPS: Virtual machine", row.route.tag);
+    }
 
     var exact_operation = try loadRoutesFromText(allocator, cloudflare, hostinger, .{ .provider = .hostinger, .operation_id = "VPS_getMetricsV1" });
     defer exact_operation.deinit(allocator);

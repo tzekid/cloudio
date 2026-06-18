@@ -433,6 +433,19 @@ fn parseRoutes(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--support=")) {
             const value = arg["--support=".len..];
             command.filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = arg };
+            command.filter.family = app_coverage.WorkplanFamily.parse(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--family=")) {
+            const value = arg["--family=".len..];
+            command.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.startsWith(u8, arg, "--control-plane-family=")) {
+            const value = arg["--control-plane-family=".len..];
+            command.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.startsWith(u8, arg, "--focus-family=")) {
+            const value = arg["--focus-family=".len..];
+            command.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--operation") or std.mem.eql(u8, arg, "--operation-id")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--operation" };
@@ -510,6 +523,19 @@ fn parseCaptureCandidates(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--support=")) {
             const value = arg["--support=".len..];
             command.options.filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = arg };
+            command.options.filter.family = app_coverage.WorkplanFamily.parse(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--family=")) {
+            const value = arg["--family=".len..];
+            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.startsWith(u8, arg, "--control-plane-family=")) {
+            const value = arg["--control-plane-family=".len..];
+            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.startsWith(u8, arg, "--focus-family=")) {
+            const value = arg["--focus-family=".len..];
+            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--operation") or std.mem.eql(u8, arg, "--operation-id")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--operation" };
@@ -573,6 +599,19 @@ fn parseDryRunCandidates(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--support=")) {
             const value = arg["--support=".len..];
             command.options.filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = arg };
+            command.options.filter.family = app_coverage.WorkplanFamily.parse(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--family=")) {
+            const value = arg["--family=".len..];
+            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.startsWith(u8, arg, "--control-plane-family=")) {
+            const value = arg["--control-plane-family=".len..];
+            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.startsWith(u8, arg, "--focus-family=")) {
+            const value = arg["--focus-family=".len..];
+            command.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--operation") or std.mem.eql(u8, arg, "--operation-id")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--operation" };
@@ -1090,6 +1129,16 @@ test "coverage command parser defaults to summary" {
         else => return error.ExpectedCoverageCaptureCandidates,
     }
 
+    const capture_candidates_family_args = [_][]const u8{ "capture-plan", "cloudflare", "--family=dns", "--limit", "0" };
+    switch (parseCommand(capture_candidates_family_args[0..])) {
+        .capture_candidates => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.filter.provider);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.dns, command.options.filter.family);
+            try std.testing.expectEqual(@as(usize, 0), command.options.limit);
+        },
+        else => return error.ExpectedCoverageCaptureCandidates,
+    }
+
     const dry_run_candidates_args = [_][]const u8{ "dry-run-candidates", "cloudflare", "AI Gateway", "--limit=8", "--json" };
     switch (parseCommand(dry_run_candidates_args[0..])) {
         .dry_run_candidates => |command| {
@@ -1111,6 +1160,16 @@ test "coverage command parser defaults to summary" {
         else => return error.ExpectedCoverageDryRunCandidates,
     }
 
+    const dry_run_candidates_family_args = [_][]const u8{ "dry-run-plan", "cloudflare", "--control-plane-family", "security", "--json" };
+    switch (parseCommand(dry_run_candidates_family_args[0..])) {
+        .dry_run_candidates => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.filter.provider);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.security, command.options.filter.family);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageDryRunCandidates,
+    }
+
     const plan_args = [_][]const u8{ "plan", "hostinger", "--operation=VPS_getMetricsV1", "--path-param", "virtualMachineId=123", "--query=date_from=2026-06-16T00:00:00Z", "--query-param", "date_to=2026-06-17T00:00:00Z" };
     switch (parseCommand(plan_args[0..])) {
         .plan => |values| {
@@ -1126,6 +1185,7 @@ test "coverage command parser defaults to summary" {
             const filter = command.filter;
             try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, filter.provider);
             try std.testing.expectEqualStrings("VPS", filter.tag_query orelse "");
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.all, filter.family);
             try std.testing.expectEqual(app_coverage.SupportFilter.partial, filter.support.?);
             try std.testing.expectEqual(app_coverage.ModeFilter.read, filter.mode.?);
             try std.testing.expect(filter.detail);
@@ -1167,6 +1227,17 @@ test "coverage command parser defaults to summary" {
             try std.testing.expectEqualStrings("accounts-list-accounts", filter.operation_id orelse "");
             try std.testing.expectEqual(app_coverage.parseRouteMethod("GET").?, filter.method.?);
             try std.testing.expectEqualStrings("/accounts", filter.path_template orelse "");
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageRoutes,
+    }
+
+    const family_routes_args = [_][]const u8{ "routes", "hostinger", "--family", "hostinger-vps", "--json" };
+    switch (parseCommand(family_routes_args[0..])) {
+        .routes => |command| {
+            const filter = command.filter;
+            try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, filter.provider);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.hostinger_vps, filter.family);
             try std.testing.expectEqual(RenderFormat.json, command.format);
         },
         else => return error.ExpectedCoverageRoutes,
