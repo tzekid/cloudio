@@ -12,6 +12,7 @@ pub const Context = struct {
     io: Io,
     gpa: Allocator,
     db: *app_coverage.DbHandle,
+    domains: []const []const u8 = &.{},
     paths: app_coverage.Paths = .{},
 };
 
@@ -850,7 +851,9 @@ fn commandCaptureCandidates(ctx: Context, command: CaptureCandidateCommand) !voi
 }
 
 fn commandActualCaptures(ctx: Context, command: ActualCaptureCommand) !void {
-    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeActualCapturesTextFromFiles, app_coverage.writeActualCapturesJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, ctx.db, command.options });
+    var options = command.options;
+    options.configured_domains = ctx.domains;
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeActualCapturesTextFromFiles, app_coverage.writeActualCapturesJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, ctx.db, options });
 }
 
 fn commandDryRunCandidates(ctx: Context, command: DryRunCandidateCommand) !void {

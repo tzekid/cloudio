@@ -83,6 +83,7 @@ pub fn run(init: std.process.Init) !void {
             .io = init.io,
             .gpa = init.gpa,
             .db = &db,
+            .domains = cfg.domains,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "route")) {
         try cli_route.run(.{
@@ -91,6 +92,7 @@ pub fn run(init: std.process.Init) !void {
             .cloudflare_auth = .{ .cloudflare = cloudflareAuth(cfg) },
             .hostinger_token = cfg.hostinger_api_token,
             .db = &db,
+            .domains = cfg.domains,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "routes")) {
         try cli_routes.run(.{

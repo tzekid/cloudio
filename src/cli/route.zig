@@ -13,6 +13,7 @@ pub const Context = struct {
     cloudflare_auth: app_coverage.Auth,
     hostinger_token: ?[]const u8,
     db: *app_coverage.DbHandle,
+    domains: []const []const u8 = &.{},
     paths: app_coverage.Paths = .{},
 };
 
@@ -108,10 +109,11 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     }
 
     if (action == .capture_ready) {
-        const parsed = parseCaptureReadyArgs(args[1..]) catch |err| {
+        var parsed = parseCaptureReadyArgs(args[1..]) catch |err| {
             std.debug.print("invalid route capture-ready arguments: {s}\n", .{@errorName(err)});
             return;
         };
+        parsed.options.configured_domains = ctx.domains;
         const json = app_coverage.actualReadyCaptureJsonFromFiles(
             ctx.io,
             ctx.gpa,
