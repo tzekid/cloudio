@@ -38,6 +38,12 @@ pub fn tokenResponse(allocator: Allocator, input: []const u8) ![]u8 {
     return try redactJsonStringKey(allocator, redacted, "value");
 }
 
+pub fn secretResponse(allocator: Allocator, input: []const u8) ![]u8 {
+    const value_redacted = try tokenResponse(allocator, input);
+    defer allocator.free(value_redacted);
+    return try redactJsonStringKey(allocator, value_redacted, "text");
+}
+
 pub fn providerResponse(allocator: Allocator, input: []const u8) ![]u8 {
     const redacted = try secrets(allocator, input);
     if (try redactJsonCursorContinuations(allocator, redacted)) |rewritten| {
@@ -357,6 +363,20 @@ test "token response redaction hides JSON token value fields" {
     try std.testing.expect(std.mem.indexOf(u8, redacted, "abcdefghijklmnopqrstuvwxyz0123456789abcd") == null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"value\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"name\":\"token\"") != null);
+}
+
+test "secret response redaction hides JSON secret text and value fields" {
+    const allocator = std.testing.allocator;
+    const input =
+        \\{"result":{"name":"myBinding","type":"secret_text","text":"plain-secret","value":"secret-value"},"success":true}
+    ;
+    const redacted = try secretResponse(allocator, input);
+    defer allocator.free(redacted);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "plain-secret") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "secret-value") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"text\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"value\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"name\":\"myBinding\"") != null);
 }
 
 test "provider response redaction hides cursor continuations without hiding unrelated after fields" {

@@ -37,7 +37,9 @@ pub const StoredResponse = struct {
 pub fn storeResponseWithSnapshotId(gpa: Allocator, db: *Db, input: ResponseCapture) !StoredResponse {
     const body = if (input.body.len == 0) try emptyBodyDiagnostic(gpa, input) else input.body;
     defer if (input.body.len == 0) gpa.free(body);
-    const redacted = if (std.mem.indexOf(u8, input.kind, "token") != null)
+    const redacted = if (std.mem.indexOf(u8, input.kind, "secret") != null)
+        try core_redact.secretResponse(gpa, body)
+    else if (std.mem.indexOf(u8, input.kind, "token") != null)
         try core_redact.tokenResponse(gpa, body)
     else
         try core_redact.providerResponse(gpa, body);
