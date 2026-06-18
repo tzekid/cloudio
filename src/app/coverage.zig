@@ -565,6 +565,11 @@ pub const CaptureCandidateOptions = struct {
     limit: usize = 25,
 };
 
+pub const DryRunCandidateOptions = struct {
+    filter: RouteFilter = .{},
+    limit: usize = 25,
+};
+
 pub fn parseRouteMethod(value: []const u8) ?provider_routes.Method {
     return provider_routes.Method.parse(value);
 }
@@ -1084,6 +1089,30 @@ pub fn writeCaptureCandidatesJsonFromText(gpa: Allocator, cloudflare_text: []con
     try writeCaptureCandidatesJson(gpa, routes.items, options, writer);
 }
 
+pub fn writeDryRunCandidatesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: DryRunCandidateOptions, writer: anytype) !void {
+    var routes = try loadDryRunCandidateRoutes(io, gpa, paths, options);
+    defer routes.deinit(gpa);
+    try writeDryRunCandidatesText(gpa, routes.items, options, writer);
+}
+
+pub fn writeDryRunCandidatesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: DryRunCandidateOptions, writer: anytype) !void {
+    var routes = try loadDryRunCandidateRoutes(io, gpa, paths, options);
+    defer routes.deinit(gpa);
+    try writeDryRunCandidatesJson(gpa, routes.items, options, writer);
+}
+
+pub fn writeDryRunCandidatesTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: DryRunCandidateOptions, writer: anytype) !void {
+    var routes = try loadDryRunCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
+    defer routes.deinit(gpa);
+    try writeDryRunCandidatesText(gpa, routes.items, options, writer);
+}
+
+pub fn writeDryRunCandidatesJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: DryRunCandidateOptions, writer: anytype) !void {
+    var routes = try loadDryRunCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
+    defer routes.deinit(gpa);
+    try writeDryRunCandidatesJson(gpa, routes.items, options, writer);
+}
+
 fn loadCaptureCandidateRoutes(io: Io, gpa: Allocator, paths: Paths, options: CaptureCandidateOptions) !CoverageRoutes {
     const filter = captureCandidateRouteFilter(options.filter);
     return try loadRoutes(io, gpa, paths, filter);
@@ -1091,6 +1120,16 @@ fn loadCaptureCandidateRoutes(io: Io, gpa: Allocator, paths: Paths, options: Cap
 
 fn loadCaptureCandidateRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: CaptureCandidateOptions) !CoverageRoutes {
     const filter = captureCandidateRouteFilter(options.filter);
+    return try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, filter);
+}
+
+fn loadDryRunCandidateRoutes(io: Io, gpa: Allocator, paths: Paths, options: DryRunCandidateOptions) !CoverageRoutes {
+    const filter = dryRunCandidateRouteFilter(options.filter);
+    return try loadRoutes(io, gpa, paths, filter);
+}
+
+fn loadDryRunCandidateRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: DryRunCandidateOptions) !CoverageRoutes {
+    const filter = dryRunCandidateRouteFilter(options.filter);
     return try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, filter);
 }
 
@@ -1521,6 +1560,14 @@ fn captureCandidateRouteFilter(filter: RouteFilter) RouteFilter {
     return next;
 }
 
+fn dryRunCandidateRouteFilter(filter: RouteFilter) RouteFilter {
+    var next = filter;
+    next.mode = .dry_run;
+    if (next.support == null) next.support = .unsafe_mutation;
+    next.detail = false;
+    return next;
+}
+
 fn routeIsCaptureCandidate(row: CoverageRoute, options: CaptureCandidateOptions) bool {
     const route = row.route;
     if (route.deprecated or !route.isRoutable()) return false;
@@ -1529,6 +1576,15 @@ fn routeIsCaptureCandidate(row: CoverageRoute, options: CaptureCandidateOptions)
     if (!std.mem.eql(u8, row.tests, "missing")) return false;
     if (options.filter.support != null) return true;
     return route.support == .planned or route.support == .blocked_permission;
+}
+
+fn routeIsDryRunCandidate(row: CoverageRoute, options: DryRunCandidateOptions) bool {
+    const route = row.route;
+    if (route.deprecated or !route.isRoutable()) return false;
+    if (!route.isDryRunMutation()) return false;
+    if (!std.mem.eql(u8, row.tests, "missing")) return false;
+    if (options.filter.support != null) return true;
+    return route.support == .unsafe_mutation;
 }
 
 fn writeCaptureCandidatesText(gpa: Allocator, routes: []const CoverageRoute, options: CaptureCandidateOptions, writer: anytype) !void {
@@ -1622,6 +1678,131 @@ fn writeCaptureCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, opt
     try writer.writeByte('\n');
 }
 
+fn writeDryRunCandidatesText(gpa: Allocator, routes: []const CoverageRoute, options: DryRunCandidateOptions, writer: anytype) !void {
+    try writer.writeAll("Cloudio route dry-run candidates\n");
+    try writer.writeAll("rank: generated mutation routes missing dry-run review evidence\n");
+    try writer.print("filter provider={s}", .{options.filter.provider.name()});
+    if (options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
+    if (options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
+    try writer.writeAll(" limit=");
+    if (options.limit == 0) {
+        try writer.writeAll("all\n");
+    } else {
+        try writer.print("{d}\n", .{options.limit});
+    }
+
+    var visible: usize = 0;
+    var omitted: usize = 0;
+    var total: usize = 0;
+    var current_provider: ?[]const u8 = null;
+    var current_tag: ?[]const u8 = null;
+    for (routes) |row| {
+        if (!routeIsDryRunCandidate(row, options)) continue;
+        total += 1;
+        if (options.limit != 0 and visible >= options.limit) {
+            omitted += 1;
+            continue;
+        }
+        visible += 1;
+        if (current_provider == null or !std.mem.eql(u8, current_provider.?, row.route.provider.name())) {
+            current_provider = row.route.provider.name();
+            current_tag = null;
+            try writer.print("\n{s}\n", .{row.route.provider.name()});
+        }
+        if (current_tag == null or !std.mem.eql(u8, current_tag.?, row.route.tag)) {
+            current_tag = row.route.tag;
+            try writer.print("  {s}\n", .{row.route.tag});
+        }
+        try writer.print("    {s} {s} | support={s}", .{ row.route.method.name(), row.route.path_template, @tagName(row.route.support) });
+        if (row.route.operation_id) |id| try writer.print(" op={s}", .{id});
+        try writer.writeByte('\n');
+        try writer.writeAll("      required_path=");
+        try writeRequiredParamNamesText(writer, row.route.path_params);
+        try writer.writeAll(" required_query=");
+        try writeRequiredParamNamesText(writer, row.route.query_params);
+        try writer.writeAll(" required_header=");
+        try writeRequiredParamNamesText(writer, row.route.header_params);
+        try writer.print(" body_required={}", .{row.route.request_body.required});
+        try writer.print(" body_content_type={s}", .{primaryRequestBodyContentType(row.route.request_body) orelse "none"});
+        try writer.writeAll(" schema_refs=");
+        try writeStringList(writer, row.route.request_body.schema_refs);
+        try writer.writeByte('\n');
+        const command = try routeDryRunCommand(gpa, row.route);
+        defer gpa.free(command);
+        try writer.print("      dry-run: {s}\n", .{command});
+    }
+
+    if (total == 0) {
+        try writer.writeAll("no dry-run candidates for filter\n");
+    } else if (omitted != 0) {
+        try writer.print("omitted={d}\n", .{omitted});
+    }
+}
+
+fn writeDryRunCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, options: DryRunCandidateOptions, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "kind", "coverage_dry_run_candidates", true);
+    try writer.writeAll("\"filter\":");
+    try writeRouteFilterJson(dryRunCandidateRouteFilter(options.filter), writer);
+    try writer.writeByte(',');
+    try writeJsonCountField(writer, "limit", options.limit, true);
+    try writeJsonField(writer, "rank", "generated mutation routes missing dry-run review evidence", true);
+    try writer.writeAll("\"candidates\":[");
+
+    var visible: usize = 0;
+    var omitted: usize = 0;
+    var total: usize = 0;
+    var first = true;
+    for (routes) |row| {
+        if (!routeIsDryRunCandidate(row, options)) continue;
+        total += 1;
+        if (options.limit != 0 and visible >= options.limit) {
+            omitted += 1;
+            continue;
+        }
+        visible += 1;
+        try writeMaybeJsonComma(writer, &first);
+        try writeDryRunCandidateJson(gpa, row, writer);
+    }
+
+    try writer.writeAll("],");
+    try writeJsonCountField(writer, "total_candidates", total, true);
+    try writeJsonCountField(writer, "visible", visible, true);
+    try writeJsonCountField(writer, "omitted", omitted, false);
+    try writer.writeByte('}');
+    try writer.writeByte('\n');
+}
+
+fn writeDryRunCandidateJson(gpa: Allocator, row: CoverageRoute, writer: anytype) !void {
+    const route = row.route;
+    const command = try routeDryRunCommand(gpa, route);
+    defer gpa.free(command);
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", route.provider.name(), true);
+    try writeJsonField(writer, "tag", route.tag, true);
+    try writeJsonField(writer, "method", route.method.name(), true);
+    try writeJsonField(writer, "path_template", route.path_template, true);
+    try writeJsonNullableStringField(writer, "operation_id", route.operation_id, true);
+    try writeJsonField(writer, "support", @tagName(route.support), true);
+    try writeJsonField(writer, "tests", row.tests, true);
+    try writer.writeAll("\"required_path_params\":");
+    try writeRequiredParamNamesJson(writer, route.path_params);
+    try writer.writeByte(',');
+    try writer.writeAll("\"required_query_params\":");
+    try writeRequiredParamNamesJson(writer, route.query_params);
+    try writer.writeByte(',');
+    try writer.writeAll("\"required_header_params\":");
+    try writeRequiredParamNamesJson(writer, route.header_params);
+    try writer.writeByte(',');
+    try writeJsonBoolField(writer, "body_required", route.request_body.required, true);
+    try writeJsonNullableStringField(writer, "body_content_type", primaryRequestBodyContentType(route.request_body), true);
+    try writer.writeAll("\"request_body_schema_refs\":");
+    try writeJsonStringArray(writer, route.request_body.schema_refs);
+    try writer.writeByte(',');
+    try writeJsonField(writer, "dry_run_command", command, false);
+    try writer.writeByte('}');
+}
+
 fn writeCaptureCandidateJson(gpa: Allocator, row: CoverageRoute, writer: anytype) !void {
     const route = row.route;
     const command = try routeCaptureCommand(gpa, route);
@@ -1663,6 +1844,30 @@ fn routeCaptureCommand(gpa: Allocator, route: provider_routes.Route) ![]u8 {
     try writeRequiredParamPlaceholders(writer, "--header-param", route.header_params);
     if (routePaginationKind(route) != null) try writer.writeAll(" --paginate");
     return try out.toOwnedSlice();
+}
+
+fn routeDryRunCommand(gpa: Allocator, route: provider_routes.Route) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    const writer = &out.writer;
+    try writer.print("cloudio route dry-run {s}", .{route.provider.name()});
+    if (route.operation_id) |id| {
+        try writer.print(" --operation {s}", .{id});
+    } else {
+        try writer.print(" --method {s} --path {s}", .{ route.method.name(), route.path_template });
+    }
+    try writeRequiredParamPlaceholders(writer, "--path-param", route.path_params);
+    try writeRequiredParamPlaceholders(writer, "--query-param", route.query_params);
+    try writeRequiredParamPlaceholders(writer, "--header-param", route.header_params);
+    if (primaryRequestBodyContentType(route.request_body)) |content_type| {
+        try writer.print(" --body-content-type {s}", .{content_type});
+    }
+    return try out.toOwnedSlice();
+}
+
+fn primaryRequestBodyContentType(body: provider_routes.RequestBody) ?[]const u8 {
+    if (body.content_types.len == 0) return null;
+    return body.content_types[0];
 }
 
 fn routePaginationKind(route: provider_routes.Route) ?[]const u8 {
@@ -2922,6 +3127,56 @@ test "lists route capture candidates for missing L2 read evidence" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"capture_command\":\"cloudio route capture cloudflare --operation logs-blocked --path-param account_id=<account_id> --query-param since=<since>\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "logs-ready") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "VPS_getVirtualMachinesV1") == null);
+}
+
+test "lists route dry-run candidates for missing mutation review evidence" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Logs","method":"POST","path":"/accounts/{account_id}/logs","operation_id":"logs-create","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":["#/components/schemas/LogCreateRequest"]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"pending dry-run"}
+        \\{"provider":"cloudflare","tag":"Logs","method":"DELETE","path":"/accounts/{account_id}/logs/{log_id}","operation_id":"logs-delete","path_params":[{"name":"account_id","required":true},{"name":"log_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"pending dry-run"}
+        \\{"provider":"cloudflare","tag":"Logs","method":"GET","path":"/accounts/{account_id}/logs","operation_id":"logs-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"read"}
+        \\{"provider":"cloudflare","tag":"Logs","method":"PATCH","path":"/accounts/{account_id}/logs/{log_id}","operation_id":"logs-patch","path_params":[{"name":"account_id","required":true},{"name":"log_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"dry_run","tests":"fixture","deprecated":false,"notes":"already reviewed"}
+        \\{"provider":"cloudflare","tag":"Logs","method":"POST","path":"/accounts/{account_id}/logs/old","operation_id":"logs-old","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"deprecated","mode":"none","tests":"generated","deprecated":true,"notes":"old"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS","method":"POST","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_purchaseNewVirtualMachineV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"other provider"}
+        \\
+    ;
+
+    var text_out = std.Io.Writer.Allocating.init(allocator);
+    defer text_out.deinit();
+    try writeDryRunCandidatesTextFromText(allocator, cloudflare, hostinger, .{
+        .filter = .{ .provider = .cloudflare, .tag_query = "Logs" },
+        .limit = 1,
+    }, &text_out.writer);
+    const text = try text_out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio route dry-run candidates\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "POST /accounts/{account_id}/logs | support=unsafe_mutation op=logs-create") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "required_path=account_id required_query=- required_header=- body_required=true body_content_type=application/json schema_refs=#/components/schemas/LogCreateRequest") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudio route dry-run cloudflare --operation logs-create --path-param account_id=<account_id> --body-content-type application/json") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "logs-patch") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeDryRunCandidatesJsonFromText(allocator, cloudflare, hostinger, .{
+        .filter = .{ .provider = .cloudflare, .tag_query = "Logs" },
+        .limit = 0,
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_dry_run_candidates\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"total_candidates\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"logs-create\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"logs-delete\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"body_required\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"body_content_type\":\"application/json\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"request_body_schema_refs\":[\"#/components/schemas/LogCreateRequest\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"dry_run_command\":\"cloudio route dry-run cloudflare --operation logs-create --path-param account_id=<account_id> --body-content-type application/json\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "logs-patch") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "VPS_purchaseNewVirtualMachineV1") == null);
 }
 
 test "summarizes manifest-backed provider coverage levels" {

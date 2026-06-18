@@ -55,6 +55,11 @@ const CaptureCandidateCommand = struct {
     format: RenderFormat = .text,
 };
 
+const DryRunCandidateCommand = struct {
+    options: app_coverage.DryRunCandidateOptions = .{},
+    format: RenderFormat = .text,
+};
+
 pub fn run(ctx: Context, args: []const []const u8) !void {
     switch (parseCommand(args)) {
         .summary => |command| try commandSummary(ctx, command),
@@ -65,6 +70,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .level_tags => |command| try commandLevelTags(ctx, command),
         .routes => |command| try commandRoutes(ctx, command),
         .capture_candidates => |command| try commandCaptureCandidates(ctx, command),
+        .dry_run_candidates => |command| try commandDryRunCandidates(ctx, command),
         .plan => |plan_args| try commandPlan(ctx, plan_args),
         .unknown => |name| std.debug.print("unknown coverage command: {s}\n", .{name}),
     }
@@ -79,6 +85,7 @@ const Command = union(enum) {
     level_tags: LevelTagCommand,
     routes: RouteCommand,
     capture_candidates: CaptureCandidateCommand,
+    dry_run_candidates: DryRunCandidateCommand,
     plan: []const []const u8,
     unknown: []const u8,
 };
@@ -107,6 +114,9 @@ fn parseCommand(args: []const []const u8) Command {
     }
     if (std.mem.eql(u8, args[0], "capture-candidates") or std.mem.eql(u8, args[0], "captures") or std.mem.eql(u8, args[0], "capture-plan")) {
         return parseCaptureCandidates(args[1..]);
+    }
+    if (std.mem.eql(u8, args[0], "dry-run-candidates") or std.mem.eql(u8, args[0], "dry-run-plan") or std.mem.eql(u8, args[0], "mutation-candidates")) {
+        return parseDryRunCandidates(args[1..]);
     }
     if (std.mem.eql(u8, args[0], "plan")) {
         return .{ .plan = args[1..] };
@@ -415,6 +425,76 @@ fn parseCaptureCandidates(args: []const []const u8) Command {
     return .{ .capture_candidates = command };
 }
 
+fn parseDryRunCandidates(args: []const []const u8) Command {
+    var command = DryRunCandidateCommand{};
+    var provider_set = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--limit")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--limit" };
+            command.options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
+            const value = arg["--limit=".len..];
+            command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--json")) {
+            command.format = .json;
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--format" };
+            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            const value = arg["--format=".len..];
+            command.format = parseFormat(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--support")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--support" };
+            command.options.filter.support = app_coverage.SupportFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--support=")) {
+            const value = arg["--support=".len..];
+            command.options.filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--operation") or std.mem.eql(u8, arg, "--operation-id")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--operation" };
+            command.options.filter.operation_id = args[index];
+        } else if (std.mem.startsWith(u8, arg, "--operation=")) {
+            command.options.filter.operation_id = arg["--operation=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--operation-id=")) {
+            command.options.filter.operation_id = arg["--operation-id=".len..];
+        } else if (std.mem.eql(u8, arg, "--method")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--method" };
+            command.options.filter.method = app_coverage.parseRouteMethod(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--method=")) {
+            const value = arg["--method=".len..];
+            command.options.filter.method = app_coverage.parseRouteMethod(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--path") or std.mem.eql(u8, arg, "--path-template")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--path" };
+            command.options.filter.path_template = args[index];
+        } else if (std.mem.startsWith(u8, arg, "--path=")) {
+            command.options.filter.path_template = arg["--path=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--path-template=")) {
+            command.options.filter.path_template = arg["--path-template=".len..];
+        } else if (!provider_set) {
+            if (app_coverage.ProviderFilter.parse(arg)) |provider| {
+                command.options.filter.provider = provider;
+                provider_set = true;
+            } else if (command.options.filter.tag_query == null) {
+                command.options.filter.tag_query = arg;
+            } else {
+                return .{ .unknown = arg };
+            }
+        } else if (command.options.filter.tag_query == null) {
+            command.options.filter.tag_query = arg;
+        } else {
+            return .{ .unknown = arg };
+        }
+    }
+    return .{ .dry_run_candidates = command };
+}
+
 fn commandSummary(ctx: Context, command: SummaryCommand) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
@@ -491,6 +571,16 @@ fn commandCaptureCandidates(ctx: Context, command: CaptureCandidateCommand) !voi
     switch (command.format) {
         .text => try app_coverage.writeCaptureCandidatesTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
         .json => try app_coverage.writeCaptureCandidatesJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
+    }
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+}
+
+fn commandDryRunCandidates(ctx: Context, command: DryRunCandidateCommand) !void {
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    switch (command.format) {
+        .text => try app_coverage.writeDryRunCandidatesTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
+        .json => try app_coverage.writeDryRunCandidatesJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
     }
     try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
@@ -770,6 +860,27 @@ test "coverage command parser defaults to summary" {
             try std.testing.expectEqualStrings("logs-list", command.options.filter.operation_id orelse "");
         },
         else => return error.ExpectedCoverageCaptureCandidates,
+    }
+
+    const dry_run_candidates_args = [_][]const u8{ "dry-run-candidates", "cloudflare", "AI Gateway", "--limit=8", "--json" };
+    switch (parseCommand(dry_run_candidates_args[0..])) {
+        .dry_run_candidates => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.filter.provider);
+            try std.testing.expectEqualStrings("AI Gateway", command.options.filter.tag_query orelse "");
+            try std.testing.expectEqual(@as(usize, 8), command.options.limit);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageDryRunCandidates,
+    }
+
+    const mutation_candidates_args = [_][]const u8{ "mutation-candidates", "--support", "unsafe_mutation", "--operation=logs-create", "--method=POST" };
+    switch (parseCommand(mutation_candidates_args[0..])) {
+        .dry_run_candidates => |command| {
+            try std.testing.expectEqual(app_coverage.SupportFilter.unsafe_mutation, command.options.filter.support.?);
+            try std.testing.expectEqualStrings("logs-create", command.options.filter.operation_id orelse "");
+            try std.testing.expectEqual(app_coverage.parseRouteMethod("POST").?, command.options.filter.method.?);
+        },
+        else => return error.ExpectedCoverageDryRunCandidates,
     }
 
     const plan_args = [_][]const u8{ "plan", "hostinger", "--operation=VPS_getMetricsV1", "--path-param", "virtualMachineId=123", "--query=date_from=2026-06-16T00:00:00Z", "--query-param", "date_to=2026-06-17T00:00:00Z" };
