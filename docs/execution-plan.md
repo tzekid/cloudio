@@ -172,7 +172,7 @@ Acceptance:
    - Use `cloudio evidence --json` as the provider/system capture evidence contract over raw-capture metadata, snapshots, and audit events.
    - Use `cloudio evidence matrix --json` and `cloudio evidence routes --json` to review DB-backed family/status evidence and operation-level L2 route capture evidence.
    - Use `cloudio routes --json` as the compact provider-route metadata contract for UI/API consumers.
-   - Use `cloudio topology --json` as the operational graph contract for UI/API consumers.
+   - Use `cloudio topology --json` as the operational graph contract for UI/API consumers; it joins provider DNS, Caddy routes, projects, sockets, services, and containers, then derives row status, exposure, DNS match type, capabilities, and issue arrays.
 
 2. Clean command parsing and option handling.
    - Consolidate repeated `--json`, `--format`, `--limit`, `--domain`, `--query`, `--path-param`, `--query-param`, and `--header-param` handling.
