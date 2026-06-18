@@ -264,6 +264,11 @@ pub const GapSummary = struct {
     planned_read: usize = 0,
     blocked_read: usize = 0,
     unsafe_dry_run: usize = 0,
+    pending_reads: usize = 0,
+    diagnostic_blocked_reads: usize = 0,
+    dry_run_evidence: usize = 0,
+    generated_dry_run_policy_evidence: usize = 0,
+    pending_mutation_dry_runs: usize = 0,
     routable: usize = 0,
     not_applicable: usize = 0,
     deprecated: usize = 0,
@@ -280,7 +285,7 @@ pub const GapSummary = struct {
     }
 
     pub fn priority(self: GapSummary) usize {
-        return self.planned_read + self.blocked_read + self.unsafe_dry_run;
+        return self.pending_reads + self.pending_mutation_dry_runs;
     }
 };
 
@@ -294,7 +299,7 @@ pub const GapReport = struct {
 
     pub fn writeText(self: GapReport, writer: anytype, options: GapOptions) !void {
         try writer.writeAll("Cloudio provider coverage gaps\n");
-        try writer.writeAll("rank: planned_read + blocked_read + unsafe_dry_run\n");
+        try writer.writeAll("rank: pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads and generated dry-run policy are evidence\n");
         try writer.print("filter={s} limit=", .{options.provider.name()});
         if (options.limit == 0) {
             try writer.writeAll("all\n");
@@ -322,6 +327,11 @@ pub const GapReport = struct {
                 row.read_routes,
                 row.dry_run_routes,
             });
+            try writeGapField(writer, "pending_reads", row.pending_reads);
+            try writeGapField(writer, "pending_mutation_dry_runs", row.pending_mutation_dry_runs);
+            try writeGapField(writer, "diagnostic_blocked_reads", row.diagnostic_blocked_reads);
+            try writeGapField(writer, "dry_run_evidence", row.dry_run_evidence);
+            try writeGapField(writer, "generated_dry_run_policy_evidence", row.generated_dry_run_policy_evidence);
             try writeGapField(writer, "planned_read", row.planned_read);
             try writeGapField(writer, "blocked_read", row.blocked_read);
             try writeGapField(writer, "partial_read", row.partial_read);
@@ -344,7 +354,7 @@ pub const GapReport = struct {
         try writeJsonField(writer, "kind", "coverage_gaps", true);
         try writeJsonField(writer, "filter", options.provider.name(), true);
         try writeJsonCountField(writer, "limit", options.limit, true);
-        try writeJsonField(writer, "rank", "planned_read + blocked_read + unsafe_dry_run", true);
+        try writeJsonField(writer, "rank", "pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads and generated dry-run policy are evidence", true);
         try writer.writeAll("\"items\":[");
 
         var visible: usize = 0;
@@ -3058,6 +3068,7 @@ fn summarizeProviderGaps(gpa: Allocator, provider: []const u8, text: []const u8,
         defer route.deinit(gpa);
 
         const row = try gapRow(gpa, rows, provider, route.route.tag);
+        const has_evidence = hasCoverageEvidence(route.tests);
         row.total += 1;
         if (route.route.deprecated) {
             row.deprecated += 1;
@@ -3074,17 +3085,38 @@ fn summarizeProviderGaps(gpa: Allocator, provider: []const u8, text: []const u8,
         switch (route.route.support) {
             .partial => switch (route.route.mode) {
                 .read => row.partial_read += 1,
-                .dry_run => row.partial_dry_run += 1,
+                .dry_run => {
+                    row.partial_dry_run += 1;
+                    if (has_evidence) row.dry_run_evidence += 1;
+                },
                 .write, .none => {},
             },
             .planned => {
-                if (route.route.mode == .read) row.planned_read += 1;
+                if (route.route.mode == .read) {
+                    row.planned_read += 1;
+                    row.pending_reads += 1;
+                }
             },
             .blocked_permission => {
-                if (route.route.mode == .read) row.blocked_read += 1;
+                if (route.route.mode == .read) {
+                    row.blocked_read += 1;
+                    if (has_evidence) {
+                        row.diagnostic_blocked_reads += 1;
+                    } else {
+                        row.pending_reads += 1;
+                    }
+                }
             },
             .unsafe_mutation => {
-                if (route.route.mode == .dry_run) row.unsafe_dry_run += 1;
+                if (route.route.mode == .dry_run) {
+                    row.unsafe_dry_run += 1;
+                    if (hasGeneratedDryRunPolicyEvidence(route)) {
+                        row.dry_run_evidence += 1;
+                        row.generated_dry_run_policy_evidence += 1;
+                    } else {
+                        row.pending_mutation_dry_runs += 1;
+                    }
+                }
             },
             .not_applicable => row.not_applicable += 1,
             .implemented, .deprecated => {},
@@ -3538,6 +3570,11 @@ fn writeGapJson(row: GapSummary, writer: anytype) !void {
     try writeJsonCountField(writer, "routable", row.routable, true);
     try writeJsonCountField(writer, "read_routes", row.read_routes, true);
     try writeJsonCountField(writer, "dry_run_routes", row.dry_run_routes, true);
+    try writeJsonCountField(writer, "pending_reads", row.pending_reads, true);
+    try writeJsonCountField(writer, "pending_mutation_dry_runs", row.pending_mutation_dry_runs, true);
+    try writeJsonCountField(writer, "diagnostic_blocked_reads", row.diagnostic_blocked_reads, true);
+    try writeJsonCountField(writer, "dry_run_evidence", row.dry_run_evidence, true);
+    try writeJsonCountField(writer, "generated_dry_run_policy_evidence", row.generated_dry_run_policy_evidence, true);
     try writeJsonCountField(writer, "planned_read", row.planned_read, true);
     try writeJsonCountField(writer, "blocked_read", row.blocked_read, true);
     try writeJsonCountField(writer, "partial_read", row.partial_read, true);
@@ -3760,9 +3797,11 @@ fn gapLessThan(_: void, lhs: GapSummary, rhs: GapSummary) bool {
     const lhs_priority = lhs.priority();
     const rhs_priority = rhs.priority();
     if (lhs_priority != rhs_priority) return lhs_priority > rhs_priority;
+    if (lhs.pending_reads != rhs.pending_reads) return lhs.pending_reads > rhs.pending_reads;
+    if (lhs.pending_mutation_dry_runs != rhs.pending_mutation_dry_runs) return lhs.pending_mutation_dry_runs > rhs.pending_mutation_dry_runs;
     if (lhs.planned_read != rhs.planned_read) return lhs.planned_read > rhs.planned_read;
-    if (lhs.unsafe_dry_run != rhs.unsafe_dry_run) return lhs.unsafe_dry_run > rhs.unsafe_dry_run;
     if (lhs.blocked_read != rhs.blocked_read) return lhs.blocked_read > rhs.blocked_read;
+    if (lhs.unsafe_dry_run != rhs.unsafe_dry_run) return lhs.unsafe_dry_run > rhs.unsafe_dry_run;
     if (lhs.non_deprecated != rhs.non_deprecated) return lhs.non_deprecated > rhs.non_deprecated;
     const provider_order = std.mem.order(u8, lhs.provider, rhs.provider);
     if (provider_order != .eq) return provider_order == .lt;
@@ -4238,23 +4277,34 @@ test "ranks provider coverage gaps by broad unresolved tag groups" {
         \\
     ;
     const hostinger =
-        \\{"provider":"hostinger","tag":"Domains","method":"GET","path":"/api/domains/v1/portfolio","operation_id":"domains-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture","deprecated":false,"notes":"token lacks permission"}
+        \\{"provider":"hostinger","tag":"Domains","method":"GET","path":"/api/domains/v1/portfolio","operation_id":"domains-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"missing","deprecated":false,"notes":"token lacks permission"}
         \\{"provider":"hostinger","tag":"Domains","method":"POST","path":"/api/domains/v1/portfolio","operation_id":"domains-create","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"dry_run","tests":"fixture","deprecated":false,"notes":"dry-run reviewed"}
+        \\{"provider":"hostinger","tag":"Billing","method":"GET","path":"/api/billing/v1/catalog","operation_id":"billing-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"diagnostic evidence"}
         \\
     ;
 
     var gaps = try loadGapsFromText(allocator, cloudflare, hostinger, .all);
     defer gaps.deinit(allocator);
 
-    try std.testing.expectEqual(@as(usize, 3), gaps.items.len);
+    try std.testing.expectEqual(@as(usize, 4), gaps.items.len);
     try std.testing.expectEqualStrings("cloudflare", gaps.items[0].provider);
     try std.testing.expectEqualStrings("AI Gateway", gaps.items[0].tag);
-    try std.testing.expectEqual(@as(usize, 3), gaps.items[0].priority());
+    try std.testing.expectEqual(@as(usize, 2), gaps.items[0].priority());
     try std.testing.expectEqual(@as(usize, 2), gaps.items[0].planned_read);
+    try std.testing.expectEqual(@as(usize, 2), gaps.items[0].pending_reads);
     try std.testing.expectEqual(@as(usize, 1), gaps.items[0].unsafe_dry_run);
+    try std.testing.expectEqual(@as(usize, 1), gaps.items[0].generated_dry_run_policy_evidence);
+    try std.testing.expectEqual(@as(usize, 0), gaps.items[0].pending_mutation_dry_runs);
     try std.testing.expectEqualStrings("hostinger", gaps.items[1].provider);
+    try std.testing.expectEqual(@as(usize, 1), gaps.items[1].priority());
     try std.testing.expectEqual(@as(usize, 1), gaps.items[1].blocked_read);
+    try std.testing.expectEqual(@as(usize, 1), gaps.items[1].pending_reads);
     try std.testing.expectEqual(@as(usize, 1), gaps.items[1].partial_dry_run);
+    try std.testing.expectEqual(@as(usize, 1), gaps.items[1].dry_run_evidence);
+    try std.testing.expectEqualStrings("hostinger", gaps.items[2].provider);
+    try std.testing.expectEqualStrings("Billing", gaps.items[2].tag);
+    try std.testing.expectEqual(@as(usize, 0), gaps.items[2].priority());
+    try std.testing.expectEqual(@as(usize, 1), gaps.items[2].diagnostic_blocked_reads);
 
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
@@ -4262,8 +4312,11 @@ test "ranks provider coverage gaps by broad unresolved tag groups" {
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage gaps\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "rank: planned_read + blocked_read + unsafe_dry_run\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | AI Gateway: priority=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "rank: pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads and generated dry-run policy are evidence\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | AI Gateway: priority=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "pending_reads=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "generated_dry_run_policy_evidence=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "pending_mutation_dry_runs=1") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "planned_read=2") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "unsafe_dry_run=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
@@ -4277,7 +4330,10 @@ test "ranks provider coverage gaps by broad unresolved tag groups" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"filter\":\"all\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"items\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"AI Gateway\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"pending_reads\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"generated_dry_run_policy_evidence\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"pending_mutation_dry_runs\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"omitted\":1") != null);
 }
 
