@@ -542,7 +542,6 @@ pub const LevelTagEvidence = struct {
 
     pub fn priority(self: LevelTagEvidence) usize {
         return self.evidence.pending_reads +
-            self.evidence.l2_diagnostic_reads +
             self.evidence.pending_mutation_dry_runs;
     }
 
@@ -570,7 +569,6 @@ pub const FamilyEvidence = struct {
 
     pub fn priority(self: FamilyEvidence) usize {
         return self.evidence.pending_reads +
-            self.evidence.l2_diagnostic_reads +
             self.evidence.pending_mutation_dry_runs;
     }
 
@@ -592,7 +590,7 @@ pub const FamilyReport = struct {
     pub fn writeText(self: FamilyReport, writer: anytype, options: FamilyOptions) !void {
         try writer.writeAll("Cloudio provider coverage families\n");
         try writer.writeAll("evidence: generated manifest + Cloudio support overlay, not final completion proof\n");
-        try writer.writeAll("rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n");
+        try writer.writeAll("rank: pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence\n");
         try writer.writeAll("scope: control-plane provider families for broad implementation slices\n");
         try writer.print("filter={s} focus={s} limit=", .{ options.provider.name(), options.focus.name() });
         if (options.limit == 0) {
@@ -626,7 +624,7 @@ pub const FamilyReport = struct {
         try writeJsonField(writer, "focus", options.focus.name(), true);
         try writeJsonCountField(writer, "limit", options.limit, true);
         try writeJsonField(writer, "evidence", "generated manifest + Cloudio support overlay, not final completion proof", true);
-        try writeJsonField(writer, "rank", "pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs", true);
+        try writeJsonField(writer, "rank", "pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence", true);
         try writeJsonField(writer, "scope", "control-plane provider families for broad implementation slices", true);
         try writer.writeAll("\"items\":[");
 
@@ -662,7 +660,7 @@ pub const LevelTagReport = struct {
     pub fn writeText(self: LevelTagReport, writer: anytype, options: LevelTagOptions) !void {
         try writer.writeAll("Cloudio provider coverage levels by tag\n");
         try writer.writeAll("evidence: generated manifest + Cloudio support overlay, not final completion proof\n");
-        try writer.writeAll("rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n");
+        try writer.writeAll("rank: pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence\n");
         try writer.print("filter={s} limit=", .{options.provider.name()});
         if (options.limit == 0) {
             try writer.writeAll("all\n");
@@ -701,7 +699,7 @@ pub const LevelTagReport = struct {
         try writeJsonField(writer, "filter", options.provider.name(), true);
         try writeJsonCountField(writer, "limit", options.limit, true);
         try writeJsonField(writer, "evidence", "generated manifest + Cloudio support overlay, not final completion proof", true);
-        try writeJsonField(writer, "rank", "pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs", true);
+        try writeJsonField(writer, "rank", "pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence", true);
         try writer.writeAll("\"items\":[");
 
         var visible: usize = 0;
@@ -2293,7 +2291,7 @@ fn typedModelLessThan(_: void, lhs: LevelTagEvidence, rhs: LevelTagEvidence) boo
 fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, bundle_routes: ?[]const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
     const effective_focus = workplanEffectiveFocus(options);
     try writer.writeAll("Cloudio provider coverage workplan\n");
-    try writer.writeAll("rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n");
+    try writer.writeAll("rank: pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence\n");
     try writer.writeAll("scope: broad provider tag slices with exact no-execute planning commands\n");
     try writer.print("filter={s} focus={s} family={s}", .{ options.provider.name(), effective_focus.name(), options.family.name() });
     if (options.include_plans) try writer.writeAll(" plans=true");
@@ -2353,7 +2351,7 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, bundle_rout
     try writeJsonBoolField(writer, "include_plans", options.include_plans, true);
     try writeJsonBoolField(writer, "bundle_candidates", options.bundle_candidates, true);
     try writeJsonCountField(writer, "candidate_limit", options.candidate_limit, true);
-    try writeJsonField(writer, "rank", "pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs", true);
+    try writeJsonField(writer, "rank", "pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence", true);
     try writeJsonField(writer, "scope", "broad provider tag slices with exact no-execute planning commands", true);
     try writer.writeAll("\"items\":[");
 
@@ -2588,7 +2586,7 @@ fn routeMatchesWorkplanRow(route_row: CoverageRoute, row: LevelTagEvidence) bool
 }
 
 fn workplanNeedsCapture(row: LevelTagEvidence) bool {
-    return row.evidence.pending_reads != 0 or row.evidence.l2_diagnostic_reads != 0;
+    return row.evidence.pending_reads != 0;
 }
 
 fn workplanNeedsDryRun(row: LevelTagEvidence) bool {
@@ -4641,7 +4639,7 @@ test "ranks manifest-backed provider coverage levels by tag" {
     try std.testing.expectEqual(@as(usize, 1), report.items[0].evidence.pending_mutation_dry_runs);
     try std.testing.expectEqualStrings("hostinger", report.items[1].provider);
     try std.testing.expectEqualStrings("VPS: Docker Manager", report.items[1].tag);
-    try std.testing.expectEqual(@as(usize, 1), report.items[1].priority());
+    try std.testing.expectEqual(@as(usize, 0), report.items[1].priority());
     try std.testing.expectEqual(@as(usize, 1), report.items[1].evidence.l2_diagnostic_reads);
     try std.testing.expectEqual(@as(usize, 1), report.items[1].evidence.dry_run_evidence);
     try std.testing.expectEqualStrings("Accounts", report.items[2].tag);
@@ -4654,11 +4652,11 @@ test "ranks manifest-backed provider coverage levels by tag" {
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage levels by tag\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "rank: pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Workers: priority=2") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "pending_reads=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "closed_or_evidence_only_rows_hidden=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "omitted=") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "closed_or_evidence_only_rows_hidden=2") != null);
 
     var full_out = std.Io.Writer.Allocating.init(allocator);
     defer full_out.deinit();
@@ -4677,8 +4675,8 @@ test "ranks manifest-backed provider coverage levels by tag" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Workers\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"pending_reads\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"omitted\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"closed_or_evidence_only_rows_hidden\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"omitted\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"closed_or_evidence_only_rows_hidden\":2") != null);
 
     var full_json_out = std.Io.Writer.Allocating.init(allocator);
     defer full_json_out.deinit();
@@ -4780,8 +4778,8 @@ test "renders broad provider coverage workplan commands by tag" {
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | DNS Records: priority=1 pending_reads=1 diagnostic_blocked_reads=0 pending_mutation_dry_runs=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudio coverage capture-candidates cloudflare 'DNS Records' --limit 25") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Tokens: priority=1") == null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "closed_or_evidence_only_rows_hidden=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "omitted=") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "closed_or_evidence_only_rows_hidden=3") != null);
 
     var json_out = std.Io.Writer.Allocating.init(allocator);
     defer json_out.deinit();
@@ -4798,8 +4796,8 @@ test "renders broad provider coverage workplan commands by tag" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Workers' --detail\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"capture_candidates\",\"command\":\"cloudio coverage capture-candidates cloudflare 'Workers' --limit 25\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"dry_run_candidates\",\"command\":\"cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Reach: Segments\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"closed_or_evidence_only_rows_hidden\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Reach: Segments\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"closed_or_evidence_only_rows_hidden\":3") != null);
 
     var plans_json_out = std.Io.Writer.Allocating.init(allocator);
     defer plans_json_out.deinit();
@@ -4851,7 +4849,7 @@ test "renders broad provider coverage workplan commands by tag" {
     try std.testing.expect(std.mem.indexOf(u8, focused_text, "cloudflare | Workers") == null);
     try std.testing.expect(std.mem.indexOf(u8, focused_text, "cloudflare | Tokens") == null);
     try std.testing.expect(std.mem.indexOf(u8, focused_text, "Reach: Segments") == null);
-    try std.testing.expect(std.mem.indexOf(u8, focused_text, "focus_filtered_rows_hidden=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_text, "focus_filtered_rows_hidden=1") != null);
 
     var focused_json_out = std.Io.Writer.Allocating.init(allocator);
     defer focused_json_out.deinit();
@@ -4868,7 +4866,7 @@ test "renders broad provider coverage workplan commands by tag" {
     try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"focus_family\":\"dns\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"tag\":\"Workers\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"tag\":\"Tokens\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"focus_filtered_rows_hidden\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"focus_filtered_rows_hidden\":1") != null);
 
     const family_cloudflare =
         \\{"provider":"cloudflare","tag":"DNS Records","method":"GET","path":"/zones/{zone_id}/dns_records","operation_id":"dns-records-list","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"pending read"}
@@ -4938,7 +4936,7 @@ test "aggregates provider coverage evidence by control-plane family" {
     try std.testing.expect(std.mem.indexOf(u8, text, "dry_run_evidence=1 generated_dry_run_policy_evidence=1 pending_mutation_dry_runs=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "workplan: cloudio coverage workplan cloudflare --family dns --limit 25") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | tokens: priority=0 tags=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "hostinger | hostinger-vps: priority=1 tags=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "hostinger | hostinger-vps: priority=0 tags=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger | docker: priority=0 tags=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Workers") == null);
 
