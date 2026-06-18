@@ -60,6 +60,46 @@ pub const VpsOverviewOptions = struct {
     limit: i64 = 20,
 };
 
+pub const VpsOverviewSummary = struct {
+    vps: usize = 0,
+    running: usize = 0,
+    stopped_or_other: usize = 0,
+    complete_core_coverage: usize = 0,
+    partial_core_coverage: usize = 0,
+    with_details: usize = 0,
+    with_metrics: usize = 0,
+    with_actions: usize = 0,
+    with_backups: usize = 0,
+    with_snapshot: usize = 0,
+    with_public_keys: usize = 0,
+    with_security: usize = 0,
+    with_docker: usize = 0,
+    missing_details: usize = 0,
+    missing_metrics: usize = 0,
+    missing_actions: usize = 0,
+    missing_backups: usize = 0,
+    missing_snapshot: usize = 0,
+    resource_kinds: usize = 0,
+    inventory_kinds: usize = 0,
+    metric_summaries: usize = 0,
+    family_summaries: usize = 0,
+};
+
+const VpsCoverage = struct {
+    details: bool = false,
+    metrics: bool = false,
+    actions: bool = false,
+    backups: bool = false,
+    snapshot: bool = false,
+    public_keys: bool = false,
+    security: bool = false,
+    docker: bool = false,
+
+    fn completeCore(self: VpsCoverage) bool {
+        return self.details and self.metrics and self.actions and self.backups and self.snapshot;
+    }
+};
+
 pub const VpsOverview = struct {
     vps: db_store.HostingerVpsRows,
     resource_kinds: db_store.HostingerKindCounts,
@@ -86,13 +126,82 @@ pub const VpsOverview = struct {
         self.family_summaries.deinit(allocator);
     }
 
+    pub fn summary(self: VpsOverview) VpsOverviewSummary {
+        var out = VpsOverviewSummary{
+            .vps = self.vps.items.len,
+            .resource_kinds = self.resource_kinds.items.len,
+            .inventory_kinds = self.inventory_kinds.items.len,
+            .metric_summaries = self.metric_summaries.items.len,
+            .family_summaries = self.family_summaries.items.len,
+        };
+        for (self.vps.items) |row| {
+            if (stateLooksRunning(row.status)) {
+                out.running += 1;
+            } else {
+                out.stopped_or_other += 1;
+            }
+            const coverage = self.coverageFor(row.id);
+            if (coverage.completeCore()) {
+                out.complete_core_coverage += 1;
+            } else {
+                out.partial_core_coverage += 1;
+            }
+            if (coverage.details) out.with_details += 1 else out.missing_details += 1;
+            if (coverage.metrics) out.with_metrics += 1 else out.missing_metrics += 1;
+            if (coverage.actions) out.with_actions += 1 else out.missing_actions += 1;
+            if (coverage.backups) out.with_backups += 1 else out.missing_backups += 1;
+            if (coverage.snapshot) out.with_snapshot += 1 else out.missing_snapshot += 1;
+            if (coverage.public_keys) out.with_public_keys += 1;
+            if (coverage.security) out.with_security += 1;
+            if (coverage.docker) out.with_docker += 1;
+        }
+        return out;
+    }
+
+    fn coverageFor(self: VpsOverview, vm_id: []const u8) VpsCoverage {
+        var out = VpsCoverage{};
+        for (self.metric_summaries.items) |row| {
+            if (std.mem.eql(u8, row.vm_id, vm_id) and row.count > 0) out.metrics = true;
+        }
+        for (self.family_summaries.items) |row| {
+            if (!std.mem.eql(u8, row.vm_id, vm_id) or row.count <= 0) continue;
+            addCoverageKind(&out, row.kind);
+        }
+        return out;
+    }
+
     pub fn writeText(self: VpsOverview, writer: anytype) !void {
+        const counts = self.summary();
         try writer.writeAll("Hostinger VPS overview\n");
+        try writer.print("summary vps={d} running={d} stopped_or_other={d} complete_core_coverage={d} partial_core_coverage={d} details={d} metrics={d} actions={d} backups={d} snapshot={d} public_keys={d} security={d} docker={d} missing_details={d} missing_metrics={d} missing_actions={d} missing_backups={d} missing_snapshot={d} resource_kinds={d} inventory_kinds={d} metric_summaries={d} family_summaries={d}\n", .{
+            counts.vps,
+            counts.running,
+            counts.stopped_or_other,
+            counts.complete_core_coverage,
+            counts.partial_core_coverage,
+            counts.with_details,
+            counts.with_metrics,
+            counts.with_actions,
+            counts.with_backups,
+            counts.with_snapshot,
+            counts.with_public_keys,
+            counts.with_security,
+            counts.with_docker,
+            counts.missing_details,
+            counts.missing_metrics,
+            counts.missing_actions,
+            counts.missing_backups,
+            counts.missing_snapshot,
+            counts.resource_kinds,
+            counts.inventory_kinds,
+            counts.metric_summaries,
+            counts.family_summaries,
+        });
         try writer.writeAll("vps\n");
         if (self.vps.items.len == 0) {
             try writer.writeAll("none\n");
         } else {
-            for (self.vps.items) |row| try writeVpsRowText(row, writer);
+            for (self.vps.items) |row| try writeVpsRowText(row, self.coverageFor(row.id), writer);
         }
 
         try writer.writeAll("resources\n");
@@ -125,10 +234,12 @@ pub const VpsOverview = struct {
     }
 
     pub fn writeJson(self: VpsOverview, writer: anytype) !void {
-        try writer.writeAll("{\"kind\":\"hostinger_vps_overview\",\"vps\":[");
+        try writer.writeAll("{\"kind\":\"hostinger_vps_overview\",\"summary\":");
+        try writeVpsOverviewSummaryJson(self.summary(), writer);
+        try writer.writeAll(",\"vps\":[");
         for (self.vps.items, 0..) |row, index| {
             if (index != 0) try writer.writeByte(',');
-            try writeVpsRowJson(row, writer);
+            try writeVpsRowJson(row, self.coverageFor(row.id), writer);
         }
         try writer.writeAll("],\"resource_kinds\":[");
         for (self.resource_kinds.items, 0..) |row, index| {
@@ -286,12 +397,101 @@ fn providerListContext(ctx: Context) app_provider_list.Context {
     };
 }
 
-fn writeVpsRowText(row: db_store.HostingerVpsRow, writer: anytype) !void {
+fn addCoverageKind(out: *VpsCoverage, kind: []const u8) void {
+    if (kindLooksLikeDetails(kind)) out.details = true;
+    if (kindLooksLikeMetrics(kind)) out.metrics = true;
+    if (kindLooksLikeActions(kind)) out.actions = true;
+    if (kindLooksLikeBackups(kind)) out.backups = true;
+    if (kindLooksLikeSnapshot(kind)) out.snapshot = true;
+    if (kindLooksLikePublicKeys(kind)) out.public_keys = true;
+    if (kindLooksLikeSecurity(kind)) out.security = true;
+    if (kindLooksLikeDocker(kind)) out.docker = true;
+}
+
+fn kindLooksLikeDetails(kind: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(kind, "vps-detail") or
+        containsIgnoreCase(kind, "virtualmachinedetail") or
+        containsIgnoreCase(kind, "virtual-machine-detail") or
+        containsIgnoreCase(kind, "virtual_machine_detail") or
+        containsIgnoreCase(kind, "getvirtualmachinev1");
+}
+
+fn kindLooksLikeMetrics(kind: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(kind, "metrics") or containsIgnoreCase(kind, "metrics");
+}
+
+fn kindLooksLikeActions(kind: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(kind, "actions") or
+        std.ascii.eqlIgnoreCase(kind, "action-detail") or
+        containsIgnoreCase(kind, "actions") or
+        containsIgnoreCase(kind, "action-detail") or
+        containsIgnoreCase(kind, "actiondetail");
+}
+
+fn kindLooksLikeBackups(kind: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(kind, "backups") or
+        containsIgnoreCase(kind, "backups") or
+        containsIgnoreCase(kind, "backup");
+}
+
+fn kindLooksLikeSnapshot(kind: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(kind, "snapshot") or containsIgnoreCase(kind, "snapshot");
+}
+
+fn kindLooksLikePublicKeys(kind: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(kind, "public-keys") or
+        containsIgnoreCase(kind, "public-keys") or
+        containsIgnoreCase(kind, "public_keys") or
+        containsIgnoreCase(kind, "publickey") or
+        containsIgnoreCase(kind, "public-key");
+}
+
+fn kindLooksLikeSecurity(kind: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(kind, "monarx") or
+        containsIgnoreCase(kind, "monarx") or
+        containsIgnoreCase(kind, "malware") or
+        containsIgnoreCase(kind, "security");
+}
+
+fn kindLooksLikeDocker(kind: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(kind, "docker") or containsIgnoreCase(kind, "docker");
+}
+
+fn stateLooksRunning(value: []const u8) bool {
+    return containsIgnoreCase(value, "running") or containsIgnoreCase(value, "active") or containsIgnoreCase(value, "up");
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    var index: usize = 0;
+    while (index + needle.len <= haystack.len) : (index += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return true;
+    }
+    return false;
+}
+
+fn boolText(value: bool) []const u8 {
+    return if (value) "true" else "false";
+}
+
+fn coverageStatus(coverage: VpsCoverage) []const u8 {
+    return if (coverage.completeCore()) "complete" else "partial";
+}
+
+fn writeBoolTextField(writer: anytype, label: []const u8, value: bool) !void {
+    try writer.print("\t{s}={s}", .{ label, boolText(value) });
+}
+
+fn writeVpsRowText(row: db_store.HostingerVpsRow, coverage: VpsCoverage, writer: anytype) !void {
     try writer.print("{s}", .{row.id});
     try writeTextField(writer, "name", row.name);
     try writeTextField(writer, "status", row.status);
     try writeTextField(writer, "ipv4", row.ipv4);
     try writeTextField(writer, "plan", row.plan);
+    try writeTextField(writer, "coverage", coverageStatus(coverage));
+    try writeVpsCoverageText(coverage, writer);
+    try writeVpsCoverageIssuesText(coverage, writer);
     try writeTextField(writer, "updated", row.updated_at);
     try writer.writeByte('\n');
 }
@@ -314,13 +514,117 @@ fn writeVpsFamilySummaryText(row: db_store.HostingerVpsFamilySummary, writer: an
     try writer.writeByte('\n');
 }
 
-fn writeVpsRowJson(row: db_store.HostingerVpsRow, writer: anytype) !void {
+fn writeVpsOverviewSummaryJson(summary: VpsOverviewSummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try app_render.writeJsonIntField(writer, "vps", summary.vps, true);
+    try app_render.writeJsonIntField(writer, "running", summary.running, true);
+    try app_render.writeJsonIntField(writer, "stopped_or_other", summary.stopped_or_other, true);
+    try app_render.writeJsonIntField(writer, "complete_core_coverage", summary.complete_core_coverage, true);
+    try app_render.writeJsonIntField(writer, "partial_core_coverage", summary.partial_core_coverage, true);
+    try app_render.writeJsonIntField(writer, "with_details", summary.with_details, true);
+    try app_render.writeJsonIntField(writer, "with_metrics", summary.with_metrics, true);
+    try app_render.writeJsonIntField(writer, "with_actions", summary.with_actions, true);
+    try app_render.writeJsonIntField(writer, "with_backups", summary.with_backups, true);
+    try app_render.writeJsonIntField(writer, "with_snapshot", summary.with_snapshot, true);
+    try app_render.writeJsonIntField(writer, "with_public_keys", summary.with_public_keys, true);
+    try app_render.writeJsonIntField(writer, "with_security", summary.with_security, true);
+    try app_render.writeJsonIntField(writer, "with_docker", summary.with_docker, true);
+    try app_render.writeJsonIntField(writer, "missing_details", summary.missing_details, true);
+    try app_render.writeJsonIntField(writer, "missing_metrics", summary.missing_metrics, true);
+    try app_render.writeJsonIntField(writer, "missing_actions", summary.missing_actions, true);
+    try app_render.writeJsonIntField(writer, "missing_backups", summary.missing_backups, true);
+    try app_render.writeJsonIntField(writer, "missing_snapshot", summary.missing_snapshot, true);
+    try app_render.writeJsonIntField(writer, "resource_kinds", summary.resource_kinds, true);
+    try app_render.writeJsonIntField(writer, "inventory_kinds", summary.inventory_kinds, true);
+    try app_render.writeJsonIntField(writer, "metric_summaries", summary.metric_summaries, true);
+    try app_render.writeJsonIntField(writer, "family_summaries", summary.family_summaries, false);
+    try writer.writeByte('}');
+}
+
+fn writeVpsCoverageText(coverage: VpsCoverage, writer: anytype) !void {
+    try writeBoolTextField(writer, "details", coverage.details);
+    try writeBoolTextField(writer, "metrics", coverage.metrics);
+    try writeBoolTextField(writer, "actions", coverage.actions);
+    try writeBoolTextField(writer, "backups", coverage.backups);
+    try writeBoolTextField(writer, "snapshot", coverage.snapshot);
+    try writeBoolTextField(writer, "public_keys", coverage.public_keys);
+    try writeBoolTextField(writer, "security", coverage.security);
+    try writeBoolTextField(writer, "docker", coverage.docker);
+}
+
+fn writeVpsCoverageJson(coverage: VpsCoverage, writer: anytype) !void {
+    try writer.writeByte('{');
+    try app_render.writeJsonBoolField(writer, "details", coverage.details, true);
+    try app_render.writeJsonBoolField(writer, "metrics", coverage.metrics, true);
+    try app_render.writeJsonBoolField(writer, "actions", coverage.actions, true);
+    try app_render.writeJsonBoolField(writer, "backups", coverage.backups, true);
+    try app_render.writeJsonBoolField(writer, "snapshot", coverage.snapshot, true);
+    try app_render.writeJsonBoolField(writer, "public_keys", coverage.public_keys, true);
+    try app_render.writeJsonBoolField(writer, "security", coverage.security, true);
+    try app_render.writeJsonBoolField(writer, "docker", coverage.docker, false);
+    try writer.writeByte('}');
+}
+
+fn writeVpsCoverageIssuesText(coverage: VpsCoverage, writer: anytype) !void {
+    if (vpsCoverageIssueCount(coverage) == 0) return;
+    try writer.writeAll("\tcoverage_issues=");
+    var first = true;
+    try writeVpsCoverageIssueText(writer, &first, !coverage.details, "missing_details");
+    try writeVpsCoverageIssueText(writer, &first, !coverage.metrics, "missing_metrics");
+    try writeVpsCoverageIssueText(writer, &first, !coverage.actions, "missing_actions");
+    try writeVpsCoverageIssueText(writer, &first, !coverage.backups, "missing_backups");
+    try writeVpsCoverageIssueText(writer, &first, !coverage.snapshot, "missing_snapshot");
+}
+
+fn writeVpsCoverageIssuesJson(coverage: VpsCoverage, writer: anytype) !void {
+    try writer.writeByte('[');
+    var first = true;
+    try writeVpsCoverageIssueJson(writer, &first, !coverage.details, "missing_details");
+    try writeVpsCoverageIssueJson(writer, &first, !coverage.metrics, "missing_metrics");
+    try writeVpsCoverageIssueJson(writer, &first, !coverage.actions, "missing_actions");
+    try writeVpsCoverageIssueJson(writer, &first, !coverage.backups, "missing_backups");
+    try writeVpsCoverageIssueJson(writer, &first, !coverage.snapshot, "missing_snapshot");
+    try writer.writeByte(']');
+}
+
+fn writeVpsCoverageIssueText(writer: anytype, first: *bool, present: bool, label: []const u8) !void {
+    if (!present) return;
+    if (!first.*) try writer.writeByte(',');
+    first.* = false;
+    try writer.writeAll(label);
+}
+
+fn writeVpsCoverageIssueJson(writer: anytype, first: *bool, present: bool, label: []const u8) !void {
+    if (!present) return;
+    if (!first.*) try writer.writeByte(',');
+    first.* = false;
+    try app_render.writeJsonString(writer, label);
+}
+
+fn vpsCoverageIssueCount(coverage: VpsCoverage) usize {
+    var count: usize = 0;
+    if (!coverage.details) count += 1;
+    if (!coverage.metrics) count += 1;
+    if (!coverage.actions) count += 1;
+    if (!coverage.backups) count += 1;
+    if (!coverage.snapshot) count += 1;
+    return count;
+}
+
+fn writeVpsRowJson(row: db_store.HostingerVpsRow, coverage: VpsCoverage, writer: anytype) !void {
     try writer.writeByte('{');
     try writeJsonStringField(writer, "id", row.id, true);
     try writeJsonStringField(writer, "name", row.name, true);
     try writeJsonStringField(writer, "status", row.status, true);
     try writeJsonStringField(writer, "ipv4", row.ipv4, true);
     try writeJsonStringField(writer, "plan", row.plan, true);
+    try writeJsonStringField(writer, "coverage_status", coverageStatus(coverage), true);
+    try writer.writeAll("\"coverage\":");
+    try writeVpsCoverageJson(coverage, writer);
+    try writer.writeByte(',');
+    try writer.writeAll("\"coverage_issues\":");
+    try writeVpsCoverageIssuesJson(coverage, writer);
+    try writer.writeByte(',');
     try writeJsonStringField(writer, "updated_at", row.updated_at, false);
     try writer.writeByte('}');
 }
@@ -425,11 +729,14 @@ test "hostinger app renders VPS overview from normalized storage" {
     defer db.close();
     try db.initSchema();
     try db.upsertHostingerVps("12345", "srv12345.hstgr.cloud", "running", "76.13.130.170", "KVM 2", "{\"id\":12345}");
+    try db.upsertHostingerVps("67890", "srv67890.hstgr.cloud", "stopped", "", "KVM 1", "{\"id\":67890}");
     try db.insertHostingerMetric("12345", "cpu", "0.42", "{\"cpu\":0.42}");
+    try db.upsertHostingerResource("hostinger-vps-detail||12345", "vps-detail", "12345", "12345", "srv12345.hstgr.cloud", "running", null, "{\"id\":\"12345\"}");
     try db.upsertHostingerResource("hostinger-vps-actions||12345||reboot", "hostinger-vps-actions", "reboot", "12345", "Reboot", "available", null, "{\"id\":\"reboot\"}");
     try db.upsertHostingerResource("hostinger-vps-action-detail||12345/reboot||step-1", "hostinger-vps-action-detail", "step-1", "12345/reboot", "Step 1", "complete", null, "{\"id\":\"step-1\"}");
     try db.upsertHostingerInventoryItem("hostinger-vps-templates||ubuntu", "hostinger-vps-templates", "ubuntu", "Ubuntu", "available", "linux", null, null, null, "enabled", null, null, null, "{\"id\":\"ubuntu\"}");
     try db.upsertHostingerInventoryItem("hostinger-vps-backups|12345|backup-1", "hostinger-vps-backups", "backup-1", "Backup 1", "available", "backup", null, null, null, null, "2026-01-01T00:00:00Z", null, null, "{\"id\":\"backup-1\"}");
+    try db.upsertHostingerInventoryItem("snapshot|12345|snapshot", "snapshot", "snapshot", "Snapshot", "available", "snapshot", null, null, null, null, "2026-01-02T00:00:00Z", null, null, "{\"id\":\"snapshot\"}");
 
     const domains = [_][]const u8{"plosca.ru"};
     const ctx = Context{
@@ -442,13 +749,29 @@ test "hostinger app renders VPS overview from normalized storage" {
 
     var overview = try VpsOverview.load(ctx, .{ .limit = 10 });
     defer overview.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), overview.vps.items.len);
+    try std.testing.expectEqual(@as(usize, 2), overview.vps.items.len);
     try std.testing.expectEqualStrings("12345", overview.vps.items[0].id);
-    try std.testing.expectEqual(@as(usize, 2), overview.resource_kinds.items.len);
-    try std.testing.expectEqual(@as(usize, 2), overview.inventory_kinds.items.len);
+    try std.testing.expectEqual(@as(usize, 3), overview.resource_kinds.items.len);
+    try std.testing.expectEqual(@as(usize, 3), overview.inventory_kinds.items.len);
     try std.testing.expectEqual(@as(usize, 1), overview.metric_summaries.items.len);
     try std.testing.expectEqualStrings("cpu", overview.metric_summaries.items[0].metric);
-    try std.testing.expectEqual(@as(usize, 4), overview.family_summaries.items.len);
+    try std.testing.expectEqual(@as(usize, 6), overview.family_summaries.items.len);
+    const summary = overview.summary();
+    try std.testing.expectEqual(@as(usize, 2), summary.vps);
+    try std.testing.expectEqual(@as(usize, 1), summary.running);
+    try std.testing.expectEqual(@as(usize, 1), summary.stopped_or_other);
+    try std.testing.expectEqual(@as(usize, 1), summary.complete_core_coverage);
+    try std.testing.expectEqual(@as(usize, 1), summary.partial_core_coverage);
+    try std.testing.expectEqual(@as(usize, 1), summary.with_details);
+    try std.testing.expectEqual(@as(usize, 1), summary.with_metrics);
+    try std.testing.expectEqual(@as(usize, 1), summary.with_actions);
+    try std.testing.expectEqual(@as(usize, 1), summary.with_backups);
+    try std.testing.expectEqual(@as(usize, 1), summary.with_snapshot);
+    try std.testing.expectEqual(@as(usize, 1), summary.missing_details);
+    try std.testing.expectEqual(@as(usize, 1), summary.missing_metrics);
+    try std.testing.expectEqual(@as(usize, 1), summary.missing_actions);
+    try std.testing.expectEqual(@as(usize, 1), summary.missing_backups);
+    try std.testing.expectEqual(@as(usize, 1), summary.missing_snapshot);
 
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
@@ -456,13 +779,18 @@ test "hostinger app renders VPS overview from normalized storage" {
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Hostinger VPS overview\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "12345\tname=srv12345.hstgr.cloud\tstatus=running\tipv4=76.13.130.170\tplan=KVM 2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "summary vps=2 running=1 stopped_or_other=1 complete_core_coverage=1 partial_core_coverage=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "12345\tname=srv12345.hstgr.cloud\tstatus=running\tipv4=76.13.130.170\tplan=KVM 2\tcoverage=complete\tdetails=true\tmetrics=true\tactions=true\tbackups=true\tsnapshot=true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "67890\tname=srv67890.hstgr.cloud\tstatus=stopped\tplan=KVM 1\tcoverage=partial\tdetails=false\tmetrics=false\tactions=false\tbackups=false\tsnapshot=false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "coverage_issues=missing_details,missing_metrics,missing_actions,missing_backups,missing_snapshot") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger-vps-actions\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/cpu\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "vm family\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "12345/resource/vps-detail\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/resource/hostinger-vps-actions\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/resource/hostinger-vps-action-detail\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/inventory/hostinger-vps-backups\tcount=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "12345/inventory/snapshot\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/metric/cpu\tcount=1") != null);
 
     var json_out = std.Io.Writer.Allocating.init(allocator);
@@ -471,12 +799,19 @@ test "hostinger app renders VPS overview from normalized storage" {
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"hostinger_vps_overview\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"summary\":{\"vps\":2,\"running\":1,\"stopped_or_other\":1,\"complete_core_coverage\":1,\"partial_core_coverage\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\":\"12345\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"coverage_status\":\"complete\",\"coverage\":{\"details\":true,\"metrics\":true,\"actions\":true,\"backups\":true,\"snapshot\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\":\"67890\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"coverage_status\":\"partial\",\"coverage\":{\"details\":false,\"metrics\":false,\"actions\":false,\"backups\":false,\"snapshot\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"coverage_issues\":[\"missing_details\",\"missing_metrics\",\"missing_actions\",\"missing_backups\",\"missing_snapshot\"]") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"resource_kinds\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"inventory_kinds\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"metric_summaries\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"metric\":\"cpu\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"vm_family\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"resource\",\"kind\":\"vps-detail\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"resource\",\"kind\":\"hostinger-vps-actions\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"inventory\",\"kind\":\"hostinger-vps-backups\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"inventory\",\"kind\":\"snapshot\"") != null);
 }
