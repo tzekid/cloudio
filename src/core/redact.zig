@@ -310,10 +310,18 @@ fn containsSecretWord(line: []const u8) bool {
         "client_secret",
         "refresh_token",
         "access_token",
+        "auth_key",
+        "authkey",
         "stream_key",
         "streamkey",
         "ingest_key",
         "ingestkey",
+        "signing_key",
+        "signingkey",
+        "turn_key",
+        "turnkey",
+        "webhook_key",
+        "webhookkey",
         "license_key",
         "licensekey",
         "provisioning_key",
@@ -464,6 +472,24 @@ test "provider response redaction hides provider credentials without hiding publ
     try std.testing.expect(std.mem.indexOf(u8, redacted, "credential-secret") == null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"credentials\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"credential_id\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"public_key\":\"public-material\"") != null);
+}
+
+test "provider response redaction hides credential key material without hiding public keys" {
+    const allocator = std.testing.allocator;
+    const input =
+        \\{"result":{"turn_key":"turn-secret","authKey":"auth-secret","signing_key":"signing-secret","webhookKey":"webhook-secret","public_key":"public-material"},"success":true}
+    ;
+    const redacted = try providerResponse(allocator, input);
+    defer allocator.free(redacted);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "turn-secret") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "auth-secret") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "signing-secret") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "webhook-secret") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"turn_key\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"authKey\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"signing_key\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"webhookKey\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"public_key\":\"public-material\"") != null);
 }
 

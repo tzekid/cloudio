@@ -210,7 +210,11 @@ pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, reques
     try writeResponsesField(writer, "responses", route.responses, true);
     try writer.writeAll("\"mode\":\"read\",");
     try writer.writeAll("\"will_execute\":false,");
-    try writeJsonField(writer, "safety", "No provider API request is sent. This is a generic request plan for a live read route.", false);
+    const safety = if (routeLiveCallSupported(route))
+        "No provider API request is sent. This is a generic request plan for a live read route."
+    else
+        "No provider API request is sent. This read route is planned for metadata review, but Cloudio will not execute it live with the current support policy.";
+    try writeJsonField(writer, "safety", safety, false);
     try writer.writeAll("}");
     return try out.toOwnedSlice();
 }
@@ -881,6 +885,7 @@ test "generic dispatch plans but does not execute policy-blocked read routes" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"support\":\"blocked_permission\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"dispatch\":{\"live_call_supported\":false,\"dry_run_supported\":false}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "Cloudio will not execute it live with the current support policy") != null);
 
     const client = Client.init(.{ .cloudflare = .{ .token = "test-token" } });
     try std.testing.expectError(error.UnsupportedProviderRoute, client.callReadRouteRequest(std.testing.io, allocator, blocked_route, request));
