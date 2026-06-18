@@ -2,6 +2,7 @@ const std = @import("std");
 const collector_capture = @import("collector_capture");
 const collector_capture_normalize = @import("collector_capture_normalize");
 const core_json = @import("core_json");
+const core_time = @import("core_time");
 const db_store = @import("db_store");
 const net_pagination = @import("net_pagination");
 const provider_dispatch = @import("provider_dispatch");
@@ -2330,7 +2331,7 @@ fn actualCaptureMissingInputCount(route: provider_routes.Route, hints: ActualCap
         if (actualCapturePathParamHint(route, param.name, hints) == null) count += 1;
     }
     for (route.query_params) |param| {
-        if (param.required) count += 1;
+        if (param.required and !actualCaptureHasQueryParamHint(route, param.name)) count += 1;
     }
     for (route.header_params) |param| {
         if (param.required) count += 1;
@@ -2344,6 +2345,7 @@ fn actualCapturePathParamHint(route: provider_routes.Route, name: []const u8, hi
     if (std.mem.eql(u8, name, "actionId")) return actualCaptureHostingerResourceHint(route, hints, "VPS_getActionDetailsV1", "VPS_getActionsV1");
     if (std.mem.eql(u8, name, "templateId")) return actualCaptureHostingerResourceHint(route, hints, "VPS_getTemplateDetailsV1", "VPS_getTemplatesV1");
     if (std.mem.eql(u8, name, "postInstallScriptId")) return actualCaptureHostingerResourceHint(route, hints, "VPS_getPostInstallScriptV1", "VPS_getPostInstallScriptsV1");
+    if (std.mem.eql(u8, name, "firewallId")) return actualCaptureHostingerResourceHint(route, hints, "VPS_getFirewallDetailsV1", "VPS_getFirewallListV1");
     return null;
 }
 
@@ -2353,6 +2355,23 @@ fn actualCaptureHostingerResourceHint(route: provider_routes.Route, hints: Actua
         if (std.mem.eql(u8, row.kind, list_kind) and row.resource_id.len != 0) return row.resource_id;
     }
     return null;
+}
+
+fn actualCaptureHasQueryParamHint(route: provider_routes.Route, name: []const u8) bool {
+    return route.provider == .hostinger and
+        route.operation_id != null and
+        std.mem.eql(u8, route.operation_id.?, "VPS_getMetricsV1") and
+        (std.mem.eql(u8, name, "date_from") or std.mem.eql(u8, name, "date_to"));
+}
+
+fn actualCaptureQueryParamHint(gpa: Allocator, route: provider_routes.Route, name: []const u8) !?[]u8 {
+    if (!actualCaptureHasQueryParamHint(route, name)) return null;
+    const now = core_time.currentEpochSeconds() catch return null;
+    const day: u64 = 24 * 60 * 60;
+    const timestamp = if (std.mem.eql(u8, name, "date_from") and now > day) now - day else now;
+    var buf: [17]u8 = undefined;
+    const formatted = try core_time.formatUtcMinute(&buf, timestamp);
+    return try gpa.dupe(u8, formatted);
 }
 
 fn writeActualMissingInputsText(writer: anytype, route: provider_routes.Route, hints: ActualCaptureHints) !void {
@@ -2366,6 +2385,7 @@ fn writeActualMissingInputsText(writer: anytype, route: provider_routes.Route, h
     }
     for (route.query_params) |param| {
         if (!param.required) continue;
+        if (actualCaptureHasQueryParamHint(route, param.name)) continue;
         if (wrote) try writer.writeByte(',');
         wrote = true;
         try writer.print("query:{s}", .{param.name});
@@ -2393,6 +2413,7 @@ fn writeActualMissingInputsJson(writer: anytype, route: provider_routes.Route, h
     }
     for (route.query_params) |param| {
         if (!param.required) continue;
+        if (actualCaptureHasQueryParamHint(route, param.name)) continue;
         try writeMaybeJsonComma(writer, &first);
         try writer.writeByte('{');
         try writeJsonField(writer, "source", "query", true);
@@ -2483,7 +2504,7 @@ fn actualCaptureCommand(gpa: Allocator, route: provider_routes.Route, hints: Act
         try writeShellArg(writer, route.path_template);
     }
     try writeActualPathParams(writer, route, hints);
-    try writeActualRequiredParamPlaceholders(writer, "--query-param", route.query_params);
+    try writeActualQueryParams(gpa, writer, route);
     try writeActualRequiredParamPlaceholders(writer, "--header-param", route.header_params);
     if (routePaginationKind(route) != null) try writer.writeAll(" --paginate");
     return try out.toOwnedSlice();
@@ -2494,6 +2515,19 @@ fn writeActualPathParams(writer: anytype, route: provider_routes.Route, hints: A
         if (!param.required) continue;
         try writer.print(" --path-param {s}=", .{param.name});
         if (actualCapturePathParamHint(route, param.name, hints)) |hint| {
+            try writeShellArg(writer, hint);
+        } else {
+            try writer.print("REPLACE_{s}", .{param.name});
+        }
+    }
+}
+
+fn writeActualQueryParams(gpa: Allocator, writer: anytype, route: provider_routes.Route) !void {
+    for (route.query_params) |param| {
+        if (!param.required) continue;
+        try writer.print(" --query-param {s}=", .{param.name});
+        if (try actualCaptureQueryParamHint(gpa, route, param.name)) |hint| {
+            defer gpa.free(hint);
             try writeShellArg(writer, hint);
         } else {
             try writer.print("REPLACE_{s}", .{param.name});
@@ -2522,8 +2556,13 @@ const ActualReadyCaptureSummary = struct {
 const ActualReadyRequest = struct {
     request: Request,
     path_params: []PathParam,
+    query_params: []QueryParam,
+    query_values: [][]u8,
 
     fn deinit(self: ActualReadyRequest, gpa: Allocator) void {
+        for (self.query_values) |value| gpa.free(value);
+        gpa.free(self.query_values);
+        gpa.free(self.query_params);
         gpa.free(self.path_params);
     }
 };
@@ -2667,15 +2706,34 @@ fn actualReadyCaptureRequest(gpa: Allocator, route: provider_routes.Route, hints
         const value = actualCapturePathParamHint(route, param.name, hints) orelse return error.ActualCaptureRouteNotReady;
         try path_params.append(gpa, .{ .name = param.name, .value = value });
     }
+    var query_params = std.ArrayList(QueryParam).empty;
+    errdefer query_params.deinit(gpa);
+    var query_values = std.ArrayList([]u8).empty;
+    errdefer {
+        for (query_values.items) |value| gpa.free(value);
+        query_values.deinit(gpa);
+    }
+    for (route.query_params) |param| {
+        if (!param.required) continue;
+        const value = (try actualCaptureQueryParamHint(gpa, route, param.name)) orelse return error.ActualCaptureRouteNotReady;
+        try query_values.append(gpa, value);
+        try query_params.append(gpa, .{ .name = param.name, .value = value });
+    }
     const owned_path_params = try path_params.toOwnedSlice(gpa);
+    errdefer gpa.free(owned_path_params);
+    const owned_query_params = try query_params.toOwnedSlice(gpa);
+    errdefer gpa.free(owned_query_params);
+    const owned_query_values = try query_values.toOwnedSlice(gpa);
     return .{
         .request = .{
             .path_params = owned_path_params,
-            .query_params = &.{},
+            .query_params = owned_query_params,
             .header_params = &.{},
             .body = .{},
         },
         .path_params = owned_path_params,
+        .query_params = owned_query_params,
+        .query_values = owned_query_values,
     };
 }
 
@@ -5200,12 +5258,14 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"non_ok_read_routes\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_read_routes\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":3") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":3") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachinesV1\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachineDetailsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"actual_state\":\"non_ok\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getVirtualMachineDetailsV1 --path-param virtualMachineId='12345'") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_inputs\":[{\"source\":\"query\",\"name\":\"date_from\"},{\"source\":\"query\",\"name\":\"date_to\"}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getMetricsV1 --path-param virtualMachineId='12345' --query-param date_from='") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "--query-param date_to='") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_date_from") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_virtualMachineId") == null);
 
     var text_out = std.Io.Writer.Allocating.init(allocator);
@@ -5235,12 +5295,14 @@ test "plans derived Hostinger VPS detail captures from captured resource hints" 
     try db.upsertHostingerVps("12345", "srv12345.hstgr.cloud", "running", "76.13.130.170", "KVM 2", "{\"id\":12345}");
     try db.upsertHostingerResource("VPS_getActionsV1/99", "VPS_getActionsV1", "99", "VPS_getActionsV1", "backup_create", "success", null, "{\"id\":99}");
     try db.upsertHostingerResource("VPS_getTemplatesV1/1002", "VPS_getTemplatesV1", "1002", "VPS_getTemplatesV1", "Ubuntu 24.04", null, null, "{\"id\":1002}");
+    try db.upsertHostingerResource("VPS_getFirewallListV1/55", "VPS_getFirewallListV1", "55", "VPS_getFirewallListV1", "default firewall", "active", null, "{\"id\":55}");
 
     const hostinger =
         \\{"provider":"hostinger","tag":"VPS","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/actions/{actionId}","operation_id":"VPS_getActionDetailsV1","path_params":[{"name":"virtualMachineId","required":true},{"name":"actionId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"detail read"}
         \\{"provider":"hostinger","tag":"VPS","method":"GET","path":"/api/vps/v1/templates/{templateId}","operation_id":"VPS_getTemplateDetailsV1","path_params":[{"name":"templateId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"detail read"}
         \\{"provider":"hostinger","tag":"VPS","method":"GET","path":"/api/vps/v1/post-install-scripts/{postInstallScriptId}","operation_id":"VPS_getPostInstallScriptV1","path_params":[{"name":"postInstallScriptId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"requires script list resource"}
         \\{"provider":"hostinger","tag":"VPS","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/metrics","operation_id":"VPS_getMetricsV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[{"name":"date_from","required":true},{"name":"date_to","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"requires explicit date window"}
+        \\{"provider":"hostinger","tag":"VPS","method":"GET","path":"/api/vps/v1/firewall/{firewallId}","operation_id":"VPS_getFirewallDetailsV1","path_params":[{"name":"firewallId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"detail read"}
         \\
     ;
 
@@ -5253,14 +5315,16 @@ test "plans derived Hostinger VPS detail captures from captured resource hints" 
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"hostinger_vps_hints\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"hostinger_resource_hints\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"official_read_routes\":4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"hostinger_resource_hints\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"official_read_routes\":5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":4") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getActionDetailsV1 --path-param virtualMachineId='12345' --path-param actionId='99'") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getTemplateDetailsV1 --path-param templateId='1002'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getFirewallDetailsV1 --path-param firewallId='55'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getMetricsV1 --path-param virtualMachineId='12345' --query-param date_from='") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_inputs\":[{\"source\":\"path\",\"name\":\"postInstallScriptId\"}]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_inputs\":[{\"source\":\"query\",\"name\":\"date_from\"},{\"source\":\"query\",\"name\":\"date_to\"}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_date_to") == null);
 
     const planned = try actualReadyCaptureJsonFromText(std.testing.io, allocator, "", hostinger, &db, .{ .hostinger = "test-token" }, .{
         .filter = .{ .provider = .hostinger, .family = .hostinger_vps },
@@ -5268,14 +5332,15 @@ test "plans derived Hostinger VPS detail captures from captured resource hints" 
         .execute = false,
     });
     defer allocator.free(planned);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "\"candidate_routes\":4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "\"ready_routes\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "\"skipped_unready\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "\"planned\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"candidate_routes\":5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"ready_routes\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"skipped_unready\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"planned\":4") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"attempted\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getActionDetailsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getTemplateDetailsV1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getMetricsV1\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getMetricsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getFirewallDetailsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getPostInstallScriptV1\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "test-token") == null);
 }
