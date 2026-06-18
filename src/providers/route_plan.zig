@@ -1,6 +1,7 @@
 const std = @import("std");
 const core_json = @import("core_json");
 const provider_capabilities = @import("provider_capabilities");
+const provider_route_safety = @import("provider_route_safety");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -53,6 +54,7 @@ pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, reques
     try writeResponsesField(writer, "responses", route.responses, true);
     try writer.writeAll("\"mode\":\"read\",");
     try writer.writeAll("\"will_execute\":false,");
+    try provider_route_safety.writeRouteSafetyPolicyJson(writer, "safety_policy", route, .read_plan, true);
     const safety = if (provider_capabilities.routeLiveReadSupported(route))
         "No provider API request is sent. This is a generic request plan for a live read route."
     else
@@ -105,6 +107,7 @@ pub fn dryRunPlanJsonRequestWithBase(gpa: Allocator, route: provider_routes.Rout
     try writeResponsesField(writer, "responses", route.responses, true);
     try writer.writeAll("\"mode\":\"dry_run\",");
     try writer.writeAll("\"will_execute\":false,");
+    try provider_route_safety.writeRouteSafetyPolicyJson(writer, "safety_policy", route, .dry_run_mutation, true);
     try writeJsonField(writer, "safety", "No provider API request is sent. This is a generic dry-run plan for a live mutation route.", false);
     try writer.writeAll("}");
     return try out.toOwnedSlice();
@@ -297,6 +300,14 @@ test "plans bodyless read routes without executing HTTP" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"VPS_getMetricsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"read\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"safety_policy\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"execution\":\"plan_only\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"write_policy\":\"no_live_mutations\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"live_provider_request\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"mutation\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"write_enabled\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"write_blocked\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dry_run_only\":false") != null);
 }
 
 test "keeps mutation plans dry-run only" {
@@ -318,4 +329,12 @@ test "keeps mutation plans dry-run only" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"worker-assets-upload\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"dry_run\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"safety_policy\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"execution\":\"dry_run_only\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"write_policy\":\"no_live_mutations\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"live_provider_request\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"mutation\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"write_enabled\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"write_blocked\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dry_run_only\":true") != null);
 }
