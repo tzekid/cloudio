@@ -1,5 +1,6 @@
 const std = @import("std");
 const collector_cloudflare = @import("collector_cloudflare");
+const core_output = @import("core_output");
 const db_store = @import("db_store");
 const provider_cloudflare = @import("provider_cloudflare");
 
@@ -129,7 +130,7 @@ pub const DnssecMutationEndpoint = collector_cloudflare.DnssecMutationEndpoint;
 pub const IdentityEndpoint = collector_cloudflare.IdentityEndpoint;
 pub const MembershipMutationArgs = collector_cloudflare.MembershipMutationArgs;
 pub const MembershipMutationEndpoint = collector_cloudflare.MembershipMutationEndpoint;
-pub const Output = collector_cloudflare.Output;
+pub const Output = core_output.Output;
 pub const SmartShieldHealthCheckReadEndpoint = collector_cloudflare.SmartShieldHealthCheckReadEndpoint;
 pub const UserTokenEndpoint = collector_cloudflare.UserTokenEndpoint;
 pub const UserTokenMutationArgs = collector_cloudflare.UserTokenMutationArgs;

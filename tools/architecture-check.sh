@@ -50,6 +50,16 @@ check_no_matches \
     src/app
 
 check_no_matches \
+    "app modules must not expose collector-owned Output types" \
+    'pub const Output = collector_' \
+    src/app
+
+check_no_matches \
+    "collector output container belongs in core/output.zig" \
+    'pub const Output = struct' \
+    src/collectors
+
+check_no_matches \
     "CLI modules must delegate through app modules, not provider or collector modules" \
     '@import\("(collector_[^"]+|provider_cloudflare|provider_hostinger|provider_cloudflare_models|provider_hostinger_models)"\)' \
     src/cli

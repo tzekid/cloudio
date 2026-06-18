@@ -8,6 +8,7 @@ pub const core = struct {
     pub const fs = @import("core_fs");
     pub const json = @import("core_json");
     pub const log = @import("core_log");
+    pub const output = @import("core_output");
     pub const process = @import("core_process");
     pub const redact = @import("core_redact");
     pub const time = @import("core_time");
@@ -59,6 +60,7 @@ test "facade exposes stable integration modules" {
     try std.testing.expectEqualStrings("0.1.0-poc", version);
     _ = core.config.Config;
     _ = core.fs.ensureParentDir;
+    _ = core.output.Output;
     _ = app.caddy.Context;
     _ = app.cloudflare.Context;
     _ = app.coverage.Summary;

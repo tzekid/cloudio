@@ -1,5 +1,6 @@
 const std = @import("std");
 const collector_hostinger = @import("collector_hostinger");
+const core_output = @import("core_output");
 const db_store = @import("db_store");
 const provider_hostinger = @import("provider_hostinger");
 
@@ -7,7 +8,7 @@ const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
 const Io = std.Io;
 
-pub const Output = collector_hostinger.Output;
+pub const Output = core_output.Output;
 pub const VmEndpoint = collector_hostinger.VmEndpoint;
 pub const VpsMutationEndpoint = provider_hostinger.VpsMutationEndpoint;
 pub const VpsMutationArgs = provider_hostinger.VpsMutationArgs;

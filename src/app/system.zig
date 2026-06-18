@@ -1,5 +1,6 @@
 const std = @import("std");
 const collector_system = @import("collector_system");
+const core_output = @import("core_output");
 const db_store = @import("db_store");
 
 const Allocator = std.mem.Allocator;
@@ -9,7 +10,7 @@ const Io = std.Io;
 const snapshot_limit = 12;
 const metric_limit = 30;
 
-pub const Output = collector_system.Output;
+pub const Output = core_output.Output;
 
 pub const Context = struct {
     io: Io,

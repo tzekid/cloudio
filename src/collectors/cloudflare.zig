@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const core_time = @import("core_time");
 const core_process = @import("core_process");
+const core_output = @import("core_output");
 const core_redact = @import("core_redact");
 const collector_capture = @import("collector_capture");
 const collector_capture_normalize = @import("collector_capture_normalize");
@@ -152,7 +153,7 @@ pub const ZoneMutationEndpoint = provider_cloudflare.ZoneMutationEndpoint;
 const max_command_bytes = 4 * 1024 * 1024;
 const runCommand = core_process.run;
 
-pub const Output = collector_capture.Output;
+pub const Output = core_output.Output;
 
 pub fn collectAll(io: Io, gpa: Allocator, auth: Auth, domains: []const []const u8, db: *Db) !void {
     var ips = try collectIps(io, gpa, db, null, false);

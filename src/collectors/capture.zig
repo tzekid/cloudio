@@ -1,4 +1,5 @@
 const std = @import("std");
+const core_output = @import("core_output");
 const core_redact = @import("core_redact");
 const db_store = @import("db_store");
 const net_http = @import("net_http");
@@ -6,13 +7,7 @@ const net_http = @import("net_http");
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
 
-pub const Output = struct {
-    text: ?[]u8 = null,
-
-    pub fn deinit(self: Output, allocator: Allocator) void {
-        if (self.text) |text| allocator.free(text);
-    }
-};
+pub const Output = core_output.Output;
 
 pub const ResponseCapture = struct {
     provider: []const u8,
@@ -106,7 +101,7 @@ pub fn skipped(gpa: Allocator, db: *Db, provider: []const u8, kind: []const u8, 
 }
 
 pub fn outputText(gpa: Allocator, capture_output: bool, text: []const u8) !Output {
-    return .{ .text = if (capture_output) try gpa.dupe(u8, text) else null };
+    return try core_output.maybeText(gpa, capture_output, text);
 }
 
 test "captures redacted provider response into snapshots and provider raw" {

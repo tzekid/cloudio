@@ -1,4 +1,5 @@
 const std = @import("std");
+const core_output = @import("core_output");
 const core_process = @import("core_process");
 const core_redact = @import("core_redact");
 const db_store = @import("db_store");
@@ -17,13 +18,7 @@ pub const Paths = struct {
     caddy_admin_socket: []const u8,
 };
 
-pub const Output = struct {
-    text: ?[]u8 = null,
-
-    pub fn deinit(self: Output, allocator: Allocator) void {
-        if (self.text) |text| allocator.free(text);
-    }
-};
+pub const Output = core_output.Output;
 
 pub const Site = struct {
     host: []const u8,

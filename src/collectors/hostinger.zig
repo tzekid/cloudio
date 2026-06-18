@@ -1,5 +1,6 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
+const core_output = @import("core_output");
 const db_store = @import("db_store");
 const net_http = @import("net_http");
 const collector_capture = @import("collector_capture");
@@ -55,7 +56,7 @@ const docker_project_detail_endpoints = [_]DockerEndpoint{
 };
 const max_hostinger_pages = 25;
 
-pub const Output = collector_capture.Output;
+pub const Output = core_output.Output;
 
 pub fn collectAll(io: Io, gpa: Allocator, token: ?[]const u8, domains: []const []const u8, db: *Db) !void {
     for (billing_endpoints) |endpoint| {

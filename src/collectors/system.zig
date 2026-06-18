@@ -1,4 +1,5 @@
 const std = @import("std");
+const core_output = @import("core_output");
 const core_process = @import("core_process");
 const core_redact = @import("core_redact");
 const db_store = @import("db_store");
@@ -9,13 +10,7 @@ const Db = db_store.Db;
 
 const max_command_bytes = 4 * 1024 * 1024;
 
-pub const Output = struct {
-    text: ?[]u8 = null,
-
-    pub fn deinit(self: Output, allocator: Allocator) void {
-        if (self.text) |text| allocator.free(text);
-    }
-};
+pub const Output = core_output.Output;
 
 pub fn collect(io: Io, gpa: Allocator, db: *Db) !void {
     try collectMetrics(io, gpa, db);

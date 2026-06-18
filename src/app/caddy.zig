@@ -1,12 +1,13 @@
 const std = @import("std");
 const collector_caddy = @import("collector_caddy");
+const core_output = @import("core_output");
 const db_store = @import("db_store");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
 const Io = std.Io;
 
-pub const Output = collector_caddy.Output;
+pub const Output = core_output.Output;
 pub const Paths = collector_caddy.Paths;
 
 pub const Context = struct {

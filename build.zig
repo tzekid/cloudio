@@ -22,6 +22,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const core_output_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/output.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const core_fs_mod = b.createModule(.{
         .root_source_file = b.path("src/core/fs.zig"),
         .target = target,
@@ -102,6 +107,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "net_http", .module = net_http_mod },
@@ -129,6 +135,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "core_process", .module = core_process_mod },
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -140,6 +147,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "core_process", .module = core_process_mod },
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -193,6 +201,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "core_process", .module = core_process_mod },
             .{ .name = "core_redact", .module = core_redact_mod },
@@ -223,6 +232,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "collector_capture", .module = collector_capture_mod },
             .{ .name = "collector_capture_normalize", .module = collector_capture_normalize_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -325,6 +335,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "collector_caddy", .module = collector_caddy_mod },
+            .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
     });
@@ -347,6 +358,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "collector_system", .module = collector_system_mod },
+            .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
     });
@@ -358,6 +370,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "collector_cloudflare", .module = collector_cloudflare_mod },
+            .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
         },
@@ -370,6 +383,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "collector_hostinger", .module = collector_hostinger_mod },
+            .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
         },
@@ -409,6 +423,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_fs", .module = core_fs_mod },
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "core_log", .module = core_log_mod },
+            .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "core_process", .module = core_process_mod },
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "core_time", .module = core_time_mod },
@@ -595,6 +610,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, core_fs_mod);
     addModuleTest(b, test_step, core_json_mod);
     addModuleTest(b, test_step, core_log_mod);
+    addModuleTest(b, test_step, core_output_mod);
     addModuleTest(b, test_step, core_process_mod);
     addModuleTest(b, test_step, core_redact_mod);
     addModuleTest(b, test_step, core_time_mod);
