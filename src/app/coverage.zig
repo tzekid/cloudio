@@ -2633,7 +2633,7 @@ fn workplanTagFamily(provider: []const u8, tag: []const u8) ?WorkplanFamily {
         if (tagContainsAny(tag, &.{"Access"})) return .access;
         if (tagContainsAny(tag, &.{"Tunnel"})) return .tunnels;
         if (tagContainsAny(tag, &.{ "Ruleset", "Rules List" })) return .rulesets;
-        if (tagContainsAny(tag, &.{"Log"})) return .logs;
+        if (cloudflareTagIsLogsFamily(tag)) return .logs;
         if (tagContainsAny(tag, &.{ "Cache", "Argo" })) return .cache;
         if (tagContainsAny(tag, &.{"Billing"})) return .billing;
         if (tagContainsAny(tag, &.{"Custom Pages"})) return .custom_pages;
@@ -2651,6 +2651,21 @@ fn tagContainsAny(tag: []const u8, needles: []const []const u8) bool {
         if (containsIgnoreCase(tag, needle)) return true;
     }
     return false;
+}
+
+fn cloudflareTagIsLogsFamily(tag: []const u8) bool {
+    return tagContainsAny(tag, &.{
+        "AI Gateway Logs",
+        "Audit Logs",
+        "Instant Logs",
+        "Log Explorer",
+        "Logcontrol",
+        "Logs",
+        "Logpush",
+        "Logs Received",
+        "VPC Flow logs",
+        "Worker Tail Logs",
+    });
 }
 
 fn workplanRoutesCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
@@ -4867,6 +4882,18 @@ test "aggregates provider coverage evidence by control-plane family" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"family\":\"docker\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"visible\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"omitted\":2") != null);
+}
+
+test "classifies Cloudflare logs without catalog or logo substring noise" {
+    try std.testing.expectEqual(@as(?WorkplanFamily, .logs), workplanTagFamily("cloudflare", "AI Gateway Logs"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .logs), workplanTagFamily("cloudflare", "Logpush jobs for a zone"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .logs), workplanTagFamily("cloudflare", "Logcontrol CMB config for an account"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .logs), workplanTagFamily("cloudflare", "Worker Tail Logs"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .logs), workplanTagFamily("cloudflare", "Magic Network Monitoring VPC Flow logs"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, null), workplanTagFamily("cloudflare", "Catalog Sync"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, null), workplanTagFamily("cloudflare", "R2 Catalog Management"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, null), workplanTagFamily("cloudflare", "logo_match"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, null), workplanTagFamily("cloudflare", "Changelog"));
 }
 
 test "audits L1 routability invariants across provider manifests" {

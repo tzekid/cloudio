@@ -1022,6 +1022,10 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "business_address",
         "userName",
         "default_usage_model",
+        "gateway_id",
+        "script_name",
+        "model",
+        "provider",
     };
     for (fields) |field_name| {
         if (core_json.fieldAnyString(gpa, item, field_name)) |value| return value;
@@ -1078,6 +1082,8 @@ fn resourceFlag(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldBool(item, "include_subdomains")) |include| return try gpa.dupe(u8, if (include) "include_subdomains" else "zone_only");
     if (core_json.fieldBool(item, "locked_on_deployment")) |locked| return try gpa.dupe(u8, if (locked) "locked_on_deployment" else "deployment_editable");
     if (core_json.fieldBool(item, "green_compute")) |enabled| return try gpa.dupe(u8, if (enabled) "green_compute" else "standard_compute");
+    if (core_json.fieldBool(item, "success")) |success| return try gpa.dupe(u8, if (success) "success" else "failed");
+    if (core_json.fieldBool(item, "allow_out_of_region_access")) |allowed| return try gpa.dupe(u8, if (allowed) "out_of_region_access_allowed" else "out_of_region_access_denied");
     return null;
 }
 
@@ -1198,6 +1204,9 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "subscription_id",
         "plan_id",
         "rate_plan_id",
+        "event_id",
+        "log_id",
+        "tail_id",
         "legacy_id",
         "custom_csr_id",
         "environment_id",
@@ -1248,6 +1257,8 @@ fn fallbackInventoryResourceId(gpa: Allocator, item: std.json.Value) !?[]u8 {
         core_json.field(item, "infrequentAccess") != null) return try gpa.dupe(u8, "r2-account-metrics");
     if (core_json.field(item, "business_name") != null or
         core_json.field(item, "business_email") != null) return try gpa.dupe(u8, "organization-profile");
+    if (core_json.field(item, "allow_out_of_region_access") != null or
+        core_json.field(item, "regions") != null) return try gpa.dupe(u8, "logs-cmb-config");
     if (core_json.field(item, "zone_defaults") != null) return try gpa.dupe(u8, "account-dns-settings");
     if (isDnsSettingsShape(item)) return try gpa.dupe(u8, "dns-settings");
     if (core_json.field(item, "nameservers") != null) return try gpa.dupe(u8, "nameservers");
@@ -1590,6 +1601,32 @@ test "parses typed Cloudflare account inventory rows from SCIM and settings shap
     const profile = try expectInventoryRow(rows.items, "organization-profile");
     try std.testing.expectEqualStrings("Plosca", profile.name orelse "");
     try std.testing.expectEqualStrings("ops@plosca.ru", profile.related_id orelse "");
+}
+
+test "parses typed Cloudflare log inventory rows from gateway, CMB, and tail shapes" {
+    const allocator = std.testing.allocator;
+    var rows = try parseInventoryRows(allocator, "cloudflare-log-inventory", "account", "acct-1",
+        \\{"result":[
+        \\  {"event_id":"evt-1","gateway_id":"gw-1","model":"@cf/meta/llama","provider":"workers-ai","success":true,"created_at":"2026-06-18T00:00:00Z"},
+        \\  {"allow_out_of_region_access":true,"regions":["ENAM"]},
+        \\  {"id":"tail-1","url":"wss://tail.example.test","expires_at":"2026-06-18T01:00:00Z"}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    const gateway_log = try expectInventoryRow(rows.items, "evt-1");
+    try std.testing.expectEqualStrings("gw-1", gateway_log.related_id orelse "");
+    try std.testing.expectEqualStrings("workers-ai", gateway_log.category orelse "");
+    try std.testing.expectEqualStrings("success", gateway_log.flag orelse "");
+    try std.testing.expectEqualStrings("2026-06-18T00:00:00Z", gateway_log.created_at orelse "");
+
+    const cmb = try expectInventoryRow(rows.items, "logs-cmb-config");
+    try std.testing.expectEqualStrings("out_of_region_access_allowed", cmb.flag orelse "");
+    try std.testing.expectEqualStrings("acct-1", cmb.account_id orelse "");
+
+    const tail = try expectInventoryRow(rows.items, "tail-1");
+    try std.testing.expectEqualStrings("wss://tail.example.test", tail.related_id orelse "");
+    try std.testing.expectEqualStrings("2026-06-18T01:00:00Z", tail.expires_at orelse "");
 }
 
 test "parses typed Cloudflare inventory rows from control plane nested shapes" {
