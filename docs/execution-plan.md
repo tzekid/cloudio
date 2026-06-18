@@ -44,7 +44,7 @@ The POC already has:
 - Generic route plan/read/capture/dry-run surfaces.
 - L0/L1/L2/L3 provider coverage review commands.
 - Broad Cloudflare and Hostinger inventory projections.
-- Caddy, system, project, overview, export, log, and doctor workflows.
+- Caddy, system, project, project-correlation, overview, export, log, and doctor workflows.
 - A public `cloudio.zig` facade that keeps collectors out of future embedding code.
 
 The current simplification slices added `src/app/render.zig` and migrated overview, inventory, Cloudflare, Hostinger, doctor, and run-log app read models away from repeated local JSON/text helpers.

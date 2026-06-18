@@ -20,6 +20,7 @@ zig build run -- overview --json
 zig build run -- inventory
 zig build run -- log
 zig build run -- log --json
+zig build run -- projects correlate --json
 ```
 
 Optional local config lives in `cloudio.local.toml` and is ignored by git:

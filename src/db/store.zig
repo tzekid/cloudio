@@ -166,6 +166,45 @@ pub const ProjectDetails = struct {
     }
 };
 
+pub const ProjectCorrelation = struct {
+    project: []u8,
+    source: []u8,
+    path: []u8,
+    host: []u8,
+    caddy_source: []u8,
+    upstream: []u8,
+    socket_state: []u8,
+    socket_process: []u8,
+    service: []u8,
+    service_state: []u8,
+    container: []u8,
+    container_status: []u8,
+
+    pub fn deinit(self: ProjectCorrelation, allocator: Allocator) void {
+        allocator.free(self.project);
+        allocator.free(self.source);
+        allocator.free(self.path);
+        allocator.free(self.host);
+        allocator.free(self.caddy_source);
+        allocator.free(self.upstream);
+        allocator.free(self.socket_state);
+        allocator.free(self.socket_process);
+        allocator.free(self.service);
+        allocator.free(self.service_state);
+        allocator.free(self.container);
+        allocator.free(self.container_status);
+    }
+};
+
+pub const ProjectCorrelations = struct {
+    items: []ProjectCorrelation,
+
+    pub fn deinit(self: *ProjectCorrelations, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const MetricRow = struct {
     metric: []u8,
     value: []u8,
@@ -913,6 +952,75 @@ pub const Db = struct {
         return try self.nameValueRows(gpa, "SELECT name, source FROM projects ORDER BY name LIMIT 200");
     }
 
+    pub fn projectCorrelations(self: *Db, gpa: Allocator, limit: i64) !ProjectCorrelations {
+        const stmt = try self.prepare(
+            \\WITH rows AS (
+            \\  SELECT p.name AS project,
+            \\         p.source AS source,
+            \\         COALESCE(p.path, '') AS path,
+            \\         COALESCE(NULLIF(p.host, ''), cu.host, '') AS host,
+            \\         COALESCE(NULLIF(p.upstream, ''), cu.upstream, '') AS upstream,
+            \\         COALESCE(p.service, '') AS service,
+            \\         COALESCE(p.container, '') AS container
+            \\  FROM projects p
+            \\  LEFT JOIN caddy_upstreams cu
+            \\    ON (p.host IS NOT NULL AND p.host != '' AND cu.host = p.host)
+            \\    OR (p.upstream IS NOT NULL AND p.upstream != '' AND cu.upstream = p.upstream)
+            \\  UNION ALL
+            \\  SELECT '' AS project,
+            \\         'caddy' AS source,
+            \\         '' AS path,
+            \\         cu.host AS host,
+            \\         cu.upstream AS upstream,
+            \\         '' AS service,
+            \\         '' AS container
+            \\  FROM caddy_upstreams cu
+            \\  WHERE NOT EXISTS (
+            \\    SELECT 1 FROM projects p
+            \\    WHERE (p.host IS NOT NULL AND p.host != '' AND p.host = cu.host)
+            \\       OR (p.upstream IS NOT NULL AND p.upstream != '' AND p.upstream = cu.upstream)
+            \\  )
+            \\)
+            \\SELECT rows.project,
+            \\       rows.source,
+            \\       rows.path,
+            \\       rows.host,
+            \\       COALESCE(cs.source_path, '') AS caddy_source,
+            \\       rows.upstream,
+            \\       COALESCE(sock.state, '') AS socket_state,
+            \\       COALESCE(sock.process, '') AS socket_process,
+            \\       rows.service,
+            \\       COALESCE(svc.state, '') AS service_state,
+            \\       rows.container,
+            \\       COALESCE(ct.status, '') AS container_status
+            \\FROM rows
+            \\LEFT JOIN caddy_sites cs ON cs.host = rows.host
+            \\LEFT JOIN sockets sock
+            \\  ON rows.upstream != ''
+            \\ AND (sock.local_address = rows.upstream OR rows.upstream LIKE '%' || sock.local_address)
+            \\LEFT JOIN services svc
+            \\  ON rows.service != ''
+            \\ AND svc.name = rows.service
+            \\LEFT JOIN containers ct
+            \\  ON rows.container != ''
+            \\ AND ct.name = rows.container
+            \\ORDER BY rows.project = '', rows.project, rows.host, rows.upstream
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 200));
+        var rows = std.ArrayList(ProjectCorrelation).empty;
+        errdefer deinitProjectCorrelationList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try projectCorrelationFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
     pub fn serviceList(self: *Db, gpa: Allocator) !NameValueRows {
         return try self.nameValueRows(gpa, "SELECT COALESCE(name,''), COALESCE(state,'') FROM services ORDER BY 1 LIMIT 200");
     }
@@ -1502,6 +1610,11 @@ fn deinitInventoryFacetList(rows: *std.ArrayList(InventoryFacet), allocator: All
     rows.deinit(allocator);
 }
 
+fn deinitProjectCorrelationList(rows: *std.ArrayList(ProjectCorrelation), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
 fn deinitMetricList(rows: *std.ArrayList(MetricRow), allocator: Allocator) void {
     for (rows.items) |row| row.deinit(allocator);
     rows.deinit(allocator);
@@ -1886,6 +1999,47 @@ fn projectDetailsFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !Pro
         .upstream = upstream,
         .service = service,
         .container = container,
+    };
+}
+
+fn projectCorrelationFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !ProjectCorrelation {
+    const project = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(project);
+    const source = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(source);
+    const path = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(path);
+    const host = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(host);
+    const caddy_source = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(caddy_source);
+    const upstream = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(upstream);
+    const socket_state = try dupeColumn(allocator, stmt, 6);
+    errdefer allocator.free(socket_state);
+    const socket_process = try dupeColumn(allocator, stmt, 7);
+    errdefer allocator.free(socket_process);
+    const service = try dupeColumn(allocator, stmt, 8);
+    errdefer allocator.free(service);
+    const service_state = try dupeColumn(allocator, stmt, 9);
+    errdefer allocator.free(service_state);
+    const container = try dupeColumn(allocator, stmt, 10);
+    errdefer allocator.free(container);
+    const container_status = try dupeColumn(allocator, stmt, 11);
+    errdefer allocator.free(container_status);
+    return .{
+        .project = project,
+        .source = source,
+        .path = path,
+        .host = host,
+        .caddy_source = caddy_source,
+        .upstream = upstream,
+        .socket_state = socket_state,
+        .socket_process = socket_process,
+        .service = service,
+        .service_state = service_state,
+        .container = container,
+        .container_status = container_status,
     };
 }
 

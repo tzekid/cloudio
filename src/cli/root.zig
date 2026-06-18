@@ -323,7 +323,7 @@ fn usage() void {
         \\  cloudio hostinger firewall <id>|template <id>|post-install-script <id>
         \\  cloudio caddy sites|upstreams|render|diff|validate
         \\  cloudio system summary|services|ports|containers|metrics|logs [unit]
-        \\  cloudio projects list|show <name>
+        \\  cloudio projects list|show <name>|correlate [--json|--format json]
         \\
     , .{version});
 }
