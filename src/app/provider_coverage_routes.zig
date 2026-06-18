@@ -1,9 +1,18 @@
 const std = @import("std");
+const app_provider_coverage_render = @import("app_provider_coverage_render");
 const core_json = @import("core_json");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const containsIgnoreCase = app_provider_coverage_render.containsIgnoreCase;
+const writeJsonBoolField = app_provider_coverage_render.writeJsonBoolField;
+const writeJsonCountField = app_provider_coverage_render.writeJsonCountField;
+const writeJsonField = app_provider_coverage_render.writeJsonField;
+const writeJsonNullableBoolField = app_provider_coverage_render.writeJsonNullableBoolField;
+const writeJsonNullableStringField = app_provider_coverage_render.writeJsonNullableStringField;
+const writeJsonStringArray = app_provider_coverage_render.writeJsonStringArray;
+const writeMaybeJsonComma = app_provider_coverage_render.writeMaybeJsonComma;
 
 const max_manifest_bytes = 8 * 1024 * 1024;
 
@@ -418,74 +427,6 @@ fn cloudflareTagIsLogsFamily(tag: []const u8) bool {
     });
 }
 
-fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (needle.len > haystack.len) return false;
-    var index: usize = 0;
-    while (index + needle.len <= haystack.len) : (index += 1) {
-        if (eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return true;
-    }
-    return false;
-}
-
-fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |left, right| {
-        if (std.ascii.toLower(left) != std.ascii.toLower(right)) return false;
-    }
-    return true;
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.print(":{d}", .{value});
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try writer.writeAll(if (value) "true" else "false");
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonNullableStringField(writer: anytype, name: []const u8, value: ?[]const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |text| {
-        try core_json.writeString(writer, text);
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonNullableBoolField(writer: anytype, name: []const u8, value: ?bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |flag| {
-        try writer.writeAll(if (flag) "true" else "false");
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
-    if (first.*) {
-        first.* = false;
-    } else {
-        try writer.writeByte(',');
-    }
-}
-
 pub fn writeRouteFilterJson(filter: RouteFilter, writer: anytype) !void {
     try writer.writeByte('{');
     try writeJsonField(writer, "provider", filter.provider.name(), true);
@@ -602,15 +543,6 @@ fn writeSecurityJson(security: provider_routes.Security, writer: anytype) !void 
         try writeJsonStringArray(writer, alternative.schemes);
     }
     try writer.writeAll("]}");
-}
-
-fn writeJsonStringArray(writer: anytype, values: anytype) !void {
-    try writer.writeByte('[');
-    for (values, 0..) |value, index| {
-        if (index != 0) try writer.writeByte(',');
-        try core_json.writeString(writer, value);
-    }
-    try writer.writeByte(']');
 }
 
 fn writeRouteDetail(writer: anytype, route: provider_routes.Route) !void {

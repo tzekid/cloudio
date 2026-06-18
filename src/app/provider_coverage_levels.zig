@@ -1,11 +1,15 @@
 const std = @import("std");
 const app_provider_coverage_candidates = @import("app_provider_coverage_candidates");
+const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
-const core_json = @import("core_json");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const containsIgnoreCase = app_provider_coverage_render.containsIgnoreCase;
+const writeJsonCountField = app_provider_coverage_render.writeJsonCountField;
+const writeJsonField = app_provider_coverage_render.writeJsonField;
+const writeMaybeJsonComma = app_provider_coverage_render.writeMaybeJsonComma;
 
 pub const Paths = provider_routes.Paths;
 pub const ProviderFilter = provider_routes.ProviderFilter;
@@ -566,45 +570,6 @@ fn isCloudflareTypedInventoryTag(tag: []const u8) bool {
         "SCIM",
         "Magic",
     });
-}
-
-fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (needle.len > haystack.len) return false;
-    var index: usize = 0;
-    while (index + needle.len <= haystack.len) : (index += 1) {
-        if (eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return true;
-    }
-    return false;
-}
-
-fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |left, right| {
-        if (std.ascii.toLower(left) != std.ascii.toLower(right)) return false;
-    }
-    return true;
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.print(":{d}", .{value});
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
-    if (first.*) {
-        first.* = false;
-    } else {
-        try writer.writeByte(',');
-    }
 }
 
 test "summarizes provider coverage levels from route manifests" {

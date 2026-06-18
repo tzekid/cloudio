@@ -1,9 +1,15 @@
 const std = @import("std");
+const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_workplan = @import("app_provider_coverage_workplan");
-const core_json = @import("core_json");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
+const writeJsonBoolField = app_provider_coverage_render.writeJsonBoolField;
+const writeJsonCountField = app_provider_coverage_render.writeJsonCountField;
+const writeJsonField = app_provider_coverage_render.writeJsonField;
+const writeJsonNullableStringField = app_provider_coverage_render.writeJsonNullableStringField;
+const writeMaybeJsonComma = app_provider_coverage_render.writeMaybeJsonComma;
+const writeShellArg = app_provider_coverage_render.writeShellArg;
 
 pub const WorkplanFamily = app_provider_coverage_workplan.WorkplanFamily;
 
@@ -215,57 +221,6 @@ fn familyIncludes(family: WorkplanFamily, row: anytype) bool {
 
 fn tagFamily(provider: []const u8, tag: []const u8) ?WorkplanFamily {
     return app_provider_coverage_workplan.tagFamily(provider, tag);
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.print(":{d}", .{value});
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try writer.writeAll(if (value) "true" else "false");
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonNullableStringField(writer: anytype, name: []const u8, value: ?[]const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |text| {
-        try core_json.writeString(writer, text);
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
-    if (first.*) {
-        first.* = false;
-    } else {
-        try writer.writeByte(',');
-    }
-}
-
-fn writeShellArg(writer: anytype, value: []const u8) !void {
-    try writer.writeByte('\'');
-    for (value) |byte| {
-        if (byte == '\'') {
-            try writer.writeAll("'\\''");
-        } else {
-            try writer.writeByte(byte);
-        }
-    }
-    try writer.writeByte('\'');
 }
 
 const TestEvidence = struct {

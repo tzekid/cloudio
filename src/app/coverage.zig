@@ -3,6 +3,7 @@ const app_provider_l1 = @import("app_provider_l1");
 const app_provider_coverage_candidates = @import("app_provider_coverage_candidates");
 const app_provider_coverage_families = @import("app_provider_coverage_families");
 const app_provider_coverage_levels = @import("app_provider_coverage_levels");
+const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_rollups = @import("app_provider_coverage_rollups");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
 const app_provider_coverage_typed_models = @import("app_provider_coverage_typed_models");
@@ -18,6 +19,17 @@ const provider_routes = @import("provider_routes");
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
 const Io = std.Io;
+const containsIgnoreCase = app_provider_coverage_render.containsIgnoreCase;
+const eqlIgnoreCase = app_provider_coverage_render.eqlIgnoreCase;
+const writeJsonBoolField = app_provider_coverage_render.writeJsonBoolField;
+const writeJsonCountField = app_provider_coverage_render.writeJsonCountField;
+const writeJsonField = app_provider_coverage_render.writeJsonField;
+const writeJsonNullableBoolField = app_provider_coverage_render.writeJsonNullableBoolField;
+const writeJsonNullableCountField = app_provider_coverage_render.writeJsonNullableCountField;
+const writeJsonNullableStringField = app_provider_coverage_render.writeJsonNullableStringField;
+const writeJsonStringArray = app_provider_coverage_render.writeJsonStringArray;
+const writeMaybeJsonComma = app_provider_coverage_render.writeMaybeJsonComma;
+const writeShellArg = app_provider_coverage_render.writeShellArg;
 
 const max_manifest_bytes = 8 * 1024 * 1024;
 const default_capture_max_pages = 25;
@@ -1055,13 +1067,6 @@ fn selectSingleRoute(routes: []const CoverageRoute) !CoverageRoute {
     if (routes.len == 0) return error.ProviderRoutePlanNotFound;
     if (routes.len != 1) return error.ProviderRoutePlanAmbiguous;
     return routes[0];
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 fn actualCaptureRouteFilter(filter: RouteFilter) RouteFilter {
@@ -2667,89 +2672,8 @@ fn writeRequiredParamNamesJson(writer: anytype, params: []const provider_routes.
     try writer.writeByte(']');
 }
 
-fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (needle.len > haystack.len) return false;
-    var index: usize = 0;
-    while (index + needle.len <= haystack.len) : (index += 1) {
-        if (eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return true;
-    }
-    return false;
-}
-
-fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |left, right| {
-        if (std.ascii.toLower(left) != std.ascii.toLower(right)) return false;
-    }
-    return true;
-}
-
 fn writeRouteFilterJson(filter: RouteFilter, writer: anytype) !void {
     try app_provider_coverage_routes.writeRouteFilterJson(filter, writer);
-}
-
-fn writeJsonStringArray(writer: anytype, values: anytype) !void {
-    try writer.writeByte('[');
-    for (values, 0..) |value, index| {
-        if (index != 0) try writer.writeByte(',');
-        try core_json.writeString(writer, value);
-    }
-    try writer.writeByte(']');
-}
-
-fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
-    if (first.*) {
-        first.* = false;
-    } else {
-        try writer.writeByte(',');
-    }
-}
-
-fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.print(":{d}", .{value});
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonNullableCountField(writer: anytype, name: []const u8, value: ?usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |count| {
-        try writer.print("{d}", .{count});
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try writer.writeAll(if (value) "true" else "false");
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonNullableStringField(writer: anytype, name: []const u8, value: ?[]const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |text| {
-        try core_json.writeString(writer, text);
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonNullableBoolField(writer: anytype, name: []const u8, value: ?bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |flag| {
-        try writer.writeAll(if (flag) "true" else "false");
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 fn writeStringList(writer: anytype, values: anytype) !void {
@@ -2761,18 +2685,6 @@ fn writeStringList(writer: anytype, values: anytype) !void {
         if (index != 0) try writer.writeByte(',');
         try writer.writeAll(value);
     }
-}
-
-fn writeShellArg(writer: anytype, value: []const u8) !void {
-    try writer.writeByte('\'');
-    for (value) |byte| {
-        if (byte == '\'') {
-            try writer.writeAll("'\\''");
-        } else {
-            try writer.writeByte(byte);
-        }
-    }
-    try writer.writeByte('\'');
 }
 
 test "lists route capture candidates for missing L2 read evidence" {

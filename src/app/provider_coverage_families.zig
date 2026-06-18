@@ -1,9 +1,12 @@
 const std = @import("std");
+const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_workplan = @import("app_provider_coverage_workplan");
-const core_json = @import("core_json");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
+const writeJsonCountField = app_provider_coverage_render.writeJsonCountField;
+const writeJsonField = app_provider_coverage_render.writeJsonField;
+const writeMaybeJsonComma = app_provider_coverage_render.writeMaybeJsonComma;
 
 pub const WorkplanFocus = app_provider_coverage_workplan.WorkplanFocus;
 pub const WorkplanFamily = app_provider_coverage_workplan.WorkplanFamily;
@@ -289,27 +292,6 @@ fn writeProviderEvidenceJson(evidence: ProviderEvidence, writer: anytype) !void 
     try writeJsonCountField(writer, "l3_generic_inventory_candidates", evidence.l3_generic_inventory_candidates, true);
     try writeJsonCountField(writer, "l3_typed_table_evidence", evidence.l3_typed_table_evidence, false);
     try writer.writeByte('}');
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.print(":{d}", .{value});
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
-    if (first.*) {
-        first.* = false;
-    } else {
-        try writer.writeByte(',');
-    }
 }
 
 const TestEvidence = struct {

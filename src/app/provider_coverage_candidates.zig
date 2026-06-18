@@ -1,4 +1,5 @@
 const std = @import("std");
+const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
 const app_provider_route_capture = @import("app_provider_route_capture");
 const core_json = @import("core_json");
@@ -7,6 +8,12 @@ const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const writeJsonBoolField = app_provider_coverage_render.writeJsonBoolField;
+const writeJsonCountField = app_provider_coverage_render.writeJsonCountField;
+const writeJsonField = app_provider_coverage_render.writeJsonField;
+const writeJsonNullableStringField = app_provider_coverage_render.writeJsonNullableStringField;
+const writeJsonStringArray = app_provider_coverage_render.writeJsonStringArray;
+const writeMaybeJsonComma = app_provider_coverage_render.writeMaybeJsonComma;
 
 pub const Paths = provider_routes.Paths;
 pub const RouteFilter = app_provider_coverage_routes.RouteFilter;
@@ -504,54 +511,6 @@ fn writeStringList(writer: anytype, values: anytype) !void {
     for (values, 0..) |value, index| {
         if (index != 0) try writer.writeByte(',');
         try writer.writeAll(value);
-    }
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.print(":{d}", .{value});
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try writer.writeAll(if (value) "true" else "false");
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonNullableStringField(writer: anytype, name: []const u8, value: ?[]const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |text| {
-        try core_json.writeString(writer, text);
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonStringArray(writer: anytype, values: anytype) !void {
-    try writer.writeByte('[');
-    for (values, 0..) |value, index| {
-        if (index != 0) try writer.writeByte(',');
-        try core_json.writeString(writer, value);
-    }
-    try writer.writeByte(']');
-}
-
-fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
-    if (first.*) {
-        first.* = false;
-    } else {
-        try writer.writeByte(',');
     }
 }
 
