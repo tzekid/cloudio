@@ -390,6 +390,17 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const app_provider_coverage_typed_models_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/provider_coverage_typed_models.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_provider_coverage_workplan", .module = app_provider_coverage_workplan_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+
     const app_coverage_mod = b.createModule(.{
         .root_source_file = b.path("src/app/coverage.zig"),
         .target = target,
@@ -398,6 +409,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_provider_l1", .module = app_provider_l1_mod },
             .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
             .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
+            .{ .name = "app_provider_coverage_typed_models", .module = app_provider_coverage_typed_models_mod },
             .{ .name = "app_provider_coverage_workplan", .module = app_provider_coverage_workplan_mod },
             .{ .name = "app_provider_route_capture", .module = app_provider_route_capture_mod },
             .{ .name = "app_provider_route_plan", .module = app_provider_route_plan_mod },
@@ -842,6 +854,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_provider_api_mod);
     addModuleTest(b, test_step, app_provider_l1_mod);
     addModuleTest(b, test_step, app_provider_coverage_candidates_mod);
+    addModuleTest(b, test_step, app_provider_coverage_typed_models_mod);
     addModuleTest(b, test_step, app_provider_coverage_workplan_mod);
     addModuleTest(b, test_step, app_provider_coverage_routes_mod);
     addModuleTest(b, test_step, app_provider_route_plan_mod);

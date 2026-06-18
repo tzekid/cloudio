@@ -2,6 +2,7 @@ const std = @import("std");
 const app_provider_l1 = @import("app_provider_l1");
 const app_provider_coverage_candidates = @import("app_provider_coverage_candidates");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
+const app_provider_coverage_typed_models = @import("app_provider_coverage_typed_models");
 const app_provider_coverage_workplan = @import("app_provider_coverage_workplan");
 const app_provider_route_capture = @import("app_provider_route_capture");
 const app_provider_route_plan = @import("app_provider_route_plan");
@@ -324,12 +325,7 @@ pub const WorkplanFamily = app_provider_coverage_workplan.WorkplanFamily;
 
 pub const WorkplanOptions = app_provider_coverage_workplan.WorkplanOptions;
 
-pub const TypedModelOptions = struct {
-    provider: ProviderFilter = .all,
-    family: WorkplanFamily = .all,
-    limit: usize = 25,
-    include_complete: bool = false,
-};
+pub const TypedModelOptions = app_provider_coverage_typed_models.TypedModelOptions;
 
 pub const LevelTagEvidence = struct {
     provider: []const u8,
@@ -1306,25 +1302,25 @@ pub fn writeFamiliesJsonFromText(gpa: Allocator, cloudflare_text: []const u8, ho
 pub fn writeTypedModelsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: TypedModelOptions, writer: anytype) !void {
     var report = try loadLevelTags(io, gpa, paths, options.provider);
     defer report.deinit(gpa);
-    try writeTypedModelsText(gpa, report.items, options, writer);
+    try app_provider_coverage_typed_models.writeText(gpa, report.items, options, writer);
 }
 
 pub fn writeTypedModelsJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: TypedModelOptions, writer: anytype) !void {
     var report = try loadLevelTags(io, gpa, paths, options.provider);
     defer report.deinit(gpa);
-    try writeTypedModelsJson(gpa, report.items, options, writer);
+    try app_provider_coverage_typed_models.writeJson(gpa, report.items, options, writer);
 }
 
 pub fn writeTypedModelsTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: TypedModelOptions, writer: anytype) !void {
     var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
     defer report.deinit(gpa);
-    try writeTypedModelsText(gpa, report.items, options, writer);
+    try app_provider_coverage_typed_models.writeText(gpa, report.items, options, writer);
 }
 
 pub fn writeTypedModelsJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: TypedModelOptions, writer: anytype) !void {
     var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
     defer report.deinit(gpa);
-    try writeTypedModelsJson(gpa, report.items, options, writer);
+    try app_provider_coverage_typed_models.writeJson(gpa, report.items, options, writer);
 }
 
 pub fn writeWorkplanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions, writer: anytype) !void {
@@ -3332,187 +3328,6 @@ fn writeFamilyRowJson(row: FamilyEvidence, writer: anytype) !void {
     try writer.writeAll(" --family ");
     try writer.writeAll(row.family.name());
     try writer.writeAll(" --limit 25\"}]}");
-}
-
-fn writeTypedModelsText(gpa: Allocator, rows: []LevelTagEvidence, options: TypedModelOptions, writer: anytype) !void {
-    std.mem.sort(LevelTagEvidence, rows, {}, typedModelLessThan);
-    try writer.writeAll("Cloudio typed model candidates\n");
-    try writer.writeAll("evidence: L3 generic inventory rows with missing or thin typed-table projections\n");
-    try writer.writeAll("rank: typed_gap + generic_inventory_candidates, grouped by provider family\n");
-    try writer.print("filter={s} family={s}", .{ options.provider.name(), options.family.name() });
-    if (options.include_complete) try writer.writeAll(" include_complete=true");
-    try writer.writeAll(" limit=");
-    if (options.limit == 0) {
-        try writer.writeAll("all\n");
-    } else {
-        try writer.print("{d}\n", .{options.limit});
-    }
-
-    var visible: usize = 0;
-    var omitted: usize = 0;
-    var hidden_complete: usize = 0;
-    var hidden_family: usize = 0;
-    for (rows) |row| {
-        if (!workplanFamilyIncludes(options.family, row)) {
-            if (row.evidence.l3_generic_inventory_candidates != 0) hidden_family += 1;
-            continue;
-        }
-        if (row.evidence.l3_generic_inventory_candidates == 0) continue;
-        if (!options.include_complete and typedModelGap(row) == 0) {
-            hidden_complete += 1;
-            continue;
-        }
-        if (options.limit != 0 and visible >= options.limit) {
-            omitted += 1;
-            continue;
-        }
-        visible += 1;
-        try writeTypedModelTextRow(gpa, row, writer);
-    }
-
-    if (visible == 0) {
-        try writer.writeAll("no typed model candidates for filter\n");
-    } else {
-        if (omitted != 0) try writer.print("omitted={d}\n", .{omitted});
-        if (hidden_family != 0) try writer.print("family_filtered_rows_hidden={d}\n", .{hidden_family});
-        if (hidden_complete != 0) try writer.print("typed_or_complete_rows_hidden={d}\n", .{hidden_complete});
-    }
-}
-
-fn writeTypedModelsJson(gpa: Allocator, rows: []LevelTagEvidence, options: TypedModelOptions, writer: anytype) !void {
-    std.mem.sort(LevelTagEvidence, rows, {}, typedModelLessThan);
-    try writer.writeByte('{');
-    try writeJsonField(writer, "kind", "coverage_typed_model_candidates", true);
-    try writeJsonField(writer, "filter", options.provider.name(), true);
-    try writeJsonField(writer, "family", options.family.name(), true);
-    try writeJsonCountField(writer, "limit", options.limit, true);
-    try writeJsonBoolField(writer, "include_complete", options.include_complete, true);
-    try writeJsonField(writer, "evidence", "L3 generic inventory rows with missing or thin typed-table projections", true);
-    try writeJsonField(writer, "rank", "typed_gap + generic_inventory_candidates, grouped by provider family", true);
-    try writer.writeAll("\"items\":[");
-
-    var visible: usize = 0;
-    var omitted: usize = 0;
-    var hidden_complete: usize = 0;
-    var hidden_family: usize = 0;
-    var first = true;
-    for (rows) |row| {
-        if (!workplanFamilyIncludes(options.family, row)) {
-            if (row.evidence.l3_generic_inventory_candidates != 0) hidden_family += 1;
-            continue;
-        }
-        if (row.evidence.l3_generic_inventory_candidates == 0) continue;
-        if (!options.include_complete and typedModelGap(row) == 0) {
-            hidden_complete += 1;
-            continue;
-        }
-        if (options.limit != 0 and visible >= options.limit) {
-            omitted += 1;
-            continue;
-        }
-        visible += 1;
-        try writeMaybeJsonComma(writer, &first);
-        try writeTypedModelJsonRow(gpa, row, writer);
-    }
-
-    try writer.writeAll("],");
-    try writeJsonCountField(writer, "visible", visible, true);
-    try writeJsonCountField(writer, "omitted", omitted, true);
-    try writeJsonCountField(writer, "family_filtered_rows_hidden", hidden_family, true);
-    try writeJsonCountField(writer, "typed_or_complete_rows_hidden", hidden_complete, false);
-    try writer.writeByte('}');
-    try writer.writeByte('\n');
-}
-
-fn writeTypedModelTextRow(gpa: Allocator, row: LevelTagEvidence, writer: anytype) !void {
-    const family = workplanTagFamily(row.provider, row.tag);
-    try writer.print("{s} | {s}: typed_gap={d} L3_generic={d} typed={d} L2_read_evidence={d} family={s}\n", .{
-        row.provider,
-        row.tag,
-        typedModelGap(row),
-        row.evidence.l3_generic_inventory_candidates,
-        row.evidence.l3_typed_table_evidence,
-        row.evidence.l2_read_evidence,
-        if (family) |value| value.name() else "-",
-    });
-    const routes = try typedModelRoutesCommand(gpa, row);
-    defer gpa.free(routes);
-    try writer.print("  routes: {s}\n", .{routes});
-    const workplan = try typedModelWorkplanCommand(gpa, row);
-    defer gpa.free(workplan);
-    try writer.print("  review-bundle: {s}\n", .{workplan});
-}
-
-fn writeTypedModelJsonRow(gpa: Allocator, row: LevelTagEvidence, writer: anytype) !void {
-    const family = workplanTagFamily(row.provider, row.tag);
-    try writer.writeByte('{');
-    try writeJsonField(writer, "provider", row.provider, true);
-    try writeJsonField(writer, "tag", row.tag, true);
-    try writeJsonNullableStringField(writer, "focus_family", if (family) |value| value.name() else null, true);
-    try writeJsonCountField(writer, "typed_gap", typedModelGap(row), true);
-    try writeJsonCountField(writer, "l3_generic_inventory_candidates", row.evidence.l3_generic_inventory_candidates, true);
-    try writeJsonCountField(writer, "l3_typed_table_evidence", row.evidence.l3_typed_table_evidence, true);
-    try writeJsonCountField(writer, "l2_read_evidence", row.evidence.l2_read_evidence, true);
-    try writeJsonField(writer, "status", if (typedModelGap(row) == 0) "typed" else "candidate", true);
-    try writer.writeAll("\"commands\":[");
-    var first = true;
-    const routes = try typedModelRoutesCommand(gpa, row);
-    defer gpa.free(routes);
-    try writeWorkplanCommandJson(writer, &first, "routes_detail", routes);
-    const workplan = try typedModelWorkplanCommand(gpa, row);
-    defer gpa.free(workplan);
-    try writeWorkplanCommandJson(writer, &first, "review_bundle", workplan);
-    try writer.writeAll("]}");
-}
-
-fn typedModelRoutesCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    try out.writer.print("cloudio coverage routes {s} ", .{row.provider});
-    try writeShellArg(&out.writer, row.tag);
-    try out.writer.writeAll(" --support partial --mode read --detail");
-    return try out.toOwnedSlice();
-}
-
-fn typedModelWorkplanCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    try out.writer.print("cloudio coverage workplan {s}", .{row.provider});
-    if (workplanTagFamily(row.provider, row.tag)) |family| {
-        try out.writer.print(" --family {s}", .{family.name()});
-    }
-    try out.writer.writeAll(" --limit 5 --candidate-limit 10 --bundle --plans --json");
-    return try out.toOwnedSlice();
-}
-
-fn typedModelGap(row: LevelTagEvidence) usize {
-    if (row.evidence.l3_generic_inventory_candidates <= row.evidence.l3_typed_table_evidence) return 0;
-    return row.evidence.l3_generic_inventory_candidates - row.evidence.l3_typed_table_evidence;
-}
-
-fn typedModelLessThan(_: void, lhs: LevelTagEvidence, rhs: LevelTagEvidence) bool {
-    const lhs_gap = typedModelGap(lhs);
-    const rhs_gap = typedModelGap(rhs);
-    if (lhs_gap != rhs_gap) return lhs_gap > rhs_gap;
-    if (lhs.evidence.l3_generic_inventory_candidates != rhs.evidence.l3_generic_inventory_candidates) {
-        return lhs.evidence.l3_generic_inventory_candidates > rhs.evidence.l3_generic_inventory_candidates;
-    }
-    if (lhs.evidence.l3_typed_table_evidence != rhs.evidence.l3_typed_table_evidence) {
-        return lhs.evidence.l3_typed_table_evidence < rhs.evidence.l3_typed_table_evidence;
-    }
-    const lhs_family = workplanTagFamily(lhs.provider, lhs.tag);
-    const rhs_family = workplanTagFamily(rhs.provider, rhs.tag);
-    const lhs_family_name = if (lhs_family) |family| family.name() else "";
-    const rhs_family_name = if (rhs_family) |family| family.name() else "";
-    const provider_order = std.mem.order(u8, lhs.provider, rhs.provider);
-    if (provider_order != .eq) return provider_order == .lt;
-    const family_order = std.mem.order(u8, lhs_family_name, rhs_family_name);
-    if (family_order != .eq) return family_order == .lt;
-    return std.mem.order(u8, lhs.tag, rhs.tag) == .lt;
-}
-
-fn writeWorkplanCommandJson(writer: anytype, first: *bool, kind: []const u8, command: []const u8) !void {
-    try app_provider_coverage_workplan.writeCommandJson(writer, first, kind, command);
 }
 
 fn workplanFocusIncludes(focus: WorkplanFocus, row: LevelTagEvidence) bool {
