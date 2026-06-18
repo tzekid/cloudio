@@ -42,10 +42,18 @@ pub const Client = struct {
     }
 
     pub fn callReadRouteRequest(self: Client, io: Io, gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) !net_http.Response {
+        return try self.callReadRouteRequestWithPolicy(io, gpa, route, request, false);
+    }
+
+    pub fn callDiagnosticReadRouteRequest(self: Client, io: Io, gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) !net_http.Response {
+        return try self.callReadRouteRequestWithPolicy(io, gpa, route, request, true);
+    }
+
+    fn callReadRouteRequestWithPolicy(self: Client, io: Io, gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request, include_blocked_diagnostic: bool) !net_http.Response {
         if (route.provider != self.provider()) return error.ProviderRouteAuthMismatch;
         if (!route.isRoutable()) return error.UnsupportedProviderRoute;
         if (route.method != .GET or route.mode != .read) return error.ProviderRouteRequiresDryRun;
-        if (!routeSupportAllowsLiveRead(route)) return error.UnsupportedProviderRoute;
+        if (!routeSupportAllowsLiveRead(route) and !(include_blocked_diagnostic and routeSupportAllowsBlockedDiagnosticRead(route))) return error.UnsupportedProviderRoute;
         if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
         try route.validateRequestHeaders(request);
         try validateRouteAuth(route, self.auth);
@@ -82,6 +90,11 @@ pub const Client = struct {
 
     pub fn callReadRouteResultRequest(self: Client, io: Io, gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) !ReadRouteResult {
         const response = try self.callReadRouteRequest(io, gpa, route, request);
+        return matchReadRouteResponse(route, response);
+    }
+
+    pub fn callDiagnosticReadRouteResultRequest(self: Client, io: Io, gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) !ReadRouteResult {
+        const response = try self.callDiagnosticReadRouteRequest(io, gpa, route, request);
         return matchReadRouteResponse(route, response);
     }
 
@@ -330,6 +343,9 @@ fn writeDispatchField(writer: anytype, name: []const u8, route: provider_routes.
     try writer.writeAll("\"live_call_supported\":");
     try writer.writeAll(if (routeLiveCallSupported(route)) "true" else "false");
     try writer.writeByte(',');
+    try writer.writeAll("\"diagnostic_read_supported\":");
+    try writer.writeAll(if (routeDiagnosticReadSupported(route)) "true" else "false");
+    try writer.writeByte(',');
     try writer.writeAll("\"dry_run_supported\":");
     try writer.writeAll(if (routeDryRunSupported(route)) "true" else "false");
     try writer.writeByte('}');
@@ -440,6 +456,10 @@ pub fn routeLiveCallSupported(route: provider_routes.Route) bool {
     return routeSupportAllowsLiveRead(route) and route.isRoutable() and route.mode == .read and route.method == .GET and !route.request_body.required and cloudioSupportsRouteAuth(route);
 }
 
+pub fn routeDiagnosticReadSupported(route: provider_routes.Route) bool {
+    return routeSupportAllowsBlockedDiagnosticRead(route) and route.isRoutable() and route.mode == .read and route.method == .GET and !route.request_body.required and cloudioSupportsRouteAuth(route);
+}
+
 pub fn routeDryRunSupported(route: provider_routes.Route) bool {
     return route.isRoutable() and route.isDryRunMutation();
 }
@@ -449,6 +469,10 @@ fn routeSupportAllowsLiveRead(route: provider_routes.Route) bool {
         .planned, .partial, .implemented => true,
         .blocked_permission, .unsafe_mutation, .deprecated, .not_applicable => false,
     };
+}
+
+fn routeSupportAllowsBlockedDiagnosticRead(route: provider_routes.Route) bool {
+    return route.support == .blocked_permission;
 }
 
 fn cloudflareSecurityAcceptsApiToken(security: provider_routes.Security) bool {
@@ -573,7 +597,7 @@ test "generic dispatch plans bodyless read routes without executing HTTP" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path\":\"/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"url\":\"https://developers.hostinger.com/api/vps/v1/virtual-machines/123/metrics?date_from=2026-06-16T00%3A00%3A00Z&date_to=2026-06-17T00%3A00%3A00Z\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"apiToken\"]]}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dispatch\":{\"live_call_supported\":true,\"dry_run_supported\":false}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dispatch\":{\"live_call_supported\":true,\"diagnostic_read_supported\":false,\"dry_run_supported\":false}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"path_param_shapes\":[{\"name\":\"virtualMachineId\",\"required\":true,\"style\":null,\"explode\":null,\"schema\":{\"schema_refs\":[],\"types\":[\"integer\"],\"formats\":[],\"enum_values\":[]}}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"query_param_shapes\":[{\"name\":\"date_from\",\"required\":true,\"style\":null,\"explode\":null,\"schema\":{\"schema_refs\":[],\"types\":[\"string\"],\"formats\":[\"date-time\"],\"enum_values\":[]}}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"read\"") != null);
@@ -599,7 +623,7 @@ test "generic dispatch route planner keeps mutation plans dry-run only" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"worker-assets-upload\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"mode\":\"dry_run\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":true,\"cloudio_supported\":false,\"alternatives\":[[\"assets_jwt\"]]}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dispatch\":{\"live_call_supported\":false,\"dry_run_supported\":true}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dispatch\":{\"live_call_supported\":false,\"diagnostic_read_supported\":false,\"dry_run_supported\":true}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 
@@ -871,6 +895,7 @@ test "generic dispatch plans but does not execute policy-blocked read routes" {
     var blocked_route = route;
     blocked_route.support = .blocked_permission;
     try std.testing.expect(!routeLiveCallSupported(blocked_route));
+    try std.testing.expect(routeDiagnosticReadSupported(blocked_route));
 
     const request = provider_routes.Request{
         .path_params = &.{
@@ -883,12 +908,15 @@ test "generic dispatch plans but does not execute policy-blocked read routes" {
     const plan = try planRouteJsonRequest(allocator, blocked_route, request);
     defer allocator.free(plan);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"support\":\"blocked_permission\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dispatch\":{\"live_call_supported\":false,\"dry_run_supported\":false}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dispatch\":{\"live_call_supported\":false,\"diagnostic_read_supported\":true,\"dry_run_supported\":false}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "Cloudio will not execute it live with the current support policy") != null);
 
     const client = Client.init(.{ .cloudflare = .{ .token = "test-token" } });
     try std.testing.expectError(error.UnsupportedProviderRoute, client.callReadRouteRequest(std.testing.io, allocator, blocked_route, request));
+
+    const missing_auth_client = Client.init(.{ .cloudflare = .{} });
+    try std.testing.expectError(error.MissingCloudflareAuth, missing_auth_client.callDiagnosticReadRouteRequest(std.testing.io, allocator, blocked_route, request));
 }
 
 test "generic dispatch validates Cloudflare auth scheme compatibility before HTTP" {
@@ -911,7 +939,7 @@ test "generic dispatch validates Cloudflare auth scheme compatibility before HTT
     );
     defer allocator.free(bearer_plan);
     try std.testing.expect(std.mem.indexOf(u8, bearer_plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"bearerAuth\"]]}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bearer_plan, "\"dispatch\":{\"live_call_supported\":true,\"dry_run_supported\":false}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bearer_plan, "\"dispatch\":{\"live_call_supported\":true,\"diagnostic_read_supported\":false,\"dry_run_supported\":false}") != null);
 
     const assets_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
     defer assets_route.deinit(allocator);

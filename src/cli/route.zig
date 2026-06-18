@@ -50,6 +50,7 @@ const ParsedCaptureArgs = struct {
     target: ?[]const u8,
     paginate: bool = false,
     max_pages: usize = 25,
+    diagnostic_read: bool = false,
 
     fn deinit(self: ParsedCaptureArgs, gpa: Allocator) void {
         gpa.free(self.plan_args);
@@ -98,6 +99,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
                 .target = capture_args.target,
                 .paginate = capture_args.paginate,
                 .max_pages = capture_args.max_pages,
+                .diagnostic_read = capture_args.diagnostic_read,
             },
         ) catch |err| {
             std.debug.print("route capture failed: {s}\n", .{@errorName(err)});
@@ -175,6 +177,8 @@ fn parseCaptureReadyArgs(args: []const []const u8) !ParsedCaptureReadyArgs {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--execute")) {
             parsed.options.execute = true;
+        } else if (std.mem.eql(u8, arg, "--include-blocked") or std.mem.eql(u8, arg, "--diagnostic-blocked")) {
+            parsed.options.include_blocked = true;
         } else if (std.mem.eql(u8, arg, "--dry-run") or std.mem.eql(u8, arg, "--plan-only")) {
             parsed.options.execute = false;
         } else if (try parseCaptureReadyValue(args, &index, .{"--limit"})) |value| {
@@ -218,12 +222,15 @@ fn parseCaptureArgs(gpa: Allocator, args: []const []const u8) !ParsedCaptureArgs
     var target: ?[]const u8 = null;
     var paginate = false;
     var max_pages: usize = 25;
+    var diagnostic_read = false;
 
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--paginate")) {
             paginate = true;
+        } else if (std.mem.eql(u8, arg, "--diagnostic")) {
+            diagnostic_read = true;
         } else if (try cli_args.parsePositiveUsizeArg(args, &index, .{"--max-pages"}, error.MissingRouteCaptureOptionValue, error.InvalidRouteCaptureMaxPages)) |value| {
             max_pages = value;
         } else if (try cli_args.parseRequiredValueArg(args, &index, .{ "--kind", "--snapshot-kind" }, error.MissingRouteCaptureOptionValue)) |value| {
@@ -241,6 +248,7 @@ fn parseCaptureArgs(gpa: Allocator, args: []const []const u8) !ParsedCaptureArgs
         .target = target,
         .paginate = paginate,
         .max_pages = max_pages,
+        .diagnostic_read = diagnostic_read,
     };
 }
 
@@ -249,8 +257,8 @@ fn usage() void {
         \\Usage:
         \\  cloudio route plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\  cloudio route read <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value]
-        \\  cloudio route capture <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--kind <snapshot-kind>] [--target <snapshot-target>] [--paginate] [--max-pages <n>]
-        \\  cloudio route capture-ready <cloudflare|hostinger> [tag-query] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--execute]
+        \\  cloudio route capture <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--kind <snapshot-kind>] [--target <snapshot-target>] [--paginate] [--max-pages <n>] [--diagnostic]
+        \\  cloudio route capture-ready <cloudflare|hostinger> [tag-query] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--include-blocked] [--execute]
         \\  cloudio route dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\
     , .{});
@@ -279,6 +287,7 @@ test "route capture-ready parser builds provider family execution options" {
         "3",
         "--operation",
         "VPS_getBackupsV1",
+        "--include-blocked",
         "--execute",
     };
     const parsed = try parseCaptureReadyArgs(args[0..]);
@@ -287,6 +296,7 @@ test "route capture-ready parser builds provider family execution options" {
     try std.testing.expectEqualStrings("VPS_getBackupsV1", parsed.options.filter.operation_id orelse "");
     try std.testing.expectEqual(@as(usize, 0), parsed.options.limit);
     try std.testing.expectEqual(@as(usize, 3), parsed.options.max_pages);
+    try std.testing.expect(parsed.options.include_blocked);
     try std.testing.expect(parsed.options.execute);
 
     const tag_args = [_][]const u8{ "cloudflare", "Logs", "--support=partial", "--plan-only" };
@@ -312,6 +322,7 @@ test "route capture parser separates snapshot labels from route request argument
         "route-vps-metrics",
         "--paginate",
         "--max-pages=3",
+        "--diagnostic",
         "--query-param=date_from=2026-06-16T00:00:00Z",
     };
     const parsed = try parseCaptureArgs(allocator, args[0..]);
@@ -320,6 +331,7 @@ test "route capture parser separates snapshot labels from route request argument
     try std.testing.expectEqualStrings("vps-123", parsed.target orelse "");
     try std.testing.expect(parsed.paginate);
     try std.testing.expectEqual(@as(usize, 3), parsed.max_pages);
+    try std.testing.expect(parsed.diagnostic_read);
     try std.testing.expectEqual(@as(usize, 5), parsed.plan_args.len);
     try std.testing.expectEqualStrings("hostinger", parsed.plan_args[0]);
     try std.testing.expectEqualStrings("--operation=VPS_getMetricsV1", parsed.plan_args[1]);

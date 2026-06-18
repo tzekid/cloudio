@@ -48,6 +48,7 @@ pub const CaptureOptions = struct {
     target: ?[]const u8 = null,
     paginate: bool = false,
     max_pages: usize = default_capture_max_pages,
+    diagnostic_read: bool = false,
 };
 pub const DbHandle = Db;
 
@@ -791,6 +792,7 @@ pub const ActualReadyCaptureOptions = struct {
     limit: usize = 25,
     max_pages: usize = default_capture_max_pages,
     execute: bool = false,
+    include_blocked: bool = false,
     configured_domains: []const []const u8 = &.{},
 };
 
@@ -1933,7 +1935,7 @@ pub fn routeCaptureReadMetadataJson(io: Io, gpa: Allocator, paths: Paths, input:
     const route = try selectSingleRoute(routes.items);
     const client = provider_dispatch.Client.init(auth);
     if (options.paginate) return try capturePaginatedRouteReadMetadataJson(io, gpa, db, client, route.route, input.request, options);
-    const result = try client.callReadRouteResultRequest(io, gpa, route.route, input.request);
+    const result = try callCaptureReadRouteResultRequest(io, gpa, client, route.route, input.request, options);
     defer result.deinit(gpa);
     return try captureRouteReadResultJson(gpa, db, route.route, input.request, result, options);
 }
@@ -1981,7 +1983,7 @@ fn capturePagePaginatedRouteReadMetadataJson(io: Io, gpa: Allocator, db: *Db, cl
     while (page <= max_pages) : (page += 1) {
         const page_request = try requestWithPage(gpa, request, page);
         defer page_request.deinit(gpa);
-        const result = try client.callReadRouteResultRequest(io, gpa, route, page_request.request);
+        const result = try callCaptureReadRouteResultRequest(io, gpa, client, route, page_request.request, options);
         defer result.deinit(gpa);
         const captured = try captureRouteReadPageResult(gpa, db, route, page_request.request, result, options, .{ .page = page });
         pages.append(gpa, captured) catch |err| {
@@ -2015,7 +2017,7 @@ fn captureCursorPaginatedRouteReadMetadataJson(io: Io, gpa: Allocator, db: *Db, 
             break :blk owned_request.?.request;
         } else request;
 
-        const result = try client.callReadRouteResultRequest(io, gpa, route, effective_request);
+        const result = try callCaptureReadRouteResultRequest(io, gpa, client, route, effective_request, options);
         defer result.deinit(gpa);
         const captured = try captureRouteReadPageResult(gpa, db, route, effective_request, result, options, .{ .cursor = page_index });
         pages.append(gpa, captured) catch |err| {
@@ -2034,6 +2036,11 @@ fn captureCursorPaginatedRouteReadMetadataJson(io: Io, gpa: Allocator, db: *Db, 
     }
 
     return try routePaginatedCaptureMetadataJson(gpa, route, pages.items, max_pages);
+}
+
+fn callCaptureReadRouteResultRequest(io: Io, gpa: Allocator, client: provider_dispatch.Client, route: provider_routes.Route, request: Request, options: CaptureOptions) !provider_dispatch.ReadRouteResult {
+    if (options.diagnostic_read) return try client.callDiagnosticReadRouteResultRequest(io, gpa, route, request);
+    return try client.callReadRouteResultRequest(io, gpa, route, request);
 }
 
 fn captureRouteReadPageResult(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, result: provider_dispatch.ReadRouteResult, options: CaptureOptions, page_ref: ?CapturePageRef) !CapturedRoutePage {
@@ -2435,7 +2442,19 @@ fn actualLatestAtLessThan(current: []const u8, candidate: []const u8) bool {
 }
 
 fn actualCaptureReady(route: provider_routes.Route, hints: ActualCaptureHints) bool {
-    return provider_dispatch.routeLiveCallSupported(route) and actualCaptureMissingInputCount(route, hints) == 0;
+    return actualCaptureReadyWithPolicy(route, hints, false);
+}
+
+fn actualCaptureReadyWithPolicy(route: provider_routes.Route, hints: ActualCaptureHints, include_blocked: bool) bool {
+    return actualCaptureRouteExecutable(route, include_blocked) and actualCaptureMissingInputCount(route, hints) == 0;
+}
+
+fn actualCaptureRouteExecutable(route: provider_routes.Route, include_blocked: bool) bool {
+    return provider_dispatch.routeLiveCallSupported(route) or (include_blocked and provider_dispatch.routeDiagnosticReadSupported(route));
+}
+
+fn actualCaptureUsesDiagnosticRead(route: provider_routes.Route, include_blocked: bool) bool {
+    return include_blocked and !provider_dispatch.routeLiveCallSupported(route) and provider_dispatch.routeDiagnosticReadSupported(route);
 }
 
 fn actualCaptureMissingInputCount(route: provider_routes.Route, hints: ActualCaptureHints) usize {
@@ -3074,6 +3093,7 @@ fn writeActualCaptureCandidateJson(
     try writer.writeByte(',');
     try writeJsonBoolField(writer, "ready", actualCaptureReady(route, hints), true);
     try writeJsonBoolField(writer, "live_read_supported", provider_dispatch.routeLiveCallSupported(route), true);
+    try writeJsonBoolField(writer, "diagnostic_read_supported", provider_dispatch.routeDiagnosticReadSupported(route), true);
     try writer.writeAll("\"missing_inputs\":");
     try writeActualMissingInputsJson(writer, route, hints);
     try writer.writeByte(',');
@@ -3102,6 +3122,7 @@ fn actualCaptureCommand(gpa: Allocator, route: provider_routes.Route, hints: Act
     try writeActualQueryParams(gpa, writer, route, hints);
     try writeActualRequiredParamPlaceholders(writer, "--header-param", route.header_params);
     if (routePaginationKind(route) != null) try writer.writeAll(" --paginate");
+    if (provider_dispatch.routeDiagnosticReadSupported(route)) try writer.writeAll(" --diagnostic");
     return try out.toOwnedSlice();
 }
 
@@ -3180,7 +3201,7 @@ fn actualReadyCaptureJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, plan: Act
         const state = actualCaptureState(row.route, plan.captures.items) orelse continue;
         if (state == .ok) continue;
         summary.candidate_routes += 1;
-        if (!actualCaptureReady(row.route, hints)) {
+        if (!actualCaptureReadyWithPolicy(row.route, hints, options.include_blocked)) {
             summary.skipped_unready += 1;
             continue;
         }
@@ -3208,6 +3229,7 @@ fn actualReadyCaptureJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, plan: Act
     try writer.writeByte('{');
     try writeJsonField(writer, "kind", "actual_ready_capture_run", true);
     try writeJsonBoolField(writer, "execute", options.execute, true);
+    try writeJsonBoolField(writer, "include_blocked", options.include_blocked, true);
     try writer.writeAll("\"filter\":");
     try writeRouteFilterJson(actualCaptureRouteFilter(options.filter), writer);
     try writer.writeByte(',');
@@ -3256,6 +3278,8 @@ fn writeActualReadyCaptureItemJson(
     try writeJsonField(writer, "path_template", route.path_template, true);
     try writeJsonField(writer, "actual_state", state.name(), true);
     try writeJsonNullableStringField(writer, "pagination", routePaginationKind(route), true);
+    try writeJsonBoolField(writer, "live_read_supported", provider_dispatch.routeLiveCallSupported(route), true);
+    try writeJsonBoolField(writer, "diagnostic_read", actualCaptureUsesDiagnosticRead(route, options.include_blocked), true);
     try writeJsonField(writer, "capture_command", command, true);
     if (!options.execute) {
         try writeJsonField(writer, "status", "planned", false);
@@ -3279,16 +3303,17 @@ fn writeActualReadyCaptureItemJson(
 }
 
 fn actualReadyCaptureRouteJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, route: provider_routes.Route, hints: ActualCaptureHints, options: ActualReadyCaptureOptions) ![]u8 {
-    if (!actualCaptureReady(route, hints)) return error.ActualCaptureRouteNotReady;
+    if (!actualCaptureReadyWithPolicy(route, hints, options.include_blocked)) return error.ActualCaptureRouteNotReady;
     const owned_request = try actualReadyCaptureRequest(gpa, route, hints);
     defer owned_request.deinit(gpa);
     const client = provider_dispatch.Client.init(auth);
     const capture_options = CaptureOptions{
         .paginate = routePaginationKind(route) != null,
         .max_pages = options.max_pages,
+        .diagnostic_read = actualCaptureUsesDiagnosticRead(route, options.include_blocked),
     };
     if (capture_options.paginate) return try capturePaginatedRouteReadMetadataJson(io, gpa, db, client, route, owned_request.request, capture_options);
-    const result = try client.callReadRouteResultRequest(io, gpa, route, owned_request.request);
+    const result = try callCaptureReadRouteResultRequest(io, gpa, client, route, owned_request.request, capture_options);
     defer result.deinit(gpa);
     return try captureRouteReadResultJson(gpa, db, route, owned_request.request, result, capture_options);
 }
@@ -5938,6 +5963,65 @@ test "plans derived Hostinger VPS detail captures from captured resource hints" 
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getFirewallDetailsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"VPS_getPostInstallScriptV1\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "test-token") == null);
+}
+
+test "plans blocked Hostinger diagnostic captures only when explicitly included" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-capture-blocked-diagnostics.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertHostingerVps("1307809", "srv1307809.hstgr.cloud", "running", "76.13.130.170", "KVM 4", "{\"id\":1307809}");
+
+    const hostinger =
+        \\{"provider":"hostinger","tag":"Reach: Profiles","method":"GET","path":"/api/reach/v1/profiles","operation_id":"reach_listProfilesV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"403","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"blocked diagnostic"}
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker","operation_id":"VPS_getProjectListV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"400","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"unsupported OS diagnostic"}
+        \\
+    ;
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, "", hostinger, &db, .{
+        .filter = .{ .provider = .hostinger },
+        .limit = 0,
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"live_read_supported\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_read_supported\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getProjectListV1 --path-param virtualMachineId='1307809' --diagnostic") != null);
+
+    const normal_plan = try actualReadyCaptureJsonFromText(std.testing.io, allocator, "", hostinger, &db, .{ .hostinger = "test-token" }, .{
+        .filter = .{ .provider = .hostinger },
+        .limit = 0,
+        .execute = false,
+    });
+    defer allocator.free(normal_plan);
+    try std.testing.expect(std.mem.indexOf(u8, normal_plan, "\"include_blocked\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, normal_plan, "\"candidate_routes\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, normal_plan, "\"ready_routes\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, normal_plan, "\"planned\":0") != null);
+
+    const diagnostic_plan = try actualReadyCaptureJsonFromText(std.testing.io, allocator, "", hostinger, &db, .{ .hostinger = "test-token" }, .{
+        .filter = .{ .provider = .hostinger },
+        .limit = 0,
+        .execute = false,
+        .include_blocked = true,
+    });
+    defer allocator.free(diagnostic_plan);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "\"include_blocked\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "\"candidate_routes\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "\"ready_routes\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "\"planned\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "\"diagnostic_read\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "\"operation_id\":\"reach_listProfilesV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "\"operation_id\":\"VPS_getProjectListV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "test-token") == null);
 }
 
 test "plans Cloudflare account and zone captures from configured scope hints" {
