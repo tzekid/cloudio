@@ -54,35 +54,29 @@ pub fn parseOptions(args: []const []const u8) !app_inventory.ListOptions {
 
 pub fn parseParsed(args: []const []const u8) !Parsed {
     var parsed = Parsed{};
+    var provider_seen = false;
+    var query_seen = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         if (try cli_args.parseFormatOption(args, &i, &parsed.format, error.MissingFormat, error.InvalidFormat)) continue;
         const arg = args[i];
-        if (try cli_args.parseRequiredValueArg(args, &i, .{"--provider"}, error.MissingProvider)) |value| {
-            parsed.options.provider = try parseProvider(value);
+        if (try cli_args.parseProviderOption(args, &i, &parsed.options.provider, &provider_seen, app_inventory.Provider.parse, .{"--provider"}, error.MissingProvider, error.InvalidProvider)) {
+            continue;
         } else if (try cli_args.parseRequiredValueArg(args, &i, .{"--domain"}, error.MissingDomain)) |value| {
             parsed.options.domain = value;
-        } else if (try cli_args.parseRequiredValueArg(args, &i, .{"--query"}, error.MissingQuery)) |value| {
-            parsed.options.query = value;
+        } else if (try cli_args.parseQueryOption(args, &i, &parsed.options.query, &query_seen, .{"--query"}, error.MissingQuery)) {
+            continue;
         } else if (try cli_args.parsePositiveI64Arg(args, &i, .{"--limit"}, error.MissingLimit, error.InvalidLimit)) |limit| {
             parsed.options.limit = limit;
-        } else if (isProvider(arg) and parsed.options.provider == null) {
-            parsed.options.provider = try parseProvider(arg);
-        } else if (parsed.options.query == null) {
-            parsed.options.query = arg;
+        } else if (cli_args.parseProviderPositional(arg, &parsed.options.provider, &provider_seen, app_inventory.Provider.parse)) {
+            continue;
+        } else if (cli_args.parseQueryPositional(arg, &parsed.options.query, &query_seen)) {
+            continue;
         } else {
             return error.UnexpectedArgument;
         }
     }
     return parsed;
-}
-
-fn parseProvider(value: []const u8) !app_inventory.Provider {
-    return app_inventory.Provider.parse(value) orelse error.InvalidProvider;
-}
-
-fn isProvider(value: []const u8) bool {
-    return app_inventory.Provider.parse(value) != null;
 }
 
 test "inventory parser maps positional provider and filters" {

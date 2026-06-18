@@ -56,30 +56,12 @@ fn parse(args: []const []const u8) !Parsed {
             parsed.options.limit = limit;
             continue;
         }
-        if (try cli_args.parseRequiredValueArg(args, &index, .{"--provider"}, error.MissingRoutesProvider)) |value| {
-            parsed.options.provider = app_route_catalog.ProviderFilter.parse(value) orelse return error.InvalidRoutesProvider;
-            provider_seen = true;
-            continue;
-        }
-        if (try cli_args.parseRequiredValueArg(args, &index, .{"--query"}, error.MissingRoutesQuery)) |value| {
-            parsed.options.query = value;
-            query_seen = true;
-            continue;
-        }
+        if (try cli_args.parseProviderOption(args, &index, &parsed.options.provider, &provider_seen, app_route_catalog.ProviderFilter.parse, .{"--provider"}, error.MissingRoutesProvider, error.InvalidRoutesProvider)) continue;
+        if (try cli_args.parseQueryOption(args, &index, &parsed.options.query, &query_seen, .{"--query"}, error.MissingRoutesQuery)) continue;
 
         const arg = args[index];
-        if (!provider_seen) {
-            if (app_route_catalog.ProviderFilter.parse(arg)) |provider| {
-                parsed.options.provider = provider;
-                provider_seen = true;
-                continue;
-            }
-        }
-        if (!query_seen) {
-            parsed.options.query = arg;
-            query_seen = true;
-            continue;
-        }
+        if (cli_args.parseProviderPositional(arg, &parsed.options.provider, &provider_seen, app_route_catalog.ProviderFilter.parse)) continue;
+        if (cli_args.parseQueryPositional(arg, &parsed.options.query, &query_seen)) continue;
         return error.UnexpectedRoutesArgument;
     }
     return parsed;

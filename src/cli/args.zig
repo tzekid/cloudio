@@ -93,6 +93,60 @@ pub fn parseFormatOnly(args: []const []const u8, unexpected_error: anyerror) !cl
     return format;
 }
 
+pub fn parseProviderOption(
+    args: []const []const u8,
+    index: *usize,
+    provider: anytype,
+    provider_seen: *bool,
+    comptime parse_provider: anytype,
+    comptime names: anytype,
+    missing_error: anyerror,
+    invalid_error: anyerror,
+) !bool {
+    if (try parseRequiredValueArg(args, index, names, missing_error)) |value| {
+        provider.* = parse_provider(value) orelse return invalid_error;
+        provider_seen.* = true;
+        return true;
+    }
+    return false;
+}
+
+pub fn parseProviderPositional(
+    arg: []const u8,
+    provider: anytype,
+    provider_seen: *bool,
+    comptime parse_provider: anytype,
+) bool {
+    if (provider_seen.*) return false;
+    const value = parse_provider(arg) orelse return false;
+    provider.* = value;
+    provider_seen.* = true;
+    return true;
+}
+
+pub fn parseQueryOption(
+    args: []const []const u8,
+    index: *usize,
+    query: *?[]const u8,
+    query_seen: *bool,
+    comptime names: anytype,
+    missing_error: anyerror,
+) !bool {
+    if (try parseRequiredValueArg(args, index, names, missing_error)) |value| {
+        query.* = value;
+        query_seen.* = true;
+        return true;
+    }
+    return false;
+}
+
+pub fn parseQueryPositional(arg: []const u8, query: *?[]const u8, query_seen: *bool) bool {
+    if (query_seen.*) return false;
+    query.* = arg;
+    query_seen.* = true;
+    return true;
+}
+
 pub const FormatLimitOptions = struct {
     format: cli_render.RenderFormat = .text,
     limit: i64,
@@ -189,6 +243,62 @@ test "format helpers share common command output parsing" {
 
     const unexpected = [_][]const u8{"extra"};
     try std.testing.expectError(error.Unexpected, parseFormatOnly(unexpected[0..], error.Unexpected));
+}
+
+const ProviderFixture = enum {
+    all,
+    cloudflare,
+    hostinger,
+
+    fn parse(value: []const u8) ?ProviderFixture {
+        if (std.mem.eql(u8, value, "all")) return .all;
+        if (std.mem.eql(u8, value, "cloudflare")) return .cloudflare;
+        if (std.mem.eql(u8, value, "hostinger")) return .hostinger;
+        return null;
+    }
+};
+
+test "provider and query helpers share common command parsing" {
+    var provider: ProviderFixture = .all;
+    var provider_seen = false;
+    var query: ?[]const u8 = null;
+    var query_seen = false;
+
+    var index: usize = 0;
+    const provider_args = [_][]const u8{ "--provider", "cloudflare" };
+    try std.testing.expect(try parseProviderOption(provider_args[0..], &index, &provider, &provider_seen, ProviderFixture.parse, .{"--provider"}, error.MissingProvider, error.InvalidProvider));
+    try std.testing.expectEqual(ProviderFixture.cloudflare, provider);
+    try std.testing.expect(provider_seen);
+    try std.testing.expectEqual(@as(usize, 1), index);
+
+    index = 0;
+    const query_args = [_][]const u8{"--query=dns"};
+    try std.testing.expect(try parseQueryOption(query_args[0..], &index, &query, &query_seen, .{"--query"}, error.MissingQuery));
+    try std.testing.expectEqualStrings("dns", query.?);
+    try std.testing.expect(query_seen);
+    try std.testing.expectEqual(@as(usize, 0), index);
+
+    var positional_provider: ProviderFixture = .all;
+    var positional_provider_seen = false;
+    try std.testing.expect(parseProviderPositional("hostinger", &positional_provider, &positional_provider_seen, ProviderFixture.parse));
+    try std.testing.expectEqual(ProviderFixture.hostinger, positional_provider);
+    try std.testing.expect(positional_provider_seen);
+    try std.testing.expect(!parseProviderPositional("cloudflare", &positional_provider, &positional_provider_seen, ProviderFixture.parse));
+
+    var positional_query: ?[]const u8 = null;
+    var positional_query_seen = false;
+    try std.testing.expect(parseQueryPositional("vps", &positional_query, &positional_query_seen));
+    try std.testing.expectEqualStrings("vps", positional_query.?);
+    try std.testing.expect(positional_query_seen);
+    try std.testing.expect(!parseQueryPositional("extra", &positional_query, &positional_query_seen));
+
+    index = 0;
+    const missing_provider = [_][]const u8{"--provider"};
+    try std.testing.expectError(error.MissingProvider, parseProviderOption(missing_provider[0..], &index, &provider, &provider_seen, ProviderFixture.parse, .{"--provider"}, error.MissingProvider, error.InvalidProvider));
+
+    index = 0;
+    const invalid_provider = [_][]const u8{"--provider=other"};
+    try std.testing.expectError(error.InvalidProvider, parseProviderOption(invalid_provider[0..], &index, &provider, &provider_seen, ProviderFixture.parse, .{"--provider"}, error.MissingProvider, error.InvalidProvider));
 }
 
 test "format and positive limit helper preserves split inline behavior" {

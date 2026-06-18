@@ -80,20 +80,10 @@ fn parseOptions(args: []const []const u8) !Parsed {
             parsed.options.limit = limit;
             continue;
         }
-        if (try cli_args.parseRequiredValueArg(args, &index, .{"--provider"}, error.MissingEvidenceProvider)) |value| {
-            parsed.options.provider = app_evidence.ProviderFilter.parse(value) orelse return error.InvalidEvidenceProvider;
-            provider_seen = true;
-            continue;
-        }
+        if (try cli_args.parseProviderOption(args, &index, &parsed.options.provider, &provider_seen, app_evidence.ProviderFilter.parse, .{"--provider"}, error.MissingEvidenceProvider, error.InvalidEvidenceProvider)) continue;
 
         const arg = args[index];
-        if (!provider_seen) {
-            if (app_evidence.ProviderFilter.parse(arg)) |provider| {
-                parsed.options.provider = provider;
-                provider_seen = true;
-                continue;
-            }
-        }
+        if (cli_args.parseProviderPositional(arg, &parsed.options.provider, &provider_seen, app_evidence.ProviderFilter.parse)) continue;
         return error.UnexpectedEvidenceArgument;
     }
     return parsed;
