@@ -3842,7 +3842,7 @@ fn hasCoverageEvidence(tests: []const u8) bool {
 
 fn isTypedTableCoverageCandidate(provider: []const u8, tag: []const u8) bool {
     if (std.mem.eql(u8, provider, "hostinger")) {
-        return std.mem.eql(u8, tag, "VPS: Virtual machine");
+        return isHostingerTypedInventoryTag(tag);
     }
     if (std.mem.eql(u8, provider, "cloudflare")) {
         return std.mem.eql(u8, tag, "Accounts") or
@@ -3851,6 +3851,19 @@ fn isTypedTableCoverageCandidate(provider: []const u8, tag: []const u8) bool {
             isCloudflareSecurityTypedTableTag(tag);
     }
     return false;
+}
+
+fn isHostingerTypedInventoryTag(tag: []const u8) bool {
+    return tagContainsAny(tag, &.{
+        "Billing:",
+        "DNS:",
+        "Domains:",
+        "Hosting:",
+        "VPS:",
+        "Docker",
+        "Monarx",
+        "Malware",
+    });
 }
 
 fn isCloudflareSecurityTypedTableTag(tag: []const u8) bool {
@@ -4454,7 +4467,7 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
         \\
     ;
     const hostinger =
-        \\{"provider":"hostinger","tag":"Hosting websites","method":"GET","path":"/api/websites/v1","operation_id":"Websites_getListV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"generic inventory only"}
+        \\{"provider":"hostinger","tag":"Horizons: Websites","method":"GET","path":"/api/horizons/v1/websites","operation_id":"Horizons_getWebsitesV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"generic inventory only"}
         \\
     ;
 
@@ -4487,7 +4500,7 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"focus_family\":\"logs\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_gap\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Logs' --support partial --mode read --detail\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Hosting websites\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Horizons: Websites\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Security Center Insights\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Accounts\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_or_complete_rows_hidden\":2") != null);
