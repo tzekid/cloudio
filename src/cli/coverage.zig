@@ -11,6 +11,7 @@ pub const RenderFormat = cli_render.RenderFormat;
 pub const Context = struct {
     io: Io,
     gpa: Allocator,
+    db: *app_coverage.DbHandle,
     paths: app_coverage.Paths = .{},
 };
 
@@ -68,6 +69,11 @@ const CaptureCandidateCommand = struct {
     format: RenderFormat = .text,
 };
 
+const ActualCaptureCommand = struct {
+    options: app_coverage.ActualCaptureOptions = .{},
+    format: RenderFormat = .text,
+};
+
 const DryRunCandidateCommand = struct {
     options: app_coverage.DryRunCandidateOptions = .{},
     format: RenderFormat = .text,
@@ -87,6 +93,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .workplan => |command| try commandWorkplan(ctx, command),
         .routes => |command| try commandRoutes(ctx, command),
         .capture_candidates => |command| try commandCaptureCandidates(ctx, command),
+        .actual_captures => |command| try commandActualCaptures(ctx, command),
         .dry_run_candidates => |command| try commandDryRunCandidates(ctx, command),
         .plan => |plan_args| try commandPlan(ctx, plan_args),
         .unknown => |name| std.debug.print("unknown coverage command: {s}\n", .{name}),
@@ -106,6 +113,7 @@ const Command = union(enum) {
     workplan: WorkplanCommand,
     routes: RouteCommand,
     capture_candidates: CaptureCandidateCommand,
+    actual_captures: ActualCaptureCommand,
     dry_run_candidates: DryRunCandidateCommand,
     plan: []const []const u8,
     unknown: []const u8,
@@ -145,6 +153,9 @@ fn parseCommand(args: []const []const u8) Command {
     }
     if (std.mem.eql(u8, args[0], "capture-candidates") or std.mem.eql(u8, args[0], "captures") or std.mem.eql(u8, args[0], "capture-plan")) {
         return parseCaptureCandidates(args[1..]);
+    }
+    if (std.mem.eql(u8, args[0], "actual-captures") or std.mem.eql(u8, args[0], "actual-capture-plan") or std.mem.eql(u8, args[0], "missing-captures") or std.mem.eql(u8, args[0], "actual-workplan")) {
+        return parseActualCaptures(args[1..]);
     }
     if (std.mem.eql(u8, args[0], "dry-run-candidates") or std.mem.eql(u8, args[0], "dry-run-plan") or std.mem.eql(u8, args[0], "mutation-candidates")) {
         return parseDryRunCandidates(args[1..]);
@@ -540,6 +551,7 @@ pub const usage_text =
     \\  cloudio coverage typed-models [all|cloudflare|hostinger] [--family <family>] [--limit <n>] [--include-complete] [--json|--format json]
     \\  cloudio coverage workplan [all|cloudflare|hostinger] [all|control-plane|<family>] [--focus all|control-plane] [--family <family>] [--limit <n>] [--plans] [--bundle] [--candidate-limit <n>] [--json|--format json]
     \\  cloudio coverage capture-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--plans] [--json|--format json]
+    \\  cloudio coverage actual-captures [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--operation <id>] [--limit <n>] [--plans] [--json|--format json]
     \\  cloudio coverage dry-run-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--plans] [--json|--format json]
     \\  cloudio coverage routes [all|cloudflare|hostinger] [tag-query] [--family <family>] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>] [--detail] [--json|--format json]
     \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]
@@ -548,6 +560,7 @@ pub const usage_text =
     \\  cloudio coverage workplan control-plane --limit 0
     \\  cloudio coverage workplan security --plans --json
     \\  cloudio coverage workplan hostinger hostinger-vps --bundle --plans --json
+    \\  cloudio coverage actual-captures hostinger --family hostinger-vps --limit 20 --json
     \\  cloudio coverage families control-plane --limit 0 --json
     \\
     \\Families include accounts, zones, dns, ssl-tls, access, tunnels, rulesets, logs, cache, security, tokens, memberships, billing, domains, hosting, docker, hostinger-vps, public-keys, custom-pages, healthchecks, and load-balancing.
@@ -675,6 +688,62 @@ fn parseCaptureCandidates(args: []const []const u8) Command {
     return .{ .capture_candidates = command };
 }
 
+fn parseActualCaptures(args: []const []const u8) Command {
+    var command = ActualCaptureCommand{};
+    var provider_set = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageUnsignedArg(args, &index, .{"--limit"}, &command.options.limit)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageSupportArg(args, &index, &command.options.filter.support)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageFamilyArg(args, &index, &command.options.filter.family)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageOperationArg(args, &index, &command.options.filter.operation_id)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoveragePathArg(args, &index, &command.options.filter.path_template)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
+            command.options.include_plans = true;
+        } else if (!provider_set) {
+            if (app_coverage.ProviderFilter.parse(arg)) |provider| {
+                command.options.filter.provider = provider;
+                provider_set = true;
+            } else if (command.options.filter.tag_query == null) {
+                command.options.filter.tag_query = arg;
+            } else {
+                return .{ .unknown = arg };
+            }
+        } else if (command.options.filter.tag_query == null) {
+            command.options.filter.tag_query = arg;
+        } else {
+            return .{ .unknown = arg };
+        }
+    }
+    return .{ .actual_captures = command };
+}
+
 fn parseDryRunCandidates(args: []const []const u8) Command {
     var command = DryRunCandidateCommand{};
     var provider_set = false;
@@ -778,6 +847,10 @@ fn commandRoutes(ctx: Context, command: RouteCommand) !void {
 
 fn commandCaptureCandidates(ctx: Context, command: CaptureCandidateCommand) !void {
     try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeCaptureCandidatesTextFromFiles, app_coverage.writeCaptureCandidatesJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.options });
+}
+
+fn commandActualCaptures(ctx: Context, command: ActualCaptureCommand) !void {
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeActualCapturesTextFromFiles, app_coverage.writeActualCapturesJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, ctx.db, command.options });
 }
 
 fn commandDryRunCandidates(ctx: Context, command: DryRunCandidateCommand) !void {
@@ -1186,6 +1259,28 @@ test "coverage command parser defaults to summary" {
             try std.testing.expect(command.options.include_plans);
         },
         else => return error.ExpectedCoverageCaptureCandidates,
+    }
+
+    const actual_captures_args = [_][]const u8{ "actual-captures", "hostinger", "--family", "hostinger-vps", "--limit=10", "--operation", "VPS_getVirtualMachineDetailsV1", "--json" };
+    switch (parseCommand(actual_captures_args[0..])) {
+        .actual_captures => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, command.options.filter.provider);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.hostinger_vps, command.options.filter.family);
+            try std.testing.expectEqualStrings("VPS_getVirtualMachineDetailsV1", command.options.filter.operation_id orelse "");
+            try std.testing.expectEqual(@as(usize, 10), command.options.limit);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageActualCaptures,
+    }
+
+    const missing_captures_args = [_][]const u8{ "missing-captures", "VPS", "--support=partial", "--plans" };
+    switch (parseCommand(missing_captures_args[0..])) {
+        .actual_captures => |command| {
+            try std.testing.expectEqualStrings("VPS", command.options.filter.tag_query orelse "");
+            try std.testing.expectEqual(app_coverage.SupportFilter.partial, command.options.filter.support.?);
+            try std.testing.expect(command.options.include_plans);
+        },
+        else => return error.ExpectedCoverageActualCaptures,
     }
 
     const dry_run_candidates_args = [_][]const u8{ "dry-run-candidates", "cloudflare", "AI Gateway", "--limit=8", "--json" };

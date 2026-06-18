@@ -82,6 +82,7 @@ pub fn run(init: std.process.Init) !void {
         try cli_coverage.run(.{
             .io = init.io,
             .gpa = init.gpa,
+            .db = &db,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "route")) {
         try cli_route.run(.{
@@ -164,6 +165,7 @@ fn usage() void {
         \\  cloudio coverage typed-models [all|cloudflare|hostinger] [--family <family>] [--limit <n>] [--include-complete] [--json|--format json]
         \\  cloudio coverage workplan [all|cloudflare|hostinger] [all|control-plane|<family>] [--focus all|control-plane] [--family <family>] [--limit <n>] [--plans] [--bundle] [--candidate-limit <n>] [--json|--format json]
         \\  cloudio coverage routes [all|cloudflare|hostinger] [tag-query] [--family <family>] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>] [--json|--format json]
+        \\  cloudio coverage actual-captures [all|cloudflare|hostinger] [tag-query] [--family <family>] [--operation <id>] [--limit <n>] [--plans] [--json|--format json]
         \\  cloudio coverage gaps|levels|level-tags [all|cloudflare|hostinger] [--limit <n>] [--json|--format json]
         \\  cloudio coverage help
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]

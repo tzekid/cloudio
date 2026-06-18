@@ -13,6 +13,8 @@ const Io = std.Io;
 
 const max_manifest_bytes = 8 * 1024 * 1024;
 const default_capture_max_pages = 25;
+const actual_capture_load_limit: i64 = 100_000;
+const actual_capture_hostinger_vps_hint_limit: i64 = 50;
 
 pub const support_names = [_][]const u8{
     "implemented",
@@ -773,6 +775,12 @@ pub const CaptureCandidateOptions = struct {
     include_plans: bool = false,
 };
 
+pub const ActualCaptureOptions = struct {
+    filter: RouteFilter = .{},
+    limit: usize = 25,
+    include_plans: bool = false,
+};
+
 pub const DryRunCandidateOptions = struct {
     filter: RouteFilter = .{},
     limit: usize = 25,
@@ -881,6 +889,207 @@ pub const CoverageRoutes = struct {
             try writeCoverageRouteJson(row, writer);
         }
         try writer.writeAll("]}");
+        try writer.writeByte('\n');
+    }
+};
+
+const ActualRouteStatus = struct {
+    any: bool = false,
+    ok: bool = false,
+    err: bool = false,
+    events: i64 = 0,
+    latest_at: []const u8 = "",
+};
+
+const ActualCaptureState = enum {
+    ok,
+    missing,
+    non_ok,
+
+    fn name(self: ActualCaptureState) []const u8 {
+        return switch (self) {
+            .ok => "ok",
+            .missing => "missing",
+            .non_ok => "non_ok",
+        };
+    }
+};
+
+const ActualCaptureTotals = struct {
+    official_read_routes: usize = 0,
+    ok_read_routes: usize = 0,
+    non_ok_read_routes: usize = 0,
+    missing_read_routes: usize = 0,
+    candidate_routes: usize = 0,
+    ready_candidates: usize = 0,
+    capture_events: i64 = 0,
+};
+
+const ActualCapturePlan = struct {
+    options: ActualCaptureOptions,
+    routes: CoverageRoutes,
+    captures: db_store.RouteCaptureEvidenceRows,
+    hostinger_vps: ?db_store.HostingerVpsRows,
+
+    fn deinit(self: *ActualCapturePlan, gpa: Allocator) void {
+        if (self.hostinger_vps) |*rows| rows.deinit(gpa);
+        self.captures.deinit(gpa);
+        self.routes.deinit(gpa);
+    }
+
+    fn hostingerRows(self: ActualCapturePlan) []const db_store.HostingerVpsRow {
+        if (self.hostinger_vps) |rows| return rows.items;
+        return &.{};
+    }
+
+    fn totals(self: ActualCapturePlan) ActualCaptureTotals {
+        var out = ActualCaptureTotals{};
+        const hostinger_rows = self.hostingerRows();
+        for (self.routes.items) |row| {
+            const status = actualCaptureState(row.route, self.captures.items) orelse continue;
+            out.official_read_routes += 1;
+            const route_status = actualRouteCaptureStatus(row.route.provider.name(), row.route.operation_id.?, self.captures.items);
+            out.capture_events += route_status.events;
+            switch (status) {
+                .ok => out.ok_read_routes += 1,
+                .missing => {
+                    out.missing_read_routes += 1;
+                    out.candidate_routes += 1;
+                    if (actualCaptureReady(row.route, hostinger_rows)) out.ready_candidates += 1;
+                },
+                .non_ok => {
+                    out.non_ok_read_routes += 1;
+                    out.candidate_routes += 1;
+                    if (actualCaptureReady(row.route, hostinger_rows)) out.ready_candidates += 1;
+                },
+            }
+        }
+        return out;
+    }
+
+    fn writeText(self: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
+        const totals_value = self.totals();
+        try writer.writeAll("Cloudio actual route capture plan\n");
+        try writer.writeAll("rank: official GET/read routes missing an OK route.capture audit event\n");
+        try writer.print("filter provider={s}", .{self.options.filter.provider.name()});
+        if (self.options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
+        if (self.options.filter.family != .all) try writer.print(" family={s}", .{self.options.filter.family.name()});
+        if (self.options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
+        if (self.options.include_plans) try writer.writeAll(" plans=true");
+        try writer.writeAll(" limit=");
+        if (self.options.limit == 0) {
+            try writer.writeAll("all\n");
+        } else {
+            try writer.print("{d}\n", .{self.options.limit});
+        }
+        try writer.print("loaded_capture_operation_status_rows={d} hostinger_vps_hints={d}\n", .{ self.captures.items.len, self.hostingerRows().len });
+        try writer.print("summary official_read_routes={d} ok_read_routes={d} non_ok_read_routes={d} missing_read_routes={d} candidate_routes={d} ready_candidates={d} capture_events={d}\n", .{
+            totals_value.official_read_routes,
+            totals_value.ok_read_routes,
+            totals_value.non_ok_read_routes,
+            totals_value.missing_read_routes,
+            totals_value.candidate_routes,
+            totals_value.ready_candidates,
+            totals_value.capture_events,
+        });
+
+        var visible: usize = 0;
+        var omitted: usize = 0;
+        var current_provider: ?[]const u8 = null;
+        var current_tag: ?[]const u8 = null;
+        const hostinger_rows = self.hostingerRows();
+        for (self.routes.items) |row| {
+            const state = actualCaptureState(row.route, self.captures.items) orelse continue;
+            if (state == .ok) continue;
+            if (self.options.limit != 0 and visible >= self.options.limit) {
+                omitted += 1;
+                continue;
+            }
+            visible += 1;
+            const provider_name = row.route.provider.name();
+            if (current_provider == null or !std.mem.eql(u8, current_provider.?, provider_name)) {
+                current_provider = provider_name;
+                current_tag = null;
+                try writer.print("\n{s}\n", .{provider_name});
+            }
+            if (current_tag == null or !std.mem.eql(u8, current_tag.?, row.route.tag)) {
+                current_tag = row.route.tag;
+                try writer.print("  {s}\n", .{row.route.tag});
+            }
+            const route_status = actualRouteCaptureStatus(provider_name, row.route.operation_id.?, self.captures.items);
+            try writer.print("    {s} {s} | state={s} support={s} op={s} events={d}", .{
+                row.route.method.name(),
+                row.route.path_template,
+                state.name(),
+                @tagName(row.route.support),
+                row.route.operation_id.?,
+                route_status.events,
+            });
+            if (route_status.latest_at.len != 0) try writer.print(" latest={s}", .{route_status.latest_at});
+            try writer.writeByte('\n');
+            try writer.writeAll("      required_path=");
+            try writeRequiredParamNamesText(writer, row.route.path_params);
+            try writer.writeAll(" required_query=");
+            try writeRequiredParamNamesText(writer, row.route.query_params);
+            try writer.writeAll(" required_header=");
+            try writeRequiredParamNamesText(writer, row.route.header_params);
+            try writer.print(" pagination={s}\n", .{routePaginationKind(row.route) orelse "none"});
+            try writer.print("      ready={s} missing_inputs=", .{if (actualCaptureReady(row.route, hostinger_rows)) "true" else "false"});
+            try writeActualMissingInputsText(writer, row.route, hostinger_rows);
+            try writer.writeByte('\n');
+            const command = try actualCaptureCommand(gpa, row.route, hostinger_rows);
+            defer gpa.free(command);
+            try writer.print("      capture: {s}\n", .{command});
+            if (self.options.include_plans) {
+                const plan = try routeReadPlanJson(gpa, row.route);
+                defer gpa.free(plan);
+                try writer.print("      read-plan: {s}\n", .{plan});
+            }
+        }
+
+        if (totals_value.candidate_routes == 0) {
+            try writer.writeAll("no actual capture gaps for filter\n");
+        } else if (omitted != 0) {
+            try writer.print("omitted={d}\n", .{omitted});
+        }
+    }
+
+    fn writeJson(self: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
+        const totals_value = self.totals();
+        try writer.writeByte('{');
+        try writeJsonField(writer, "kind", "coverage_actual_captures", true);
+        try writer.writeAll("\"filter\":");
+        try writeRouteFilterJson(actualCaptureRouteFilter(self.options.filter), writer);
+        try writer.writeByte(',');
+        try writeJsonCountField(writer, "limit", self.options.limit, true);
+        try writeJsonBoolField(writer, "include_plans", self.options.include_plans, true);
+        try writeJsonField(writer, "rank", "official GET/read routes missing an OK route.capture audit event", true);
+        try writeJsonCountField(writer, "loaded_capture_operation_status_rows", self.captures.items.len, true);
+        try writeJsonCountField(writer, "hostinger_vps_hints", self.hostingerRows().len, true);
+        try writer.writeAll("\"summary\":");
+        try writeActualCaptureTotalsJson(totals_value, writer);
+        try writer.writeAll(",\"candidates\":[");
+
+        var visible: usize = 0;
+        var omitted: usize = 0;
+        var first = true;
+        const hostinger_rows = self.hostingerRows();
+        for (self.routes.items) |row| {
+            const state = actualCaptureState(row.route, self.captures.items) orelse continue;
+            if (state == .ok) continue;
+            if (self.options.limit != 0 and visible >= self.options.limit) {
+                omitted += 1;
+                continue;
+            }
+            visible += 1;
+            try writeMaybeJsonComma(writer, &first);
+            try writeActualCaptureCandidateJson(gpa, row, state, self.captures.items, hostinger_rows, self.options, writer);
+        }
+
+        try writer.writeAll("],");
+        try writeJsonCountField(writer, "visible", visible, true);
+        try writeJsonCountField(writer, "omitted", omitted, false);
+        try writer.writeByte('}');
         try writer.writeByte('\n');
     }
 };
@@ -1406,6 +1615,30 @@ pub fn writeCaptureCandidatesJsonFromText(gpa: Allocator, cloudflare_text: []con
     try writeCaptureCandidatesJson(gpa, routes.items, options, writer);
 }
 
+pub fn writeActualCapturesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, options: ActualCaptureOptions, writer: anytype) !void {
+    var plan = try loadActualCapturePlanFromFiles(io, gpa, paths, db, options);
+    defer plan.deinit(gpa);
+    try plan.writeText(gpa, writer);
+}
+
+pub fn writeActualCapturesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, options: ActualCaptureOptions, writer: anytype) !void {
+    var plan = try loadActualCapturePlanFromFiles(io, gpa, paths, db, options);
+    defer plan.deinit(gpa);
+    try plan.writeJson(gpa, writer);
+}
+
+pub fn writeActualCapturesTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, db: *Db, options: ActualCaptureOptions, writer: anytype) !void {
+    var plan = try loadActualCapturePlanFromText(gpa, cloudflare_text, hostinger_text, db, options);
+    defer plan.deinit(gpa);
+    try plan.writeText(gpa, writer);
+}
+
+pub fn writeActualCapturesJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, db: *Db, options: ActualCaptureOptions, writer: anytype) !void {
+    var plan = try loadActualCapturePlanFromText(gpa, cloudflare_text, hostinger_text, db, options);
+    defer plan.deinit(gpa);
+    try plan.writeJson(gpa, writer);
+}
+
 pub fn writeDryRunCandidatesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: DryRunCandidateOptions, writer: anytype) !void {
     var routes = try loadDryRunCandidateRoutes(io, gpa, paths, options);
     defer routes.deinit(gpa);
@@ -1438,6 +1671,55 @@ fn loadCaptureCandidateRoutes(io: Io, gpa: Allocator, paths: Paths, options: Cap
 fn loadCaptureCandidateRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: CaptureCandidateOptions) !CoverageRoutes {
     const filter = captureCandidateRouteFilter(options.filter);
     return try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, filter);
+}
+
+fn loadActualCapturePlanFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, options: ActualCaptureOptions) !ActualCapturePlan {
+    var routes = try loadRoutes(io, gpa, paths, actualCaptureRouteFilter(options.filter));
+    errdefer routes.deinit(gpa);
+    var captures = try db.routeCaptureEvidence(gpa, .{
+        .provider = actualCaptureProviderDbValue(options.filter.provider),
+        .limit = actual_capture_load_limit,
+    });
+    errdefer captures.deinit(gpa);
+    var hostinger_vps = try loadActualCaptureHostingerHints(gpa, db, options.filter.provider);
+    errdefer if (hostinger_vps) |*rows| rows.deinit(gpa);
+    return .{
+        .options = options,
+        .routes = routes,
+        .captures = captures,
+        .hostinger_vps = hostinger_vps,
+    };
+}
+
+fn loadActualCapturePlanFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, db: *Db, options: ActualCaptureOptions) !ActualCapturePlan {
+    var routes = try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, actualCaptureRouteFilter(options.filter));
+    errdefer routes.deinit(gpa);
+    var captures = try db.routeCaptureEvidence(gpa, .{
+        .provider = actualCaptureProviderDbValue(options.filter.provider),
+        .limit = actual_capture_load_limit,
+    });
+    errdefer captures.deinit(gpa);
+    var hostinger_vps = try loadActualCaptureHostingerHints(gpa, db, options.filter.provider);
+    errdefer if (hostinger_vps) |*rows| rows.deinit(gpa);
+    return .{
+        .options = options,
+        .routes = routes,
+        .captures = captures,
+        .hostinger_vps = hostinger_vps,
+    };
+}
+
+fn loadActualCaptureHostingerHints(gpa: Allocator, db: *Db, provider: ProviderFilter) !?db_store.HostingerVpsRows {
+    if (!provider.includes("hostinger")) return null;
+    return try db.hostingerVpsRows(gpa, actual_capture_hostinger_vps_hint_limit);
+}
+
+fn actualCaptureProviderDbValue(provider: ProviderFilter) ?[]const u8 {
+    return switch (provider) {
+        .all => null,
+        .cloudflare => "cloudflare",
+        .hostinger => "hostinger",
+    };
 }
 
 fn loadDryRunCandidateRoutes(io: Io, gpa: Allocator, paths: Paths, options: DryRunCandidateOptions) !CoverageRoutes {
@@ -1869,6 +2151,14 @@ fn captureEndpoint(gpa: Allocator, route: provider_routes.Route, request: Reques
     return sanitized;
 }
 
+fn actualCaptureRouteFilter(filter: RouteFilter) RouteFilter {
+    var next = filter;
+    next.method = .GET;
+    next.mode = .read;
+    next.detail = false;
+    return next;
+}
+
 fn captureCandidateRouteFilter(filter: RouteFilter) RouteFilter {
     var next = filter;
     next.method = .GET;
@@ -1903,6 +2193,243 @@ fn routeIsDryRunCandidate(row: CoverageRoute, options: DryRunCandidateOptions) b
     if (hasGeneratedDryRunPolicyEvidence(row)) return false;
     if (options.filter.support != null) return true;
     return route.support == .unsafe_mutation;
+}
+
+fn actualCaptureState(route: provider_routes.Route, captures: []const db_store.RouteCaptureEvidenceRow) ?ActualCaptureState {
+    if (route.deprecated or !route.isRoutable()) return null;
+    if (route.method != .GET or route.mode != .read) return null;
+    if (route.request_body.required) return null;
+    const operation_id = route.operation_id orelse return null;
+    const status = actualRouteCaptureStatus(route.provider.name(), operation_id, captures);
+    if (status.ok) return .ok;
+    if (status.any) return .non_ok;
+    return .missing;
+}
+
+fn actualRouteCaptureStatus(provider: []const u8, operation_id: []const u8, captures: []const db_store.RouteCaptureEvidenceRow) ActualRouteStatus {
+    var out = ActualRouteStatus{};
+    for (captures) |capture| {
+        if (!std.mem.eql(u8, capture.provider, provider)) continue;
+        if (!std.mem.eql(u8, capture.operation_id, operation_id)) continue;
+        out.any = true;
+        out.events += capture.count;
+        if (actualStatusIsOk(capture.status)) out.ok = true;
+        if (actualStatusIsError(capture.status)) out.err = true;
+        if (capture.latest_at.len != 0 and actualLatestAtLessThan(out.latest_at, capture.latest_at)) out.latest_at = capture.latest_at;
+    }
+    return out;
+}
+
+fn actualStatusIsOk(status: []const u8) bool {
+    return std.mem.eql(u8, status, "ok") or
+        std.mem.eql(u8, status, "success") or
+        std.mem.eql(u8, status, "done") or
+        actualHttpStatusIsSuccess(status);
+}
+
+fn actualStatusIsError(status: []const u8) bool {
+    return actualHttpStatusIsError(status) or
+        std.mem.indexOf(u8, status, "error") != null or
+        std.mem.indexOf(u8, status, "fail") != null or
+        std.mem.indexOf(u8, status, "denied") != null or
+        std.mem.indexOf(u8, status, "blocked") != null or
+        std.mem.indexOf(u8, status, "permission") != null or
+        std.mem.indexOf(u8, status, "not_found") != null or
+        std.mem.indexOf(u8, status, "missing") != null;
+}
+
+fn actualHttpStatusIsSuccess(status: []const u8) bool {
+    if (status.len != 3) return false;
+    const value = std.fmt.parseInt(u16, status, 10) catch return false;
+    return value >= 200 and value < 300;
+}
+
+fn actualHttpStatusIsError(status: []const u8) bool {
+    if (status.len != 3) return false;
+    const value = std.fmt.parseInt(u16, status, 10) catch return false;
+    return value >= 400;
+}
+
+fn actualLatestAtLessThan(current: []const u8, candidate: []const u8) bool {
+    if (current.len == 0) return true;
+    return std.mem.order(u8, current, candidate) == .lt;
+}
+
+fn actualCaptureReady(route: provider_routes.Route, hostinger_rows: []const db_store.HostingerVpsRow) bool {
+    return actualCaptureMissingInputCount(route, hostinger_rows) == 0;
+}
+
+fn actualCaptureMissingInputCount(route: provider_routes.Route, hostinger_rows: []const db_store.HostingerVpsRow) usize {
+    var count: usize = 0;
+    for (route.path_params) |param| {
+        if (!param.required) continue;
+        if (actualCapturePathParamHint(route, param.name, hostinger_rows) == null) count += 1;
+    }
+    for (route.query_params) |param| {
+        if (param.required) count += 1;
+    }
+    for (route.header_params) |param| {
+        if (param.required) count += 1;
+    }
+    return count;
+}
+
+fn actualCapturePathParamHint(route: provider_routes.Route, name: []const u8, hostinger_rows: []const db_store.HostingerVpsRow) ?[]const u8 {
+    if (route.provider != .hostinger) return null;
+    if (std.mem.eql(u8, name, "virtualMachineId") and hostinger_rows.len != 0) return hostinger_rows[0].id;
+    return null;
+}
+
+fn writeActualMissingInputsText(writer: anytype, route: provider_routes.Route, hostinger_rows: []const db_store.HostingerVpsRow) !void {
+    var wrote = false;
+    for (route.path_params) |param| {
+        if (!param.required) continue;
+        if (actualCapturePathParamHint(route, param.name, hostinger_rows) != null) continue;
+        if (wrote) try writer.writeByte(',');
+        wrote = true;
+        try writer.print("path:{s}", .{param.name});
+    }
+    for (route.query_params) |param| {
+        if (!param.required) continue;
+        if (wrote) try writer.writeByte(',');
+        wrote = true;
+        try writer.print("query:{s}", .{param.name});
+    }
+    for (route.header_params) |param| {
+        if (!param.required) continue;
+        if (wrote) try writer.writeByte(',');
+        wrote = true;
+        try writer.print("header:{s}", .{param.name});
+    }
+    if (!wrote) try writer.writeAll("-");
+}
+
+fn writeActualMissingInputsJson(writer: anytype, route: provider_routes.Route, hostinger_rows: []const db_store.HostingerVpsRow) !void {
+    try writer.writeByte('[');
+    var first = true;
+    for (route.path_params) |param| {
+        if (!param.required) continue;
+        if (actualCapturePathParamHint(route, param.name, hostinger_rows) != null) continue;
+        try writeMaybeJsonComma(writer, &first);
+        try writer.writeByte('{');
+        try writeJsonField(writer, "source", "path", true);
+        try writeJsonField(writer, "name", param.name, false);
+        try writer.writeByte('}');
+    }
+    for (route.query_params) |param| {
+        if (!param.required) continue;
+        try writeMaybeJsonComma(writer, &first);
+        try writer.writeByte('{');
+        try writeJsonField(writer, "source", "query", true);
+        try writeJsonField(writer, "name", param.name, false);
+        try writer.writeByte('}');
+    }
+    for (route.header_params) |param| {
+        if (!param.required) continue;
+        try writeMaybeJsonComma(writer, &first);
+        try writer.writeByte('{');
+        try writeJsonField(writer, "source", "header", true);
+        try writeJsonField(writer, "name", param.name, false);
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
+}
+
+fn writeActualCaptureTotalsJson(totals_value: ActualCaptureTotals, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonCountField(writer, "official_read_routes", totals_value.official_read_routes, true);
+    try writeJsonCountField(writer, "ok_read_routes", totals_value.ok_read_routes, true);
+    try writeJsonCountField(writer, "non_ok_read_routes", totals_value.non_ok_read_routes, true);
+    try writeJsonCountField(writer, "missing_read_routes", totals_value.missing_read_routes, true);
+    try writeJsonCountField(writer, "candidate_routes", totals_value.candidate_routes, true);
+    try writeJsonCountField(writer, "ready_candidates", totals_value.ready_candidates, true);
+    try core_json.writeString(writer, "capture_events");
+    try writer.print(":{d}", .{totals_value.capture_events});
+    try writer.writeByte('}');
+}
+
+fn writeActualCaptureCandidateJson(
+    gpa: Allocator,
+    row: CoverageRoute,
+    state: ActualCaptureState,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    hostinger_rows: []const db_store.HostingerVpsRow,
+    options: ActualCaptureOptions,
+    writer: anytype,
+) !void {
+    const route = row.route;
+    const command = try actualCaptureCommand(gpa, route, hostinger_rows);
+    defer gpa.free(command);
+    const status = actualRouteCaptureStatus(route.provider.name(), route.operation_id.?, captures);
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", route.provider.name(), true);
+    try writeJsonField(writer, "tag", route.tag, true);
+    try writeJsonField(writer, "method", route.method.name(), true);
+    try writeJsonField(writer, "path_template", route.path_template, true);
+    try writeJsonField(writer, "operation_id", route.operation_id.?, true);
+    try writeJsonField(writer, "support", @tagName(route.support), true);
+    try writeJsonField(writer, "actual_state", state.name(), true);
+    try writeJsonCountField(writer, "capture_events", @intCast(@max(status.events, 0)), true);
+    try writeJsonNullableStringField(writer, "latest_capture_at", if (status.latest_at.len == 0) null else status.latest_at, true);
+    try writeJsonNullableStringField(writer, "pagination", routePaginationKind(route), true);
+    try writer.writeAll("\"required_path_params\":");
+    try writeRequiredParamNamesJson(writer, route.path_params);
+    try writer.writeByte(',');
+    try writer.writeAll("\"required_query_params\":");
+    try writeRequiredParamNamesJson(writer, route.query_params);
+    try writer.writeByte(',');
+    try writer.writeAll("\"required_header_params\":");
+    try writeRequiredParamNamesJson(writer, route.header_params);
+    try writer.writeByte(',');
+    try writeJsonBoolField(writer, "ready", actualCaptureReady(route, hostinger_rows), true);
+    try writer.writeAll("\"missing_inputs\":");
+    try writeActualMissingInputsJson(writer, route, hostinger_rows);
+    try writer.writeByte(',');
+    try writeJsonField(writer, "capture_command", command, options.include_plans);
+    if (options.include_plans) {
+        const plan = try routeReadPlanJson(gpa, route);
+        defer gpa.free(plan);
+        try writer.writeAll("\"read_plan\":");
+        try writer.writeAll(plan);
+    }
+    try writer.writeByte('}');
+}
+
+fn actualCaptureCommand(gpa: Allocator, route: provider_routes.Route, hostinger_rows: []const db_store.HostingerVpsRow) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    const writer = &out.writer;
+    try writer.print("cloudio route capture {s}", .{route.provider.name()});
+    if (route.operation_id) |id| {
+        try writer.print(" --operation {s}", .{id});
+    } else {
+        try writer.print(" --method {s} --path ", .{route.method.name()});
+        try writeShellArg(writer, route.path_template);
+    }
+    try writeActualPathParams(writer, route, hostinger_rows);
+    try writeActualRequiredParamPlaceholders(writer, "--query-param", route.query_params);
+    try writeActualRequiredParamPlaceholders(writer, "--header-param", route.header_params);
+    if (routePaginationKind(route) != null) try writer.writeAll(" --paginate");
+    return try out.toOwnedSlice();
+}
+
+fn writeActualPathParams(writer: anytype, route: provider_routes.Route, hostinger_rows: []const db_store.HostingerVpsRow) !void {
+    for (route.path_params) |param| {
+        if (!param.required) continue;
+        try writer.print(" --path-param {s}=", .{param.name});
+        if (actualCapturePathParamHint(route, param.name, hostinger_rows)) |hint| {
+            try writeShellArg(writer, hint);
+        } else {
+            try writer.print("REPLACE_{s}", .{param.name});
+        }
+    }
+}
+
+fn writeActualRequiredParamPlaceholders(writer: anytype, option: []const u8, params: []const provider_routes.RouteParam) !void {
+    for (params) |param| {
+        if (!param.required) continue;
+        try writer.print(" {s} {s}=REPLACE_{s}", .{ option, param.name, param.name });
+    }
 }
 
 fn writeCaptureCandidatesText(gpa: Allocator, routes: []const CoverageRoute, options: CaptureCandidateOptions, writer: anytype) !void {
@@ -4389,6 +4916,64 @@ test "lists route capture candidates for missing L2 read evidence" {
     try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"request_body_input\":{\"present\":false,\"content_type\":null,\"required_missing\":false}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"mode\":\"read\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"will_execute\":false") != null);
+}
+
+test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-captures.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertHostingerVps("12345", "srv12345.hstgr.cloud", "running", "76.13.130.170", "KVM 2", "{\"id\":12345}");
+    try db.insertAudit("route.capture", "ok", "hostinger/VPS_getVirtualMachinesV1 /api/vps/v1/virtual-machines");
+    try db.insertAudit("route.capture", "http_error", "hostinger/VPS_getBackupsV1 /api/vps/v1/virtual-machines/12345/backups");
+
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS","method":"GET","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_getVirtualMachinesV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"already captured"}
+        \\{"provider":"hostinger","tag":"VPS","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}","operation_id":"VPS_getVirtualMachineDetailsV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"needs actual capture"}
+        \\{"provider":"hostinger","tag":"VPS","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/backups","operation_id":"VPS_getBackupsV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[{"name":"page","required":false}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"error-only capture should retry"}
+        \\{"provider":"hostinger","tag":"VPS","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/metrics","operation_id":"VPS_getMetricsV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[{"name":"date_from","required":true},{"name":"date_to","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"requires date range"}
+        \\
+    ;
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, "", hostinger, &db, .{
+        .filter = .{ .provider = .hostinger, .family = .hostinger_vps },
+        .limit = 0,
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_actual_captures\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"official_read_routes\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"ok_read_routes\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"non_ok_read_routes\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_read_routes\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachinesV1\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachineDetailsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"actual_state\":\"non_ok\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getVirtualMachineDetailsV1 --path-param virtualMachineId='12345'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_inputs\":[{\"source\":\"query\",\"name\":\"date_from\"},{\"source\":\"query\",\"name\":\"date_to\"}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_virtualMachineId") == null);
+
+    var text_out = std.Io.Writer.Allocating.init(allocator);
+    defer text_out.deinit();
+    try writeActualCapturesTextFromText(allocator, "", hostinger, &db, .{
+        .filter = .{ .provider = .hostinger, .family = .hostinger_vps },
+        .limit = 2,
+    }, &text_out.writer);
+    const text = try text_out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio actual route capture plan\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "state=missing support=partial op=VPS_getVirtualMachineDetailsV1 events=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "state=non_ok support=partial op=VPS_getBackupsV1 events=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "ready=true missing_inputs=-") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
 }
 
 test "closed Cloudflare security read slice has no capture candidates" {
