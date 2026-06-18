@@ -343,6 +343,7 @@ Cloudflare Email Sending inventory routes currently require API Email + Global A
 Useful read-only Hostinger checks:
 
 ```sh
+zig build run -- hostinger vps overview --json
 zig build run -- hostinger vps list
 zig build run -- hostinger vps show <vm-id>
 zig build run -- hostinger inventory

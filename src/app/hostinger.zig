@@ -65,6 +65,7 @@ pub const VpsOverview = struct {
     resource_kinds: db_store.HostingerKindCounts,
     inventory_kinds: db_store.HostingerKindCounts,
     metric_summaries: db_store.HostingerMetricSummaries,
+    family_summaries: db_store.HostingerVpsFamilySummaries,
 
     pub fn load(ctx: Context, options: VpsOverviewOptions) !VpsOverview {
         const limit = positiveLimit(options.limit, 20);
@@ -73,6 +74,7 @@ pub const VpsOverview = struct {
             .resource_kinds = try ctx.db.hostingerResourceKindCounts(ctx.gpa, limit),
             .inventory_kinds = try ctx.db.hostingerInventoryKindCounts(ctx.gpa, limit),
             .metric_summaries = try ctx.db.hostingerMetricSummaries(ctx.gpa, limit),
+            .family_summaries = try ctx.db.hostingerVpsFamilySummaries(ctx.gpa, limit),
         };
     }
 
@@ -81,6 +83,7 @@ pub const VpsOverview = struct {
         self.resource_kinds.deinit(allocator);
         self.inventory_kinds.deinit(allocator);
         self.metric_summaries.deinit(allocator);
+        self.family_summaries.deinit(allocator);
     }
 
     pub fn writeText(self: VpsOverview, writer: anytype) !void {
@@ -112,6 +115,13 @@ pub const VpsOverview = struct {
         } else {
             for (self.metric_summaries.items) |row| try writeMetricSummaryText(row, writer);
         }
+
+        try writer.writeAll("vm family\n");
+        if (self.family_summaries.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.family_summaries.items) |row| try writeVpsFamilySummaryText(row, writer);
+        }
     }
 
     pub fn writeJson(self: VpsOverview, writer: anytype) !void {
@@ -134,6 +144,11 @@ pub const VpsOverview = struct {
         for (self.metric_summaries.items, 0..) |row, index| {
             if (index != 0) try writer.writeByte(',');
             try writeMetricSummaryJson(row, writer);
+        }
+        try writer.writeAll("],\"vm_family\":[");
+        for (self.family_summaries.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeVpsFamilySummaryJson(row, writer);
         }
         try writer.writeAll("]}");
         try writer.writeByte('\n');
@@ -293,6 +308,12 @@ fn writeMetricSummaryText(row: db_store.HostingerMetricSummary, writer: anytype)
     try writer.writeByte('\n');
 }
 
+fn writeVpsFamilySummaryText(row: db_store.HostingerVpsFamilySummary, writer: anytype) !void {
+    try writer.print("{s}/{s}/{s}\tcount={d}", .{ row.vm_id, row.source, row.kind, row.count });
+    try writeTextField(writer, "latest", row.latest_updated);
+    try writer.writeByte('\n');
+}
+
 fn writeVpsRowJson(row: db_store.HostingerVpsRow, writer: anytype) !void {
     try writer.writeByte('{');
     try writeJsonStringField(writer, "id", row.id, true);
@@ -318,6 +339,16 @@ fn writeMetricSummaryJson(row: db_store.HostingerMetricSummary, writer: anytype)
     try writeJsonStringField(writer, "metric", row.metric, true);
     try app_render.writeJsonIntField(writer, "count", row.count, true);
     try writeJsonStringField(writer, "latest_captured", row.latest_captured, false);
+    try writer.writeByte('}');
+}
+
+fn writeVpsFamilySummaryJson(row: db_store.HostingerVpsFamilySummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonStringField(writer, "vm_id", row.vm_id, true);
+    try writeJsonStringField(writer, "source", row.source, true);
+    try writeJsonStringField(writer, "kind", row.kind, true);
+    try app_render.writeJsonIntField(writer, "count", row.count, true);
+    try writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
     try writer.writeByte('}');
 }
 
@@ -396,7 +427,9 @@ test "hostinger app renders VPS overview from normalized storage" {
     try db.upsertHostingerVps("12345", "srv12345.hstgr.cloud", "running", "76.13.130.170", "KVM 2", "{\"id\":12345}");
     try db.insertHostingerMetric("12345", "cpu", "0.42", "{\"cpu\":0.42}");
     try db.upsertHostingerResource("hostinger-vps-actions||12345||reboot", "hostinger-vps-actions", "reboot", "12345", "Reboot", "available", null, "{\"id\":\"reboot\"}");
+    try db.upsertHostingerResource("hostinger-vps-action-detail||12345/reboot||step-1", "hostinger-vps-action-detail", "step-1", "12345/reboot", "Step 1", "complete", null, "{\"id\":\"step-1\"}");
     try db.upsertHostingerInventoryItem("hostinger-vps-templates||ubuntu", "hostinger-vps-templates", "ubuntu", "Ubuntu", "available", "linux", null, null, null, "enabled", null, null, null, "{\"id\":\"ubuntu\"}");
+    try db.upsertHostingerInventoryItem("hostinger-vps-backups|12345|backup-1", "hostinger-vps-backups", "backup-1", "Backup 1", "available", "backup", null, null, null, null, "2026-01-01T00:00:00Z", null, null, "{\"id\":\"backup-1\"}");
 
     const domains = [_][]const u8{"plosca.ru"};
     const ctx = Context{
@@ -411,13 +444,11 @@ test "hostinger app renders VPS overview from normalized storage" {
     defer overview.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), overview.vps.items.len);
     try std.testing.expectEqualStrings("12345", overview.vps.items[0].id);
-    try std.testing.expectEqual(@as(usize, 1), overview.resource_kinds.items.len);
-    try std.testing.expectEqualStrings("hostinger-vps-actions", overview.resource_kinds.items[0].kind);
-    try std.testing.expectEqual(@as(i64, 1), overview.resource_kinds.items[0].count);
-    try std.testing.expectEqual(@as(usize, 1), overview.inventory_kinds.items.len);
-    try std.testing.expectEqualStrings("hostinger-vps-templates", overview.inventory_kinds.items[0].kind);
+    try std.testing.expectEqual(@as(usize, 2), overview.resource_kinds.items.len);
+    try std.testing.expectEqual(@as(usize, 2), overview.inventory_kinds.items.len);
     try std.testing.expectEqual(@as(usize, 1), overview.metric_summaries.items.len);
     try std.testing.expectEqualStrings("cpu", overview.metric_summaries.items[0].metric);
+    try std.testing.expectEqual(@as(usize, 4), overview.family_summaries.items.len);
 
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
@@ -428,6 +459,11 @@ test "hostinger app renders VPS overview from normalized storage" {
     try std.testing.expect(std.mem.indexOf(u8, text, "12345\tname=srv12345.hstgr.cloud\tstatus=running\tipv4=76.13.130.170\tplan=KVM 2") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger-vps-actions\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/cpu\tcount=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "vm family\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "12345/resource/hostinger-vps-actions\tcount=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "12345/resource/hostinger-vps-action-detail\tcount=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "12345/inventory/hostinger-vps-backups\tcount=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "12345/metric/cpu\tcount=1") != null);
 
     var json_out = std.Io.Writer.Allocating.init(allocator);
     defer json_out.deinit();
@@ -440,4 +476,7 @@ test "hostinger app renders VPS overview from normalized storage" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"inventory_kinds\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"metric_summaries\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"metric\":\"cpu\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"vm_family\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"resource\",\"kind\":\"hostinger-vps-actions\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"inventory\",\"kind\":\"hostinger-vps-backups\"") != null);
 }
