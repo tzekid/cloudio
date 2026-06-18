@@ -74,6 +74,8 @@ test "facade exposes stable integration modules" {
     _ = app.coverage.CaptureOptions;
     _ = app.doctor.Report;
     _ = app.evidence.Evidence;
+    _ = app.evidence.Matrix;
+    _ = app.evidence.RouteCaptures;
     _ = app.exports.writeRecentSnapshotsJson;
     _ = app.history.History;
     _ = app.hostinger.Context;

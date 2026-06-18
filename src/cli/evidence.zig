@@ -19,12 +19,22 @@ const Parsed = struct {
     format: cli_render.RenderFormat = .text,
 };
 
+const Command = union(enum) {
+    events: Parsed,
+    matrix: Parsed,
+    routes: Parsed,
+};
+
 pub fn run(ctx: Context, args: []const []const u8) !void {
-    const parsed = parse(args) catch |err| {
+    const command = parseCommand(args) catch |err| {
         std.debug.print("invalid evidence command: {s}\n", .{@errorName(err)});
         return err;
     };
-    try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeText, app_evidence.writeJson, .{ appContext(ctx), parsed.options });
+    switch (command) {
+        .events => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeText, app_evidence.writeJson, .{ appContext(ctx), parsed.options }),
+        .matrix => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeMatrixText, app_evidence.writeMatrixJson, .{ appContext(ctx), parsed.options }),
+        .routes => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeRouteCapturesText, app_evidence.writeRouteCapturesJson, .{ appContext(ctx), parsed.options }),
+    }
 }
 
 fn appContext(ctx: Context) app_evidence.Context {
@@ -34,7 +44,22 @@ fn appContext(ctx: Context) app_evidence.Context {
     };
 }
 
-fn parse(args: []const []const u8) !Parsed {
+fn parseCommand(args: []const []const u8) !Command {
+    if (args.len != 0) {
+        if (std.mem.eql(u8, args[0], "matrix") or std.mem.eql(u8, args[0], "families")) {
+            return .{ .matrix = try parseOptions(args[1..]) };
+        }
+        if (std.mem.eql(u8, args[0], "routes") or std.mem.eql(u8, args[0], "route-captures") or std.mem.eql(u8, args[0], "captures")) {
+            return .{ .routes = try parseOptions(args[1..]) };
+        }
+        if (std.mem.eql(u8, args[0], "events") or std.mem.eql(u8, args[0], "recent")) {
+            return .{ .events = try parseOptions(args[1..]) };
+        }
+    }
+    return .{ .events = try parseOptions(args) };
+}
+
+fn parseOptions(args: []const []const u8) !Parsed {
     var parsed = Parsed{};
     var provider_seen = false;
     var index: usize = 0;
@@ -65,30 +90,41 @@ fn parse(args: []const []const u8) !Parsed {
 
 test "evidence parser accepts provider limit and format" {
     const defaults_args = [_][]const u8{};
-    const defaults = try parse(defaults_args[0..]);
+    const defaults = (try parseCommand(defaults_args[0..])).events;
     try std.testing.expectEqual(app_evidence.ProviderFilter.all, defaults.options.provider);
     try std.testing.expectEqual(@as(i64, app_evidence.default_limit), defaults.options.limit);
     try std.testing.expectEqual(cli_render.RenderFormat.text, defaults.format);
 
     const args = [_][]const u8{ "hostinger", "--limit=5", "--json" };
-    const parsed = try parse(args[0..]);
+    const parsed = (try parseCommand(args[0..])).events;
     try std.testing.expectEqual(app_evidence.ProviderFilter.hostinger, parsed.options.provider);
     try std.testing.expectEqual(@as(i64, 5), parsed.options.limit);
     try std.testing.expectEqual(cli_render.RenderFormat.json, parsed.format);
 
     const flag_args = [_][]const u8{ "--provider", "cloudflare", "--format", "json" };
-    const flags = try parse(flag_args[0..]);
+    const flags = (try parseCommand(flag_args[0..])).events;
     try std.testing.expectEqual(app_evidence.ProviderFilter.cloudflare, flags.options.provider);
     try std.testing.expectEqual(cli_render.RenderFormat.json, flags.format);
+
+    const matrix_args = [_][]const u8{ "matrix", "cloudflare", "--limit=7", "--json" };
+    const matrix = (try parseCommand(matrix_args[0..])).matrix;
+    try std.testing.expectEqual(app_evidence.ProviderFilter.cloudflare, matrix.options.provider);
+    try std.testing.expectEqual(@as(i64, 7), matrix.options.limit);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, matrix.format);
+
+    const route_args = [_][]const u8{ "routes", "--provider", "hostinger", "--format=json" };
+    const routes = (try parseCommand(route_args[0..])).routes;
+    try std.testing.expectEqual(app_evidence.ProviderFilter.hostinger, routes.options.provider);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, routes.format);
 }
 
 test "evidence parser rejects invalid options" {
     const invalid_provider = [_][]const u8{ "--provider", "other" };
-    try std.testing.expectError(error.InvalidEvidenceProvider, parse(invalid_provider[0..]));
+    try std.testing.expectError(error.InvalidEvidenceProvider, parseCommand(invalid_provider[0..]));
 
     const invalid_limit = [_][]const u8{"--limit=0"};
-    try std.testing.expectError(error.InvalidEvidenceLimit, parse(invalid_limit[0..]));
+    try std.testing.expectError(error.InvalidEvidenceLimit, parseCommand(invalid_limit[0..]));
 
     const unexpected = [_][]const u8{"extra"};
-    try std.testing.expectError(error.UnexpectedEvidenceArgument, parse(unexpected[0..]));
+    try std.testing.expectError(error.UnexpectedEvidenceArgument, parseCommand(unexpected[0..]));
 }

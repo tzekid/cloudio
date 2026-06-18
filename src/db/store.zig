@@ -560,6 +560,37 @@ pub const ProviderEvidenceSummaryRows = struct {
     }
 };
 
+pub const RouteCaptureEvidenceFilter = struct {
+    provider: ?[]const u8 = null,
+    limit: i64 = 200,
+};
+
+pub const RouteCaptureEvidenceRow = struct {
+    provider: []u8,
+    operation_id: []u8,
+    status: []u8,
+    endpoint_sample: []u8,
+    count: i64,
+    latest_at: []u8,
+
+    pub fn deinit(self: RouteCaptureEvidenceRow, allocator: Allocator) void {
+        allocator.free(self.provider);
+        allocator.free(self.operation_id);
+        allocator.free(self.status);
+        allocator.free(self.endpoint_sample);
+        allocator.free(self.latest_at);
+    }
+};
+
+pub const RouteCaptureEvidenceRows = struct {
+    items: []RouteCaptureEvidenceRow,
+
+    pub fn deinit(self: *RouteCaptureEvidenceRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const Db = struct {
     handle: *sqlite.sqlite3,
 
@@ -1766,6 +1797,24 @@ pub const Db = struct {
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
 
+    pub fn routeCaptureEvidence(self: *Db, gpa: Allocator, filter: RouteCaptureEvidenceFilter) !RouteCaptureEvidenceRows {
+        const stmt = try self.prepare(route_capture_evidence_sql);
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindTextOpt(stmt, 1, filter.provider);
+        try bindTextOpt(stmt, 2, filter.provider);
+        try bindI64(stmt, 3, positiveLimit(filter.limit, 200));
+        var rows = std.ArrayList(RouteCaptureEvidenceRow).empty;
+        errdefer deinitRouteCaptureEvidenceList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try routeCaptureEvidenceFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
     pub fn projectDetails(self: *Db, gpa: Allocator, name: []const u8) !?ProjectDetails {
         const stmt = try self.prepare(
             \\SELECT name, source, COALESCE(path,''), COALESCE(host,''), COALESCE(upstream,''), COALESCE(service,''), COALESCE(container,'')
@@ -1942,6 +1991,11 @@ fn deinitProviderEvidenceSummaryList(rows: *std.ArrayList(ProviderEvidenceSummar
     rows.deinit(allocator);
 }
 
+fn deinitRouteCaptureEvidenceList(rows: *std.ArrayList(RouteCaptureEvidenceRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
 fn snapshotSummaryFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !SnapshotSummary {
     const id = sqlite.sqlite3_column_int64(stmt, 0);
     const source = try dupeColumn(allocator, stmt, 1);
@@ -2030,6 +2084,27 @@ fn providerEvidenceSummaryFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_s
         .provider = provider,
         .kind = kind,
         .status = status,
+        .count = sqlite.sqlite3_column_int64(stmt, 4),
+        .latest_at = latest_at,
+    };
+}
+
+fn routeCaptureEvidenceFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !RouteCaptureEvidenceRow {
+    const provider = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(provider);
+    const operation_id = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(operation_id);
+    const status = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(status);
+    const endpoint_sample = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(endpoint_sample);
+    const latest_at = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(latest_at);
+    return .{
+        .provider = provider,
+        .operation_id = operation_id,
+        .status = status,
+        .endpoint_sample = endpoint_sample,
         .count = sqlite.sqlite3_column_int64(stmt, 4),
         .latest_at = latest_at,
     };
@@ -2500,6 +2575,50 @@ const provider_evidence_summary_sql = provider_evidence_cte ++
     \\ORDER BY latest_at DESC, event_count DESC, source, provider, kind, status
 ;
 
+const route_capture_evidence_sql =
+    \\WITH parsed AS (
+    \\  SELECT status,
+    \\         created_at,
+    \\         detail,
+    \\         instr(detail, '/') AS slash_pos
+    \\  FROM audit_events
+    \\  WHERE action = 'route.capture'
+    \\),
+    \\provider_rows AS (
+    \\  SELECT status,
+    \\         created_at,
+    \\         detail,
+    \\         CASE WHEN slash_pos > 1 THEN substr(detail, 1, slash_pos - 1) ELSE '' END AS provider,
+    \\         CASE WHEN slash_pos > 0 THEN substr(detail, slash_pos + 1) ELSE detail END AS rest
+    \\  FROM parsed
+    \\),
+    \\route_rows AS (
+    \\  SELECT provider,
+    \\         CASE
+    \\           WHEN instr(rest, ' ') > 1 THEN substr(rest, 1, instr(rest, ' ') - 1)
+    \\           ELSE rest
+    \\         END AS operation_id,
+    \\         status,
+    \\         CASE
+    \\           WHEN instr(rest, ' ') > 0 THEN substr(rest, instr(rest, ' ') + 1)
+    \\           ELSE ''
+    \\         END AS endpoint,
+    \\         created_at
+    \\  FROM provider_rows
+    \\)
+    \\SELECT provider,
+    \\       operation_id,
+    \\       status,
+    \\       COALESCE(MAX(endpoint), '') AS endpoint_sample,
+    \\       COUNT(*) AS event_count,
+    \\       COALESCE(MAX(created_at), '') AS latest_at
+    \\FROM route_rows
+    \\WHERE (? IS NULL OR provider = ?)
+    \\GROUP BY provider, operation_id, status
+    \\ORDER BY latest_at DESC, event_count DESC, provider, operation_id, status
+    \\LIMIT ?
+;
+
 fn isKnownTable(table: []const u8) bool {
     const known = [_][]const u8{
         "snapshots",            "provider_raw",               "cloudflare_accounts",       "cloudflare_zones", "cloudflare_dns_records",
@@ -2578,6 +2697,43 @@ test "provider evidence read model joins raw captures snapshots and audit events
     }
     try std.testing.expect(saw_raw);
     try std.testing.expect(saw_cloudflare_error);
+}
+
+test "route capture evidence extracts operation ids from audit detail" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudio-route-capture-evidence.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    try db.insertAudit("route.capture", "ok", "cloudflare/accounts-list-accounts /accounts");
+    try db.insertAudit("route.capture", "ok", "cloudflare/accounts-list-accounts /accounts?page=2");
+    try db.insertAudit("route.capture", "http_error", "cloudflare/listZoneRulesets /zones/zone/rulesets");
+    try db.insertAudit("route.capture", "ok", "hostinger/VPS_getVirtualMachinesV1 /api/vps/v1/virtual-machines");
+
+    var cloudflare_rows = try db.routeCaptureEvidence(allocator, .{ .provider = "cloudflare", .limit = 20 });
+    defer cloudflare_rows.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), cloudflare_rows.items.len);
+
+    var saw_accounts = false;
+    var saw_rulesets = false;
+    for (cloudflare_rows.items) |row| {
+        try std.testing.expectEqualStrings("cloudflare", row.provider);
+        if (std.mem.eql(u8, row.operation_id, "accounts-list-accounts")) {
+            saw_accounts = true;
+            try std.testing.expectEqual(@as(i64, 2), row.count);
+            try std.testing.expectEqualStrings("ok", row.status);
+        }
+        if (std.mem.eql(u8, row.operation_id, "listZoneRulesets")) {
+            saw_rulesets = true;
+            try std.testing.expectEqualStrings("http_error", row.status);
+        }
+    }
+    try std.testing.expect(saw_accounts);
+    try std.testing.expect(saw_rulesets);
 }
 
 test "provider inventory read model joins and filters typed inventory" {
