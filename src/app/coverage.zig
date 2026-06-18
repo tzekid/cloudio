@@ -514,6 +514,13 @@ pub const WorkplanOptions = struct {
     candidate_limit: usize = 25,
 };
 
+pub const TypedModelOptions = struct {
+    provider: ProviderFilter = .all,
+    family: WorkplanFamily = .all,
+    limit: usize = 25,
+    include_complete: bool = false,
+};
+
 pub const LevelTagEvidence = struct {
     provider: []const u8,
     tag: []u8,
@@ -1245,6 +1252,30 @@ pub fn writeFamiliesJsonFromText(gpa: Allocator, cloudflare_text: []const u8, ho
     var report = try loadFamiliesFromText(gpa, cloudflare_text, hostinger_text, options);
     defer report.deinit(gpa);
     try report.writeJson(writer, options);
+}
+
+pub fn writeTypedModelsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: TypedModelOptions, writer: anytype) !void {
+    var report = try loadLevelTags(io, gpa, paths, options.provider);
+    defer report.deinit(gpa);
+    try writeTypedModelsText(gpa, report.items, options, writer);
+}
+
+pub fn writeTypedModelsJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: TypedModelOptions, writer: anytype) !void {
+    var report = try loadLevelTags(io, gpa, paths, options.provider);
+    defer report.deinit(gpa);
+    try writeTypedModelsJson(gpa, report.items, options, writer);
+}
+
+pub fn writeTypedModelsTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: TypedModelOptions, writer: anytype) !void {
+    var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
+    defer report.deinit(gpa);
+    try writeTypedModelsText(gpa, report.items, options, writer);
+}
+
+pub fn writeTypedModelsJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: TypedModelOptions, writer: anytype) !void {
+    var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
+    defer report.deinit(gpa);
+    try writeTypedModelsJson(gpa, report.items, options, writer);
 }
 
 pub fn writeWorkplanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions, writer: anytype) !void {
@@ -2076,6 +2107,183 @@ fn writeFamilyRowJson(row: FamilyEvidence, writer: anytype) !void {
     try writer.writeAll(" --family ");
     try writer.writeAll(row.family.name());
     try writer.writeAll(" --limit 25\"}]}");
+}
+
+fn writeTypedModelsText(gpa: Allocator, rows: []LevelTagEvidence, options: TypedModelOptions, writer: anytype) !void {
+    std.mem.sort(LevelTagEvidence, rows, {}, typedModelLessThan);
+    try writer.writeAll("Cloudio typed model candidates\n");
+    try writer.writeAll("evidence: L3 generic inventory rows with missing or thin typed-table projections\n");
+    try writer.writeAll("rank: typed_gap + generic_inventory_candidates, grouped by provider family\n");
+    try writer.print("filter={s} family={s}", .{ options.provider.name(), options.family.name() });
+    if (options.include_complete) try writer.writeAll(" include_complete=true");
+    try writer.writeAll(" limit=");
+    if (options.limit == 0) {
+        try writer.writeAll("all\n");
+    } else {
+        try writer.print("{d}\n", .{options.limit});
+    }
+
+    var visible: usize = 0;
+    var omitted: usize = 0;
+    var hidden_complete: usize = 0;
+    var hidden_family: usize = 0;
+    for (rows) |row| {
+        if (!workplanFamilyIncludes(options.family, row)) {
+            if (row.evidence.l3_generic_inventory_candidates != 0) hidden_family += 1;
+            continue;
+        }
+        if (row.evidence.l3_generic_inventory_candidates == 0) continue;
+        if (!options.include_complete and typedModelGap(row) == 0) {
+            hidden_complete += 1;
+            continue;
+        }
+        if (options.limit != 0 and visible >= options.limit) {
+            omitted += 1;
+            continue;
+        }
+        visible += 1;
+        try writeTypedModelTextRow(gpa, row, writer);
+    }
+
+    if (visible == 0) {
+        try writer.writeAll("no typed model candidates for filter\n");
+    } else {
+        if (omitted != 0) try writer.print("omitted={d}\n", .{omitted});
+        if (hidden_family != 0) try writer.print("family_filtered_rows_hidden={d}\n", .{hidden_family});
+        if (hidden_complete != 0) try writer.print("typed_or_complete_rows_hidden={d}\n", .{hidden_complete});
+    }
+}
+
+fn writeTypedModelsJson(gpa: Allocator, rows: []LevelTagEvidence, options: TypedModelOptions, writer: anytype) !void {
+    std.mem.sort(LevelTagEvidence, rows, {}, typedModelLessThan);
+    try writer.writeByte('{');
+    try writeJsonField(writer, "kind", "coverage_typed_model_candidates", true);
+    try writeJsonField(writer, "filter", options.provider.name(), true);
+    try writeJsonField(writer, "family", options.family.name(), true);
+    try writeJsonCountField(writer, "limit", options.limit, true);
+    try writeJsonBoolField(writer, "include_complete", options.include_complete, true);
+    try writeJsonField(writer, "evidence", "L3 generic inventory rows with missing or thin typed-table projections", true);
+    try writeJsonField(writer, "rank", "typed_gap + generic_inventory_candidates, grouped by provider family", true);
+    try writer.writeAll("\"items\":[");
+
+    var visible: usize = 0;
+    var omitted: usize = 0;
+    var hidden_complete: usize = 0;
+    var hidden_family: usize = 0;
+    var first = true;
+    for (rows) |row| {
+        if (!workplanFamilyIncludes(options.family, row)) {
+            if (row.evidence.l3_generic_inventory_candidates != 0) hidden_family += 1;
+            continue;
+        }
+        if (row.evidence.l3_generic_inventory_candidates == 0) continue;
+        if (!options.include_complete and typedModelGap(row) == 0) {
+            hidden_complete += 1;
+            continue;
+        }
+        if (options.limit != 0 and visible >= options.limit) {
+            omitted += 1;
+            continue;
+        }
+        visible += 1;
+        try writeMaybeJsonComma(writer, &first);
+        try writeTypedModelJsonRow(gpa, row, writer);
+    }
+
+    try writer.writeAll("],");
+    try writeJsonCountField(writer, "visible", visible, true);
+    try writeJsonCountField(writer, "omitted", omitted, true);
+    try writeJsonCountField(writer, "family_filtered_rows_hidden", hidden_family, true);
+    try writeJsonCountField(writer, "typed_or_complete_rows_hidden", hidden_complete, false);
+    try writer.writeByte('}');
+    try writer.writeByte('\n');
+}
+
+fn writeTypedModelTextRow(gpa: Allocator, row: LevelTagEvidence, writer: anytype) !void {
+    const family = workplanTagFamily(row.provider, row.tag);
+    try writer.print("{s} | {s}: typed_gap={d} L3_generic={d} typed={d} L2_read_evidence={d} family={s}\n", .{
+        row.provider,
+        row.tag,
+        typedModelGap(row),
+        row.evidence.l3_generic_inventory_candidates,
+        row.evidence.l3_typed_table_evidence,
+        row.evidence.l2_read_evidence,
+        if (family) |value| value.name() else "-",
+    });
+    const routes = try typedModelRoutesCommand(gpa, row);
+    defer gpa.free(routes);
+    try writer.print("  routes: {s}\n", .{routes});
+    const workplan = try typedModelWorkplanCommand(gpa, row);
+    defer gpa.free(workplan);
+    try writer.print("  review-bundle: {s}\n", .{workplan});
+}
+
+fn writeTypedModelJsonRow(gpa: Allocator, row: LevelTagEvidence, writer: anytype) !void {
+    const family = workplanTagFamily(row.provider, row.tag);
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", row.provider, true);
+    try writeJsonField(writer, "tag", row.tag, true);
+    try writeJsonNullableStringField(writer, "focus_family", if (family) |value| value.name() else null, true);
+    try writeJsonCountField(writer, "typed_gap", typedModelGap(row), true);
+    try writeJsonCountField(writer, "l3_generic_inventory_candidates", row.evidence.l3_generic_inventory_candidates, true);
+    try writeJsonCountField(writer, "l3_typed_table_evidence", row.evidence.l3_typed_table_evidence, true);
+    try writeJsonCountField(writer, "l2_read_evidence", row.evidence.l2_read_evidence, true);
+    try writeJsonField(writer, "status", if (typedModelGap(row) == 0) "typed" else "candidate", true);
+    try writer.writeAll("\"commands\":[");
+    var first = true;
+    const routes = try typedModelRoutesCommand(gpa, row);
+    defer gpa.free(routes);
+    try writeWorkplanCommandJson(writer, &first, "routes_detail", routes);
+    const workplan = try typedModelWorkplanCommand(gpa, row);
+    defer gpa.free(workplan);
+    try writeWorkplanCommandJson(writer, &first, "review_bundle", workplan);
+    try writer.writeAll("]}");
+}
+
+fn typedModelRoutesCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    try out.writer.print("cloudio coverage routes {s} ", .{row.provider});
+    try writeShellArg(&out.writer, row.tag);
+    try out.writer.writeAll(" --support partial --mode read --detail");
+    return try out.toOwnedSlice();
+}
+
+fn typedModelWorkplanCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    try out.writer.print("cloudio coverage workplan {s}", .{row.provider});
+    if (workplanTagFamily(row.provider, row.tag)) |family| {
+        try out.writer.print(" --family {s}", .{family.name()});
+    }
+    try out.writer.writeAll(" --limit 5 --candidate-limit 10 --bundle --plans --json");
+    return try out.toOwnedSlice();
+}
+
+fn typedModelGap(row: LevelTagEvidence) usize {
+    if (row.evidence.l3_generic_inventory_candidates <= row.evidence.l3_typed_table_evidence) return 0;
+    return row.evidence.l3_generic_inventory_candidates - row.evidence.l3_typed_table_evidence;
+}
+
+fn typedModelLessThan(_: void, lhs: LevelTagEvidence, rhs: LevelTagEvidence) bool {
+    const lhs_gap = typedModelGap(lhs);
+    const rhs_gap = typedModelGap(rhs);
+    if (lhs_gap != rhs_gap) return lhs_gap > rhs_gap;
+    if (lhs.evidence.l3_generic_inventory_candidates != rhs.evidence.l3_generic_inventory_candidates) {
+        return lhs.evidence.l3_generic_inventory_candidates > rhs.evidence.l3_generic_inventory_candidates;
+    }
+    if (lhs.evidence.l3_typed_table_evidence != rhs.evidence.l3_typed_table_evidence) {
+        return lhs.evidence.l3_typed_table_evidence < rhs.evidence.l3_typed_table_evidence;
+    }
+    const lhs_family = workplanTagFamily(lhs.provider, lhs.tag);
+    const rhs_family = workplanTagFamily(rhs.provider, rhs.tag);
+    const lhs_family_name = if (lhs_family) |family| family.name() else "";
+    const rhs_family_name = if (rhs_family) |family| family.name() else "";
+    const provider_order = std.mem.order(u8, lhs.provider, rhs.provider);
+    if (provider_order != .eq) return provider_order == .lt;
+    const family_order = std.mem.order(u8, lhs_family_name, rhs_family_name);
+    if (family_order != .eq) return family_order == .lt;
+    return std.mem.order(u8, lhs.tag, rhs.tag) == .lt;
 }
 
 fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, bundle_routes: ?[]const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
@@ -4214,6 +4422,63 @@ test "ranks manifest-backed provider coverage levels by tag" {
     const full_json = try full_json_out.toOwnedSlice();
     defer allocator.free(full_json);
     try std.testing.expect(std.mem.indexOf(u8, full_json, "\"tag\":\"Accounts\"") != null);
+}
+
+test "ranks typed model candidates from L3 generic inventory evidence" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Security Center Insights","method":"GET","path":"/accounts/{account_id}/security-center/insights","operation_id":"security-insights-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"generic inventory only"}
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"typed account rows"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"Hosting websites","method":"GET","path":"/api/websites/v1","operation_id":"Websites_getListV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"generic inventory only"}
+        \\
+    ;
+
+    var text_out = std.Io.Writer.Allocating.init(allocator);
+    defer text_out.deinit();
+    try writeTypedModelsTextFromText(allocator, cloudflare, hostinger, .{
+        .provider = .cloudflare,
+        .family = .security,
+        .limit = 10,
+    }, &text_out.writer);
+    const text = try text_out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio typed model candidates\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Security Center Insights: typed_gap=1 L3_generic=1 typed=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "routes: cloudio coverage routes cloudflare 'Security Center Insights' --support partial --mode read --detail") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "review-bundle: cloudio coverage workplan cloudflare --family security --limit 5 --candidate-limit 10 --bundle --plans --json") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Accounts") == null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeTypedModelsJsonFromText(allocator, cloudflare, hostinger, .{
+        .provider = .all,
+        .limit = 10,
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_typed_model_candidates\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Security Center Insights\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"focus_family\":\"security\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_gap\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Security Center Insights' --support partial --mode read --detail\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Hosting websites\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Accounts\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_or_complete_rows_hidden\":1") != null);
+
+    var complete_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer complete_json_out.deinit();
+    try writeTypedModelsJsonFromText(allocator, cloudflare, hostinger, .{
+        .provider = .cloudflare,
+        .limit = 0,
+        .include_complete = true,
+    }, &complete_json_out.writer);
+    const complete_json = try complete_json_out.toOwnedSlice();
+    defer allocator.free(complete_json);
+    try std.testing.expect(std.mem.indexOf(u8, complete_json, "\"tag\":\"Accounts\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_json, "\"status\":\"typed\"") != null);
 }
 
 test "renders broad provider coverage workplan commands by tag" {

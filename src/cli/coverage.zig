@@ -50,6 +50,11 @@ const FamilyCommand = struct {
     format: RenderFormat = .text,
 };
 
+const TypedModelsCommand = struct {
+    options: app_coverage.TypedModelOptions = .{},
+    format: RenderFormat = .text,
+};
+
 const WorkplanCommand = struct {
     options: app_coverage.WorkplanOptions = .{},
     format: RenderFormat = .text,
@@ -79,6 +84,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .levels => |command| try commandLevels(ctx, command),
         .level_tags => |command| try commandLevelTags(ctx, command),
         .families => |command| try commandFamilies(ctx, command),
+        .typed_models => |command| try commandTypedModels(ctx, command),
         .workplan => |command| try commandWorkplan(ctx, command),
         .routes => |command| try commandRoutes(ctx, command),
         .capture_candidates => |command| try commandCaptureCandidates(ctx, command),
@@ -96,6 +102,7 @@ const Command = union(enum) {
     levels: LevelCommand,
     level_tags: LevelTagCommand,
     families: FamilyCommand,
+    typed_models: TypedModelsCommand,
     workplan: WorkplanCommand,
     routes: RouteCommand,
     capture_candidates: CaptureCandidateCommand,
@@ -125,6 +132,9 @@ fn parseCommand(args: []const []const u8) Command {
     }
     if (std.mem.eql(u8, args[0], "families") or std.mem.eql(u8, args[0], "family-summary") or std.mem.eql(u8, args[0], "family-levels")) {
         return parseFamilies(args[1..]);
+    }
+    if (std.mem.eql(u8, args[0], "typed-models") or std.mem.eql(u8, args[0], "typed-model-candidates") or std.mem.eql(u8, args[0], "l3-models")) {
+        return parseTypedModels(args[1..]);
     }
     if (std.mem.eql(u8, args[0], "workplan") or std.mem.eql(u8, args[0], "slice-plan") or std.mem.eql(u8, args[0], "slices")) {
         return parseWorkplan(args[1..]);
@@ -343,6 +353,53 @@ fn parseFamilies(args: []const []const u8) Command {
         }
     }
     return .{ .families = command };
+}
+
+fn parseTypedModels(args: []const []const u8) Command {
+    var command = TypedModelsCommand{};
+    var provider_set = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--limit")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--limit" };
+            command.options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
+            const value = arg["--limit=".len..];
+            command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--json")) {
+            command.format = .json;
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--format" };
+            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            const value = arg["--format=".len..];
+            command.format = parseFormat(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = arg };
+            command.options.family = app_coverage.WorkplanFamily.parse(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--family=")) {
+            const value = arg["--family=".len..];
+            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.startsWith(u8, arg, "--control-plane-family=")) {
+            const value = arg["--control-plane-family=".len..];
+            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.startsWith(u8, arg, "--focus-family=")) {
+            const value = arg["--focus-family=".len..];
+            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--include-complete") or std.mem.eql(u8, arg, "--include-typed") or std.mem.eql(u8, arg, "--all")) {
+            command.options.include_complete = true;
+        } else if (!provider_set) {
+            command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
+            provider_set = true;
+        } else {
+            return .{ .unknown = arg };
+        }
+    }
+    return .{ .typed_models = command };
 }
 
 fn parseWorkplan(args: []const []const u8) Command {
@@ -738,6 +795,16 @@ fn commandFamilies(ctx: Context, command: FamilyCommand) !void {
     try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
 
+fn commandTypedModels(ctx: Context, command: TypedModelsCommand) !void {
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    switch (command.format) {
+        .text => try app_coverage.writeTypedModelsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
+        .json => try app_coverage.writeTypedModelsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
+    }
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+}
+
 fn commandWorkplan(ctx: Context, command: WorkplanCommand) !void {
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
@@ -1041,6 +1108,18 @@ test "coverage command parser defaults to summary" {
             try std.testing.expectEqual(RenderFormat.text, command.format);
         },
         else => return error.ExpectedCoverageFamilies,
+    }
+
+    const typed_models_args = [_][]const u8{ "typed-models", "cloudflare", "--family", "security", "--limit=7", "--include-complete", "--json" };
+    switch (parseCommand(typed_models_args[0..])) {
+        .typed_models => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.provider);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.security, command.options.family);
+            try std.testing.expectEqual(@as(usize, 7), command.options.limit);
+            try std.testing.expect(command.options.include_complete);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageTypedModels,
     }
 
     const workplan_args = [_][]const u8{ "workplan", "cloudflare", "--limit=6", "--json" };
