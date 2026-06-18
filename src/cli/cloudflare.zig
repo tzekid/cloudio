@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_cloudflare = @import("app_cloudflare");
+const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
 const db_store = @import("db_store");
 
@@ -25,6 +26,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandAccount(ctx, args);
     } else if (std.mem.eql(u8, sub, "dry-run")) {
         try commandDryRun(ctx, args);
+    } else if (isOverviewCommand(sub)) {
+        try commandOverview(ctx, args[1..]);
     } else if (std.mem.eql(u8, sub, "inventory")) {
         try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.listInventoryItems(appContext(ctx)));
     } else if (std.mem.eql(u8, sub, "resources")) {
@@ -108,6 +111,55 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     } else {
         std.debug.print("unknown cloudflare command: {s}\n", .{sub});
     }
+}
+
+const OverviewParsed = struct {
+    options: app_cloudflare.OverviewOptions = .{},
+    format: cli_render.RenderFormat = .text,
+};
+
+fn commandOverview(ctx: Context, args: []const []const u8) !void {
+    const parsed = parseOverviewArgs(args) catch |err| {
+        std.debug.print("invalid cloudflare overview command: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_cloudflare.writeOverviewText, app_cloudflare.writeOverviewJson, .{ appContext(ctx), parsed.options });
+}
+
+fn parseOverviewArgs(args: []const []const u8) !OverviewParsed {
+    var parsed = OverviewParsed{};
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        switch (cli_render.parseFormatArg(args, &i)) {
+            .matched => |format| {
+                parsed.format = format;
+                continue;
+            },
+            .missing_value => return error.MissingFormat,
+            .invalid_value => return error.InvalidFormat,
+            .no_match => {},
+        }
+        switch (cli_args.parseValueArg(args, &i, .{"--limit"})) {
+            .matched => |value| {
+                parsed.options.limit = try parseLimit(value);
+                continue;
+            },
+            .missing_value => return error.MissingLimit,
+            .no_match => {},
+        }
+        return error.UnexpectedArgument;
+    }
+    return parsed;
+}
+
+fn parseLimit(value: []const u8) !i64 {
+    const parsed = try std.fmt.parseInt(i64, value, 10);
+    if (parsed < 1) return error.InvalidLimit;
+    return parsed;
+}
+
+fn isOverviewCommand(value: []const u8) bool {
+    return std.mem.eql(u8, value, "overview") or std.mem.eql(u8, value, "summary") or std.mem.eql(u8, value, "zone-overview");
 }
 
 fn commandDryRun(ctx: Context, args: []const []const u8) !void {
@@ -792,6 +844,7 @@ fn commandDns(ctx: Context, args: []const []const u8) !void {
         try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.collectDns(appContext(ctx), ctx.domains[0]));
         return;
     }
+    if (isOverviewCommand(args[1])) return try commandOverview(ctx, args[2..]);
     if (app_cloudflare.DnsRecordReadEndpoint.parse(args[1])) |endpoint| {
         if (endpoint.requiresRecordId() and args.len < 3) {
             std.debug.print("dns record id required for dns {s}\n", .{endpoint.commandName()});
@@ -1949,6 +2002,7 @@ fn commandMembership(ctx: Context, args: []const []const u8) !void {
 }
 
 fn commandZone(ctx: Context, args: []const []const u8) !void {
+    if (args.len > 1 and isOverviewCommand(args[1])) return try commandOverview(ctx, args[2..]);
     if (args.len > 1 and (std.mem.eql(u8, args[1], "show") or std.mem.eql(u8, args[1], "detail") or std.mem.eql(u8, args[1], "details"))) {
         if (args.len < 3) {
             std.debug.print("zone id required for zone {s}\n", .{args[1]});
@@ -2517,6 +2571,41 @@ test "cloudflare domain commands use explicit or default domain" {
 
     const zone_explicit = [_][]const u8{ "zone", "example.net" };
     try std.testing.expectEqualStrings("example.net", app_cloudflare.selectedDomain(configured[0..], zone_explicit[0..]));
+}
+
+test "cloudflare overview parser accepts format and limit" {
+    const default_args = [_][]const u8{};
+    const defaults = try parseOverviewArgs(default_args[0..]);
+    try std.testing.expectEqual(cli_render.RenderFormat.text, defaults.format);
+    try std.testing.expectEqual(@as(i64, 20), defaults.options.limit);
+
+    const args = [_][]const u8{ "--json", "--limit=5" };
+    const parsed = try parseOverviewArgs(args[0..]);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, parsed.format);
+    try std.testing.expectEqual(@as(i64, 5), parsed.options.limit);
+
+    const split_args = [_][]const u8{ "--format", "json", "--limit", "3" };
+    const split = try parseOverviewArgs(split_args[0..]);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, split.format);
+    try std.testing.expectEqual(@as(i64, 3), split.options.limit);
+
+    try std.testing.expect(isOverviewCommand("overview"));
+    try std.testing.expect(isOverviewCommand("summary"));
+    try std.testing.expect(isOverviewCommand("zone-overview"));
+}
+
+test "cloudflare overview parser rejects invalid values" {
+    const missing_limit = [_][]const u8{"--limit"};
+    try std.testing.expectError(error.MissingLimit, parseOverviewArgs(missing_limit[0..]));
+
+    const invalid_limit = [_][]const u8{"--limit=0"};
+    try std.testing.expectError(error.InvalidLimit, parseOverviewArgs(invalid_limit[0..]));
+
+    const invalid_format = [_][]const u8{"--format=yaml"};
+    try std.testing.expectError(error.InvalidFormat, parseOverviewArgs(invalid_format[0..]));
+
+    const extra = [_][]const u8{"unexpected"};
+    try std.testing.expectError(error.UnexpectedArgument, parseOverviewArgs(extra[0..]));
 }
 
 test "cloudforce one rule filters parse key value arguments" {

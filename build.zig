@@ -383,6 +383,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "collector_cloudflare", .module = collector_cloudflare_mod },
             .{ .name = "app_provider_list", .module = app_provider_list_mod },
+            .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
@@ -506,6 +507,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },

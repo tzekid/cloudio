@@ -189,6 +189,113 @@ pub const MetricRows = struct {
     }
 };
 
+pub const CloudflareAccountRow = struct {
+    id: []u8,
+    name: []u8,
+    account_type: []u8,
+    status: []u8,
+    updated_at: []u8,
+
+    pub fn deinit(self: CloudflareAccountRow, allocator: Allocator) void {
+        allocator.free(self.id);
+        allocator.free(self.name);
+        allocator.free(self.account_type);
+        allocator.free(self.status);
+        allocator.free(self.updated_at);
+    }
+};
+
+pub const CloudflareAccountRows = struct {
+    items: []CloudflareAccountRow,
+
+    pub fn deinit(self: *CloudflareAccountRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const CloudflareZoneRow = struct {
+    id: []u8,
+    name: []u8,
+    account_id: []u8,
+    status: []u8,
+    paused: []u8,
+    zone_type: []u8,
+    name_servers: []u8,
+    updated_at: []u8,
+
+    pub fn deinit(self: CloudflareZoneRow, allocator: Allocator) void {
+        allocator.free(self.id);
+        allocator.free(self.name);
+        allocator.free(self.account_id);
+        allocator.free(self.status);
+        allocator.free(self.paused);
+        allocator.free(self.zone_type);
+        allocator.free(self.name_servers);
+        allocator.free(self.updated_at);
+    }
+};
+
+pub const CloudflareZoneRows = struct {
+    items: []CloudflareZoneRow,
+
+    pub fn deinit(self: *CloudflareZoneRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const CloudflareDnsRecordRow = struct {
+    id: []u8,
+    zone_id: []u8,
+    name: []u8,
+    record_type: []u8,
+    content: []u8,
+    ttl: []u8,
+    proxied: []u8,
+    updated_at: []u8,
+
+    pub fn deinit(self: CloudflareDnsRecordRow, allocator: Allocator) void {
+        allocator.free(self.id);
+        allocator.free(self.zone_id);
+        allocator.free(self.name);
+        allocator.free(self.record_type);
+        allocator.free(self.content);
+        allocator.free(self.ttl);
+        allocator.free(self.proxied);
+        allocator.free(self.updated_at);
+    }
+};
+
+pub const CloudflareDnsRecordRows = struct {
+    items: []CloudflareDnsRecordRow,
+
+    pub fn deinit(self: *CloudflareDnsRecordRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const CloudflareKindCount = struct {
+    kind: []u8,
+    count: i64,
+    latest_updated: []u8,
+
+    pub fn deinit(self: CloudflareKindCount, allocator: Allocator) void {
+        allocator.free(self.kind);
+        allocator.free(self.latest_updated);
+    }
+};
+
+pub const CloudflareKindCounts = struct {
+    items: []CloudflareKindCount,
+
+    pub fn deinit(self: *CloudflareKindCounts, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const HostingerVpsRow = struct {
     id: []u8,
     name: []u8,
@@ -814,6 +921,104 @@ pub const Db = struct {
         );
     }
 
+    pub fn cloudflareAccountRows(self: *Db, gpa: Allocator, limit: i64) !CloudflareAccountRows {
+        const stmt = try self.prepare(
+            \\SELECT id, COALESCE(name,''), COALESCE(type,''), COALESCE(status,''), updated_at
+            \\FROM cloudflare_accounts
+            \\ORDER BY updated_at DESC, id
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 200));
+        var rows = std.ArrayList(CloudflareAccountRow).empty;
+        errdefer deinitCloudflareAccountRowList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try cloudflareAccountRowFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
+    pub fn cloudflareZoneRows(self: *Db, gpa: Allocator, limit: i64) !CloudflareZoneRows {
+        const stmt = try self.prepare(
+            \\SELECT id, COALESCE(name,''), COALESCE(account_id,''), COALESCE(status,''),
+            \\       CASE WHEN paused IS NULL THEN '' WHEN paused != 0 THEN 'true' ELSE 'false' END,
+            \\       COALESCE(type,''), COALESCE(name_servers,''), updated_at
+            \\FROM cloudflare_zones
+            \\ORDER BY updated_at DESC, name, id
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 200));
+        var rows = std.ArrayList(CloudflareZoneRow).empty;
+        errdefer deinitCloudflareZoneRowList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try cloudflareZoneRowFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
+    pub fn cloudflareDnsRecordRows(self: *Db, gpa: Allocator, limit: i64) !CloudflareDnsRecordRows {
+        const stmt = try self.prepare(
+            \\SELECT id, COALESCE(zone_id,''), COALESCE(name,''), COALESCE(type,''), COALESCE(content,''),
+            \\       COALESCE(CAST(ttl AS TEXT), ''),
+            \\       CASE WHEN proxied IS NULL THEN '' WHEN proxied != 0 THEN 'true' ELSE 'false' END,
+            \\       updated_at
+            \\FROM cloudflare_dns_records
+            \\ORDER BY updated_at DESC, name, type, id
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 200));
+        var rows = std.ArrayList(CloudflareDnsRecordRow).empty;
+        errdefer deinitCloudflareDnsRecordRowList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try cloudflareDnsRecordRowFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
+    pub fn cloudflareResourceKindCounts(self: *Db, gpa: Allocator, limit: i64) !CloudflareKindCounts {
+        return try self.cloudflareKindCounts(gpa,
+            \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
+            \\FROM cloudflare_resources
+            \\GROUP BY kind
+            \\ORDER BY item_count DESC, kind
+            \\LIMIT ?
+        , limit);
+    }
+
+    pub fn cloudflareInventoryKindCounts(self: *Db, gpa: Allocator, limit: i64) !CloudflareKindCounts {
+        return try self.cloudflareKindCounts(gpa,
+            \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
+            \\FROM cloudflare_inventory_items
+            \\GROUP BY kind
+            \\ORDER BY item_count DESC, kind
+            \\LIMIT ?
+        , limit);
+    }
+
+    pub fn cloudflareSecurityKindCounts(self: *Db, gpa: Allocator, limit: i64) !CloudflareKindCounts {
+        return try self.cloudflareKindCounts(gpa,
+            \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
+            \\FROM cloudflare_security_items
+            \\GROUP BY kind
+            \\ORDER BY item_count DESC, kind
+            \\LIMIT ?
+        , limit);
+    }
+
     pub fn hostingerResourceList(self: *Db, gpa: Allocator) !NameValueRows {
         return try self.nameValueRows(gpa,
             \\SELECT kind || '/' || resource_id,
@@ -960,6 +1165,22 @@ pub const Db = struct {
         errdefer deinitInventoryItemList(&rows, gpa);
         while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
             var row = try inventoryItemFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
+    fn cloudflareKindCounts(self: *Db, gpa: Allocator, sql: []const u8, limit: i64) !CloudflareKindCounts {
+        const stmt = try self.prepare(sql);
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 200));
+        var rows = std.ArrayList(CloudflareKindCount).empty;
+        errdefer deinitCloudflareKindCountList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try cloudflareKindCountFromStmt(gpa, stmt);
             rows.append(gpa, row) catch |err| {
                 row.deinit(gpa);
                 return err;
@@ -1210,6 +1431,26 @@ fn deinitMetricList(rows: *std.ArrayList(MetricRow), allocator: Allocator) void 
     rows.deinit(allocator);
 }
 
+fn deinitCloudflareAccountRowList(rows: *std.ArrayList(CloudflareAccountRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
+fn deinitCloudflareZoneRowList(rows: *std.ArrayList(CloudflareZoneRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
+fn deinitCloudflareDnsRecordRowList(rows: *std.ArrayList(CloudflareDnsRecordRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
+fn deinitCloudflareKindCountList(rows: *std.ArrayList(CloudflareKindCount), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
 fn deinitHostingerVpsRowList(rows: *std.ArrayList(HostingerVpsRow), allocator: Allocator) void {
     for (rows.items) |row| row.deinit(allocator);
     rows.deinit(allocator);
@@ -1288,6 +1529,96 @@ fn metricRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !MetricRo
         .value = value,
         .unit = unit,
         .captured_at = captured_at,
+    };
+}
+
+fn cloudflareAccountRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !CloudflareAccountRow {
+    const id = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(id);
+    const name = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(name);
+    const account_type = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(account_type);
+    const status = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(status);
+    const updated_at = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(updated_at);
+    return .{
+        .id = id,
+        .name = name,
+        .account_type = account_type,
+        .status = status,
+        .updated_at = updated_at,
+    };
+}
+
+fn cloudflareZoneRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !CloudflareZoneRow {
+    const id = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(id);
+    const name = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(name);
+    const account_id = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(account_id);
+    const status = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(status);
+    const paused = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(paused);
+    const zone_type = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(zone_type);
+    const name_servers = try dupeColumn(allocator, stmt, 6);
+    errdefer allocator.free(name_servers);
+    const updated_at = try dupeColumn(allocator, stmt, 7);
+    errdefer allocator.free(updated_at);
+    return .{
+        .id = id,
+        .name = name,
+        .account_id = account_id,
+        .status = status,
+        .paused = paused,
+        .zone_type = zone_type,
+        .name_servers = name_servers,
+        .updated_at = updated_at,
+    };
+}
+
+fn cloudflareDnsRecordRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !CloudflareDnsRecordRow {
+    const id = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(id);
+    const zone_id = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(zone_id);
+    const name = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(name);
+    const record_type = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(record_type);
+    const content = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(content);
+    const ttl = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(ttl);
+    const proxied = try dupeColumn(allocator, stmt, 6);
+    errdefer allocator.free(proxied);
+    const updated_at = try dupeColumn(allocator, stmt, 7);
+    errdefer allocator.free(updated_at);
+    return .{
+        .id = id,
+        .zone_id = zone_id,
+        .name = name,
+        .record_type = record_type,
+        .content = content,
+        .ttl = ttl,
+        .proxied = proxied,
+        .updated_at = updated_at,
+    };
+}
+
+fn cloudflareKindCountFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !CloudflareKindCount {
+    const kind = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(kind);
+    const latest_updated = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(latest_updated);
+    return .{
+        .kind = kind,
+        .count = sqlite.sqlite3_column_int64(stmt, 1),
+        .latest_updated = latest_updated,
     };
 }
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 const collector_cloudflare = @import("collector_cloudflare");
 const app_provider_list = @import("app_provider_list");
+const core_json = @import("core_json");
 const core_output = @import("core_output");
 const db_store = @import("db_store");
 const provider_cloudflare = @import("provider_cloudflare");
@@ -150,6 +151,120 @@ pub const Context = struct {
     auth: Auth,
     domains: []const []const u8,
     db: *Db,
+};
+
+pub const OverviewOptions = struct {
+    limit: i64 = 20,
+};
+
+pub const Overview = struct {
+    accounts: db_store.CloudflareAccountRows,
+    zones: db_store.CloudflareZoneRows,
+    dns_records: db_store.CloudflareDnsRecordRows,
+    resource_kinds: db_store.CloudflareKindCounts,
+    inventory_kinds: db_store.CloudflareKindCounts,
+    security_kinds: db_store.CloudflareKindCounts,
+
+    pub fn load(ctx: Context, options: OverviewOptions) !Overview {
+        const limit = positiveLimit(options.limit, 20);
+        return .{
+            .accounts = try ctx.db.cloudflareAccountRows(ctx.gpa, limit),
+            .zones = try ctx.db.cloudflareZoneRows(ctx.gpa, limit),
+            .dns_records = try ctx.db.cloudflareDnsRecordRows(ctx.gpa, limit),
+            .resource_kinds = try ctx.db.cloudflareResourceKindCounts(ctx.gpa, limit),
+            .inventory_kinds = try ctx.db.cloudflareInventoryKindCounts(ctx.gpa, limit),
+            .security_kinds = try ctx.db.cloudflareSecurityKindCounts(ctx.gpa, limit),
+        };
+    }
+
+    pub fn deinit(self: *Overview, allocator: Allocator) void {
+        self.accounts.deinit(allocator);
+        self.zones.deinit(allocator);
+        self.dns_records.deinit(allocator);
+        self.resource_kinds.deinit(allocator);
+        self.inventory_kinds.deinit(allocator);
+        self.security_kinds.deinit(allocator);
+    }
+
+    pub fn writeText(self: Overview, writer: anytype) !void {
+        try writer.writeAll("Cloudflare overview\n");
+        try writer.writeAll("accounts\n");
+        if (self.accounts.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.accounts.items) |row| try writeAccountText(row, writer);
+        }
+
+        try writer.writeAll("zones\n");
+        if (self.zones.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.zones.items) |row| try writeZoneText(row, writer);
+        }
+
+        try writer.writeAll("dns records\n");
+        if (self.dns_records.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.dns_records.items) |row| try writeDnsRecordText(row, writer);
+        }
+
+        try writer.writeAll("resources\n");
+        if (self.resource_kinds.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.resource_kinds.items) |row| try writeKindCountText(row, writer);
+        }
+
+        try writer.writeAll("inventory\n");
+        if (self.inventory_kinds.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.inventory_kinds.items) |row| try writeKindCountText(row, writer);
+        }
+
+        try writer.writeAll("security\n");
+        if (self.security_kinds.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.security_kinds.items) |row| try writeKindCountText(row, writer);
+        }
+    }
+
+    pub fn writeJson(self: Overview, writer: anytype) !void {
+        try writer.writeAll("{\"kind\":\"cloudflare_overview\",\"accounts\":[");
+        for (self.accounts.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeAccountJson(row, writer);
+        }
+        try writer.writeAll("],\"zones\":[");
+        for (self.zones.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeZoneJson(row, writer);
+        }
+        try writer.writeAll("],\"dns_records\":[");
+        for (self.dns_records.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeDnsRecordJson(row, writer);
+        }
+        try writer.writeAll("],\"resource_kinds\":[");
+        for (self.resource_kinds.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeKindCountJson(row, writer);
+        }
+        try writer.writeAll("],\"inventory_kinds\":[");
+        for (self.inventory_kinds.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeKindCountJson(row, writer);
+        }
+        try writer.writeAll("],\"security_kinds\":[");
+        for (self.security_kinds.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeKindCountJson(row, writer);
+        }
+        try writer.writeAll("]}");
+        try writer.writeByte('\n');
+    }
 };
 
 pub fn collectAccounts(ctx: Context) !Output {
@@ -520,6 +635,18 @@ pub fn listInventoryItems(ctx: Context) !Output {
     return try app_provider_list.inventoryItems(providerListContext(ctx), .cloudflare);
 }
 
+pub fn writeOverviewText(ctx: Context, options: OverviewOptions, writer: anytype) !void {
+    var overview = try Overview.load(ctx, options);
+    defer overview.deinit(ctx.gpa);
+    try overview.writeText(writer);
+}
+
+pub fn writeOverviewJson(ctx: Context, options: OverviewOptions, writer: anytype) !void {
+    var overview = try Overview.load(ctx, options);
+    defer overview.deinit(ctx.gpa);
+    try overview.writeJson(writer);
+}
+
 pub fn selectedDomain(domains: []const []const u8, args: []const []const u8) []const u8 {
     if (args.len > 1) return args[1];
     return domains[0];
@@ -530,6 +657,107 @@ fn providerListContext(ctx: Context) app_provider_list.Context {
         .gpa = ctx.gpa,
         .db = ctx.db,
     };
+}
+
+fn writeAccountText(row: db_store.CloudflareAccountRow, writer: anytype) !void {
+    try writer.print("{s}", .{row.id});
+    try writeTextField(writer, "name", row.name);
+    try writeTextField(writer, "type", row.account_type);
+    try writeTextField(writer, "status", row.status);
+    try writeTextField(writer, "updated", row.updated_at);
+    try writer.writeByte('\n');
+}
+
+fn writeZoneText(row: db_store.CloudflareZoneRow, writer: anytype) !void {
+    try writer.print("{s}", .{row.id});
+    try writeTextField(writer, "name", row.name);
+    try writeTextField(writer, "account", row.account_id);
+    try writeTextField(writer, "status", row.status);
+    try writeTextField(writer, "paused", row.paused);
+    try writeTextField(writer, "type", row.zone_type);
+    try writeTextField(writer, "nameservers", row.name_servers);
+    try writeTextField(writer, "updated", row.updated_at);
+    try writer.writeByte('\n');
+}
+
+fn writeDnsRecordText(row: db_store.CloudflareDnsRecordRow, writer: anytype) !void {
+    try writer.print("{s}", .{row.id});
+    try writeTextField(writer, "zone", row.zone_id);
+    try writeTextField(writer, "name", row.name);
+    try writeTextField(writer, "type", row.record_type);
+    try writeTextField(writer, "content", row.content);
+    try writeTextField(writer, "ttl", row.ttl);
+    try writeTextField(writer, "proxied", row.proxied);
+    try writeTextField(writer, "updated", row.updated_at);
+    try writer.writeByte('\n');
+}
+
+fn writeKindCountText(row: db_store.CloudflareKindCount, writer: anytype) !void {
+    try writer.print("{s}\tcount={d}", .{ row.kind, row.count });
+    try writeTextField(writer, "latest", row.latest_updated);
+    try writer.writeByte('\n');
+}
+
+fn writeAccountJson(row: db_store.CloudflareAccountRow, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonStringField(writer, "id", row.id, true);
+    try writeJsonStringField(writer, "name", row.name, true);
+    try writeJsonStringField(writer, "type", row.account_type, true);
+    try writeJsonStringField(writer, "status", row.status, true);
+    try writeJsonStringField(writer, "updated_at", row.updated_at, false);
+    try writer.writeByte('}');
+}
+
+fn writeZoneJson(row: db_store.CloudflareZoneRow, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonStringField(writer, "id", row.id, true);
+    try writeJsonStringField(writer, "name", row.name, true);
+    try writeJsonStringField(writer, "account_id", row.account_id, true);
+    try writeJsonStringField(writer, "status", row.status, true);
+    try writeJsonStringField(writer, "paused", row.paused, true);
+    try writeJsonStringField(writer, "type", row.zone_type, true);
+    try writeJsonStringField(writer, "name_servers", row.name_servers, true);
+    try writeJsonStringField(writer, "updated_at", row.updated_at, false);
+    try writer.writeByte('}');
+}
+
+fn writeDnsRecordJson(row: db_store.CloudflareDnsRecordRow, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonStringField(writer, "id", row.id, true);
+    try writeJsonStringField(writer, "zone_id", row.zone_id, true);
+    try writeJsonStringField(writer, "name", row.name, true);
+    try writeJsonStringField(writer, "type", row.record_type, true);
+    try writeJsonStringField(writer, "content", row.content, true);
+    try writeJsonStringField(writer, "ttl", row.ttl, true);
+    try writeJsonStringField(writer, "proxied", row.proxied, true);
+    try writeJsonStringField(writer, "updated_at", row.updated_at, false);
+    try writer.writeByte('}');
+}
+
+fn writeKindCountJson(row: db_store.CloudflareKindCount, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonStringField(writer, "kind", row.kind, true);
+    try writer.writeAll("\"count\":");
+    try writer.print("{d}", .{row.count});
+    try writer.writeByte(',');
+    try writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
+    try writer.writeByte('}');
+}
+
+fn writeJsonStringField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    try core_json.writeString(writer, value);
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+fn writeTextField(writer: anytype, label: []const u8, value: []const u8) !void {
+    if (value.len == 0) return;
+    try writer.print("\t{s}={s}", .{ label, value });
+}
+
+fn positiveLimit(value: i64, fallback: i64) i64 {
+    return if (value > 0) value else fallback;
 }
 
 test "cloudflare app domain selection uses explicit or default domain" {
@@ -589,4 +817,68 @@ test "cloudflare app lists typed inventory items" {
     defer output.deinit(allocator);
     try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "dns-records/record-1") != null);
     try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "zone zone-1 active dns_only A plosca.ru plosca.ru 76.13.130.170") != null);
+}
+
+test "cloudflare app renders account zone DNS overview from normalized storage" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudflare-app-overview.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertCloudflareAccount("acct-1", "Main account", "standard", "active", "{\"id\":\"acct-1\"}");
+    try db.upsertCloudflareZone("zone-1", "plosca.ru", "acct-1", "active", false, "full", "ns1.example,ns2.example", "{\"id\":\"zone-1\"}");
+    try db.upsertDnsRecord("record-1", "zone-1", "plosca.ru", "A", "76.13.130.170", 1, false, "{\"id\":\"record-1\"}");
+    try db.upsertCloudflareResource("dns-records|zone|zone-1|record-1", "dns-records", "record-1", "zone", "zone-1", "plosca.ru", "active", "A", "{\"id\":\"record-1\"}");
+    try db.upsertCloudflareInventoryItem("dns-records|zone|zone-1|record-1", "dns-records", "record-1", "zone", "zone-1", "plosca.ru", "active", "A", "plosca.ru", "acct-1", "zone-1", "76.13.130.170", "dns_only", null, "2026-06-17T00:00:00Z", null, "{\"id\":\"record-1\"}");
+    try db.upsertCloudflareSecurityItem("waf|zone|zone-1|ruleset-1", "waf-rulesets", "ruleset-1", "zone", "zone-1", "Default WAF", "enabled", "waf", "medium", "block", "plosca.ru", "acct-1", "zone-1", null, "managed", null, "2026-06-17T00:00:00Z", null, "{\"id\":\"ruleset-1\"}");
+
+    const domains = [_][]const u8{"plosca.ru"};
+    const ctx = Context{
+        .io = std.testing.io,
+        .gpa = allocator,
+        .auth = .{},
+        .domains = domains[0..],
+        .db = &db,
+    };
+
+    var overview = try Overview.load(ctx, .{ .limit = 10 });
+    defer overview.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), overview.accounts.items.len);
+    try std.testing.expectEqualStrings("acct-1", overview.accounts.items[0].id);
+    try std.testing.expectEqual(@as(usize, 1), overview.zones.items.len);
+    try std.testing.expectEqualStrings("plosca.ru", overview.zones.items[0].name);
+    try std.testing.expectEqualStrings("false", overview.zones.items[0].paused);
+    try std.testing.expectEqual(@as(usize, 1), overview.dns_records.items.len);
+    try std.testing.expectEqualStrings("A", overview.dns_records.items[0].record_type);
+    try std.testing.expectEqual(@as(usize, 1), overview.resource_kinds.items.len);
+    try std.testing.expectEqualStrings("dns-records", overview.resource_kinds.items[0].kind);
+    try std.testing.expectEqual(@as(usize, 1), overview.inventory_kinds.items.len);
+    try std.testing.expectEqual(@as(usize, 1), overview.security_kinds.items.len);
+    try std.testing.expectEqualStrings("waf-rulesets", overview.security_kinds.items[0].kind);
+
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+    try writeOverviewText(ctx, .{ .limit = 10 }, &out.writer);
+    const text = try out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Cloudflare overview\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "acct-1\tname=Main account\ttype=standard\tstatus=active") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "zone-1\tname=plosca.ru\taccount=acct-1\tstatus=active\tpaused=false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "record-1\tzone=zone-1\tname=plosca.ru\ttype=A\tcontent=76.13.130.170\tttl=1\tproxied=false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "waf-rulesets\tcount=1") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeOverviewJson(ctx, .{ .limit = 10 }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"cloudflare_overview\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"zones\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"dns_records\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"security_kinds\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"content\":\"76.13.130.170\"") != null);
 }
