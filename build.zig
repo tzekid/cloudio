@@ -448,6 +448,17 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_inventory_mod);
 
+    const app_topology_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/topology.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_topology_mod);
+
     const app_route_catalog_mod = b.createModule(.{
         .root_source_file = b.path("src/app/route_catalog.zig"),
         .target = target,
@@ -480,6 +491,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_refresh", .module = app_refresh_mod },
             .{ .name = "app_route_catalog", .module = app_route_catalog_mod },
             .{ .name = "app_system", .module = app_system_mod },
+            .{ .name = "app_topology", .module = app_topology_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_fs", .module = core_fs_mod },
             .{ .name = "core_json", .module = core_json_mod },
@@ -617,6 +629,18 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(cli_system_mod);
+    const cli_topology_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/topology.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_topology", .module = app_topology_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(cli_topology_mod);
     const cli_root_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/root.zig"),
         .target = target,
@@ -642,6 +666,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_route", .module = cli_route_mod },
             .{ .name = "cli_routes", .module = cli_routes_mod },
             .{ .name = "cli_system", .module = cli_system_mod },
+            .{ .name = "cli_topology", .module = cli_topology_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_version", .module = core_version_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -682,6 +707,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cli_projects_mod);
     addModuleTest(b, test_step, cli_routes_mod);
     addModuleTest(b, test_step, cli_system_mod);
+    addModuleTest(b, test_step, cli_topology_mod);
     addModuleTest(b, test_step, cloudio_mod);
     addModuleTest(b, test_step, app_overview_mod);
     addModuleTest(b, test_step, app_export_mod);
@@ -693,6 +719,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_caddy_mod);
     addModuleTest(b, test_step, app_projects_mod);
     addModuleTest(b, test_step, app_system_mod);
+    addModuleTest(b, test_step, app_topology_mod);
     addModuleTest(b, test_step, app_provider_list_mod);
     addModuleTest(b, test_step, app_render_mod);
     addModuleTest(b, test_step, app_route_catalog_mod);

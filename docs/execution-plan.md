@@ -151,6 +151,7 @@ Broad slices:
 
 - Stable app-level JSON structs/writers for overview, inventory, coverage, provider detail, Caddy, projects, system, logs, and operational history/audits.
 - A compact route-catalog read model over the spec-generated manifests so UI/API callers can review L0/L1 provider metadata without scraping coverage text.
+- A topology read model that joins provider DNS, Caddy routes, project metadata, sockets, services, and containers into one UI/API contract.
 - Facade-level API examples that call `cloudio.app.*` directly.
 - UI/API read-only command contract docs.
 - Optional local HTTP server module only after CLI/app boundaries are stable.
@@ -168,6 +169,7 @@ Acceptance:
    - Keep CLI rendering separate from reusable app read-model JSON.
    - Use `cloudio history --json` and `cloudio export history --json` as the first operational-history contract for UI/API consumers.
    - Use `cloudio routes --json` as the compact provider-route metadata contract for UI/API consumers.
+   - Use `cloudio topology --json` as the operational graph contract for UI/API consumers.
 
 2. Clean command parsing and option handling.
    - Consolidate repeated `--json`, `--format`, `--limit`, `--domain`, `--query`, `--path-param`, `--query-param`, and `--header-param` handling.

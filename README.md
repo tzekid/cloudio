@@ -17,6 +17,8 @@ zig build run -- doctor --json
 zig build run -- refresh --all
 zig build run -- overview
 zig build run -- overview --json
+zig build run -- topology
+zig build run -- topology --json
 zig build run -- history
 zig build run -- history --json
 zig build run -- history --limit 50
@@ -58,6 +60,14 @@ zig build run -- history --json
 zig build run -- history --audit-limit 25 --snapshot-limit 50 --json
 zig build run -- audit --limit 100
 zig build run -- export history --json
+```
+
+Topology reads SQLite only and connects Cloudflare DNS records, Caddy routes, project metadata, listening sockets, systemd service state, and Docker container state:
+
+```sh
+zig build run -- topology
+zig build run -- topology --json
+zig build run -- topology --limit 50 --json
 ```
 
 Central inventory reads join the typed Cloudflare and Hostinger inventory projections without calling live provider APIs:

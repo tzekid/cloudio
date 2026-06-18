@@ -21,6 +21,7 @@ const cli_render = @import("cli_render");
 const cli_route = @import("cli_route");
 const cli_routes = @import("cli_routes");
 const cli_system = @import("cli_system");
+const cli_topology = @import("cli_topology");
 const db_store = @import("db_store");
 
 const Io = std.Io;
@@ -54,6 +55,12 @@ pub fn run(init: std.process.Init) !void {
         try commandRefresh(init.io, init.gpa, cfg, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "overview")) {
         try commandOverview(init.io, init.gpa, &db, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "topology")) {
+        try cli_topology.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
+            .db = &db,
+        }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "history") or std.mem.eql(u8, cmd, "audit")) {
         try commandHistory(init.io, init.gpa, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "inventory")) {
@@ -136,6 +143,7 @@ fn usage() void {
         \\  cloudio doctor [--json|--format json]
         \\  cloudio refresh [--all|--cloudflare|--hostinger|--caddy|--system|--projects]
         \\  cloudio overview [--json|--format json]
+        \\  cloudio topology [--limit <n>] [--json|--format json]
         \\  cloudio history|audit [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json|--format json]
         \\  cloudio inventory [summary|facets] [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>] [--json|--format json]
         \\  cloudio export [snapshots|history] [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json]

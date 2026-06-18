@@ -205,6 +205,53 @@ pub const ProjectCorrelations = struct {
     }
 };
 
+pub const TopologyRow = struct {
+    host: []u8,
+    dns_name: []u8,
+    dns_type: []u8,
+    dns_content: []u8,
+    dns_proxied: []u8,
+    project: []u8,
+    source: []u8,
+    path: []u8,
+    caddy_source: []u8,
+    upstream: []u8,
+    socket_state: []u8,
+    socket_process: []u8,
+    service: []u8,
+    service_state: []u8,
+    container: []u8,
+    container_status: []u8,
+
+    pub fn deinit(self: TopologyRow, allocator: Allocator) void {
+        allocator.free(self.host);
+        allocator.free(self.dns_name);
+        allocator.free(self.dns_type);
+        allocator.free(self.dns_content);
+        allocator.free(self.dns_proxied);
+        allocator.free(self.project);
+        allocator.free(self.source);
+        allocator.free(self.path);
+        allocator.free(self.caddy_source);
+        allocator.free(self.upstream);
+        allocator.free(self.socket_state);
+        allocator.free(self.socket_process);
+        allocator.free(self.service);
+        allocator.free(self.service_state);
+        allocator.free(self.container);
+        allocator.free(self.container_status);
+    }
+};
+
+pub const TopologyRows = struct {
+    items: []TopologyRow,
+
+    pub fn deinit(self: *TopologyRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const MetricRow = struct {
     metric: []u8,
     value: []u8,
@@ -1021,6 +1068,125 @@ pub const Db = struct {
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
 
+    pub fn topologyRows(self: *Db, gpa: Allocator, limit: i64) !TopologyRows {
+        const stmt = try self.prepare(
+            \\WITH rows AS (
+            \\  SELECT p.name AS project,
+            \\         p.source AS source,
+            \\         COALESCE(p.path, '') AS path,
+            \\         COALESCE(NULLIF(p.host, ''), cu.host, '') AS host,
+            \\         COALESCE(NULLIF(p.upstream, ''), cu.upstream, '') AS upstream,
+            \\         COALESCE(p.service, '') AS service,
+            \\         COALESCE(p.container, '') AS container
+            \\  FROM projects p
+            \\  LEFT JOIN caddy_upstreams cu
+            \\    ON (p.host IS NOT NULL AND p.host != '' AND cu.host = p.host)
+            \\    OR (p.upstream IS NOT NULL AND p.upstream != '' AND cu.upstream = p.upstream)
+            \\  UNION ALL
+            \\  SELECT '' AS project,
+            \\         'caddy' AS source,
+            \\         '' AS path,
+            \\         cu.host AS host,
+            \\         cu.upstream AS upstream,
+            \\         '' AS service,
+            \\         '' AS container
+            \\  FROM caddy_upstreams cu
+            \\  WHERE NOT EXISTS (
+            \\    SELECT 1 FROM projects p
+            \\    WHERE (p.host IS NOT NULL AND p.host != '' AND p.host = cu.host)
+            \\       OR (p.upstream IS NOT NULL AND p.upstream != '' AND p.upstream = cu.upstream)
+            \\  )
+            \\),
+            \\local_rows AS (
+            \\  SELECT rows.project,
+            \\         rows.source,
+            \\         rows.path,
+            \\         rows.host,
+            \\         COALESCE(cs.source_path, '') AS caddy_source,
+            \\         rows.upstream,
+            \\         COALESCE(sock.state, '') AS socket_state,
+            \\         COALESCE(sock.process, '') AS socket_process,
+            \\         rows.service,
+            \\         COALESCE(svc.state, '') AS service_state,
+            \\         rows.container,
+            \\         COALESCE(ct.status, '') AS container_status
+            \\  FROM rows
+            \\  LEFT JOIN caddy_sites cs ON cs.host = rows.host
+            \\  LEFT JOIN sockets sock
+            \\    ON rows.upstream != ''
+            \\   AND (sock.local_address = rows.upstream OR rows.upstream LIKE '%' || sock.local_address)
+            \\  LEFT JOIN services svc
+            \\    ON rows.service != ''
+            \\   AND svc.name = rows.service
+            \\  LEFT JOIN containers ct
+            \\    ON rows.container != ''
+            \\   AND ct.name = rows.container
+            \\),
+            \\combined AS (
+            \\  SELECT COALESCE(NULLIF(local_rows.host, ''), dns.name, '') AS host,
+            \\         COALESCE(dns.name, '') AS dns_name,
+            \\         COALESCE(dns.type, '') AS dns_type,
+            \\         COALESCE(dns.content, '') AS dns_content,
+            \\         CASE WHEN dns.proxied IS NULL THEN '' WHEN dns.proxied != 0 THEN 'true' ELSE 'false' END AS dns_proxied,
+            \\         local_rows.project,
+            \\         local_rows.source,
+            \\         local_rows.path,
+            \\         local_rows.caddy_source,
+            \\         local_rows.upstream,
+            \\         local_rows.socket_state,
+            \\         local_rows.socket_process,
+            \\         local_rows.service,
+            \\         local_rows.service_state,
+            \\         local_rows.container,
+            \\         local_rows.container_status
+            \\  FROM local_rows
+            \\  LEFT JOIN cloudflare_dns_records dns
+            \\    ON dns.name = local_rows.host
+            \\    OR (dns.name LIKE '*.%' AND local_rows.host LIKE '%' || substr(dns.name, 2))
+            \\  UNION ALL
+            \\  SELECT dns.name AS host,
+            \\         dns.name AS dns_name,
+            \\         COALESCE(dns.type, '') AS dns_type,
+            \\         COALESCE(dns.content, '') AS dns_content,
+            \\         CASE WHEN dns.proxied IS NULL THEN '' WHEN dns.proxied != 0 THEN 'true' ELSE 'false' END AS dns_proxied,
+            \\         '' AS project,
+            \\         'cloudflare' AS source,
+            \\         '' AS path,
+            \\         '' AS caddy_source,
+            \\         '' AS upstream,
+            \\         '' AS socket_state,
+            \\         '' AS socket_process,
+            \\         '' AS service,
+            \\         '' AS service_state,
+            \\         '' AS container,
+            \\         '' AS container_status
+            \\  FROM cloudflare_dns_records dns
+            \\  WHERE dns.name IS NOT NULL
+            \\    AND dns.name != ''
+            \\    AND NOT EXISTS (
+            \\      SELECT 1 FROM local_rows
+            \\      WHERE dns.name = local_rows.host
+            \\         OR (dns.name LIKE '*.%' AND local_rows.host LIKE '%' || substr(dns.name, 2))
+            \\    )
+            \\)
+            \\SELECT * FROM combined
+            \\ORDER BY project = '', project, host, dns_type, upstream
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 200));
+        var rows = std.ArrayList(TopologyRow).empty;
+        errdefer deinitTopologyRowList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try topologyRowFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
     pub fn serviceList(self: *Db, gpa: Allocator) !NameValueRows {
         return try self.nameValueRows(gpa, "SELECT COALESCE(name,''), COALESCE(state,'') FROM services ORDER BY 1 LIMIT 200");
     }
@@ -1615,6 +1781,11 @@ fn deinitProjectCorrelationList(rows: *std.ArrayList(ProjectCorrelation), alloca
     rows.deinit(allocator);
 }
 
+fn deinitTopologyRowList(rows: *std.ArrayList(TopologyRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
 fn deinitMetricList(rows: *std.ArrayList(MetricRow), allocator: Allocator) void {
     for (rows.items) |row| row.deinit(allocator);
     rows.deinit(allocator);
@@ -2032,6 +2203,59 @@ fn projectCorrelationFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) 
         .source = source,
         .path = path,
         .host = host,
+        .caddy_source = caddy_source,
+        .upstream = upstream,
+        .socket_state = socket_state,
+        .socket_process = socket_process,
+        .service = service,
+        .service_state = service_state,
+        .container = container,
+        .container_status = container_status,
+    };
+}
+
+fn topologyRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !TopologyRow {
+    const host = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(host);
+    const dns_name = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(dns_name);
+    const dns_type = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(dns_type);
+    const dns_content = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(dns_content);
+    const dns_proxied = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(dns_proxied);
+    const project = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(project);
+    const source = try dupeColumn(allocator, stmt, 6);
+    errdefer allocator.free(source);
+    const path = try dupeColumn(allocator, stmt, 7);
+    errdefer allocator.free(path);
+    const caddy_source = try dupeColumn(allocator, stmt, 8);
+    errdefer allocator.free(caddy_source);
+    const upstream = try dupeColumn(allocator, stmt, 9);
+    errdefer allocator.free(upstream);
+    const socket_state = try dupeColumn(allocator, stmt, 10);
+    errdefer allocator.free(socket_state);
+    const socket_process = try dupeColumn(allocator, stmt, 11);
+    errdefer allocator.free(socket_process);
+    const service = try dupeColumn(allocator, stmt, 12);
+    errdefer allocator.free(service);
+    const service_state = try dupeColumn(allocator, stmt, 13);
+    errdefer allocator.free(service_state);
+    const container = try dupeColumn(allocator, stmt, 14);
+    errdefer allocator.free(container);
+    const container_status = try dupeColumn(allocator, stmt, 15);
+    errdefer allocator.free(container_status);
+    return .{
+        .host = host,
+        .dns_name = dns_name,
+        .dns_type = dns_type,
+        .dns_content = dns_content,
+        .dns_proxied = dns_proxied,
+        .project = project,
+        .source = source,
+        .path = path,
         .caddy_source = caddy_source,
         .upstream = upstream,
         .socket_state = socket_state,

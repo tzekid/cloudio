@@ -37,6 +37,7 @@ pub const app = struct {
     pub const refresh = @import("app_refresh");
     pub const route_catalog = @import("app_route_catalog");
     pub const system = @import("app_system");
+    pub const topology = @import("app_topology");
 };
 
 pub const net = struct {
@@ -86,6 +87,7 @@ test "facade exposes stable integration modules" {
     _ = app.refresh.Selection;
     _ = app.route_catalog.Catalog;
     _ = app.system.Context;
+    _ = app.topology.Topology;
     _ = db.schema.Migration;
     _ = db.store.Db;
     _ = net.http.Response;
