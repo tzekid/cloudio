@@ -5,8 +5,10 @@ const app_init = @import("app_init");
 const app_log = @import("app_log");
 const app_overview = @import("app_overview");
 const app_refresh = @import("app_refresh");
+const app_caddy = @import("app_caddy");
+const app_cloudflare = @import("app_cloudflare");
 const core_config = @import("core_config");
-const cloudio = @import("cloudio");
+const core_version = @import("core_version");
 const cli_caddy = @import("cli_caddy");
 const cli_cloudflare = @import("cli_cloudflare");
 const cli_coverage = @import("cli_coverage");
@@ -23,7 +25,7 @@ const Allocator = std.mem.Allocator;
 const Config = core_config.Config;
 const Db = db_store.Db;
 
-const version = cloudio.version;
+const version = core_version.value;
 
 pub fn run(init: std.process.Init) !void {
     const arena = init.arena.allocator();
@@ -451,7 +453,7 @@ fn parseOverviewFormatValue(value: []const u8) !OverviewFormat {
     return error.InvalidFormat;
 }
 
-fn cloudflareAuth(cfg: Config) cloudio.app.cloudflare.Auth {
+fn cloudflareAuth(cfg: Config) app_cloudflare.Auth {
     return .{
         .token = cfg.cloudflare_api_token,
         .email = cfg.cloudflare_email,
@@ -459,7 +461,7 @@ fn cloudflareAuth(cfg: Config) cloudio.app.cloudflare.Auth {
     };
 }
 
-fn caddyPaths(cfg: Config) cloudio.app.caddy.Paths {
+fn caddyPaths(cfg: Config) app_caddy.Paths {
     return .{
         .caddyfile_path = cfg.caddyfile_path,
         .caddy_sites_path = cfg.caddy_sites_path,

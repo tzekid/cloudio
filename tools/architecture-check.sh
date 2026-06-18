@@ -50,6 +50,11 @@ check_no_matches \
     src/cli
 
 check_no_matches \
+    "CLI modules must not import the public cloudio embedding facade" \
+    '@import\("cloudio"\)' \
+    src/cli
+
+check_no_matches \
     "public cloudio facade must not expose collector internals" \
     '@import\("(collector_[^"]+)"\)|pub const collectors' \
     src/cloudio.zig

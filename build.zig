@@ -32,6 +32,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const core_version_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/version.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const core_redact_mod = b.createModule(.{
         .root_source_file = b.path("src/core/redact.zig"),
         .target = target,
@@ -407,6 +412,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_process", .module = core_process_mod },
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "core_time", .module = core_time_mod },
+            .{ .name = "core_version", .module = core_version_mod },
             .{ .name = "db_schema", .module = db_schema_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "net_http", .module = net_http_mod },
@@ -522,6 +528,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_log", .module = app_log_mod },
             .{ .name = "app_overview", .module = app_overview_mod },
             .{ .name = "app_refresh", .module = app_refresh_mod },
+            .{ .name = "app_caddy", .module = app_caddy_mod },
+            .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
             .{ .name = "cli_caddy", .module = cli_caddy_mod },
             .{ .name = "cli_cloudflare", .module = cli_cloudflare_mod },
             .{ .name = "cli_coverage", .module = cli_coverage_mod },
@@ -531,8 +539,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "cli_route", .module = cli_route_mod },
             .{ .name = "cli_system", .module = cli_system_mod },
-            .{ .name = "cloudio", .module = cloudio_mod },
             .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_version", .module = core_version_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
     });
@@ -590,6 +598,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, core_process_mod);
     addModuleTest(b, test_step, core_redact_mod);
     addModuleTest(b, test_step, core_time_mod);
+    addModuleTest(b, test_step, core_version_mod);
     addModuleTest(b, test_step, net_http_mod);
     addModuleTest(b, test_step, net_pagination_mod);
     addModuleTest(b, test_step, provider_dispatch_mod);

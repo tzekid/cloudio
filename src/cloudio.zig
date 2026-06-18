@@ -1,6 +1,7 @@
 const std = @import("std");
+const core_version = @import("core_version");
 
-pub const version = "0.1.0-poc";
+pub const version = core_version.value;
 
 pub const core = struct {
     pub const config = @import("core_config");
@@ -10,6 +11,7 @@ pub const core = struct {
     pub const process = @import("core_process");
     pub const redact = @import("core_redact");
     pub const time = @import("core_time");
+    pub const version = core_version;
 };
 
 pub const db = struct {
