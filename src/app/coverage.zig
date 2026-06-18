@@ -398,6 +398,11 @@ pub const LevelTagOptions = struct {
     limit: usize = 25,
 };
 
+pub const WorkplanOptions = struct {
+    provider: ProviderFilter = .all,
+    limit: usize = 10,
+};
+
 pub const LevelTagEvidence = struct {
     provider: []const u8,
     tag: []u8,
@@ -993,6 +998,30 @@ pub fn writeLevelTagsJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options
     var report = try loadLevelTags(io, gpa, paths, options.provider);
     defer report.deinit(gpa);
     try report.writeJson(writer, options);
+}
+
+pub fn writeWorkplanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions, writer: anytype) !void {
+    var report = try loadLevelTags(io, gpa, paths, options.provider);
+    defer report.deinit(gpa);
+    try writeWorkplanText(gpa, report.items, options, writer);
+}
+
+pub fn writeWorkplanJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions, writer: anytype) !void {
+    var report = try loadLevelTags(io, gpa, paths, options.provider);
+    defer report.deinit(gpa);
+    try writeWorkplanJson(gpa, report.items, options, writer);
+}
+
+pub fn writeWorkplanTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: WorkplanOptions, writer: anytype) !void {
+    var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
+    defer report.deinit(gpa);
+    try writeWorkplanText(gpa, report.items, options, writer);
+}
+
+pub fn writeWorkplanJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: WorkplanOptions, writer: anytype) !void {
+    var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
+    defer report.deinit(gpa);
+    try writeWorkplanJson(gpa, report.items, options, writer);
 }
 
 pub fn auditL1(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !L1Audit {
@@ -1676,6 +1705,176 @@ fn writeCaptureCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, opt
     try writeJsonCountField(writer, "omitted", omitted, false);
     try writer.writeByte('}');
     try writer.writeByte('\n');
+}
+
+fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: WorkplanOptions, writer: anytype) !void {
+    try writer.writeAll("Cloudio provider coverage workplan\n");
+    try writer.writeAll("rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n");
+    try writer.writeAll("scope: broad provider tag slices with exact no-execute planning commands\n");
+    try writer.print("filter={s} limit=", .{options.provider.name()});
+    if (options.limit == 0) {
+        try writer.writeAll("all\n");
+    } else {
+        try writer.print("{d}\n", .{options.limit});
+    }
+
+    var visible: usize = 0;
+    var omitted: usize = 0;
+    var hidden_closed: usize = 0;
+    for (rows) |row| {
+        const priority = row.priority();
+        if (priority == 0) {
+            hidden_closed += 1;
+            continue;
+        }
+        if (options.limit != 0 and visible >= options.limit) {
+            omitted += 1;
+            continue;
+        }
+        visible += 1;
+        try writeWorkplanTextRow(gpa, row, writer);
+    }
+
+    if (visible == 0) {
+        try writer.writeAll("no unresolved provider tag slices for filter\n");
+    } else {
+        if (omitted != 0) try writer.print("omitted={d}\n", .{omitted});
+        if (hidden_closed != 0) try writer.print("closed_or_evidence_only_rows_hidden={d}\n", .{hidden_closed});
+    }
+}
+
+fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: WorkplanOptions, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "kind", "coverage_workplan", true);
+    try writeJsonField(writer, "filter", options.provider.name(), true);
+    try writeJsonCountField(writer, "limit", options.limit, true);
+    try writeJsonField(writer, "rank", "pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs", true);
+    try writeJsonField(writer, "scope", "broad provider tag slices with exact no-execute planning commands", true);
+    try writer.writeAll("\"items\":[");
+
+    var visible: usize = 0;
+    var omitted: usize = 0;
+    var hidden_closed: usize = 0;
+    var first = true;
+    for (rows) |row| {
+        const priority = row.priority();
+        if (priority == 0) {
+            hidden_closed += 1;
+            continue;
+        }
+        if (options.limit != 0 and visible >= options.limit) {
+            omitted += 1;
+            continue;
+        }
+        visible += 1;
+        try writeMaybeJsonComma(writer, &first);
+        try writeWorkplanRowJson(gpa, row, writer);
+    }
+
+    try writer.writeAll("],");
+    try writeJsonCountField(writer, "visible", visible, true);
+    try writeJsonCountField(writer, "omitted", omitted, true);
+    try writeJsonCountField(writer, "closed_or_evidence_only_rows_hidden", hidden_closed, false);
+    try writer.writeByte('}');
+    try writer.writeByte('\n');
+}
+
+fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, writer: anytype) !void {
+    const evidence = row.evidence;
+    try writer.print("{s} | {s}: priority={d} pending_reads={d} diagnostic_blocked_reads={d} pending_mutation_dry_runs={d} L2_read_evidence={d} dry_run_evidence={d} L3_generic={d} typed={d}\n", .{
+        row.provider,
+        row.tag,
+        row.priority(),
+        evidence.pending_reads,
+        evidence.l2_diagnostic_reads,
+        evidence.pending_mutation_dry_runs,
+        evidence.l2_read_evidence,
+        evidence.dry_run_evidence,
+        evidence.l3_generic_inventory_candidates,
+        evidence.l3_typed_table_evidence,
+    });
+    const routes = try workplanRoutesCommand(gpa, row);
+    defer gpa.free(routes);
+    try writer.print("  routes: {s}\n", .{routes});
+    if (workplanNeedsCapture(row)) {
+        const capture = try workplanCaptureCommand(gpa, row);
+        defer gpa.free(capture);
+        try writer.print("  capture-candidates: {s}\n", .{capture});
+    }
+    if (workplanNeedsDryRun(row)) {
+        const dry_run = try workplanDryRunCommand(gpa, row);
+        defer gpa.free(dry_run);
+        try writer.print("  dry-run-candidates: {s}\n", .{dry_run});
+    }
+}
+
+fn writeWorkplanRowJson(gpa: Allocator, row: LevelTagEvidence, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", row.provider, true);
+    try writeJsonField(writer, "tag", row.tag, true);
+    try writeJsonCountField(writer, "priority", row.priority(), true);
+    try writer.writeAll("\"evidence\":");
+    try writeLevelProviderEvidenceJson(row.evidence, writer);
+    try writer.writeByte(',');
+    try writer.writeAll("\"commands\":[");
+    var first = true;
+    const routes = try workplanRoutesCommand(gpa, row);
+    defer gpa.free(routes);
+    try writeWorkplanCommandJson(writer, &first, "routes_detail", routes);
+    if (workplanNeedsCapture(row)) {
+        const capture = try workplanCaptureCommand(gpa, row);
+        defer gpa.free(capture);
+        try writeWorkplanCommandJson(writer, &first, "capture_candidates", capture);
+    }
+    if (workplanNeedsDryRun(row)) {
+        const dry_run = try workplanDryRunCommand(gpa, row);
+        defer gpa.free(dry_run);
+        try writeWorkplanCommandJson(writer, &first, "dry_run_candidates", dry_run);
+    }
+    try writer.writeAll("]}");
+}
+
+fn writeWorkplanCommandJson(writer: anytype, first: *bool, kind: []const u8, command: []const u8) !void {
+    try writeMaybeJsonComma(writer, first);
+    try writer.writeByte('{');
+    try writeJsonField(writer, "kind", kind, true);
+    try writeJsonField(writer, "command", command, false);
+    try writer.writeByte('}');
+}
+
+fn workplanNeedsCapture(row: LevelTagEvidence) bool {
+    return row.evidence.pending_reads != 0 or row.evidence.l2_diagnostic_reads != 0;
+}
+
+fn workplanNeedsDryRun(row: LevelTagEvidence) bool {
+    return row.evidence.pending_mutation_dry_runs != 0;
+}
+
+fn workplanRoutesCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    try out.writer.print("cloudio coverage routes {s} ", .{row.provider});
+    try writeShellArg(&out.writer, row.tag);
+    try out.writer.writeAll(" --detail");
+    return try out.toOwnedSlice();
+}
+
+fn workplanCaptureCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    try out.writer.print("cloudio coverage capture-candidates {s} ", .{row.provider});
+    try writeShellArg(&out.writer, row.tag);
+    try out.writer.writeAll(" --limit 25");
+    return try out.toOwnedSlice();
+}
+
+fn workplanDryRunCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    try out.writer.print("cloudio coverage dry-run-candidates {s} ", .{row.provider});
+    try writeShellArg(&out.writer, row.tag);
+    try out.writer.writeAll(" --limit 25");
+    return try out.toOwnedSlice();
 }
 
 fn writeDryRunCandidatesText(gpa: Allocator, routes: []const CoverageRoute, options: DryRunCandidateOptions, writer: anytype) !void {
@@ -2943,6 +3142,18 @@ fn writeStringList(writer: anytype, values: anytype) !void {
     }
 }
 
+fn writeShellArg(writer: anytype, value: []const u8) !void {
+    try writer.writeByte('\'');
+    for (value) |byte| {
+        if (byte == '\'') {
+            try writer.writeAll("'\\''");
+        } else {
+            try writer.writeByte(byte);
+        }
+    }
+    try writer.writeByte('\'');
+}
+
 test "summarizes provider coverage jsonl by status and mode" {
     const allocator = std.testing.allocator;
     const cloudflare =
@@ -3295,6 +3506,56 @@ test "ranks manifest-backed provider coverage levels by tag" {
     const full_json = try full_json_out.toOwnedSlice();
     defer allocator.free(full_json);
     try std.testing.expect(std.mem.indexOf(u8, full_json, "\"tag\":\"Accounts\"") != null);
+}
+
+test "renders broad provider coverage workplan commands by tag" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Workers","method":"GET","path":"/accounts/{account_id}/workers","operation_id":"workers-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"pending read"}
+        \\{"provider":"cloudflare","tag":"Workers","method":"POST","path":"/accounts/{account_id}/workers","operation_id":"workers-create","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"pending dry-run"}
+        \\{"provider":"cloudflare","tag":"Tokens","method":"DELETE","path":"/accounts/{account_id}/tokens/{token_id}","operation_id":"tokens-delete","path_params":[{"name":"account_id","required":true},{"name":"token_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"dry-run only"}
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"closed"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"Reach: Segments","method":"GET","path":"/api/reach/v1/segments","operation_id":"Reach_getSegmentsV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"403","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"blocked diagnostic"}
+        \\
+    ;
+
+    var text_out = std.Io.Writer.Allocating.init(allocator);
+    defer text_out.deinit();
+    try writeWorkplanTextFromText(allocator, cloudflare, hostinger, .{
+        .provider = .all,
+        .limit = 2,
+    }, &text_out.writer);
+    const text = try text_out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage workplan\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Workers: priority=2 pending_reads=1 diagnostic_blocked_reads=0 pending_mutation_dry_runs=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "routes: cloudio coverage routes cloudflare 'Workers' --detail") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "capture-candidates: cloudio coverage capture-candidates cloudflare 'Workers' --limit 25") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "dry-run-candidates: cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Tokens: priority=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudio coverage capture-candidates cloudflare 'Tokens'") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "closed_or_evidence_only_rows_hidden=1") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeWorkplanJsonFromText(allocator, cloudflare, hostinger, .{
+        .provider = .all,
+        .limit = 0,
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_workplan\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Workers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Workers' --detail\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"capture_candidates\",\"command\":\"cloudio coverage capture-candidates cloudflare 'Workers' --limit 25\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"dry_run_candidates\",\"command\":\"cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Reach: Segments\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"closed_or_evidence_only_rows_hidden\":1") != null);
 }
 
 test "audits L1 routability invariants across provider manifests" {

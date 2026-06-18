@@ -45,6 +45,11 @@ const LevelTagCommand = struct {
     format: RenderFormat = .text,
 };
 
+const WorkplanCommand = struct {
+    options: app_coverage.WorkplanOptions = .{},
+    format: RenderFormat = .text,
+};
+
 const RouteCommand = struct {
     filter: app_coverage.RouteFilter = .{},
     format: RenderFormat = .text,
@@ -68,6 +73,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .gaps => |command| try commandGaps(ctx, command),
         .levels => |command| try commandLevels(ctx, command),
         .level_tags => |command| try commandLevelTags(ctx, command),
+        .workplan => |command| try commandWorkplan(ctx, command),
         .routes => |command| try commandRoutes(ctx, command),
         .capture_candidates => |command| try commandCaptureCandidates(ctx, command),
         .dry_run_candidates => |command| try commandDryRunCandidates(ctx, command),
@@ -83,6 +89,7 @@ const Command = union(enum) {
     gaps: GapCommand,
     levels: LevelCommand,
     level_tags: LevelTagCommand,
+    workplan: WorkplanCommand,
     routes: RouteCommand,
     capture_candidates: CaptureCandidateCommand,
     dry_run_candidates: DryRunCandidateCommand,
@@ -108,6 +115,9 @@ fn parseCommand(args: []const []const u8) Command {
     }
     if (std.mem.eql(u8, args[0], "level-tags") or std.mem.eql(u8, args[0], "levels-by-tag") or std.mem.eql(u8, args[0], "evidence")) {
         return parseLevelTags(args[1..]);
+    }
+    if (std.mem.eql(u8, args[0], "workplan") or std.mem.eql(u8, args[0], "slice-plan") or std.mem.eql(u8, args[0], "slices")) {
+        return parseWorkplan(args[1..]);
     }
     if (std.mem.eql(u8, args[0], "routes")) {
         return parseRoutes(args[1..]);
@@ -282,6 +292,38 @@ fn parseLevelTags(args: []const []const u8) Command {
         }
     }
     return .{ .level_tags = command };
+}
+
+fn parseWorkplan(args: []const []const u8) Command {
+    var command = WorkplanCommand{};
+    var provider_set = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--limit")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--limit" };
+            command.options.limit = std.fmt.parseUnsigned(usize, args[index], 10) catch return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--limit=")) {
+            const value = arg["--limit=".len..];
+            command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--json")) {
+            command.format = .json;
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--format" };
+            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            const value = arg["--format=".len..];
+            command.format = parseFormat(value) orelse return .{ .unknown = value };
+        } else if (!provider_set) {
+            command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
+            provider_set = true;
+        } else {
+            return .{ .unknown = arg };
+        }
+    }
+    return .{ .workplan = command };
 }
 
 fn parseFormat(value: []const u8) ?RenderFormat {
@@ -551,6 +593,16 @@ fn commandLevelTags(ctx: Context, command: LevelTagCommand) !void {
     switch (command.format) {
         .text => try app_coverage.writeLevelTagsTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
         .json => try app_coverage.writeLevelTagsJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
+    }
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+}
+
+fn commandWorkplan(ctx: Context, command: WorkplanCommand) !void {
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    switch (command.format) {
+        .text => try app_coverage.writeWorkplanTextFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
+        .json => try app_coverage.writeWorkplanJsonFromFiles(ctx.io, ctx.gpa, ctx.paths, command.options, &out.writer),
     }
     try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
@@ -826,6 +878,26 @@ test "coverage command parser defaults to summary" {
             try std.testing.expectEqual(RenderFormat.text, command.format);
         },
         else => return error.ExpectedCoverageLevelTags,
+    }
+
+    const workplan_args = [_][]const u8{ "workplan", "cloudflare", "--limit=6", "--json" };
+    switch (parseCommand(workplan_args[0..])) {
+        .workplan => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.provider);
+            try std.testing.expectEqual(@as(usize, 6), command.options.limit);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageWorkplan,
+    }
+
+    const slice_plan_args = [_][]const u8{ "slice-plan", "--limit", "0" };
+    switch (parseCommand(slice_plan_args[0..])) {
+        .workplan => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.all, command.options.provider);
+            try std.testing.expectEqual(@as(usize, 0), command.options.limit);
+            try std.testing.expectEqual(RenderFormat.text, command.format);
+        },
+        else => return error.ExpectedCoverageWorkplan,
     }
 
     const routes_args = [_][]const u8{"routes"};
