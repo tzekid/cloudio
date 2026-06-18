@@ -47,7 +47,7 @@ The POC already has:
 - Caddy, system, project, overview, export, log, and doctor workflows.
 - A public `cloudio.zig` facade that keeps collectors out of future embedding code.
 
-The current simplification slice added `src/app/render.zig` and migrated overview, inventory, Cloudflare, and Hostinger app read models away from repeated local JSON/text helpers.
+The current simplification slices added `src/app/render.zig` and migrated overview, inventory, Cloudflare, Hostinger, doctor, and run-log app read models away from repeated local JSON/text helpers.
 
 ## Execution Phases
 
@@ -163,7 +163,7 @@ Acceptance:
 ## Next Broad Slices
 
 1. Finish app presentation consolidation.
-   - Extend the new app render helper pattern to any remaining repeated app-level JSON/text rendering.
+   - Extend the app render helper pattern to any remaining repeated app-level JSON/text rendering.
    - Keep CLI rendering separate from reusable app read-model JSON.
 
 2. Clean command parsing and option handling.

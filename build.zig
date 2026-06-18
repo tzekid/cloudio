@@ -313,6 +313,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_fs", .module = core_fs_mod },
             .{ .name = "core_process", .module = core_process_mod },
@@ -336,9 +337,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "core_log", .module = core_log_mod },
         },
     });
+    linkSqlite(app_log_mod);
 
     const app_caddy_mod = b.createModule(.{
         .root_source_file = b.path("src/app/caddy.zig"),

@@ -13,11 +13,13 @@ zig build
 zig build check
 zig build run -- init
 zig build run -- doctor
+zig build run -- doctor --json
 zig build run -- refresh --all
 zig build run -- overview
 zig build run -- overview --json
 zig build run -- inventory
 zig build run -- log
+zig build run -- log --json
 ```
 
 Optional local config lives in `cloudio.local.toml` and is ignored by git:

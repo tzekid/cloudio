@@ -18,11 +18,31 @@ pub fn writeJsonStringField(writer: anytype, name: []const u8, value: []const u8
     if (trailing_comma) try writer.writeByte(',');
 }
 
+pub fn writeJsonString(writer: anytype, value: []const u8) !void {
+    try core_json.writeString(writer, value);
+}
+
 pub fn writeJsonIntField(writer: anytype, name: []const u8, value: anytype, trailing_comma: bool) !void {
     try core_json.writeString(writer, name);
     try writer.writeByte(':');
     try writer.print("{d}", .{value});
     if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeJsonBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    try writer.writeAll(if (value) "true" else "false");
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeJsonStringArray(writer: anytype, values: []const []const u8) !void {
+    try writer.writeByte('[');
+    for (values, 0..) |value, index| {
+        if (index != 0) try writer.writeByte(',');
+        try core_json.writeString(writer, value);
+    }
+    try writer.writeByte(']');
 }
 
 pub fn writeTextField(writer: anytype, label: []const u8, value: []const u8) !void {
@@ -95,11 +115,16 @@ test "app render helpers write strings integers and optional text fields" {
 
     try out.writer.writeByte('{');
     try writeJsonStringField(&out.writer, "name", "quote \" and\nnewline", true);
-    try writeJsonIntField(&out.writer, "count", @as(i64, 42), false);
+    try writeJsonIntField(&out.writer, "count", @as(i64, 42), true);
+    try writeJsonBoolField(&out.writer, "ok", true, true);
+    try core_json.writeString(&out.writer, "domains");
+    try out.writer.writeByte(':');
+    const values = [_][]const u8{ "plosca.ru", "sparkdate.love" };
+    try writeJsonStringArray(&out.writer, values[0..]);
     try out.writer.writeByte('}');
     const json = try out.toOwnedSlice();
     defer allocator.free(json);
-    try std.testing.expectEqualStrings("{\"name\":\"quote \\\" and\\nnewline\",\"count\":42}", json);
+    try std.testing.expectEqualStrings("{\"name\":\"quote \\\" and\\nnewline\",\"count\":42,\"ok\":true,\"domains\":[\"plosca.ru\",\"sparkdate.love\"]}", json);
 
     var text_out = std.Io.Writer.Allocating.init(allocator);
     defer text_out.deinit();

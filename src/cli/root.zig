@@ -46,7 +46,7 @@ pub fn run(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, cmd, "init")) {
         try commandInit(init.io, init.gpa, cfg, &db);
     } else if (std.mem.eql(u8, cmd, "doctor")) {
-        try commandDoctor(init.io, init.gpa, cfg, &db);
+        try commandDoctor(init.io, init.gpa, cfg, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "refresh")) {
         try commandRefresh(init.io, init.gpa, cfg, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "overview")) {
@@ -73,7 +73,7 @@ pub fn run(init: std.process.Init) !void {
             .db = &db,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "log")) {
-        try commandLog(init.io, init.gpa, cfg);
+        try commandLog(init.io, init.gpa, cfg, args[2..]);
     } else if (std.mem.eql(u8, cmd, "cloudflare")) {
         try cli_cloudflare.run(.{
             .io = init.io,
@@ -123,7 +123,7 @@ fn usage() void {
         \\
         \\Usage:
         \\  cloudio init
-        \\  cloudio doctor
+        \\  cloudio doctor [--json|--format json]
         \\  cloudio refresh [--all|--cloudflare|--hostinger|--caddy|--system|--projects]
         \\  cloudio overview [--json|--format json]
         \\  cloudio inventory [summary|facets] [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>] [--json|--format json]
@@ -141,7 +141,7 @@ fn usage() void {
         \\  cloudio coverage help
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]
         \\  cloudio route plan|read|capture|dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--paginate] [--max-pages <n>] [--body-present|--body-content-type <type>]
-        \\  cloudio log
+        \\  cloudio log [--json|--format json]
         \\  cloudio cloudflare account [list]|account show <account-id>|account profile <account-id>|account organizations <account-id>
         \\  cloudio cloudflare account dns-record-usage <account-id>
         \\  cloudio cloudflare account members|roles <account-id>|account member|role <account-id> <resource-id>
@@ -340,17 +340,19 @@ fn commandInit(io: Io, gpa: Allocator, cfg: Config, db: *Db) !void {
     try cli_render.printOwned(io, gpa, &out);
 }
 
-fn commandDoctor(io: Io, gpa: Allocator, cfg: Config, db: *Db) !void {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    try app_doctor.writeText(.{
+fn commandDoctor(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []const u8) !void {
+    const format = parseFormatOnly(args, error.UnexpectedDoctorArgument) catch |err| {
+        std.debug.print("invalid doctor command: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    const ctx: app_doctor.Context = .{
         .io = io,
         .gpa = gpa,
         .version = version,
         .config = cfg,
         .db = db,
-    }, &out.writer);
-    try cli_render.printOwned(io, gpa, &out);
+    };
+    try cli_render.printFormatted(io, gpa, format, app_doctor.writeText, app_doctor.writeJson, .{ctx});
 }
 
 fn commandRefresh(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []const u8) !void {
@@ -377,15 +379,16 @@ fn commandRefresh(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []
     try cli_render.writeAll(io, "refresh complete\n");
 }
 
-fn commandLog(io: Io, gpa: Allocator, cfg: Config) !void {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    try app_log.writeText(.{
+fn commandLog(io: Io, gpa: Allocator, cfg: Config, args: []const []const u8) !void {
+    const format = parseFormatOnly(args, error.UnexpectedLogArgument) catch |err| {
+        std.debug.print("invalid log command: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    try cli_render.printFormatted(io, gpa, format, app_log.writeText, app_log.writeJson, .{app_log.Context{
         .io = io,
         .gpa = gpa,
         .path = cfg.log_path,
-    }, &out.writer);
-    try cli_render.printOwned(io, gpa, &out);
+    }});
 }
 
 fn commandExport(io: Io, gpa: Allocator, db: *Db) !void {
@@ -418,6 +421,10 @@ fn commandOverview(io: Io, gpa: Allocator, db: *Db, args: []const []const u8) !v
 }
 
 fn parseOverviewFormat(args: []const []const u8) !cli_render.RenderFormat {
+    return try parseFormatOnly(args, error.UnexpectedOverviewArgument);
+}
+
+fn parseFormatOnly(args: []const []const u8, comptime unexpected_error: anyerror) !cli_render.RenderFormat {
     var format: cli_render.RenderFormat = .text;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
@@ -428,7 +435,7 @@ fn parseOverviewFormat(args: []const []const u8) !cli_render.RenderFormat {
             },
             .missing_value => return error.MissingFormat,
             .invalid_value => return error.InvalidFormat,
-            .no_match => return error.UnexpectedOverviewArgument,
+            .no_match => return unexpected_error,
         }
     }
     return format;
@@ -468,6 +475,8 @@ test "overview parser supports text and json formats" {
 
     const unexpected_args = [_][]const u8{"json"};
     try std.testing.expectError(error.UnexpectedOverviewArgument, parseOverviewFormat(unexpected_args[0..]));
+    try std.testing.expectEqual(cli_render.RenderFormat.json, try parseFormatOnly(json_args[0..], error.UnexpectedDoctorArgument));
+    try std.testing.expectError(error.UnexpectedLogArgument, parseFormatOnly(unexpected_args[0..], error.UnexpectedLogArgument));
 }
 
 test "sqlite schema initializes" {

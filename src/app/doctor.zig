@@ -1,4 +1,5 @@
 const std = @import("std");
+const app_render = @import("app_render");
 const core_config = @import("core_config");
 const core_fs = @import("core_fs");
 const core_process = @import("core_process");
@@ -78,6 +79,45 @@ pub const Report = struct {
         try writer.print("caddy sites: {s} ({s})\n", .{ self.caddy_sites_path, presentLabel(self.caddy_sites_present) });
         try writer.print("caddy admin socket: {s} ({s})\n", .{ self.caddy_admin_socket, presentLabel(self.caddy_admin_socket_present) });
     }
+
+    pub fn writeJson(self: Report, writer: anytype) !void {
+        try writer.writeAll("{\"kind\":\"doctor\",");
+        try app_render.writeJsonStringField(writer, "version", self.version, true);
+        try writer.writeAll("\"paths\":{");
+        try app_render.writeJsonStringField(writer, "db", self.db_path, true);
+        try app_render.writeJsonStringField(writer, "log", self.log_path, true);
+        try writer.writeAll("\"config\":{");
+        try app_render.writeJsonStringField(writer, "path", self.config_path, true);
+        try app_render.writeJsonBoolField(writer, "present", self.config_present, false);
+        try writer.writeAll("},\"caddyfile\":{");
+        try app_render.writeJsonStringField(writer, "path", self.caddyfile_path, true);
+        try app_render.writeJsonBoolField(writer, "present", self.caddyfile_present, false);
+        try writer.writeAll("},\"caddy_sites\":{");
+        try app_render.writeJsonStringField(writer, "path", self.caddy_sites_path, true);
+        try app_render.writeJsonBoolField(writer, "present", self.caddy_sites_present, false);
+        try writer.writeAll("},\"caddy_admin_socket\":{");
+        try app_render.writeJsonStringField(writer, "path", self.caddy_admin_socket, true);
+        try app_render.writeJsonBoolField(writer, "present", self.caddy_admin_socket_present, false);
+        try writer.writeAll("}},\"env\":{");
+        try app_render.writeJsonBoolField(writer, "dotenv_loaded", self.loaded_dotenv, true);
+        try app_render.writeJsonBoolField(writer, "fish_env_loaded", self.loaded_fish_env, false);
+        try writer.writeAll("},\"auth\":{");
+        try app_render.writeJsonBoolField(writer, "cloudflare", self.cloudflare_auth, true);
+        try app_render.writeJsonBoolField(writer, "hostinger", self.hostinger_auth, false);
+        try writer.writeAll("},\"sqlite\":{");
+        try app_render.writeJsonIntField(writer, "snapshots", self.snapshot_count, false);
+        try writer.writeAll("},\"domains\":");
+        try app_render.writeJsonStringArray(writer, self.domains);
+        try writer.writeAll(",\"tools\":[");
+        for (self.tool_checks, 0..) |check, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writer.writeByte('{');
+            try app_render.writeJsonStringField(writer, "name", check.name, true);
+            try app_render.writeJsonStringField(writer, "status", check.status, false);
+            try writer.writeByte('}');
+        }
+        try writer.writeAll("]}");
+    }
 };
 
 pub fn collect(ctx: Context) !Report {
@@ -133,6 +173,12 @@ pub fn writeText(ctx: Context, writer: anytype) !void {
     var report = try collect(ctx);
     defer report.deinit(ctx.gpa);
     try report.writeText(writer);
+}
+
+pub fn writeJson(ctx: Context, writer: anytype) !void {
+    var report = try collect(ctx);
+    defer report.deinit(ctx.gpa);
+    try report.writeJson(writer);
 }
 
 fn runToolCheck(io: Io, gpa: Allocator, argv: []const []const u8) ![]u8 {
@@ -204,6 +250,7 @@ test "doctor report renders reusable health output without credentials" {
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
     try report.writeText(&out.writer);
+    try report.writeJson(&out.writer);
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
 
@@ -211,5 +258,9 @@ test "doctor report renders reusable health output without credentials" {
     try std.testing.expect(std.mem.indexOf(u8, text, "domains: plosca.ru, example.test\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare auth: configured\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger auth: missing\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"kind\":\"doctor\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"domains\":[\"plosca.ru\",\"example.test\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"cloudflare\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"hostinger\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "api_token") == null);
 }
