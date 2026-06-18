@@ -139,22 +139,12 @@ fn parseOverviewArgs(args: []const []const u8) !OverviewParsed {
             .invalid_value => return error.InvalidFormat,
             .no_match => {},
         }
-        switch (cli_args.parseValueArg(args, &i, .{"--limit"})) {
-            .matched => |value| {
-                parsed.options.limit = try parseLimit(value);
-                continue;
-            },
-            .missing_value => return error.MissingLimit,
-            .no_match => {},
+        if (try cli_args.parsePositiveI64Arg(args, &i, .{"--limit"}, error.MissingLimit, error.InvalidLimit)) |limit| {
+            parsed.options.limit = limit;
+            continue;
         }
         return error.UnexpectedArgument;
     }
-    return parsed;
-}
-
-fn parseLimit(value: []const u8) !i64 {
-    const parsed = try std.fmt.parseInt(i64, value, 10);
-    if (parsed < 1) return error.InvalidLimit;
     return parsed;
 }
 

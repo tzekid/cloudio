@@ -191,7 +191,7 @@ fn parseCoverageUnsignedArg(args: []const []const u8, index: *usize, comptime na
     return switch (parseCoverageValueArg(args, index, names)) {
         .no_match => .no_match,
         .matched => |value| blk: {
-            value_out.* = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
+            value_out.* = cli_args.parseUnsignedUsize(value, error.InvalidCoverageUnsigned) catch return .{ .unknown = value };
             break :blk .matched;
         },
         .unknown => |value| .{ .unknown = value },
@@ -811,11 +811,7 @@ pub const ParsedPlan = struct {
 };
 
 fn parsePlanValueArg(args: []const []const u8, index: *usize, comptime names: anytype) !?[]const u8 {
-    return switch (cli_args.parseValueArg(args, index, names)) {
-        .no_match => null,
-        .matched => |value| value,
-        .missing_value => error.MissingCoveragePlanOptionValue,
-    };
+    return try cli_args.parseRequiredValueArg(args, index, names, error.MissingCoveragePlanOptionValue);
 }
 
 pub fn parsePlan(gpa: Allocator, args: []const []const u8) !ParsedPlan {

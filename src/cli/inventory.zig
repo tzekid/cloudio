@@ -66,14 +66,14 @@ pub fn parseParsed(args: []const []const u8) !Parsed {
             .no_match => {},
         }
         const arg = args[i];
-        if (try parseInventoryValueArg(args, &i, .{"--provider"}, error.MissingProvider)) |value| {
+        if (try cli_args.parseRequiredValueArg(args, &i, .{"--provider"}, error.MissingProvider)) |value| {
             parsed.options.provider = try parseProvider(value);
-        } else if (try parseInventoryValueArg(args, &i, .{"--domain"}, error.MissingDomain)) |value| {
+        } else if (try cli_args.parseRequiredValueArg(args, &i, .{"--domain"}, error.MissingDomain)) |value| {
             parsed.options.domain = value;
-        } else if (try parseInventoryValueArg(args, &i, .{"--query"}, error.MissingQuery)) |value| {
+        } else if (try cli_args.parseRequiredValueArg(args, &i, .{"--query"}, error.MissingQuery)) |value| {
             parsed.options.query = value;
-        } else if (try parseInventoryValueArg(args, &i, .{"--limit"}, error.MissingLimit)) |value| {
-            parsed.options.limit = try parseLimit(value);
+        } else if (try cli_args.parsePositiveI64Arg(args, &i, .{"--limit"}, error.MissingLimit, error.InvalidLimit)) |limit| {
+            parsed.options.limit = limit;
         } else if (isProvider(arg) and parsed.options.provider == null) {
             parsed.options.provider = try parseProvider(arg);
         } else if (parsed.options.query == null) {
@@ -85,26 +85,12 @@ pub fn parseParsed(args: []const []const u8) !Parsed {
     return parsed;
 }
 
-fn parseInventoryValueArg(args: []const []const u8, index: *usize, comptime names: anytype, missing_error: anyerror) !?[]const u8 {
-    return switch (cli_args.parseValueArg(args, index, names)) {
-        .no_match => null,
-        .matched => |value| value,
-        .missing_value => missing_error,
-    };
-}
-
 fn parseProvider(value: []const u8) !app_inventory.Provider {
     return app_inventory.Provider.parse(value) orelse error.InvalidProvider;
 }
 
 fn isProvider(value: []const u8) bool {
     return app_inventory.Provider.parse(value) != null;
-}
-
-fn parseLimit(value: []const u8) !i64 {
-    const parsed = try std.fmt.parseInt(i64, value, 10);
-    if (parsed < 1) return error.InvalidLimit;
-    return parsed;
 }
 
 test "inventory parser maps positional provider and filters" {

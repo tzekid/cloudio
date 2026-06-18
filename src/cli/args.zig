@@ -28,6 +28,48 @@ pub fn parseValueArg(args: []const []const u8, index: *usize, comptime names: an
     return .no_match;
 }
 
+pub fn parseRequiredValueArg(args: []const []const u8, index: *usize, comptime names: anytype, missing_error: anyerror) !?[]const u8 {
+    return switch (parseValueArg(args, index, names)) {
+        .no_match => null,
+        .matched => |value| value,
+        .missing_value => missing_error,
+    };
+}
+
+pub fn parseSignedI64(value: []const u8, invalid_error: anyerror) !i64 {
+    return std.fmt.parseInt(i64, value, 10) catch invalid_error;
+}
+
+pub fn parseUnsignedUsize(value: []const u8, invalid_error: anyerror) !usize {
+    return std.fmt.parseUnsigned(usize, value, 10) catch invalid_error;
+}
+
+pub fn parsePositiveI64(value: []const u8, invalid_error: anyerror) !i64 {
+    const parsed = try parseSignedI64(value, invalid_error);
+    if (parsed < 1) return invalid_error;
+    return parsed;
+}
+
+pub fn parsePositiveUsize(value: []const u8, invalid_error: anyerror) !usize {
+    const parsed = try parseUnsignedUsize(value, invalid_error);
+    if (parsed == 0) return invalid_error;
+    return parsed;
+}
+
+pub fn parsePositiveI64Arg(args: []const []const u8, index: *usize, comptime names: anytype, missing_error: anyerror, invalid_error: anyerror) !?i64 {
+    if (try parseRequiredValueArg(args, index, names, missing_error)) |value| {
+        return try parsePositiveI64(value, invalid_error);
+    }
+    return null;
+}
+
+pub fn parsePositiveUsizeArg(args: []const []const u8, index: *usize, comptime names: anytype, missing_error: anyerror, invalid_error: anyerror) !?usize {
+    if (try parseRequiredValueArg(args, index, names, missing_error)) |value| {
+        return try parsePositiveUsize(value, invalid_error);
+    }
+    return null;
+}
+
 test "matches recognizes exact aliases only" {
     try std.testing.expect(matches("--limit", .{"--limit"}));
     try std.testing.expect(matches("--path-template", .{ "--path", "--path-template" }));
@@ -57,4 +99,25 @@ test "value argument parser handles split inline aliases and missing values" {
     const other_args = [_][]const u8{"hostinger"};
     try std.testing.expectEqual(ValueArg.no_match, parseValueArg(other_args[0..], &index, .{"--provider"}));
     try std.testing.expectEqual(@as(usize, 0), index);
+}
+
+test "required value and numeric parsers share command option behavior" {
+    var index: usize = 0;
+    const missing_args = [_][]const u8{"--limit"};
+    try std.testing.expectError(error.MissingLimit, parseRequiredValueArg(missing_args[0..], &index, .{"--limit"}, error.MissingLimit));
+
+    index = 0;
+    const inline_args = [_][]const u8{"--limit=25"};
+    try std.testing.expectEqual(@as(i64, 25), (try parsePositiveI64Arg(inline_args[0..], &index, .{"--limit"}, error.MissingLimit, error.InvalidLimit)).?);
+    try std.testing.expectEqual(@as(usize, 0), index);
+
+    index = 0;
+    const split_args = [_][]const u8{ "--max-pages", "3" };
+    try std.testing.expectEqual(@as(usize, 3), (try parsePositiveUsizeArg(split_args[0..], &index, .{"--max-pages"}, error.MissingMaxPages, error.InvalidMaxPages)).?);
+    try std.testing.expectEqual(@as(usize, 1), index);
+
+    try std.testing.expectError(error.InvalidLimit, parsePositiveI64("0", error.InvalidLimit));
+    try std.testing.expectError(error.InvalidLimit, parsePositiveI64("-1", error.InvalidLimit));
+    try std.testing.expectError(error.InvalidMaxPages, parsePositiveUsize("0", error.InvalidMaxPages));
+    try std.testing.expectEqual(@as(usize, 0), try parseUnsignedUsize("0", error.InvalidUnsigned));
 }

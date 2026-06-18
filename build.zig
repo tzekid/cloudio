@@ -501,6 +501,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_coverage", .module = app_coverage_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_coverage", .module = cli_coverage_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
         },

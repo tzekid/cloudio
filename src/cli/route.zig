@@ -1,6 +1,7 @@
 const std = @import("std");
 const app_coverage = @import("app_coverage");
 const cli_coverage = @import("cli_coverage");
+const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
 
 const Allocator = std.mem.Allocator;
@@ -145,28 +146,12 @@ fn parseCaptureArgs(gpa: Allocator, args: []const []const u8) !ParsedCaptureArgs
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--paginate")) {
             paginate = true;
-        } else if (std.mem.eql(u8, arg, "--max-pages")) {
-            index += 1;
-            if (index >= args.len) return error.MissingRouteCaptureOptionValue;
-            max_pages = try parseMaxPages(args[index]);
-        } else if (std.mem.startsWith(u8, arg, "--max-pages=")) {
-            max_pages = try parseMaxPages(arg["--max-pages=".len..]);
-        } else if (std.mem.eql(u8, arg, "--kind") or std.mem.eql(u8, arg, "--snapshot-kind")) {
-            index += 1;
-            if (index >= args.len) return error.MissingRouteCaptureOptionValue;
-            kind = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--kind=")) {
-            kind = arg["--kind=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--snapshot-kind=")) {
-            kind = arg["--snapshot-kind=".len..];
-        } else if (std.mem.eql(u8, arg, "--target") or std.mem.eql(u8, arg, "--snapshot-target")) {
-            index += 1;
-            if (index >= args.len) return error.MissingRouteCaptureOptionValue;
-            target = args[index];
-        } else if (std.mem.startsWith(u8, arg, "--target=")) {
-            target = arg["--target=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--snapshot-target=")) {
-            target = arg["--snapshot-target=".len..];
+        } else if (try cli_args.parsePositiveUsizeArg(args, &index, .{"--max-pages"}, error.MissingRouteCaptureOptionValue, error.InvalidRouteCaptureMaxPages)) |value| {
+            max_pages = value;
+        } else if (try cli_args.parseRequiredValueArg(args, &index, .{ "--kind", "--snapshot-kind" }, error.MissingRouteCaptureOptionValue)) |value| {
+            kind = value;
+        } else if (try cli_args.parseRequiredValueArg(args, &index, .{ "--target", "--snapshot-target" }, error.MissingRouteCaptureOptionValue)) |value| {
+            target = value;
         } else {
             try plan_args.append(gpa, arg);
         }
@@ -179,12 +164,6 @@ fn parseCaptureArgs(gpa: Allocator, args: []const []const u8) !ParsedCaptureArgs
         .paginate = paginate,
         .max_pages = max_pages,
     };
-}
-
-fn parseMaxPages(value: []const u8) !usize {
-    const parsed = try std.fmt.parseInt(usize, value, 10);
-    if (parsed == 0) return error.InvalidRouteCaptureMaxPages;
-    return parsed;
 }
 
 fn usage() void {
