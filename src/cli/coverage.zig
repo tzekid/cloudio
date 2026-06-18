@@ -325,6 +325,23 @@ fn parseWorkplan(args: []const []const u8) Command {
             command.options.focus = app_coverage.WorkplanFocus.parse(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--control-plane") or std.mem.eql(u8, arg, "--cloudio-relevant")) {
             command.options.focus = .control_plane;
+        } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = arg };
+            command.options.family = app_coverage.WorkplanFamily.parse(args[index]) orelse return .{ .unknown = args[index] };
+            if (command.options.family != .all) command.options.focus = .control_plane;
+        } else if (std.mem.startsWith(u8, arg, "--family=")) {
+            const value = arg["--family=".len..];
+            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+            if (command.options.family != .all) command.options.focus = .control_plane;
+        } else if (std.mem.startsWith(u8, arg, "--control-plane-family=")) {
+            const value = arg["--control-plane-family=".len..];
+            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+            if (command.options.family != .all) command.options.focus = .control_plane;
+        } else if (std.mem.startsWith(u8, arg, "--focus-family=")) {
+            const value = arg["--focus-family=".len..];
+            command.options.family = app_coverage.WorkplanFamily.parse(value) orelse return .{ .unknown = value };
+            if (command.options.family != .all) command.options.focus = .control_plane;
         } else if (!provider_set) {
             command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
@@ -906,6 +923,30 @@ test "coverage command parser defaults to summary" {
             try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.provider);
             try std.testing.expectEqual(@as(usize, 4), command.options.limit);
             try std.testing.expectEqual(app_coverage.WorkplanFocus.control_plane, command.options.focus);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.all, command.options.family);
+            try std.testing.expectEqual(RenderFormat.text, command.format);
+        },
+        else => return error.ExpectedCoverageWorkplan,
+    }
+
+    const family_workplan_args = [_][]const u8{ "workplan", "cloudflare", "--family", "security", "--limit=4", "--json" };
+    switch (parseCommand(family_workplan_args[0..])) {
+        .workplan => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.provider);
+            try std.testing.expectEqual(@as(usize, 4), command.options.limit);
+            try std.testing.expectEqual(app_coverage.WorkplanFocus.control_plane, command.options.focus);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.security, command.options.family);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageWorkplan,
+    }
+
+    const family_alias_workplan_args = [_][]const u8{ "workplan", "--control-plane-family=hostinger-vps" };
+    switch (parseCommand(family_alias_workplan_args[0..])) {
+        .workplan => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.all, command.options.provider);
+            try std.testing.expectEqual(app_coverage.WorkplanFocus.control_plane, command.options.focus);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.hostinger_vps, command.options.family);
             try std.testing.expectEqual(RenderFormat.text, command.format);
         },
         else => return error.ExpectedCoverageWorkplan,
@@ -916,6 +957,7 @@ test "coverage command parser defaults to summary" {
         .workplan => |command| {
             try std.testing.expectEqual(app_coverage.ProviderFilter.all, command.options.provider);
             try std.testing.expectEqual(app_coverage.WorkplanFocus.control_plane, command.options.focus);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.all, command.options.family);
             try std.testing.expectEqual(RenderFormat.json, command.format);
         },
         else => return error.ExpectedCoverageWorkplan,

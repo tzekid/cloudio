@@ -131,7 +131,7 @@ fn usage() void {
         \\  cloudio coverage l1 [all|cloudflare|hostinger] [--json|--format json]
         \\  cloudio coverage capture-candidates [all|cloudflare|hostinger] [tag-query] [--support <status>] [--limit <n>] [--json|--format json]
         \\  cloudio coverage dry-run-candidates [all|cloudflare|hostinger] [tag-query] [--support <status>] [--limit <n>] [--json|--format json]
-        \\  cloudio coverage workplan [all|cloudflare|hostinger] [--focus all|control-plane] [--limit <n>] [--json|--format json]
+        \\  cloudio coverage workplan [all|cloudflare|hostinger] [--focus all|control-plane] [--family <family>] [--limit <n>] [--json|--format json]
         \\  cloudio coverage routes [all|cloudflare|hostinger] [tag-query] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>] [--json|--format json]
         \\  cloudio coverage gaps|levels|level-tags [all|cloudflare|hostinger] [--limit <n>] [--json|--format json]
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]

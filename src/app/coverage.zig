@@ -417,10 +417,92 @@ pub const WorkplanFocus = enum {
     }
 };
 
+pub const WorkplanFamily = enum {
+    all,
+    accounts,
+    memberships,
+    iam,
+    tokens,
+    zones,
+    dns,
+    ssl_tls,
+    access,
+    tunnels,
+    rulesets,
+    logs,
+    cache,
+    security,
+    billing,
+    domains,
+    hosting,
+    docker,
+    hostinger_vps,
+    public_keys,
+    custom_pages,
+    healthchecks,
+    load_balancing,
+
+    pub fn parse(value: []const u8) ?WorkplanFamily {
+        if (std.mem.eql(u8, value, "all")) return .all;
+        if (std.mem.eql(u8, value, "accounts") or std.mem.eql(u8, value, "account")) return .accounts;
+        if (std.mem.eql(u8, value, "memberships") or std.mem.eql(u8, value, "membership")) return .memberships;
+        if (std.mem.eql(u8, value, "iam")) return .iam;
+        if (std.mem.eql(u8, value, "tokens") or std.mem.eql(u8, value, "token")) return .tokens;
+        if (std.mem.eql(u8, value, "zones") or std.mem.eql(u8, value, "zone")) return .zones;
+        if (std.mem.eql(u8, value, "dns")) return .dns;
+        if (std.mem.eql(u8, value, "ssl-tls") or std.mem.eql(u8, value, "ssl_tls") or std.mem.eql(u8, value, "ssl") or std.mem.eql(u8, value, "tls")) return .ssl_tls;
+        if (std.mem.eql(u8, value, "access")) return .access;
+        if (std.mem.eql(u8, value, "tunnels") or std.mem.eql(u8, value, "tunnel")) return .tunnels;
+        if (std.mem.eql(u8, value, "rulesets") or std.mem.eql(u8, value, "ruleset") or std.mem.eql(u8, value, "rules-lists") or std.mem.eql(u8, value, "rules_lists")) return .rulesets;
+        if (std.mem.eql(u8, value, "logs") or std.mem.eql(u8, value, "log")) return .logs;
+        if (std.mem.eql(u8, value, "cache") or std.mem.eql(u8, value, "caching")) return .cache;
+        if (std.mem.eql(u8, value, "security") or std.mem.eql(u8, value, "security-posture") or std.mem.eql(u8, value, "security_posture")) return .security;
+        if (std.mem.eql(u8, value, "billing")) return .billing;
+        if (std.mem.eql(u8, value, "domains") or std.mem.eql(u8, value, "domain")) return .domains;
+        if (std.mem.eql(u8, value, "hosting")) return .hosting;
+        if (std.mem.eql(u8, value, "docker")) return .docker;
+        if (std.mem.eql(u8, value, "hostinger-vps") or std.mem.eql(u8, value, "hostinger_vps") or std.mem.eql(u8, value, "vps")) return .hostinger_vps;
+        if (std.mem.eql(u8, value, "public-keys") or std.mem.eql(u8, value, "public_keys") or std.mem.eql(u8, value, "keys")) return .public_keys;
+        if (std.mem.eql(u8, value, "custom-pages") or std.mem.eql(u8, value, "custom_pages")) return .custom_pages;
+        if (std.mem.eql(u8, value, "healthchecks") or std.mem.eql(u8, value, "healthcheck")) return .healthchecks;
+        if (std.mem.eql(u8, value, "load-balancing") or std.mem.eql(u8, value, "load_balancing") or std.mem.eql(u8, value, "load-balancers") or std.mem.eql(u8, value, "load_balancers")) return .load_balancing;
+        return null;
+    }
+
+    pub fn name(self: WorkplanFamily) []const u8 {
+        return switch (self) {
+            .all => "all",
+            .accounts => "accounts",
+            .memberships => "memberships",
+            .iam => "iam",
+            .tokens => "tokens",
+            .zones => "zones",
+            .dns => "dns",
+            .ssl_tls => "ssl-tls",
+            .access => "access",
+            .tunnels => "tunnels",
+            .rulesets => "rulesets",
+            .logs => "logs",
+            .cache => "cache",
+            .security => "security",
+            .billing => "billing",
+            .domains => "domains",
+            .hosting => "hosting",
+            .docker => "docker",
+            .hostinger_vps => "hostinger-vps",
+            .public_keys => "public-keys",
+            .custom_pages => "custom-pages",
+            .healthchecks => "healthchecks",
+            .load_balancing => "load-balancing",
+        };
+    }
+};
+
 pub const WorkplanOptions = struct {
     provider: ProviderFilter = .all,
     limit: usize = 10,
     focus: WorkplanFocus = .all,
+    family: WorkplanFamily = .all,
 };
 
 pub const LevelTagEvidence = struct {
@@ -1728,10 +1810,11 @@ fn writeCaptureCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, opt
 }
 
 fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: WorkplanOptions, writer: anytype) !void {
+    const effective_focus = workplanEffectiveFocus(options);
     try writer.writeAll("Cloudio provider coverage workplan\n");
     try writer.writeAll("rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n");
     try writer.writeAll("scope: broad provider tag slices with exact no-execute planning commands\n");
-    try writer.print("filter={s} focus={s} limit=", .{ options.provider.name(), options.focus.name() });
+    try writer.print("filter={s} focus={s} family={s} limit=", .{ options.provider.name(), effective_focus.name(), options.family.name() });
     if (options.limit == 0) {
         try writer.writeAll("all\n");
     } else {
@@ -1742,14 +1825,19 @@ fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     var omitted: usize = 0;
     var hidden_closed: usize = 0;
     var hidden_focus: usize = 0;
+    var hidden_family: usize = 0;
     for (rows) |row| {
         const priority = row.priority();
         if (priority == 0) {
             hidden_closed += 1;
             continue;
         }
-        if (!workplanFocusIncludes(options.focus, row)) {
+        if (!workplanFocusIncludes(effective_focus, row)) {
             hidden_focus += 1;
+            continue;
+        }
+        if (!workplanFamilyIncludes(options.family, row)) {
+            hidden_family += 1;
             continue;
         }
         if (options.limit != 0 and visible >= options.limit) {
@@ -1765,15 +1853,18 @@ fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     } else {
         if (omitted != 0) try writer.print("omitted={d}\n", .{omitted});
         if (hidden_focus != 0) try writer.print("focus_filtered_rows_hidden={d}\n", .{hidden_focus});
+        if (hidden_family != 0) try writer.print("family_filtered_rows_hidden={d}\n", .{hidden_family});
         if (hidden_closed != 0) try writer.print("closed_or_evidence_only_rows_hidden={d}\n", .{hidden_closed});
     }
 }
 
 fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: WorkplanOptions, writer: anytype) !void {
+    const effective_focus = workplanEffectiveFocus(options);
     try writer.writeByte('{');
     try writeJsonField(writer, "kind", "coverage_workplan", true);
     try writeJsonField(writer, "filter", options.provider.name(), true);
-    try writeJsonField(writer, "focus", options.focus.name(), true);
+    try writeJsonField(writer, "focus", effective_focus.name(), true);
+    try writeJsonField(writer, "family", options.family.name(), true);
     try writeJsonCountField(writer, "limit", options.limit, true);
     try writeJsonField(writer, "rank", "pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs", true);
     try writeJsonField(writer, "scope", "broad provider tag slices with exact no-execute planning commands", true);
@@ -1783,6 +1874,7 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     var omitted: usize = 0;
     var hidden_closed: usize = 0;
     var hidden_focus: usize = 0;
+    var hidden_family: usize = 0;
     var first = true;
     for (rows) |row| {
         const priority = row.priority();
@@ -1790,8 +1882,12 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
             hidden_closed += 1;
             continue;
         }
-        if (!workplanFocusIncludes(options.focus, row)) {
+        if (!workplanFocusIncludes(effective_focus, row)) {
             hidden_focus += 1;
+            continue;
+        }
+        if (!workplanFamilyIncludes(options.family, row)) {
+            hidden_family += 1;
             continue;
         }
         if (options.limit != 0 and visible >= options.limit) {
@@ -1807,6 +1903,7 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     try writeJsonCountField(writer, "visible", visible, true);
     try writeJsonCountField(writer, "omitted", omitted, true);
     try writeJsonCountField(writer, "focus_filtered_rows_hidden", hidden_focus, true);
+    try writeJsonCountField(writer, "family_filtered_rows_hidden", hidden_family, true);
     try writeJsonCountField(writer, "closed_or_evidence_only_rows_hidden", hidden_closed, false);
     try writer.writeByte('}');
     try writer.writeByte('\n');
@@ -1814,7 +1911,8 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
 
 fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, writer: anytype) !void {
     const evidence = row.evidence;
-    try writer.print("{s} | {s}: priority={d} pending_reads={d} diagnostic_blocked_reads={d} pending_mutation_dry_runs={d} L2_read_evidence={d} dry_run_evidence={d} L3_generic={d} typed={d}\n", .{
+    const family = workplanTagFamily(row.provider, row.tag);
+    try writer.print("{s} | {s}: priority={d} pending_reads={d} diagnostic_blocked_reads={d} pending_mutation_dry_runs={d} L2_read_evidence={d} dry_run_evidence={d} L3_generic={d} typed={d} family={s}\n", .{
         row.provider,
         row.tag,
         row.priority(),
@@ -1825,6 +1923,7 @@ fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, writer: anytype) 
         evidence.dry_run_evidence,
         evidence.l3_generic_inventory_candidates,
         evidence.l3_typed_table_evidence,
+        if (family) |value| value.name() else "-",
     });
     const routes = try workplanRoutesCommand(gpa, row);
     defer gpa.free(routes);
@@ -1842,9 +1941,11 @@ fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, writer: anytype) 
 }
 
 fn writeWorkplanRowJson(gpa: Allocator, row: LevelTagEvidence, writer: anytype) !void {
+    const family = workplanTagFamily(row.provider, row.tag);
     try writer.writeByte('{');
     try writeJsonField(writer, "provider", row.provider, true);
     try writeJsonField(writer, "tag", row.tag, true);
+    try writeJsonNullableStringField(writer, "focus_family", if (family) |value| value.name() else null, true);
     try writeJsonCountField(writer, "priority", row.priority(), true);
     try writer.writeAll("\"evidence\":");
     try writeLevelProviderEvidenceJson(row.evidence, writer);
@@ -1883,6 +1984,11 @@ fn workplanNeedsDryRun(row: LevelTagEvidence) bool {
     return row.evidence.pending_mutation_dry_runs != 0;
 }
 
+fn workplanEffectiveFocus(options: WorkplanOptions) WorkplanFocus {
+    if (options.family != .all) return .control_plane;
+    return options.focus;
+}
+
 fn workplanFocusIncludes(focus: WorkplanFocus, row: LevelTagEvidence) bool {
     return switch (focus) {
         .all => true,
@@ -1890,52 +1996,48 @@ fn workplanFocusIncludes(focus: WorkplanFocus, row: LevelTagEvidence) bool {
     };
 }
 
+fn workplanFamilyIncludes(family: WorkplanFamily, row: LevelTagEvidence) bool {
+    if (family == .all) return true;
+    return (workplanTagFamily(row.provider, row.tag) orelse return false) == family;
+}
+
 fn workplanTagIsControlPlane(provider: []const u8, tag: []const u8) bool {
+    return workplanTagFamily(provider, tag) != null;
+}
+
+fn workplanTagFamily(provider: []const u8, tag: []const u8) ?WorkplanFamily {
     if (std.mem.eql(u8, provider, "hostinger")) {
-        return tagContainsAny(tag, &.{
-            "VPS",
-            "Virtual machine",
-            "Docker",
-            "Malware",
-            "Firewall",
-            "DNS",
-            "Domain",
-            "Hosting",
-            "Billing",
-            "Public key",
-            "Post-install",
-        });
+        if (tagContainsAny(tag, &.{ "Docker", "Container" })) return .docker;
+        if (tagContainsAny(tag, &.{ "Malware", "Monarx", "Firewall", "Security" })) return .security;
+        if (tagContainsAny(tag, &.{ "Public key", "SSH key" })) return .public_keys;
+        if (tagContainsAny(tag, &.{ "VPS", "Virtual machine", "VirtualMachine", "Post-install" })) return .hostinger_vps;
+        if (tagContainsAny(tag, &.{"DNS"})) return .dns;
+        if (tagContainsAny(tag, &.{"Domain"})) return .domains;
+        if (tagContainsAny(tag, &.{"Hosting"})) return .hosting;
+        if (tagContainsAny(tag, &.{"Billing"})) return .billing;
+        return null;
     }
     if (std.mem.eql(u8, provider, "cloudflare")) {
-        return tagContainsAny(tag, &.{
-            "Account",
-            "Membership",
-            "IAM",
-            "Token",
-            "Zone",
-            "DNS",
-            "SSL",
-            "Certificate",
-            "Access",
-            "Tunnel",
-            "Ruleset",
-            "Rules List",
-            "Log",
-            "Cache",
-            "Argo",
-            "Security",
-            "Firewall",
-            "WAF",
-            "Bot",
-            "Page Shield",
-            "IP Access",
-            "Custom Pages",
-            "Healthcheck",
-            "Load Balancer",
-            "Email Security",
-        });
+        if (tagContainsAny(tag, &.{ "Email Security", "Security Center", "Firewall", "WAF", "Bot", "Page Shield", "IP Access", "API Gateway", "Leaked Credential", "Vulnerability Scanner", "Security" })) return .security;
+        if (tagContainsAny(tag, &.{"Token"})) return .tokens;
+        if (tagContainsAny(tag, &.{"Membership"})) return .memberships;
+        if (tagContainsAny(tag, &.{"IAM"})) return .iam;
+        if (tagContainsAny(tag, &.{"DNS"})) return .dns;
+        if (tagContainsAny(tag, &.{ "SSL", "TLS", "Certificate", "mTLS" })) return .ssl_tls;
+        if (tagContainsAny(tag, &.{"Access"})) return .access;
+        if (tagContainsAny(tag, &.{"Tunnel"})) return .tunnels;
+        if (tagContainsAny(tag, &.{ "Ruleset", "Rules List" })) return .rulesets;
+        if (tagContainsAny(tag, &.{"Log"})) return .logs;
+        if (tagContainsAny(tag, &.{ "Cache", "Argo" })) return .cache;
+        if (tagContainsAny(tag, &.{"Billing"})) return .billing;
+        if (tagContainsAny(tag, &.{"Custom Pages"})) return .custom_pages;
+        if (tagContainsAny(tag, &.{"Healthcheck"})) return .healthchecks;
+        if (tagContainsAny(tag, &.{"Load Balancer"})) return .load_balancing;
+        if (tagContainsAny(tag, &.{"Zone"})) return .zones;
+        if (tagContainsAny(tag, &.{ "Account", "Organization", "User" })) return .accounts;
+        return null;
     }
-    return false;
+    return null;
 }
 
 fn tagContainsAny(tag: []const u8, needles: []const []const u8) bool {
@@ -3661,8 +3763,9 @@ test "renders broad provider coverage workplan commands by tag" {
     }, &focused_out.writer);
     const focused_text = try focused_out.toOwnedSlice();
     defer allocator.free(focused_text);
-    try std.testing.expect(std.mem.indexOf(u8, focused_text, "filter=all focus=control-plane limit=all") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_text, "filter=all focus=control-plane family=all limit=all") != null);
     try std.testing.expect(std.mem.indexOf(u8, focused_text, "cloudflare | Tokens: priority=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_text, "family=tokens") != null);
     try std.testing.expect(std.mem.indexOf(u8, focused_text, "cloudflare | Workers") == null);
     try std.testing.expect(std.mem.indexOf(u8, focused_text, "Reach: Segments") == null);
     try std.testing.expect(std.mem.indexOf(u8, focused_text, "focus_filtered_rows_hidden=2") != null);
@@ -3677,9 +3780,49 @@ test "renders broad provider coverage workplan commands by tag" {
     const focused_json = try focused_json_out.toOwnedSlice();
     defer allocator.free(focused_json);
     try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"focus\":\"control-plane\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"family\":\"all\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"tag\":\"Tokens\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"focus_family\":\"tokens\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"tag\":\"Workers\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"focus_filtered_rows_hidden\":2") != null);
+
+    const family_cloudflare =
+        \\{"provider":"cloudflare","tag":"DNS Records","method":"GET","path":"/zones/{zone_id}/dns_records","operation_id":"dns-records-list","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"pending read"}
+        \\{"provider":"cloudflare","tag":"Tokens","method":"DELETE","path":"/accounts/{account_id}/tokens/{token_id}","operation_id":"tokens-delete","path_params":[{"name":"account_id","required":true},{"name":"token_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"dry-run only"}
+        \\{"provider":"cloudflare","tag":"Workers","method":"GET","path":"/accounts/{account_id}/workers","operation_id":"workers-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"pending read"}
+        \\
+    ;
+
+    var family_text_out = std.Io.Writer.Allocating.init(allocator);
+    defer family_text_out.deinit();
+    try writeWorkplanTextFromText(allocator, family_cloudflare, "", .{
+        .provider = .all,
+        .limit = 0,
+        .family = .tokens,
+    }, &family_text_out.writer);
+    const family_text = try family_text_out.toOwnedSlice();
+    defer allocator.free(family_text);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "filter=all focus=control-plane family=tokens limit=all") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "cloudflare | Tokens: priority=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "cloudflare | DNS Records") == null);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "cloudflare | Workers") == null);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "focus_filtered_rows_hidden=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "family_filtered_rows_hidden=1") != null);
+
+    var family_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer family_json_out.deinit();
+    try writeWorkplanJsonFromText(allocator, family_cloudflare, "", .{
+        .provider = .all,
+        .limit = 0,
+        .family = .tokens,
+    }, &family_json_out.writer);
+    const family_json = try family_json_out.toOwnedSlice();
+    defer allocator.free(family_json);
+    try std.testing.expect(std.mem.indexOf(u8, family_json, "\"focus\":\"control-plane\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_json, "\"family\":\"tokens\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_json, "\"tag\":\"Tokens\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_json, "\"tag\":\"DNS Records\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, family_json, "\"family_filtered_rows_hidden\":1") != null);
 }
 
 test "audits L1 routability invariants across provider manifests" {
