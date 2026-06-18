@@ -112,11 +112,23 @@ pub fn planJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput) ![]
     return try provider_dispatch.planRouteJsonRequest(gpa, route.*, input.request);
 }
 
+pub fn loadRoute(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput) !provider_routes.Route {
+    var routes = try loadCandidateRoutes(io, gpa, paths, input.filter.provider);
+    errdefer routes.deinit(gpa);
+    return try takeSingleRoute(gpa, &routes, input.filter);
+}
+
 pub fn planJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, input: RoutePlanInput) ![]u8 {
     var routes = try loadCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, input.filter.provider);
     defer routes.deinit(gpa);
     const route = try selectSingleRoute(routes.items, input.filter);
     return try provider_dispatch.planRouteJsonRequest(gpa, route.*, input.request);
+}
+
+pub fn loadRouteFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, input: RoutePlanInput) !provider_routes.Route {
+    var routes = try loadCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, input.filter.provider);
+    errdefer routes.deinit(gpa);
+    return try takeSingleRoute(gpa, &routes, input.filter);
 }
 
 pub fn readMetadataJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, auth: Auth) ![]u8 {
@@ -176,6 +188,24 @@ fn selectSingleRoute(routes: []const provider_routes.Route, filter: RouteFilter)
         selected = route;
     }
     return selected orelse error.ProviderRoutePlanNotFound;
+}
+
+fn takeSingleRoute(gpa: Allocator, routes: *provider_routes.RouteSet, filter: RouteFilter) !provider_routes.Route {
+    var selected_index: ?usize = null;
+    for (routes.items, 0..) |route, index| {
+        if (!routeMatchesFilter(route, filter)) continue;
+        if (selected_index != null) return error.ProviderRoutePlanAmbiguous;
+        selected_index = index;
+    }
+    const index = selected_index orelse return error.ProviderRoutePlanNotFound;
+    const selected = routes.items[index];
+    for (routes.items, 0..) |route, route_index| {
+        if (route_index == index) continue;
+        route.deinit(gpa);
+    }
+    gpa.free(routes.items);
+    routes.items = &.{};
+    return selected;
 }
 
 fn routeMatchesFilter(route: provider_routes.Route, filter: RouteFilter) bool {
