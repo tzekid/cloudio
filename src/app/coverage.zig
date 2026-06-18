@@ -3208,23 +3208,28 @@ fn writeActualMissingInputSourceRowsText(
             const source_state = actualCaptureState(found, captures);
             const command = try actualCaptureCommand(gpa, found, hints);
             defer gpa.free(command);
-            try writer.print("      source: {s}:{s} <- {s} state={s} ready={s} diagnostic_ready={s} hint_count={d} capture: {s}\n", .{
+            const hint_count = actualCaptureSourceHintCount(route, hints, input_source, input_name, source);
+            try writer.print("      source: {s}:{s} <- {s} state={s} result={s} ready={s} diagnostic_ready={s} hint_count={d} next=\"{s}\" capture: {s}\n", .{
                 input_source,
                 input_name,
                 source.operation_id,
                 if (source_state) |state| state.name() else "unknown",
+                actualCaptureSourceResult(found, source_state, hints, hint_count),
                 if (actualCaptureReady(found, hints)) "true" else "false",
                 if (actualCaptureReadyWithPolicy(found, hints, true)) "true" else "false",
-                actualCaptureSourceHintCount(route, hints, input_source, input_name, source),
+                hint_count,
+                actualCaptureSourceNextAction(found, source_state, hints, hint_count),
                 command,
             });
         } else {
-            try writer.print("      source: {s}:{s} <- {s} state=not_in_catalog hint_kind={s} hint_count={d} purpose=", .{
+            const hint_count = actualCaptureSourceHintCount(route, hints, input_source, input_name, source);
+            try writer.print("      source: {s}:{s} <- {s} state=not_in_catalog result=not_in_catalog hint_kind={s} hint_count={d} next=\"{s}\" purpose=", .{
                 input_source,
                 input_name,
                 source.operation_id,
                 source.hint_kind,
-                actualCaptureSourceHintCount(route, hints, input_source, input_name, source),
+                hint_count,
+                actualCaptureSourceNextAction(null, null, hints, hint_count),
             });
             try writer.writeAll(source.purpose);
             try writer.writeByte('\n');
@@ -3279,6 +3284,8 @@ fn writeActualMissingInputSourceRowsJson(
         try writeJsonNullableStringField(writer, "source_operation_id", null, true);
         try writeJsonNullableStringField(writer, "hint_kind", null, true);
         try writeJsonCountField(writer, "hint_count", 0, true);
+        try writeJsonField(writer, "result", "unmapped", true);
+        try writeJsonField(writer, "next_action", "add a source mapping before this input can be planned", true);
         try writeJsonField(writer, "purpose", "no source mapping", true);
         try writeJsonField(writer, "catalog_state", "unmapped", true);
         try writeJsonNullableStringField(writer, "actual_state", null, true);
@@ -3313,13 +3320,16 @@ fn writeActualMissingInputSourceJson(
     defer if (command) |owned| gpa.free(owned);
     if (source_route) |found| command = try actualCaptureCommand(gpa, found, hints);
     const source_state = if (source_route) |found| actualCaptureState(found, captures) else null;
+    const hint_count = actualCaptureSourceHintCount(route, hints, input_source, input_name, source);
 
     try writer.writeByte('{');
     try writeJsonField(writer, "input_source", input_source, true);
     try writeJsonField(writer, "input_name", input_name, true);
     try writeJsonNullableStringField(writer, "source_operation_id", source.operation_id, true);
     try writeJsonNullableStringField(writer, "hint_kind", source.hint_kind, true);
-    try writeJsonCountField(writer, "hint_count", actualCaptureSourceHintCount(route, hints, input_source, input_name, source), true);
+    try writeJsonCountField(writer, "hint_count", hint_count, true);
+    try writeJsonField(writer, "result", actualCaptureSourceResult(source_route, source_state, hints, hint_count), true);
+    try writeJsonField(writer, "next_action", actualCaptureSourceNextAction(source_route, source_state, hints, hint_count), true);
     try writeJsonField(writer, "purpose", source.purpose, true);
     try writeJsonField(writer, "catalog_state", if (source_route != null) "present" else "not_in_catalog", true);
     try writeJsonNullableStringField(writer, "actual_state", if (source_state) |state| state.name() else null, true);
@@ -3338,6 +3348,35 @@ fn actualCaptureFindRouteByOperationId(routes: []const CoverageRoute, provider: 
         if (std.mem.eql(u8, row.route.operation_id.?, operation_id)) return row.route;
     }
     return null;
+}
+
+fn actualCaptureSourceResult(route: ?provider_routes.Route, state: ?ActualCaptureState, hints: ActualCaptureHints, hint_count: usize) []const u8 {
+    const source_route = route orelse return "not_in_catalog";
+    const source_state = state orelse return "not_eligible";
+    return switch (source_state) {
+        .ok => if (hint_count != 0) "captured_with_hints" else "captured_no_hints",
+        .missing => if (actualCaptureReadyWithPolicy(source_route, hints, true)) "ready_to_capture" else "waiting_for_inputs",
+        .non_ok => if (!provider_dispatch.routeLiveCallSupported(source_route) and provider_dispatch.routeDiagnosticReadSupported(source_route)) "diagnostic_blocked" else "captured_error",
+    };
+}
+
+fn actualCaptureSourceNextAction(route: ?provider_routes.Route, state: ?ActualCaptureState, hints: ActualCaptureHints, hint_count: usize) []const u8 {
+    const source_route = route orelse return "update the route catalog or remove the stale hint mapping";
+    const source_state = state orelse return "source route is not an eligible read route";
+    return switch (source_state) {
+        .ok => if (hint_count != 0)
+            "use collected identifiers for child captures"
+        else
+            "inspect raw response and normalizer; current account may have an empty collection",
+        .missing => if (actualCaptureReadyWithPolicy(source_route, hints, true))
+            "capture the source route to discover identifiers"
+        else
+            "capture the source route prerequisites first",
+        .non_ok => if (!provider_dispatch.routeLiveCallSupported(source_route) and provider_dispatch.routeDiagnosticReadSupported(source_route))
+            "diagnostic-only source is blocked; child identifiers are unavailable"
+        else
+            "inspect source capture error before child captures",
+    };
 }
 
 fn actualCaptureSourceHintCount(
@@ -6780,6 +6819,7 @@ test "explains Hostinger missing input source routes for broad child groups" {
     defer db.close();
     try db.initSchema();
     try db.upsertHostingerVps("1307809", "srv1307809.hstgr.cloud", "running", "76.13.130.170", "KVM 4", "{\"id\":1307809}");
+    try db.insertAudit("route.capture", "ok", "hostinger/domains_getWHOISProfileListV1 /api/domains/v1/whois");
     try db.insertAudit("route.capture", "permission", "hostinger/reach_listProfilesV1 /api/reach/v1/profiles");
     try db.insertAudit("route.capture", "http_error", "hostinger/VPS_getProjectListV1 /api/vps/v1/virtual-machines/1307809/docker");
 
@@ -6820,15 +6860,19 @@ test "explains Hostinger missing input source routes for broad child groups" {
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_input_sources\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"snapshotId\",\"source_operation_id\":\"DNS_getDNSSnapshotListV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"ready_to_capture\",\"next_action\":\"capture the source route to discover identifiers\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"whoisId\",\"source_operation_id\":\"domains_getWHOISProfileListV1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"websiteId\",\"source_operation_id\":\"horizons_getWebsitesV1\",\"hint_kind\":\"horizons_getWebsitesV1\",\"hint_count\":0,\"purpose\":\"discover Horizons website ids\",\"catalog_state\":\"not_in_catalog\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"captured_no_hints\",\"next_action\":\"inspect raw response and normalizer; current account may have an empty collection\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"websiteId\",\"source_operation_id\":\"horizons_getWebsitesV1\",\"hint_kind\":\"horizons_getWebsitesV1\",\"hint_count\":0,\"result\":\"not_in_catalog\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"username\",\"source_operation_id\":\"hosting_listWebsitesV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"name\",\"source_operation_id\":\"hosting_listAccountDatabasesV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"waiting_for_inputs\",\"next_action\":\"capture the source route prerequisites first\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"order_id\",\"source_operation_id\":\"hosting_listOrdersV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"uuid\",\"source_operation_id\":\"hosting_listNodeJSBuildsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"profileUuid\",\"source_operation_id\":\"reach_listProfilesV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"segmentUuid\",\"source_operation_id\":\"reach_listSegmentsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"projectName\",\"source_operation_id\":\"VPS_getProjectListV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"diagnostic_blocked\",\"next_action\":\"diagnostic-only source is blocked; child identifiers are unavailable\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"firewallId\",\"source_operation_id\":\"VPS_getFirewallListV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"postInstallScriptId\",\"source_operation_id\":\"VPS_getPostInstallScriptsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation hosting_listWebsitesV1") != null);
@@ -6846,7 +6890,7 @@ test "explains Hostinger missing input source routes for broad child groups" {
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:snapshotId <- DNS_getDNSSnapshotListV1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:websiteId <- horizons_getWebsitesV1 state=not_in_catalog") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "source: path:projectName <- VPS_getProjectListV1 state=non_ok ready=false diagnostic_ready=true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "source: path:projectName <- VPS_getProjectListV1 state=non_ok result=diagnostic_blocked ready=false diagnostic_ready=true") != null);
 }
 
 test "closed Cloudflare security read slice has no capture candidates" {
