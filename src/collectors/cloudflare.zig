@@ -178,7 +178,8 @@ pub fn collectAll(io: Io, gpa: Allocator, auth: Auth, domains: []const []const u
         zone_output.deinit(gpa);
         var dns_output = try collectDns(io, gpa, auth, db, domain, false);
         dns_output.deinit(gpa);
-        try diagnoseDomain(io, gpa, db, domain);
+        var diagnose_output = try diagnoseDomain(io, gpa, db, domain, false);
+        diagnose_output.deinit(gpa);
     }
 }
 
@@ -4143,7 +4144,10 @@ fn collectAccountTokenEndpointsForAccounts(gpa: Allocator, io: Io, auth: Auth, c
     }
 }
 
-pub fn diagnoseDomain(io: Io, gpa: Allocator, db: *Db, domain: []const u8) !void {
+pub fn diagnoseDomain(io: Io, gpa: Allocator, db: *Db, domain: []const u8, capture_output: bool) !Output {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    errdefer out.deinit();
+    var wrote_line = false;
     const doh_url = try std.fmt.allocPrint(gpa, "https://cloudflare-dns.com/dns-query?name={s}&type=A", .{domain});
     defer gpa.free(doh_url);
     const tcp_22 = try std.fmt.allocPrint(gpa, ":</dev/tcp/{s}/22", .{domain});
@@ -4168,14 +4172,29 @@ pub fn diagnoseDomain(io: Io, gpa: Allocator, db: *Db, domain: []const u8) !void
             const summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ check.kind, @errorName(err) });
             defer gpa.free(summary);
             _ = try db.insertSnapshot("cloudflare", check.kind, domain, "error", summary, null, null);
+            if (capture_output) {
+                if (wrote_line) try out.writer.writeByte('\n');
+                try out.writer.print("{s}: {s}", .{ check.kind, @errorName(err) });
+                wrote_line = true;
+            }
             continue;
         };
         defer result.deinit(gpa);
         const redacted = try core_redact.secrets(gpa, result.stdout);
         defer gpa.free(redacted);
-        _ = try db.insertSnapshot("cloudflare", check.kind, domain, if (result.ok()) "ok" else "error", firstLine(redacted), null, redacted);
-        std.debug.print("{s}: {s}\n", .{ check.kind, if (firstLine(redacted).len > 0) firstLine(redacted) else result.statusText() });
+        const summary = if (firstLine(redacted).len > 0) firstLine(redacted) else result.statusText();
+        _ = try db.insertSnapshot("cloudflare", check.kind, domain, if (result.ok()) "ok" else "error", summary, null, redacted);
+        if (capture_output) {
+            if (wrote_line) try out.writer.writeByte('\n');
+            try out.writer.print("{s}: {s}", .{ check.kind, summary });
+            wrote_line = true;
+        }
     }
+    if (!capture_output) {
+        out.deinit();
+        return .{};
+    }
+    return .{ .text = try out.toOwnedSlice() };
 }
 
 pub fn persistAccountRows(gpa: Allocator, db: *Db, body: []const u8) !void {

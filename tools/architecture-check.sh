@@ -40,6 +40,11 @@ check_no_matches \
     src/collectors
 
 check_no_matches \
+    "collector modules must not write directly to terminal output" \
+    'std\.debug\.print' \
+    src/collectors
+
+check_no_matches \
     "app modules must not import CLI modules" \
     '@import\("(cli_[^"]+)"\)' \
     src/app

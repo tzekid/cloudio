@@ -104,7 +104,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         try commandSetting(ctx, args);
     } else if (std.mem.eql(u8, sub, "diagnose")) {
         const domain = app_cloudflare.selectedDomain(ctx.domains, args);
-        try app_cloudflare.diagnose(appContext(ctx), domain);
+        try cli_render.printOutput(ctx.io, ctx.gpa, try app_cloudflare.diagnose(appContext(ctx), domain));
     } else {
         std.debug.print("unknown cloudflare command: {s}\n", .{sub});
     }

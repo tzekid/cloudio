@@ -506,8 +506,8 @@ pub fn collectZoneSetting(ctx: Context, domain: []const u8, setting_id: []const 
     return try collector_cloudflare.collectZoneSetting(ctx.io, ctx.gpa, ctx.auth, ctx.db, domain, setting_id, true);
 }
 
-pub fn diagnose(ctx: Context, domain: []const u8) !void {
-    try collector_cloudflare.diagnoseDomain(ctx.io, ctx.gpa, ctx.db, domain);
+pub fn diagnose(ctx: Context, domain: []const u8) !Output {
+    return try collector_cloudflare.diagnoseDomain(ctx.io, ctx.gpa, ctx.db, domain, true);
 }
 
 pub fn listResources(ctx: Context) !Output {
