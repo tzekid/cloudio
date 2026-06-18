@@ -3870,7 +3870,7 @@ fn hasGeneratedDryRunPolicyEvidence(row: CoverageRoute) bool {
     if (route.deprecated or !route.isRoutable()) return false;
     if (!route.isDryRunMutation()) return false;
     if (route.support != .unsafe_mutation) return false;
-    return workplanTagFamily(route.provider.name(), route.tag) != null;
+    return true;
 }
 
 fn hasCoverageEvidence(tests: []const u8) bool {
@@ -4455,78 +4455,78 @@ test "lists route dry-run candidates for missing mutation review evidence" {
         \\
     ;
     const hostinger =
-        \\{"provider":"hostinger","tag":"VPS","method":"POST","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_purchaseNewVirtualMachineV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"other provider"}
+        \\{"provider":"hostinger","tag":"VPS","method":"POST","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_purchaseNewVirtualMachineV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":["#/components/schemas/VpsPurchaseRequest"]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"pending dry-run"}
+        \\{"provider":"hostinger","tag":"VPS","method":"DELETE","path":"/api/vps/v1/virtual-machines/{virtualMachineId}","operation_id":"VPS_deleteVirtualMachineV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"pending dry-run"}
         \\
     ;
 
     var text_out = std.Io.Writer.Allocating.init(allocator);
     defer text_out.deinit();
     try writeDryRunCandidatesTextFromText(allocator, cloudflare, hostinger, .{
-        .filter = .{ .provider = .cloudflare, .tag_query = "Workers" },
+        .filter = .{ .provider = .hostinger, .tag_query = "VPS" },
         .limit = 1,
     }, &text_out.writer);
     const text = try text_out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio route dry-run candidates\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "POST /accounts/{account_id}/workers | support=unsafe_mutation op=workers-create") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "required_path=account_id required_query=- required_header=- body_required=true body_content_type=application/json schema_refs=#/components/schemas/WorkerCreateRequest") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "cloudio route dry-run cloudflare --operation workers-create --path-param account_id=<account_id> --body-content-type application/json") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "workers-patch") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "POST /api/vps/v1/virtual-machines | support=unsafe_mutation op=VPS_purchaseNewVirtualMachineV1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "required_path=- required_query=- required_header=- body_required=true body_content_type=application/json schema_refs=#/components/schemas/VpsPurchaseRequest") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudio route dry-run hostinger --operation VPS_purchaseNewVirtualMachineV1 --body-content-type application/json") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "workers-create") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
 
     var json_out = std.Io.Writer.Allocating.init(allocator);
     defer json_out.deinit();
     try writeDryRunCandidatesJsonFromText(allocator, cloudflare, hostinger, .{
-        .filter = .{ .provider = .cloudflare, .tag_query = "Workers" },
+        .filter = .{ .provider = .hostinger, .tag_query = "VPS" },
         .limit = 0,
     }, &json_out.writer);
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_dry_run_candidates\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"total_candidates\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"workers-create\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"workers-delete\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_purchaseNewVirtualMachineV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_deleteVirtualMachineV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"body_required\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"body_content_type\":\"application/json\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"request_body_schema_refs\":[\"#/components/schemas/WorkerCreateRequest\"]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"dry_run_command\":\"cloudio route dry-run cloudflare --operation workers-create --path-param account_id=<account_id> --body-content-type application/json\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "workers-patch") == null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "VPS_purchaseNewVirtualMachineV1") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"request_body_schema_refs\":[\"#/components/schemas/VpsPurchaseRequest\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"dry_run_command\":\"cloudio route dry-run hostinger --operation VPS_purchaseNewVirtualMachineV1 --body-content-type application/json\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "workers-create") == null);
 
     var family_text_out = std.Io.Writer.Allocating.init(allocator);
     defer family_text_out.deinit();
     try writeDryRunCandidatesTextFromText(allocator, cloudflare, hostinger, .{
-        .filter = .{ .provider = .cloudflare, .tag_query = "Workers" },
+        .filter = .{ .provider = .hostinger, .tag_query = "VPS" },
         .limit = 0,
     }, &family_text_out.writer);
     const family_text = try family_text_out.toOwnedSlice();
     defer allocator.free(family_text);
-    try std.testing.expect(std.mem.indexOf(u8, family_text, "filter provider=cloudflare tag_query=Workers limit=all") != null);
-    try std.testing.expect(std.mem.indexOf(u8, family_text, "workers-create") != null);
-    try std.testing.expect(std.mem.indexOf(u8, family_text, "VPS_purchaseNewVirtualMachineV1") == null);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "filter provider=hostinger tag_query=VPS limit=all") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "VPS_purchaseNewVirtualMachineV1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, family_text, "workers-create") == null);
 
     var plan_json_out = std.Io.Writer.Allocating.init(allocator);
     defer plan_json_out.deinit();
     try writeDryRunCandidatesJsonFromText(allocator, cloudflare, hostinger, .{
-        .filter = .{ .provider = .cloudflare, .tag_query = "Workers" },
+        .filter = .{ .provider = .hostinger, .tag_query = "VPS" },
         .limit = 1,
         .include_plans = true,
     }, &plan_json_out.writer);
     const plan_json = try plan_json_out.toOwnedSlice();
     defer allocator.free(plan_json);
     try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"include_plans\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"dry_run_plan\":{\"provider\":\"cloudflare\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"operation_id\":\"workers-create\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"path\":\"/accounts/example/workers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"dry_run_plan\":{\"provider\":\"hostinger\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"operation_id\":\"VPS_purchaseNewVirtualMachineV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"path\":\"/api/vps/v1/virtual-machines\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"request_body_input\":{\"present\":true,\"content_type\":\"application/json\",\"required_missing\":false}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"will_execute\":false") != null);
 }
 
-test "counts generated Cloudflare control-plane mutation dry-runs as review evidence" {
+test "counts generated Cloudflare mutation dry-runs as review evidence" {
     const allocator = std.testing.allocator;
     const cloudflare =
         \\{"provider":"cloudflare","tag":"DNS Records","method":"POST","path":"/zones/{zone_id}/dns_records","operation_id":"dns-records-create","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"generated policy reviewed"}
-        \\{"provider":"cloudflare","tag":"Workers","method":"POST","path":"/accounts/{account_id}/workers","operation_id":"workers-create","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"non-control-plane candidate"}
+        \\{"provider":"cloudflare","tag":"Workers","method":"POST","path":"/accounts/{account_id}/workers","operation_id":"workers-create","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"generated policy reviewed"}
         \\
     ;
     const hostinger =
@@ -4536,9 +4536,9 @@ test "counts generated Cloudflare control-plane mutation dry-runs as review evid
 
     const levels = try loadLevelsFromText(allocator, cloudflare, hostinger, .all);
     try std.testing.expectEqual(@as(usize, 2), levels.cloudflare.dry_run_routes);
-    try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.dry_run_evidence);
-    try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.generated_dry_run_policy_evidence);
-    try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.pending_mutation_dry_runs);
+    try std.testing.expectEqual(@as(usize, 2), levels.cloudflare.dry_run_evidence);
+    try std.testing.expectEqual(@as(usize, 2), levels.cloudflare.generated_dry_run_policy_evidence);
+    try std.testing.expectEqual(@as(usize, 0), levels.cloudflare.pending_mutation_dry_runs);
     try std.testing.expectEqual(@as(usize, 0), levels.hostinger.generated_dry_run_policy_evidence);
     try std.testing.expectEqual(@as(usize, 1), levels.hostinger.pending_mutation_dry_runs);
 
@@ -4554,6 +4554,17 @@ test "counts generated Cloudflare control-plane mutation dry-runs as review evid
     try std.testing.expect(std.mem.indexOf(u8, dns_candidates, "\"total_candidates\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, dns_candidates, "dns-records-create") == null);
 
+    var cloudflare_candidates_out = std.Io.Writer.Allocating.init(allocator);
+    defer cloudflare_candidates_out.deinit();
+    try writeDryRunCandidatesJsonFromText(allocator, cloudflare, hostinger, .{
+        .filter = .{ .provider = .cloudflare, .tag_query = "Workers" },
+        .limit = 0,
+    }, &cloudflare_candidates_out.writer);
+    const cloudflare_candidates = try cloudflare_candidates_out.toOwnedSlice();
+    defer allocator.free(cloudflare_candidates);
+    try std.testing.expect(std.mem.indexOf(u8, cloudflare_candidates, "\"total_candidates\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cloudflare_candidates, "workers-create") == null);
+
     var pending_candidates_out = std.Io.Writer.Allocating.init(allocator);
     defer pending_candidates_out.deinit();
     try writeDryRunCandidatesJsonFromText(allocator, cloudflare, hostinger, .{
@@ -4562,8 +4573,8 @@ test "counts generated Cloudflare control-plane mutation dry-runs as review evid
     }, &pending_candidates_out.writer);
     const pending_candidates = try pending_candidates_out.toOwnedSlice();
     defer allocator.free(pending_candidates);
-    try std.testing.expect(std.mem.indexOf(u8, pending_candidates, "\"total_candidates\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, pending_candidates, "\"operation_id\":\"workers-create\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, pending_candidates, "\"total_candidates\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, pending_candidates, "\"operation_id\":\"workers-create\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, pending_candidates, "\"operation_id\":\"VPS_purchaseNewVirtualMachineV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, pending_candidates, "dns-records-create") == null);
 }
@@ -4587,7 +4598,9 @@ test "summarizes manifest-backed provider coverage levels" {
     try std.testing.expectEqual(@as(usize, 2), levels.cloudflare.read_routes);
     try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.l2_read_evidence);
     try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.pending_reads);
-    try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.pending_mutation_dry_runs);
+    try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.dry_run_evidence);
+    try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.generated_dry_run_policy_evidence);
+    try std.testing.expectEqual(@as(usize, 0), levels.cloudflare.pending_mutation_dry_runs);
     try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.l3_typed_table_evidence);
     try std.testing.expectEqual(@as(usize, 1), levels.hostinger.l2_diagnostic_reads);
     try std.testing.expectEqual(@as(usize, 1), levels.hostinger.dry_run_evidence);
@@ -4634,9 +4647,10 @@ test "ranks manifest-backed provider coverage levels by tag" {
     try std.testing.expectEqual(@as(usize, 3), report.items.len);
     try std.testing.expectEqualStrings("cloudflare", report.items[0].provider);
     try std.testing.expectEqualStrings("Workers", report.items[0].tag);
-    try std.testing.expectEqual(@as(usize, 2), report.items[0].priority());
+    try std.testing.expectEqual(@as(usize, 1), report.items[0].priority());
     try std.testing.expectEqual(@as(usize, 1), report.items[0].evidence.pending_reads);
-    try std.testing.expectEqual(@as(usize, 1), report.items[0].evidence.pending_mutation_dry_runs);
+    try std.testing.expectEqual(@as(usize, 1), report.items[0].evidence.generated_dry_run_policy_evidence);
+    try std.testing.expectEqual(@as(usize, 0), report.items[0].evidence.pending_mutation_dry_runs);
     try std.testing.expectEqualStrings("hostinger", report.items[1].provider);
     try std.testing.expectEqualStrings("VPS: Docker Manager", report.items[1].tag);
     try std.testing.expectEqual(@as(usize, 0), report.items[1].priority());
@@ -4653,7 +4667,7 @@ test "ranks manifest-backed provider coverage levels by tag" {
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage levels by tag\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "rank: pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Workers: priority=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Workers: priority=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "pending_reads=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "omitted=") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "closed_or_evidence_only_rows_hidden=2") != null);
@@ -4673,7 +4687,7 @@ test "ranks manifest-backed provider coverage levels by tag" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_level_tags\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"items\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Workers\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"pending_reads\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"omitted\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"closed_or_evidence_only_rows_hidden\":2") != null);
@@ -4771,10 +4785,10 @@ test "renders broad provider coverage workplan commands by tag" {
     const text = try text_out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage workplan\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Workers: priority=2 pending_reads=1 diagnostic_blocked_reads=0 pending_mutation_dry_runs=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Workers: priority=1 pending_reads=1 diagnostic_blocked_reads=0 pending_mutation_dry_runs=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "routes: cloudio coverage routes cloudflare 'Workers' --detail") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "capture-candidates: cloudio coverage capture-candidates cloudflare 'Workers' --limit 25") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "dry-run-candidates: cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "dry-run-candidates: cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | DNS Records: priority=1 pending_reads=1 diagnostic_blocked_reads=0 pending_mutation_dry_runs=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudio coverage capture-candidates cloudflare 'DNS Records' --limit 25") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | Tokens: priority=1") == null);
@@ -4791,11 +4805,11 @@ test "renders broad provider coverage workplan commands by tag" {
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_workplan\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Workers\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"priority\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"DNS Records\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Workers' --detail\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"capture_candidates\",\"command\":\"cloudio coverage capture-candidates cloudflare 'Workers' --limit 25\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"dry_run_candidates\",\"command\":\"cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"dry_run_candidates\",\"command\":\"cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Reach: Segments\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"closed_or_evidence_only_rows_hidden\":3") != null);
 
@@ -4811,7 +4825,7 @@ test "renders broad provider coverage workplan commands by tag" {
     try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"include_plans\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"command\":\"cloudio coverage routes cloudflare 'Workers' --detail\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"command\":\"cloudio coverage capture-candidates cloudflare 'Workers' --limit 25 --plans\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"command\":\"cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25 --plans\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"command\":\"cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25 --plans\"") == null);
 
     var bundle_json_out = std.Io.Writer.Allocating.init(allocator);
     defer bundle_json_out.deinit();
@@ -4828,11 +4842,11 @@ test "renders broad provider coverage workplan commands by tag" {
     try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"candidate_limit\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"candidate_bundle\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"capture\":{\"total\":1,\"visible\":1,\"omitted\":0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"dry_run\":{\"total\":1,\"visible\":1,\"omitted\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"dry_run\":{\"total\":0,\"visible\":0,\"omitted\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"capture_command\":\"cloudio route capture cloudflare --operation workers-list --path-param account_id=<account_id>\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"read_plan\":{\"provider\":\"cloudflare\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"dry_run_command\":\"cloudio route dry-run cloudflare --operation workers-create --path-param account_id=<account_id> --body-content-type application/json\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"dry_run_plan\":{\"provider\":\"cloudflare\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"dry_run_command\":\"cloudio route dry-run cloudflare --operation workers-create --path-param account_id=<account_id> --body-content-type application/json\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"dry_run_plan\":{\"provider\":\"cloudflare\"") == null);
 
     var focused_out = std.Io.Writer.Allocating.init(allocator);
     defer focused_out.deinit();
