@@ -942,6 +942,27 @@ const ActualCaptureTotals = struct {
     capture_events: i64 = 0,
 };
 
+const ActualCaptureSourceSummary = struct {
+    total_sources: usize = 0,
+    captured_with_hints: usize = 0,
+    captured_empty: usize = 0,
+    captured_without_hints: usize = 0,
+    captured_unknown_body: usize = 0,
+    ready_to_capture: usize = 0,
+    waiting_for_inputs: usize = 0,
+    diagnostic_blocked: usize = 0,
+    captured_error: usize = 0,
+    no_official_source: usize = 0,
+    not_in_catalog: usize = 0,
+    unmapped: usize = 0,
+    not_eligible: usize = 0,
+    body_array: usize = 0,
+    body_data_array: usize = 0,
+    body_error_object: usize = 0,
+    body_no_evidence: usize = 0,
+    body_other: usize = 0,
+};
+
 const ActualCaptureHints = struct {
     configured_domains: []const []const u8 = &.{},
     cloudflare_accounts: []const db_store.CloudflareAccountRow = &.{},
@@ -1011,12 +1032,6 @@ const hostinger_whois_sources = [_]ActualCaptureInputSource{.{
     .operation_id = "domains_getWHOISProfileListV1",
     .hint_kind = "domains_getWHOISProfileListV1",
     .purpose = "discover WHOIS profile ids",
-}};
-
-const hostinger_horizons_website_sources = [_]ActualCaptureInputSource{.{
-    .operation_id = "horizons_getWebsitesV1",
-    .hint_kind = "horizons_getWebsitesV1",
-    .purpose = "discover Horizons website ids",
 }};
 
 const hostinger_username_sources = [_]ActualCaptureInputSource{.{
@@ -1169,6 +1184,7 @@ const ActualCapturePlan = struct {
 
     fn writeText(self: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
         const totals_value = self.totals();
+        const source_summary = try self.sourceSummary(gpa);
         try writer.writeAll("Cloudio actual route capture plan\n");
         try writer.writeAll("rank: official GET/read routes missing an OK route.capture audit event\n");
         try writer.print("filter provider={s}", .{self.options.filter.provider.name()});
@@ -1191,6 +1207,26 @@ const ActualCapturePlan = struct {
             totals_value.candidate_routes,
             totals_value.ready_candidates,
             totals_value.capture_events,
+        });
+        try writer.print("source_summary total={d} captured_with_hints={d} captured_empty={d} captured_without_hints={d} captured_unknown_body={d} ready_to_capture={d} waiting_for_inputs={d} diagnostic_blocked={d} captured_error={d} no_official_source={d} not_in_catalog={d} unmapped={d} not_eligible={d} body_array={d} body_data_array={d} body_error_object={d} body_no_evidence={d} body_other={d}\n", .{
+            source_summary.total_sources,
+            source_summary.captured_with_hints,
+            source_summary.captured_empty,
+            source_summary.captured_without_hints,
+            source_summary.captured_unknown_body,
+            source_summary.ready_to_capture,
+            source_summary.waiting_for_inputs,
+            source_summary.diagnostic_blocked,
+            source_summary.captured_error,
+            source_summary.no_official_source,
+            source_summary.not_in_catalog,
+            source_summary.unmapped,
+            source_summary.not_eligible,
+            source_summary.body_array,
+            source_summary.body_data_array,
+            source_summary.body_error_object,
+            source_summary.body_no_evidence,
+            source_summary.body_other,
         });
 
         var visible: usize = 0;
@@ -1262,6 +1298,7 @@ const ActualCapturePlan = struct {
 
     fn writeJson(self: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
         const totals_value = self.totals();
+        const source_summary = try self.sourceSummary(gpa);
         try writer.writeByte('{');
         try writeJsonField(writer, "kind", "coverage_actual_captures", true);
         try writer.writeAll("\"filter\":");
@@ -1282,6 +1319,8 @@ const ActualCapturePlan = struct {
         try writeJsonCountField(writer, "hostinger_inventory_hints", self.hostingerInventoryRows().len, true);
         try writer.writeAll("\"summary\":");
         try writeActualCaptureTotalsJson(totals_value, writer);
+        try writer.writeAll(",\"source_summary\":");
+        try writeActualCaptureSourceSummaryJson(source_summary, writer);
         try writer.writeAll(",\"candidates\":[");
 
         var visible: usize = 0;
@@ -1305,6 +1344,17 @@ const ActualCapturePlan = struct {
         try writeJsonCountField(writer, "omitted", omitted, false);
         try writer.writeByte('}');
         try writer.writeByte('\n');
+    }
+
+    fn sourceSummary(self: ActualCapturePlan, gpa: Allocator) !ActualCaptureSourceSummary {
+        var out = ActualCaptureSourceSummary{};
+        const hints_value = self.hints();
+        for (self.routes.items) |row| {
+            const state = actualCaptureState(row.route, self.captures.items) orelse continue;
+            if (state == .ok) continue;
+            try actualCaptureSummarizeMissingInputSources(gpa, &out, row.route, self.routes.items, self.captures.items, self.source_evidence.items, hints_value);
+        }
+        return out;
     }
 };
 
@@ -3207,6 +3257,98 @@ fn writeActualMissingInputSourcesText(
     if (!wrote) try writer.writeAll("      source: -\n");
 }
 
+fn actualCaptureSummarizeMissingInputSources(
+    gpa: Allocator,
+    summary: *ActualCaptureSourceSummary,
+    route: provider_routes.Route,
+    routes: []const CoverageRoute,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
+    hints: ActualCaptureHints,
+) !void {
+    for (route.path_params) |param| {
+        if (!param.required) continue;
+        if (actualCapturePathParamHint(route, param.name, hints) != null) continue;
+        try actualCaptureSummarizeMissingInputSourceRows(gpa, summary, route, routes, captures, source_evidence, hints, "path", param.name);
+    }
+    for (route.query_params) |param| {
+        if (!param.required) continue;
+        if (actualCaptureHasQueryParamHint(route, param.name, hints)) continue;
+        try actualCaptureSummarizeMissingInputSourceRows(gpa, summary, route, routes, captures, source_evidence, hints, "query", param.name);
+    }
+    for (route.header_params) |param| {
+        if (!param.required) continue;
+        try actualCaptureSummarizeMissingInputSourceRows(gpa, summary, route, routes, captures, source_evidence, hints, "header", param.name);
+    }
+}
+
+fn actualCaptureSummarizeMissingInputSourceRows(
+    gpa: Allocator,
+    summary: *ActualCaptureSourceSummary,
+    route: provider_routes.Route,
+    routes: []const CoverageRoute,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
+    hints: ActualCaptureHints,
+    input_source: []const u8,
+    input_name: []const u8,
+) !void {
+    const sources = actualCaptureMissingInputSources(route, input_source, input_name);
+    if (sources.len == 0) {
+        actualCaptureAddSourceSummary(summary, actualCaptureUnmappedSourceResult(route, input_source, input_name), .{});
+        return;
+    }
+    for (sources) |source| {
+        const source_route = actualCaptureFindRouteByOperationId(routes, route.provider, source.operation_id);
+        const source_state = if (source_route) |found| actualCaptureState(found, captures) else null;
+        const hint_count = actualCaptureSourceHintCount(route, hints, input_source, input_name, source);
+        const evidence = actualCaptureFindSourceEvidence(source_evidence, route.provider.name(), source.operation_id);
+        const body = try actualCaptureSourceBodyEvidence(gpa, evidence);
+        actualCaptureAddSourceSummary(summary, actualCaptureSourceResult(source_route, source_state, hints, hint_count, body), body);
+    }
+}
+
+fn actualCaptureAddSourceSummary(summary: *ActualCaptureSourceSummary, result: []const u8, body: ActualCaptureSourceBodyEvidence) void {
+    summary.total_sources += 1;
+    if (std.mem.eql(u8, result, "captured_with_hints")) {
+        summary.captured_with_hints += 1;
+    } else if (std.mem.eql(u8, result, "captured_empty")) {
+        summary.captured_empty += 1;
+    } else if (std.mem.eql(u8, result, "captured_without_hints")) {
+        summary.captured_without_hints += 1;
+    } else if (std.mem.eql(u8, result, "captured_unknown_body")) {
+        summary.captured_unknown_body += 1;
+    } else if (std.mem.eql(u8, result, "ready_to_capture")) {
+        summary.ready_to_capture += 1;
+    } else if (std.mem.eql(u8, result, "waiting_for_inputs")) {
+        summary.waiting_for_inputs += 1;
+    } else if (std.mem.eql(u8, result, "diagnostic_blocked")) {
+        summary.diagnostic_blocked += 1;
+    } else if (std.mem.eql(u8, result, "captured_error")) {
+        summary.captured_error += 1;
+    } else if (std.mem.eql(u8, result, "no_official_source")) {
+        summary.no_official_source += 1;
+    } else if (std.mem.eql(u8, result, "not_in_catalog")) {
+        summary.not_in_catalog += 1;
+    } else if (std.mem.eql(u8, result, "unmapped")) {
+        summary.unmapped += 1;
+    } else if (std.mem.eql(u8, result, "not_eligible")) {
+        summary.not_eligible += 1;
+    }
+
+    if (std.mem.eql(u8, body.shape, "array")) {
+        summary.body_array += 1;
+    } else if (std.mem.eql(u8, body.shape, "data_array")) {
+        summary.body_data_array += 1;
+    } else if (std.mem.eql(u8, body.shape, "error_object")) {
+        summary.body_error_object += 1;
+    } else if (std.mem.eql(u8, body.shape, "no_evidence")) {
+        summary.body_no_evidence += 1;
+    } else {
+        summary.body_other += 1;
+    }
+}
+
 fn writeActualMissingInputSourceRowsText(
     gpa: Allocator,
     writer: anytype,
@@ -3222,7 +3364,16 @@ fn writeActualMissingInputSourceRowsText(
     const sources = actualCaptureMissingInputSources(route, input_source, input_name);
     if (sources.len == 0) {
         wrote.* = true;
-        try writer.print("      source: {s}:{s} <- unmapped\n", .{ input_source, input_name });
+        const result = actualCaptureUnmappedSourceResult(route, input_source, input_name);
+        try writer.print("      source: {s}:{s} <- {s} result={s} evidence=no_evidence items=- bytes=0 next=\"{s}\" purpose=", .{
+            input_source,
+            input_name,
+            result,
+            result,
+            actualCaptureUnmappedSourceNextAction(route, input_source, input_name),
+        });
+        try writer.writeAll(actualCaptureUnmappedSourcePurpose(route, input_source, input_name));
+        try writer.writeByte('\n');
         return;
     }
     for (sources) |source| {
@@ -3312,6 +3463,7 @@ fn writeActualMissingInputSourceRowsJson(
 ) !void {
     const sources = actualCaptureMissingInputSources(route, input_source, input_name);
     if (sources.len == 0) {
+        const result = actualCaptureUnmappedSourceResult(route, input_source, input_name);
         try writeMaybeJsonComma(writer, first);
         try writer.writeByte('{');
         try writeJsonField(writer, "input_source", input_source, true);
@@ -3319,16 +3471,16 @@ fn writeActualMissingInputSourceRowsJson(
         try writeJsonNullableStringField(writer, "source_operation_id", null, true);
         try writeJsonNullableStringField(writer, "hint_kind", null, true);
         try writeJsonCountField(writer, "hint_count", 0, true);
-        try writeJsonField(writer, "result", "unmapped", true);
-        try writeJsonField(writer, "next_action", "add a source mapping before this input can be planned", true);
+        try writeJsonField(writer, "result", result, true);
+        try writeJsonField(writer, "next_action", actualCaptureUnmappedSourceNextAction(route, input_source, input_name), true);
         try writeJsonNullableStringField(writer, "source_status", null, true);
         try writeJsonNullableStringField(writer, "source_target", null, true);
         try writeJsonNullableStringField(writer, "source_captured_at", null, true);
         try writeJsonField(writer, "body_shape", "no_evidence", true);
         try writeJsonNullableCountField(writer, "body_item_count", null, true);
         try writeJsonCountField(writer, "body_bytes", 0, true);
-        try writeJsonField(writer, "purpose", "no source mapping", true);
-        try writeJsonField(writer, "catalog_state", "unmapped", true);
+        try writeJsonField(writer, "purpose", actualCaptureUnmappedSourcePurpose(route, input_source, input_name), true);
+        try writeJsonField(writer, "catalog_state", result, true);
         try writeJsonNullableStringField(writer, "actual_state", null, true);
         try writeJsonNullableBoolField(writer, "ready", null, true);
         try writeJsonNullableBoolField(writer, "diagnostic_ready", null, true);
@@ -3398,6 +3550,29 @@ fn actualCaptureFindRouteByOperationId(routes: []const CoverageRoute, provider: 
         if (std.mem.eql(u8, row.route.operation_id.?, operation_id)) return row.route;
     }
     return null;
+}
+
+fn actualCaptureUnmappedSourceResult(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) []const u8 {
+    if (actualCaptureHostingerNoOfficialSource(route, input_source, input_name)) return "no_official_source";
+    return "unmapped";
+}
+
+fn actualCaptureUnmappedSourceNextAction(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) []const u8 {
+    if (actualCaptureHostingerNoOfficialSource(route, input_source, input_name)) return "provide the identifier through config or another collected official surface";
+    return "add a source mapping before this input can be planned";
+}
+
+fn actualCaptureUnmappedSourcePurpose(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) []const u8 {
+    if (actualCaptureHostingerNoOfficialSource(route, input_source, input_name)) return "current Hostinger OpenAPI exposes only the Horizons website detail route, not a list route";
+    return "no source mapping";
+}
+
+fn actualCaptureHostingerNoOfficialSource(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) bool {
+    if (route.provider != .hostinger) return false;
+    const operation_id = route.operation_id orelse return false;
+    return std.mem.eql(u8, input_source, "path") and
+        std.mem.eql(u8, input_name, "websiteId") and
+        std.mem.eql(u8, operation_id, "horizons_getWebsiteV1");
 }
 
 fn actualCaptureFindSourceEvidence(source_evidence: []const db_store.RouteSourceEvidenceRow, provider: []const u8, operation_id: []const u8) ?db_store.RouteSourceEvidenceRow {
@@ -3564,7 +3739,6 @@ fn actualCaptureMissingInputSources(route: provider_routes.Route, input_source: 
         if (std.mem.eql(u8, input_name, "postInstallScriptId")) return hostinger_post_install_sources[0..];
         if (std.mem.eql(u8, input_name, "snapshotId") and std.mem.eql(u8, operation_id, "DNS_getDNSSnapshotV1")) return hostinger_dns_snapshot_sources[0..];
         if (std.mem.eql(u8, input_name, "whoisId") and (std.mem.eql(u8, operation_id, "domains_getWHOISProfileV1") or std.mem.eql(u8, operation_id, "domains_getWHOISProfileUsageV1"))) return hostinger_whois_sources[0..];
-        if (std.mem.eql(u8, input_name, "websiteId") and std.mem.eql(u8, operation_id, "horizons_getWebsiteV1")) return hostinger_horizons_website_sources[0..];
         if (std.mem.eql(u8, input_name, "username") and std.mem.startsWith(u8, operation_id, "hosting_")) return hostinger_username_sources[0..];
         if (std.mem.eql(u8, input_name, "name") and std.mem.eql(u8, operation_id, "hosting_getPhpMyAdminLinkV1")) return hostinger_database_sources[0..];
         if (std.mem.eql(u8, input_name, "uuid") and std.mem.eql(u8, operation_id, "hosting_getNodeJSBuildLogsV1")) return hostinger_nodejs_build_sources[0..];
@@ -3591,6 +3765,30 @@ fn writeActualCaptureTotalsJson(totals_value: ActualCaptureTotals, writer: anyty
     try core_json.writeString(writer, "capture_events");
     try writer.print(":{d}", .{totals_value.capture_events});
     try writer.writeByte('}');
+}
+
+fn writeActualCaptureSourceSummaryJson(summary: ActualCaptureSourceSummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonCountField(writer, "total_sources", summary.total_sources, true);
+    try writeJsonCountField(writer, "captured_with_hints", summary.captured_with_hints, true);
+    try writeJsonCountField(writer, "captured_empty", summary.captured_empty, true);
+    try writeJsonCountField(writer, "captured_without_hints", summary.captured_without_hints, true);
+    try writeJsonCountField(writer, "captured_unknown_body", summary.captured_unknown_body, true);
+    try writeJsonCountField(writer, "ready_to_capture", summary.ready_to_capture, true);
+    try writeJsonCountField(writer, "waiting_for_inputs", summary.waiting_for_inputs, true);
+    try writeJsonCountField(writer, "diagnostic_blocked", summary.diagnostic_blocked, true);
+    try writeJsonCountField(writer, "captured_error", summary.captured_error, true);
+    try writeJsonCountField(writer, "no_official_source", summary.no_official_source, true);
+    try writeJsonCountField(writer, "not_in_catalog", summary.not_in_catalog, true);
+    try writeJsonCountField(writer, "unmapped", summary.unmapped, true);
+    try writeJsonCountField(writer, "not_eligible", summary.not_eligible, true);
+    try writer.writeAll("\"body_shapes\":{");
+    try writeJsonCountField(writer, "array", summary.body_array, true);
+    try writeJsonCountField(writer, "data_array", summary.body_data_array, true);
+    try writeJsonCountField(writer, "error_object", summary.body_error_object, true);
+    try writeJsonCountField(writer, "no_evidence", summary.body_no_evidence, true);
+    try writeJsonCountField(writer, "other", summary.body_other, false);
+    try writer.writeAll("}}");
 }
 
 fn writeActualCaptureCandidateJson(
@@ -6984,13 +7182,17 @@ test "explains Hostinger missing input source routes for broad child groups" {
     }, &json_out.writer);
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source_summary\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"no_official_source\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"body_shapes\":{\"array\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_input_sources\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"snapshotId\",\"source_operation_id\":\"DNS_getDNSSnapshotListV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"ready_to_capture\",\"next_action\":\"capture the source route to discover identifiers\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"whoisId\",\"source_operation_id\":\"domains_getWHOISProfileListV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"captured_empty\",\"next_action\":\"source collection is empty; no child identifiers are available\",\"source_status\":\"ok\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"body_shape\":\"array\",\"body_item_count\":0,\"body_bytes\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"websiteId\",\"source_operation_id\":\"horizons_getWebsitesV1\",\"hint_kind\":\"horizons_getWebsitesV1\",\"hint_count\":0,\"result\":\"not_in_catalog\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"websiteId\",\"source_operation_id\":null,\"hint_kind\":null,\"hint_count\":0,\"result\":\"no_official_source\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "horizons_getWebsitesV1") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"username\",\"source_operation_id\":\"hosting_listWebsitesV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"name\",\"source_operation_id\":\"hosting_listAccountDatabasesV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"captured_without_hints\",\"next_action\":\"extend normalization for this non-empty source response\"") != null);
@@ -7016,8 +7218,10 @@ test "explains Hostinger missing input source routes for broad child groups" {
     }, &text_out.writer);
     const text = try text_out.toOwnedSlice();
     defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "source_summary total=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "no_official_source=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:snapshotId <- DNS_getDNSSnapshotListV1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "source: path:websiteId <- horizons_getWebsitesV1 state=not_in_catalog") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "source: path:websiteId <- no_official_source result=no_official_source") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:projectName <- VPS_getProjectListV1 state=non_ok result=diagnostic_blocked ready=false diagnostic_ready=true") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:whoisId <- domains_getWHOISProfileListV1 state=ok result=captured_empty") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:name <- hosting_listAccountDatabasesV1 state=ok result=captured_without_hints") != null);
