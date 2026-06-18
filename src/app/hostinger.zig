@@ -60,6 +60,86 @@ pub const VpsOverviewOptions = struct {
     limit: i64 = 20,
 };
 
+pub const AccountOverviewOptions = struct {
+    limit: i64 = 20,
+    snapshot_limit: i64 = 12,
+};
+
+pub const HostingerFamily = enum {
+    billing,
+    dns,
+    domains,
+    hosting,
+    vps,
+    docker,
+    security,
+    reach,
+    ecommerce,
+    horizons,
+    other,
+
+    fn label(self: HostingerFamily) []const u8 {
+        return switch (self) {
+            .billing => "billing",
+            .dns => "dns",
+            .domains => "domains",
+            .hosting => "hosting",
+            .vps => "vps",
+            .docker => "docker",
+            .security => "security",
+            .reach => "reach",
+            .ecommerce => "ecommerce",
+            .horizons => "horizons",
+            .other => "other",
+        };
+    }
+};
+
+pub const HostingerFamilySummary = struct {
+    billing: i64 = 0,
+    dns: i64 = 0,
+    domains: i64 = 0,
+    hosting: i64 = 0,
+    vps: i64 = 0,
+    docker: i64 = 0,
+    security: i64 = 0,
+    reach: i64 = 0,
+    ecommerce: i64 = 0,
+    horizons: i64 = 0,
+    other: i64 = 0,
+
+    fn add(self: *HostingerFamilySummary, family: HostingerFamily, count: i64) void {
+        switch (family) {
+            .billing => self.billing += count,
+            .dns => self.dns += count,
+            .domains => self.domains += count,
+            .hosting => self.hosting += count,
+            .vps => self.vps += count,
+            .docker => self.docker += count,
+            .security => self.security += count,
+            .reach => self.reach += count,
+            .ecommerce => self.ecommerce += count,
+            .horizons => self.horizons += count,
+            .other => self.other += count,
+        }
+    }
+};
+
+pub const AccountOverviewSummary = struct {
+    vps: usize = 0,
+    running_vps: usize = 0,
+    stopped_or_other_vps: usize = 0,
+    complete_vps_core_coverage: usize = 0,
+    partial_vps_core_coverage: usize = 0,
+    resources: i64 = 0,
+    inventory_items: i64 = 0,
+    resource_kinds: usize = 0,
+    inventory_kinds: usize = 0,
+    inventory_facets: usize = 0,
+    recent_snapshots: usize = 0,
+    families: HostingerFamilySummary = .{},
+};
+
 pub const VpsOverviewSummary = struct {
     vps: usize = 0,
     running: usize = 0,
@@ -100,21 +180,174 @@ const VpsCoverage = struct {
     }
 };
 
+pub const AccountOverview = struct {
+    vps_overview: VpsOverview,
+    inventory_facets: db_store.InventoryFacets,
+    family_facets: db_store.InventoryFacets,
+    recent_snapshots: db_store.SnapshotSummaries,
+    resource_count: i64,
+    inventory_count: i64,
+
+    pub fn load(ctx: Context, options: AccountOverviewOptions) !AccountOverview {
+        var vps_overview = try VpsOverview.load(ctx, .{ .limit = options.limit });
+        errdefer vps_overview.deinit(ctx.gpa);
+        var inventory_facets = try ctx.db.inventoryFacets(ctx.gpa, .{
+            .provider = "hostinger",
+            .limit = positiveLimit(options.limit, 20),
+        });
+        errdefer inventory_facets.deinit(ctx.gpa);
+        var family_facets = try ctx.db.inventoryFacets(ctx.gpa, .{
+            .provider = "hostinger",
+            .limit = 5000,
+        });
+        errdefer family_facets.deinit(ctx.gpa);
+        var recent_snapshots = try ctx.db.snapshotsForSource(ctx.gpa, "hostinger", positiveLimit(options.snapshot_limit, 12));
+        errdefer recent_snapshots.deinit(ctx.gpa);
+        return .{
+            .vps_overview = vps_overview,
+            .inventory_facets = inventory_facets,
+            .family_facets = family_facets,
+            .recent_snapshots = recent_snapshots,
+            .resource_count = try ctx.db.countTable("hostinger_resources"),
+            .inventory_count = try ctx.db.countTable("hostinger_inventory_items"),
+        };
+    }
+
+    pub fn deinit(self: *AccountOverview, allocator: Allocator) void {
+        self.vps_overview.deinit(allocator);
+        self.inventory_facets.deinit(allocator);
+        self.family_facets.deinit(allocator);
+        self.recent_snapshots.deinit(allocator);
+    }
+
+    pub fn summary(self: AccountOverview) AccountOverviewSummary {
+        const vps_summary = self.vps_overview.summary();
+        var out = AccountOverviewSummary{
+            .vps = vps_summary.vps,
+            .running_vps = vps_summary.running,
+            .stopped_or_other_vps = vps_summary.stopped_or_other,
+            .complete_vps_core_coverage = vps_summary.complete_core_coverage,
+            .partial_vps_core_coverage = vps_summary.partial_core_coverage,
+            .resources = self.resource_count,
+            .inventory_items = self.inventory_count,
+            .resource_kinds = self.vps_overview.resource_kinds.items.len,
+            .inventory_kinds = self.vps_overview.inventory_kinds.items.len,
+            .inventory_facets = self.inventory_facets.items.len,
+            .recent_snapshots = self.recent_snapshots.items.len,
+        };
+        for (self.family_facets.items) |facet| {
+            out.families.add(hostingerFamilyForKind(facet.kind), facet.count);
+        }
+        return out;
+    }
+
+    pub fn writeText(self: AccountOverview, writer: anytype) !void {
+        const counts = self.summary();
+        try writer.writeAll("Hostinger account overview\n");
+        try writeAccountOverviewSummaryText(counts, writer);
+
+        try writer.writeAll("vps\n");
+        if (self.vps_overview.vps.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.vps_overview.vps.items) |row| try writeVpsRowText(row, self.vps_overview.coverageFor(row.id), writer);
+        }
+
+        try writer.writeAll("inventory facets\n");
+        if (self.inventory_facets.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.inventory_facets.items) |row| try writeInventoryFacetText(row, writer);
+        }
+
+        try writer.writeAll("resources\n");
+        if (self.vps_overview.resource_kinds.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.vps_overview.resource_kinds.items) |row| try writeKindCountText(row, writer);
+        }
+
+        try writer.writeAll("inventory\n");
+        if (self.vps_overview.inventory_kinds.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.vps_overview.inventory_kinds.items) |row| try writeKindCountText(row, writer);
+        }
+
+        try writer.writeAll("recent snapshots\n");
+        if (self.recent_snapshots.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.recent_snapshots.items) |row| try writeSnapshotText(row, writer);
+        }
+    }
+
+    pub fn writeJson(self: AccountOverview, writer: anytype) !void {
+        try writer.writeAll("{\"kind\":\"hostinger_account_overview\",\"summary\":");
+        try writeAccountOverviewSummaryJson(self.summary(), writer);
+        try writer.writeAll(",\"vps\":[");
+        for (self.vps_overview.vps.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeVpsRowJson(row, self.vps_overview.coverageFor(row.id), writer);
+        }
+        try writer.writeAll("],\"inventory_facets\":[");
+        for (self.inventory_facets.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeInventoryFacetJson(row, writer);
+        }
+        try writer.writeAll("],\"resource_kinds\":[");
+        for (self.vps_overview.resource_kinds.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeKindCountJson(row, writer);
+        }
+        try writer.writeAll("],\"inventory_kinds\":[");
+        for (self.vps_overview.inventory_kinds.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeKindCountJson(row, writer);
+        }
+        try writer.writeAll("],\"recent_snapshots\":[");
+        for (self.recent_snapshots.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try app_render.writeSnapshotJson(writer, row, .{ .include_id = true });
+        }
+        try writer.writeAll("]}");
+        try writer.writeByte('\n');
+    }
+};
+
 pub const VpsOverview = struct {
     vps: db_store.HostingerVpsRows,
     resource_kinds: db_store.HostingerKindCounts,
     inventory_kinds: db_store.HostingerKindCounts,
     metric_summaries: db_store.HostingerMetricSummaries,
     family_summaries: db_store.HostingerVpsFamilySummaries,
+    coverage_metric_summaries: db_store.HostingerMetricSummaries,
+    coverage_family_summaries: db_store.HostingerVpsFamilySummaries,
 
     pub fn load(ctx: Context, options: VpsOverviewOptions) !VpsOverview {
         const limit = positiveLimit(options.limit, 20);
+        var vps = try ctx.db.hostingerVpsRows(ctx.gpa, limit);
+        errdefer vps.deinit(ctx.gpa);
+        var resource_kinds = try ctx.db.hostingerResourceKindCounts(ctx.gpa, limit);
+        errdefer resource_kinds.deinit(ctx.gpa);
+        var inventory_kinds = try ctx.db.hostingerInventoryKindCounts(ctx.gpa, limit);
+        errdefer inventory_kinds.deinit(ctx.gpa);
+        var metric_summaries = try ctx.db.hostingerMetricSummaries(ctx.gpa, limit);
+        errdefer metric_summaries.deinit(ctx.gpa);
+        var family_summaries = try ctx.db.hostingerVpsFamilySummaries(ctx.gpa, limit);
+        errdefer family_summaries.deinit(ctx.gpa);
+        var coverage_metric_summaries = try ctx.db.hostingerMetricSummaries(ctx.gpa, 5000);
+        errdefer coverage_metric_summaries.deinit(ctx.gpa);
+        var coverage_family_summaries = try ctx.db.hostingerVpsFamilySummaries(ctx.gpa, 5000);
+        errdefer coverage_family_summaries.deinit(ctx.gpa);
         return .{
-            .vps = try ctx.db.hostingerVpsRows(ctx.gpa, limit),
-            .resource_kinds = try ctx.db.hostingerResourceKindCounts(ctx.gpa, limit),
-            .inventory_kinds = try ctx.db.hostingerInventoryKindCounts(ctx.gpa, limit),
-            .metric_summaries = try ctx.db.hostingerMetricSummaries(ctx.gpa, limit),
-            .family_summaries = try ctx.db.hostingerVpsFamilySummaries(ctx.gpa, limit),
+            .vps = vps,
+            .resource_kinds = resource_kinds,
+            .inventory_kinds = inventory_kinds,
+            .metric_summaries = metric_summaries,
+            .family_summaries = family_summaries,
+            .coverage_metric_summaries = coverage_metric_summaries,
+            .coverage_family_summaries = coverage_family_summaries,
         };
     }
 
@@ -124,6 +357,8 @@ pub const VpsOverview = struct {
         self.inventory_kinds.deinit(allocator);
         self.metric_summaries.deinit(allocator);
         self.family_summaries.deinit(allocator);
+        self.coverage_metric_summaries.deinit(allocator);
+        self.coverage_family_summaries.deinit(allocator);
     }
 
     pub fn summary(self: VpsOverview) VpsOverviewSummary {
@@ -160,10 +395,10 @@ pub const VpsOverview = struct {
 
     fn coverageFor(self: VpsOverview, vm_id: []const u8) VpsCoverage {
         var out = VpsCoverage{};
-        for (self.metric_summaries.items) |row| {
+        for (self.coverage_metric_summaries.items) |row| {
             if (std.mem.eql(u8, row.vm_id, vm_id) and row.count > 0) out.metrics = true;
         }
-        for (self.family_summaries.items) |row| {
+        for (self.coverage_family_summaries.items) |row| {
             if (!std.mem.eql(u8, row.vm_id, vm_id) or row.count <= 0) continue;
             addCoverageKind(&out, row.kind);
         }
@@ -386,6 +621,18 @@ pub fn writeVpsOverviewJson(ctx: Context, options: VpsOverviewOptions, writer: a
     try overview.writeJson(writer);
 }
 
+pub fn writeAccountOverviewText(ctx: Context, options: AccountOverviewOptions, writer: anytype) !void {
+    var overview = try AccountOverview.load(ctx, options);
+    defer overview.deinit(ctx.gpa);
+    try overview.writeText(writer);
+}
+
+pub fn writeAccountOverviewJson(ctx: Context, options: AccountOverviewOptions, writer: anytype) !void {
+    var overview = try AccountOverview.load(ctx, options);
+    defer overview.deinit(ctx.gpa);
+    try overview.writeJson(writer);
+}
+
 pub fn defaultDomain(ctx: Context) []const u8 {
     return ctx.domains[0];
 }
@@ -457,6 +704,33 @@ fn kindLooksLikeDocker(kind: []const u8) bool {
     return std.ascii.eqlIgnoreCase(kind, "docker") or containsIgnoreCase(kind, "docker");
 }
 
+fn hostingerFamilyForKind(kind: []const u8) HostingerFamily {
+    if (containsIgnoreCase(kind, "billing")) return .billing;
+    if (containsIgnoreCase(kind, "dns")) return .dns;
+    if (kindLooksLikeDocker(kind) or containsIgnoreCase(kind, "project") or containsIgnoreCase(kind, "container")) return .docker;
+    if (kindLooksLikeSecurity(kind) or containsIgnoreCase(kind, "scanmetrics")) return .security;
+    if (containsIgnoreCase(kind, "ecommerce") or containsIgnoreCase(kind, "store")) return .ecommerce;
+    if (containsIgnoreCase(kind, "horizons")) return .horizons;
+    if (containsIgnoreCase(kind, "reach") or containsIgnoreCase(kind, "contact") or containsIgnoreCase(kind, "segment") or containsIgnoreCase(kind, "profile")) return .reach;
+    if (containsIgnoreCase(kind, "domain")) return .domains;
+    if (containsIgnoreCase(kind, "hosting") or containsIgnoreCase(kind, "website") or containsIgnoreCase(kind, "wordpress") or containsIgnoreCase(kind, "nodejs")) return .hosting;
+    if (containsIgnoreCase(kind, "vps") or
+        kindLooksLikeDetails(kind) or
+        kindLooksLikeMetrics(kind) or
+        kindLooksLikeActions(kind) or
+        kindLooksLikeBackups(kind) or
+        kindLooksLikeSnapshot(kind) or
+        kindLooksLikePublicKeys(kind) or
+        containsIgnoreCase(kind, "template") or
+        containsIgnoreCase(kind, "data-center") or
+        containsIgnoreCase(kind, "datacenter") or
+        containsIgnoreCase(kind, "firewall"))
+    {
+        return .vps;
+    }
+    return .other;
+}
+
 fn stateLooksRunning(value: []const u8) bool {
     return containsIgnoreCase(value, "running") or containsIgnoreCase(value, "active") or containsIgnoreCase(value, "up");
 }
@@ -514,6 +788,35 @@ fn writeVpsFamilySummaryText(row: db_store.HostingerVpsFamilySummary, writer: an
     try writer.writeByte('\n');
 }
 
+fn writeAccountOverviewSummaryText(summary: AccountOverviewSummary, writer: anytype) !void {
+    try writer.print("summary vps={d} running_vps={d} stopped_or_other_vps={d} complete_vps_core_coverage={d} partial_vps_core_coverage={d} resources={d} inventory_items={d} resource_kinds={d} inventory_kinds={d} inventory_facets={d} recent_snapshots={d}\n", .{
+        summary.vps,
+        summary.running_vps,
+        summary.stopped_or_other_vps,
+        summary.complete_vps_core_coverage,
+        summary.partial_vps_core_coverage,
+        summary.resources,
+        summary.inventory_items,
+        summary.resource_kinds,
+        summary.inventory_kinds,
+        summary.inventory_facets,
+        summary.recent_snapshots,
+    });
+    try writer.print("families billing={d} dns={d} domains={d} hosting={d} vps={d} docker={d} security={d} reach={d} ecommerce={d} horizons={d} other={d}\n", .{
+        summary.families.billing,
+        summary.families.dns,
+        summary.families.domains,
+        summary.families.hosting,
+        summary.families.vps,
+        summary.families.docker,
+        summary.families.security,
+        summary.families.reach,
+        summary.families.ecommerce,
+        summary.families.horizons,
+        summary.families.other,
+    });
+}
+
 fn writeVpsOverviewSummaryJson(summary: VpsOverviewSummary, writer: anytype) !void {
     try writer.writeByte('{');
     try app_render.writeJsonIntField(writer, "vps", summary.vps, true);
@@ -538,6 +841,40 @@ fn writeVpsOverviewSummaryJson(summary: VpsOverviewSummary, writer: anytype) !vo
     try app_render.writeJsonIntField(writer, "inventory_kinds", summary.inventory_kinds, true);
     try app_render.writeJsonIntField(writer, "metric_summaries", summary.metric_summaries, true);
     try app_render.writeJsonIntField(writer, "family_summaries", summary.family_summaries, false);
+    try writer.writeByte('}');
+}
+
+fn writeAccountOverviewSummaryJson(summary: AccountOverviewSummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try app_render.writeJsonIntField(writer, "vps", summary.vps, true);
+    try app_render.writeJsonIntField(writer, "running_vps", summary.running_vps, true);
+    try app_render.writeJsonIntField(writer, "stopped_or_other_vps", summary.stopped_or_other_vps, true);
+    try app_render.writeJsonIntField(writer, "complete_vps_core_coverage", summary.complete_vps_core_coverage, true);
+    try app_render.writeJsonIntField(writer, "partial_vps_core_coverage", summary.partial_vps_core_coverage, true);
+    try app_render.writeJsonIntField(writer, "resources", summary.resources, true);
+    try app_render.writeJsonIntField(writer, "inventory_items", summary.inventory_items, true);
+    try app_render.writeJsonIntField(writer, "resource_kinds", summary.resource_kinds, true);
+    try app_render.writeJsonIntField(writer, "inventory_kinds", summary.inventory_kinds, true);
+    try app_render.writeJsonIntField(writer, "inventory_facets", summary.inventory_facets, true);
+    try app_render.writeJsonIntField(writer, "recent_snapshots", summary.recent_snapshots, true);
+    try writer.writeAll("\"families\":");
+    try writeFamilySummaryJson(summary.families, writer);
+    try writer.writeByte('}');
+}
+
+fn writeFamilySummaryJson(summary: HostingerFamilySummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try app_render.writeJsonIntField(writer, "billing", summary.billing, true);
+    try app_render.writeJsonIntField(writer, "dns", summary.dns, true);
+    try app_render.writeJsonIntField(writer, "domains", summary.domains, true);
+    try app_render.writeJsonIntField(writer, "hosting", summary.hosting, true);
+    try app_render.writeJsonIntField(writer, "vps", summary.vps, true);
+    try app_render.writeJsonIntField(writer, "docker", summary.docker, true);
+    try app_render.writeJsonIntField(writer, "security", summary.security, true);
+    try app_render.writeJsonIntField(writer, "reach", summary.reach, true);
+    try app_render.writeJsonIntField(writer, "ecommerce", summary.ecommerce, true);
+    try app_render.writeJsonIntField(writer, "horizons", summary.horizons, true);
+    try app_render.writeJsonIntField(writer, "other", summary.other, false);
     try writer.writeByte('}');
 }
 
@@ -656,6 +993,38 @@ fn writeVpsFamilySummaryJson(row: db_store.HostingerVpsFamilySummary, writer: an
     try writer.writeByte('}');
 }
 
+fn writeInventoryFacetText(row: db_store.InventoryFacet, writer: anytype) !void {
+    try writer.print("{s}", .{row.kind});
+    try writeTextField(writer, "family", hostingerFamilyForKind(row.kind).label());
+    try writer.print("\tcount={d}", .{row.count});
+    if (row.domains != 0) try writer.print("\tdomains={d}", .{row.domains});
+    try writeTextField(writer, "status", row.status);
+    try writeTextField(writer, "category", row.category);
+    try writeTextField(writer, "latest", row.latest_updated);
+    try writer.writeByte('\n');
+}
+
+fn writeInventoryFacetJson(row: db_store.InventoryFacet, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonStringField(writer, "kind", row.kind, true);
+    try writeJsonStringField(writer, "family", hostingerFamilyForKind(row.kind).label(), true);
+    try writeJsonStringField(writer, "status", row.status, true);
+    try writeJsonStringField(writer, "category", row.category, true);
+    try app_render.writeJsonIntField(writer, "count", row.count, true);
+    try app_render.writeJsonIntField(writer, "domains", row.domains, true);
+    try writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
+    try writer.writeByte('}');
+}
+
+fn writeSnapshotText(row: db_store.SnapshotSummary, writer: anytype) !void {
+    try writer.print("{d}\t{s}/{s}", .{ row.id, row.source, row.kind });
+    try writeTextField(writer, "target", row.target);
+    try writeTextField(writer, "status", row.status);
+    try writeTextField(writer, "summary", row.summary);
+    try writeTextField(writer, "captured", row.captured_at);
+    try writer.writeByte('\n');
+}
+
 test "hostinger app default domain uses first configured domain" {
     const domains = [_][]const u8{ "plosca.ru", "sparkdate.love" };
     var db: Db = undefined;
@@ -717,6 +1086,98 @@ test "hostinger app lists typed inventory items" {
     defer output.deinit(allocator);
     try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "hostinger-websites/plosca.ru") != null);
     try std.testing.expect(std.mem.indexOf(u8, output.text orelse "", "enabled enabled main plosca.ru u123 plosca.ru 12345") != null);
+}
+
+test "hostinger app renders account overview across provider families" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/hostinger-app-account-overview.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    try db.upsertHostingerVps("12345", "srv12345.hstgr.cloud", "running", "76.13.130.170", "KVM 2", "{\"id\":12345}");
+    try db.upsertHostingerResource("billing_getSubscriptionListV1/sub-1", "billing_getSubscriptionListV1", "sub-1", "billing_getSubscriptionListV1", "KVM 2", "active", null, "{\"id\":\"sub-1\"}");
+    try db.upsertHostingerInventoryItem("billing_getSubscriptionListV1/sub-1", "billing_getSubscriptionListV1", "sub-1", "KVM 2", "active", "EUR", null, null, null, "auto_renewed", null, null, null, "{\"id\":\"sub-1\"}");
+    try db.upsertHostingerInventoryItem("domains_getDomainListV1/domain-1", "domains_getDomainListV1", "domain-1", "plosca.ru", "active", "domain", "plosca.ru", null, null, null, null, null, null, "{\"id\":\"domain-1\"}");
+    try db.upsertHostingerInventoryItem("DNS_getDNSRecordsV1/plosca.ru/A", "DNS_getDNSRecordsV1", "A", "plosca.ru A", "active", "A", "plosca.ru", null, null, null, null, null, null, "{\"type\":\"A\"}");
+    try db.upsertHostingerInventoryItem("DNS_getDNSRecordsV1/plosca.ru/TXT", "DNS_getDNSRecordsV1", "TXT", "plosca.ru TXT", "active", "A", "plosca.ru", null, null, null, null, null, null, "{\"type\":\"TXT\"}");
+    try db.upsertHostingerInventoryItem("hosting_listWebsitesV1/plosca.ru", "hosting_listWebsitesV1", "plosca.ru", "plosca.ru", "enabled", "main", "plosca.ru", "u123", "order-1", null, null, null, null, "{\"domain\":\"plosca.ru\"}");
+    try db.upsertHostingerInventoryItem("VPS_getVirtualMachineDetailsV1|12345|detail", "VPS_getVirtualMachineDetailsV1", "12345", "srv12345.hstgr.cloud", "running", "vps", "plosca.ru", null, null, null, null, null, null, "{\"id\":\"12345\"}");
+    try db.upsertHostingerInventoryItem("VPS_getProjectListV1|12345|stack", "VPS_getProjectListV1", "stack", "stack", "running", "docker", null, null, null, null, null, null, null, "{\"projectName\":\"stack\"}");
+    try db.upsertHostingerInventoryItem("VPS_getScanMetricsV1|12345|monarx", "VPS_getScanMetricsV1", "monarx", "Monarx", "unsupported", "security", null, null, null, null, null, null, null, "{\"status\":\"unsupported\"}");
+    try db.upsertHostingerInventoryItem("reach_listContactsV1/contact-1", "reach_listContactsV1", "contact-1", "Contact", "active", "contact", null, null, null, null, null, null, null, "{\"id\":\"contact-1\"}");
+    try db.upsertHostingerInventoryItem("ecommerce_getStoresV1/store-1", "ecommerce_getStoresV1", "store-1", "Store", "active", "store", null, null, null, null, null, null, null, "{\"id\":\"store-1\"}");
+    try db.upsertHostingerInventoryItem("horizons_getWebsitesV1/site-1", "horizons_getWebsitesV1", "site-1", "Site", "active", "website", "plosca.ru", null, null, null, null, null, null, "{\"id\":\"site-1\"}");
+    try db.upsertHostingerInventoryItem("miscKind/item-1", "miscKind", "item-1", "Other", "active", "misc", null, null, null, null, null, null, null, "{\"id\":\"item-1\"}");
+    _ = try db.insertSnapshot("hostinger", "billing", null, "ok", "billing catalog", null, null);
+    _ = try db.insertSnapshot("hostinger", "dns", "plosca.ru", "ok", "dns zone", null, null);
+    _ = try db.insertSnapshot("cloudflare", "zone", "plosca.ru", "ok", "zone", null, null);
+
+    const domains = [_][]const u8{"plosca.ru"};
+    const ctx = Context{
+        .io = std.testing.io,
+        .gpa = allocator,
+        .token = null,
+        .domains = domains[0..],
+        .db = &db,
+    };
+
+    var overview = try AccountOverview.load(ctx, .{ .limit = 20, .snapshot_limit = 5 });
+    defer overview.deinit(allocator);
+    const summary = overview.summary();
+    try std.testing.expectEqual(@as(usize, 1), summary.vps);
+    try std.testing.expectEqual(@as(usize, 1), summary.running_vps);
+    try std.testing.expectEqual(@as(usize, 0), summary.complete_vps_core_coverage);
+    try std.testing.expectEqual(@as(usize, 1), summary.partial_vps_core_coverage);
+    try std.testing.expectEqual(@as(i64, 1), summary.resources);
+    try std.testing.expectEqual(@as(i64, 12), summary.inventory_items);
+    try std.testing.expectEqual(@as(usize, 1), summary.resource_kinds);
+    try std.testing.expectEqual(@as(usize, 11), summary.inventory_kinds);
+    try std.testing.expectEqual(@as(usize, 11), summary.inventory_facets);
+    try std.testing.expectEqual(@as(usize, 2), summary.recent_snapshots);
+    try std.testing.expectEqual(@as(i64, 1), summary.families.billing);
+    try std.testing.expectEqual(@as(i64, 2), summary.families.dns);
+    try std.testing.expectEqual(@as(i64, 1), summary.families.domains);
+    try std.testing.expectEqual(@as(i64, 1), summary.families.hosting);
+    try std.testing.expectEqual(@as(i64, 1), summary.families.vps);
+    try std.testing.expectEqual(@as(i64, 1), summary.families.docker);
+    try std.testing.expectEqual(@as(i64, 1), summary.families.security);
+    try std.testing.expectEqual(@as(i64, 1), summary.families.reach);
+    try std.testing.expectEqual(@as(i64, 1), summary.families.ecommerce);
+    try std.testing.expectEqual(@as(i64, 1), summary.families.horizons);
+    try std.testing.expectEqual(@as(i64, 1), summary.families.other);
+
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+    try writeAccountOverviewText(ctx, .{ .limit = 20, .snapshot_limit = 5 }, &out.writer);
+    const text = try out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Hostinger account overview\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "summary vps=1 running_vps=1 stopped_or_other_vps=0 complete_vps_core_coverage=0 partial_vps_core_coverage=1 resources=1 inventory_items=12 resource_kinds=1 inventory_kinds=11 inventory_facets=11 recent_snapshots=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "families billing=1 dns=2 domains=1 hosting=1 vps=1 docker=1 security=1 reach=1 ecommerce=1 horizons=1 other=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "VPS_getProjectListV1\tfamily=docker\tcount=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "horizons_getWebsitesV1\tfamily=horizons\tcount=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "recent snapshots\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "hostinger/dns\ttarget=plosca.ru\tstatus=ok\tsummary=dns zone") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare/zone") == null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeAccountOverviewJson(ctx, .{ .limit = 20, .snapshot_limit = 5 }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"hostinger_account_overview\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"summary\":{\"vps\":1,\"running_vps\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"families\":{\"billing\":1,\"dns\":2,\"domains\":1,\"hosting\":1,\"vps\":1,\"docker\":1,\"security\":1,\"reach\":1,\"ecommerce\":1,\"horizons\":1,\"other\":1}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"inventory_facets\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"VPS_getProjectListV1\",\"family\":\"docker\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"horizons_getWebsitesV1\",\"family\":\"horizons\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"recent_snapshots\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"hostinger\",\"kind\":\"dns\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"cloudflare\"") == null);
 }
 
 test "hostinger app renders VPS overview from normalized storage" {

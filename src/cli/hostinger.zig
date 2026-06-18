@@ -29,6 +29,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
             .detail => |vm_id| try cli_render.printOutput(ctx.io, ctx.gpa, try app_hostinger.collectVpsDetails(appContext(ctx), vm_id)),
             .missing_id => std.debug.print("vm id required\n", .{}),
         }
+    } else if (isAccountOverviewCommand(sub)) {
+        try commandAccountOverview(ctx, args[1..]);
     } else if (std.mem.eql(u8, sub, "dry-run")) {
         try commandDryRun(ctx, args);
     } else if (std.mem.eql(u8, sub, "metrics")) {
@@ -81,6 +83,11 @@ const VpsOverviewParsed = struct {
     format: cli_render.RenderFormat = .text,
 };
 
+const AccountOverviewParsed = struct {
+    options: app_hostinger.AccountOverviewOptions = .{},
+    format: cli_render.RenderFormat = .text,
+};
+
 fn parseVpsSelection(args: []const []const u8) VpsSelection {
     if (args.len == 0) return .list;
     if (std.mem.eql(u8, args[0], "list")) return .list;
@@ -99,6 +106,14 @@ fn commandVpsOverview(ctx: Context, args: []const []const u8) !void {
     try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_hostinger.writeVpsOverviewText, app_hostinger.writeVpsOverviewJson, .{ appContext(ctx), parsed.options });
 }
 
+fn commandAccountOverview(ctx: Context, args: []const []const u8) !void {
+    const parsed = parseAccountOverviewArgs(args) catch |err| {
+        std.debug.print("invalid hostinger overview command: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_hostinger.writeAccountOverviewText, app_hostinger.writeAccountOverviewJson, .{ appContext(ctx), parsed.options });
+}
+
 fn parseVpsOverviewArgs(args: []const []const u8) !VpsOverviewParsed {
     var parsed = VpsOverviewParsed{};
     const common = try cli_args.parseFormatPositiveLimit(args, parsed.options.limit, .{"--limit"}, error.MissingLimit, error.InvalidLimit, error.UnexpectedArgument);
@@ -107,8 +122,33 @@ fn parseVpsOverviewArgs(args: []const []const u8) !VpsOverviewParsed {
     return parsed;
 }
 
+fn parseAccountOverviewArgs(args: []const []const u8) !AccountOverviewParsed {
+    var parsed = AccountOverviewParsed{};
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        if (try cli_args.parseFormatOption(args, &index, &parsed.format, error.MissingFormat, error.InvalidFormat)) continue;
+        if (try cli_args.parsePositiveI64Arg(args, &index, .{"--limit"}, error.MissingLimit, error.InvalidLimit)) |limit| {
+            parsed.options.limit = limit;
+            continue;
+        }
+        if (try cli_args.parsePositiveI64Arg(args, &index, .{ "--snapshot-limit", "--snapshots" }, error.MissingSnapshotLimit, error.InvalidSnapshotLimit)) |limit| {
+            parsed.options.snapshot_limit = limit;
+            continue;
+        }
+        return error.UnexpectedArgument;
+    }
+    return parsed;
+}
+
 fn isVpsOverviewCommand(value: []const u8) bool {
     return std.mem.eql(u8, value, "overview") or std.mem.eql(u8, value, "summary") or std.mem.eql(u8, value, "vps-overview");
+}
+
+fn isAccountOverviewCommand(value: []const u8) bool {
+    return std.mem.eql(u8, value, "overview") or
+        std.mem.eql(u8, value, "summary") or
+        std.mem.eql(u8, value, "account") or
+        std.mem.eql(u8, value, "account-overview");
 }
 
 fn commandVmEndpoint(ctx: Context, args: []const []const u8, endpoint: app_hostinger.VmEndpoint) !void {
@@ -565,6 +605,30 @@ test "hostinger vps overview parser accepts format and limit" {
     try std.testing.expectEqual(@as(i64, 3), split.options.limit);
 }
 
+test "hostinger account overview parser accepts format limits and aliases" {
+    try std.testing.expect(isAccountOverviewCommand("overview"));
+    try std.testing.expect(isAccountOverviewCommand("summary"));
+    try std.testing.expect(isAccountOverviewCommand("account"));
+    try std.testing.expect(isAccountOverviewCommand("account-overview"));
+    try std.testing.expect(!isAccountOverviewCommand("vps-overview"));
+
+    const default_args = [_][]const u8{};
+    const defaults = try parseAccountOverviewArgs(default_args[0..]);
+    try std.testing.expectEqual(cli_render.RenderFormat.text, defaults.format);
+    try std.testing.expectEqual(@as(i64, 20), defaults.options.limit);
+    try std.testing.expectEqual(@as(i64, 12), defaults.options.snapshot_limit);
+
+    const args = [_][]const u8{ "--json", "--limit=7", "--snapshot-limit", "3" };
+    const parsed = try parseAccountOverviewArgs(args[0..]);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, parsed.format);
+    try std.testing.expectEqual(@as(i64, 7), parsed.options.limit);
+    try std.testing.expectEqual(@as(i64, 3), parsed.options.snapshot_limit);
+
+    const alias_args = [_][]const u8{"--snapshots=2"};
+    const alias = try parseAccountOverviewArgs(alias_args[0..]);
+    try std.testing.expectEqual(@as(i64, 2), alias.options.snapshot_limit);
+}
+
 test "hostinger vps overview parser rejects invalid values" {
     const missing_limit = [_][]const u8{"--limit"};
     try std.testing.expectError(error.MissingLimit, parseVpsOverviewArgs(missing_limit[0..]));
@@ -577,4 +641,21 @@ test "hostinger vps overview parser rejects invalid values" {
 
     const extra = [_][]const u8{"unexpected"};
     try std.testing.expectError(error.UnexpectedArgument, parseVpsOverviewArgs(extra[0..]));
+}
+
+test "hostinger account overview parser rejects invalid values" {
+    const missing_snapshot_limit = [_][]const u8{"--snapshot-limit"};
+    try std.testing.expectError(error.MissingSnapshotLimit, parseAccountOverviewArgs(missing_snapshot_limit[0..]));
+
+    const invalid_snapshot_limit = [_][]const u8{"--snapshot-limit=0"};
+    try std.testing.expectError(error.InvalidSnapshotLimit, parseAccountOverviewArgs(invalid_snapshot_limit[0..]));
+
+    const invalid_limit = [_][]const u8{"--limit=0"};
+    try std.testing.expectError(error.InvalidLimit, parseAccountOverviewArgs(invalid_limit[0..]));
+
+    const invalid_format = [_][]const u8{"--format=yaml"};
+    try std.testing.expectError(error.InvalidFormat, parseAccountOverviewArgs(invalid_format[0..]));
+
+    const extra = [_][]const u8{"unexpected"};
+    try std.testing.expectError(error.UnexpectedArgument, parseAccountOverviewArgs(extra[0..]));
 }
