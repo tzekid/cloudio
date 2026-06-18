@@ -360,6 +360,8 @@ fn parseWorkplan(args: []const []const u8) Command {
             command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--json")) {
             command.format = .json;
+        } else if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
+            command.options.include_plans = true;
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
@@ -1078,12 +1080,13 @@ test "coverage command parser defaults to summary" {
         else => return error.ExpectedCoverageWorkplan,
     }
 
-    const relevant_workplan_args = [_][]const u8{ "workplan", "--cloudio-relevant", "--json" };
+    const relevant_workplan_args = [_][]const u8{ "workplan", "--cloudio-relevant", "--with-plans", "--json" };
     switch (parseCommand(relevant_workplan_args[0..])) {
         .workplan => |command| {
             try std.testing.expectEqual(app_coverage.ProviderFilter.all, command.options.provider);
             try std.testing.expectEqual(app_coverage.WorkplanFocus.control_plane, command.options.focus);
             try std.testing.expectEqual(app_coverage.WorkplanFamily.all, command.options.family);
+            try std.testing.expect(command.options.include_plans);
             try std.testing.expectEqual(RenderFormat.json, command.format);
         },
         else => return error.ExpectedCoverageWorkplan,

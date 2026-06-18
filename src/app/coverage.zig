@@ -509,6 +509,7 @@ pub const WorkplanOptions = struct {
     limit: usize = 10,
     focus: WorkplanFocus = .all,
     family: WorkplanFamily = .all,
+    include_plans: bool = false,
 };
 
 pub const LevelTagEvidence = struct {
@@ -2056,7 +2057,9 @@ fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     try writer.writeAll("Cloudio provider coverage workplan\n");
     try writer.writeAll("rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n");
     try writer.writeAll("scope: broad provider tag slices with exact no-execute planning commands\n");
-    try writer.print("filter={s} focus={s} family={s} limit=", .{ options.provider.name(), effective_focus.name(), options.family.name() });
+    try writer.print("filter={s} focus={s} family={s}", .{ options.provider.name(), effective_focus.name(), options.family.name() });
+    if (options.include_plans) try writer.writeAll(" plans=true");
+    try writer.writeAll(" limit=");
     if (options.limit == 0) {
         try writer.writeAll("all\n");
     } else {
@@ -2087,7 +2090,7 @@ fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
             continue;
         }
         visible += 1;
-        try writeWorkplanTextRow(gpa, row, writer);
+        try writeWorkplanTextRow(gpa, row, options.include_plans, writer);
     }
 
     if (visible == 0) {
@@ -2108,6 +2111,7 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     try writeJsonField(writer, "focus", effective_focus.name(), true);
     try writeJsonField(writer, "family", options.family.name(), true);
     try writeJsonCountField(writer, "limit", options.limit, true);
+    try writeJsonBoolField(writer, "include_plans", options.include_plans, true);
     try writeJsonField(writer, "rank", "pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs", true);
     try writeJsonField(writer, "scope", "broad provider tag slices with exact no-execute planning commands", true);
     try writer.writeAll("\"items\":[");
@@ -2138,7 +2142,7 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
         }
         visible += 1;
         try writeMaybeJsonComma(writer, &first);
-        try writeWorkplanRowJson(gpa, row, writer);
+        try writeWorkplanRowJson(gpa, row, options.include_plans, writer);
     }
 
     try writer.writeAll("],");
@@ -2151,7 +2155,7 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     try writer.writeByte('\n');
 }
 
-fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, writer: anytype) !void {
+fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, include_plans: bool, writer: anytype) !void {
     const evidence = row.evidence;
     const family = workplanTagFamily(row.provider, row.tag);
     try writer.print("{s} | {s}: priority={d} pending_reads={d} diagnostic_blocked_reads={d} pending_mutation_dry_runs={d} L2_read_evidence={d} dry_run_evidence={d} L3_generic={d} typed={d} family={s}\n", .{
@@ -2171,18 +2175,18 @@ fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, writer: anytype) 
     defer gpa.free(routes);
     try writer.print("  routes: {s}\n", .{routes});
     if (workplanNeedsCapture(row)) {
-        const capture = try workplanCaptureCommand(gpa, row);
+        const capture = try workplanCaptureCommand(gpa, row, include_plans);
         defer gpa.free(capture);
         try writer.print("  capture-candidates: {s}\n", .{capture});
     }
     if (workplanNeedsDryRun(row)) {
-        const dry_run = try workplanDryRunCommand(gpa, row);
+        const dry_run = try workplanDryRunCommand(gpa, row, include_plans);
         defer gpa.free(dry_run);
         try writer.print("  dry-run-candidates: {s}\n", .{dry_run});
     }
 }
 
-fn writeWorkplanRowJson(gpa: Allocator, row: LevelTagEvidence, writer: anytype) !void {
+fn writeWorkplanRowJson(gpa: Allocator, row: LevelTagEvidence, include_plans: bool, writer: anytype) !void {
     const family = workplanTagFamily(row.provider, row.tag);
     try writer.writeByte('{');
     try writeJsonField(writer, "provider", row.provider, true);
@@ -2198,12 +2202,12 @@ fn writeWorkplanRowJson(gpa: Allocator, row: LevelTagEvidence, writer: anytype) 
     defer gpa.free(routes);
     try writeWorkplanCommandJson(writer, &first, "routes_detail", routes);
     if (workplanNeedsCapture(row)) {
-        const capture = try workplanCaptureCommand(gpa, row);
+        const capture = try workplanCaptureCommand(gpa, row, include_plans);
         defer gpa.free(capture);
         try writeWorkplanCommandJson(writer, &first, "capture_candidates", capture);
     }
     if (workplanNeedsDryRun(row)) {
-        const dry_run = try workplanDryRunCommand(gpa, row);
+        const dry_run = try workplanDryRunCommand(gpa, row, include_plans);
         defer gpa.free(dry_run);
         try writeWorkplanCommandJson(writer, &first, "dry_run_candidates", dry_run);
     }
@@ -2298,21 +2302,23 @@ fn workplanRoutesCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
     return try out.toOwnedSlice();
 }
 
-fn workplanCaptureCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
+fn workplanCaptureCommand(gpa: Allocator, row: LevelTagEvidence, include_plans: bool) ![]u8 {
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
     try out.writer.print("cloudio coverage capture-candidates {s} ", .{row.provider});
     try writeShellArg(&out.writer, row.tag);
     try out.writer.writeAll(" --limit 25");
+    if (include_plans) try out.writer.writeAll(" --plans");
     return try out.toOwnedSlice();
 }
 
-fn workplanDryRunCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
+fn workplanDryRunCommand(gpa: Allocator, row: LevelTagEvidence, include_plans: bool) ![]u8 {
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
     try out.writer.print("cloudio coverage dry-run-candidates {s} ", .{row.provider});
     try writeShellArg(&out.writer, row.tag);
     try out.writer.writeAll(" --limit 25");
+    if (include_plans) try out.writer.writeAll(" --plans");
     return try out.toOwnedSlice();
 }
 
@@ -4106,6 +4112,20 @@ test "renders broad provider coverage workplan commands by tag" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"dry_run_candidates\",\"command\":\"cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Reach: Segments\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"closed_or_evidence_only_rows_hidden\":1") != null);
+
+    var plans_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer plans_json_out.deinit();
+    try writeWorkplanJsonFromText(allocator, cloudflare, hostinger, .{
+        .provider = .all,
+        .limit = 1,
+        .include_plans = true,
+    }, &plans_json_out.writer);
+    const plans_json = try plans_json_out.toOwnedSlice();
+    defer allocator.free(plans_json);
+    try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"include_plans\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"command\":\"cloudio coverage routes cloudflare 'Workers' --detail\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"command\":\"cloudio coverage capture-candidates cloudflare 'Workers' --limit 25 --plans\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"command\":\"cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25 --plans\"") != null);
 
     var focused_out = std.Io.Writer.Allocating.init(allocator);
     defer focused_out.deinit();
