@@ -50,6 +50,11 @@ check_no_matches \
     src/cli
 
 check_no_matches \
+    "public cloudio facade must not expose collector internals" \
+    '@import\("(collector_[^"]+)"\)|pub const collectors' \
+    src/cloudio.zig
+
+check_no_matches \
     "SQLite schema DDL belongs in src/db/schema.zig, not src/db/store.zig" \
     'CREATE (TABLE|INDEX)|schema_meta' \
     src/db/store.zig

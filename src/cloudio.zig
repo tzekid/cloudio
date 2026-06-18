@@ -53,16 +53,6 @@ pub const providers = struct {
     };
 };
 
-pub const collectors = struct {
-    pub const capture = @import("collector_capture");
-    pub const capture_normalize = @import("collector_capture_normalize");
-    pub const caddy = @import("collector_caddy");
-    pub const cloudflare = @import("collector_cloudflare");
-    pub const hostinger = @import("collector_hostinger");
-    pub const projects = @import("collector_projects");
-    pub const system = @import("collector_system");
-};
-
 test "facade exposes stable integration modules" {
     try std.testing.expectEqualStrings("0.1.0-poc", version);
     _ = core.config.Config;
@@ -89,9 +79,7 @@ test "facade exposes stable integration modules" {
     _ = providers.dispatch.ReadRouteResult;
     _ = providers.routes.Route;
     _ = providers.cloudflare.client.Client;
+    _ = providers.cloudflare.models.AccountRow;
     _ = providers.hostinger.client.Client;
-    _ = collectors.capture.Output;
-    _ = collectors.capture_normalize.Counts;
-    _ = collectors.capture.StoredResponse;
-    _ = collectors.caddy.Paths;
+    _ = providers.hostinger.models.VpsRow;
 }
