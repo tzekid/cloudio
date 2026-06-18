@@ -1,6 +1,7 @@
 const std = @import("std");
 const app_doctor = @import("app_doctor");
 const app_export = @import("app_export");
+const app_history = @import("app_history");
 const app_init = @import("app_init");
 const app_log = @import("app_log");
 const app_overview = @import("app_overview");
@@ -9,6 +10,7 @@ const app_caddy = @import("app_caddy");
 const app_cloudflare = @import("app_cloudflare");
 const core_config = @import("core_config");
 const core_version = @import("core_version");
+const cli_args = @import("cli_args");
 const cli_caddy = @import("cli_caddy");
 const cli_cloudflare = @import("cli_cloudflare");
 const cli_coverage = @import("cli_coverage");
@@ -51,6 +53,8 @@ pub fn run(init: std.process.Init) !void {
         try commandRefresh(init.io, init.gpa, cfg, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "overview")) {
         try commandOverview(init.io, init.gpa, &db, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "history") or std.mem.eql(u8, cmd, "audit")) {
+        try commandHistory(init.io, init.gpa, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "inventory")) {
         try cli_inventory.run(.{
             .io = init.io,
@@ -58,7 +62,7 @@ pub fn run(init: std.process.Init) !void {
             .db = &db,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "export")) {
-        try commandExport(init.io, init.gpa, &db);
+        try commandExport(init.io, init.gpa, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "coverage")) {
         try cli_coverage.run(.{
             .io = init.io,
@@ -126,8 +130,9 @@ fn usage() void {
         \\  cloudio doctor [--json|--format json]
         \\  cloudio refresh [--all|--cloudflare|--hostinger|--caddy|--system|--projects]
         \\  cloudio overview [--json|--format json]
+        \\  cloudio history|audit [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json|--format json]
         \\  cloudio inventory [summary|facets] [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>] [--json|--format json]
-        \\  cloudio export
+        \\  cloudio export [snapshots|history] [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json]
         \\  cloudio coverage summary [--json|--format json]
         \\  cloudio coverage tags [all|cloudflare|hostinger] [--json|--format json]
         \\  cloudio coverage l1 [all|cloudflare|hostinger] [--json|--format json]
@@ -391,10 +396,17 @@ fn commandLog(io: Io, gpa: Allocator, cfg: Config, args: []const []const u8) !vo
     }});
 }
 
-fn commandExport(io: Io, gpa: Allocator, db: *Db) !void {
+fn commandExport(io: Io, gpa: Allocator, db: *Db, args: []const []const u8) !void {
+    const parsed = parseExportOptions(args) catch |err| {
+        std.debug.print("invalid export command: {s}\n", .{@errorName(err)});
+        return err;
+    };
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
-    try app_export.writeRecentSnapshotsJson(gpa, db, &out.writer);
+    switch (parsed.kind) {
+        .snapshots => try app_export.writeRecentSnapshotsJsonWithLimit(gpa, db, parsed.history_options.snapshot_limit, &out.writer),
+        .history => try app_export.writeOperationalHistoryJson(gpa, db, parsed.history_options, &out.writer),
+    }
     try cli_render.printOwned(io, gpa, &out);
 }
 
@@ -420,8 +432,106 @@ fn commandOverview(io: Io, gpa: Allocator, db: *Db, args: []const []const u8) !v
     try cli_render.printFormatted(io, gpa, format, app_overview.writeText, app_overview.writeJson, .{ gpa, db });
 }
 
+fn commandHistory(io: Io, gpa: Allocator, db: *Db, args: []const []const u8) !void {
+    const parsed = parseHistoryOptions(args) catch |err| {
+        std.debug.print("invalid history command: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    try cli_render.printFormatted(io, gpa, parsed.format, app_history.writeText, app_history.writeJson, .{ gpa, db, parsed.options });
+}
+
 fn parseOverviewFormat(args: []const []const u8) !cli_render.RenderFormat {
     return try parseFormatOnly(args, error.UnexpectedOverviewArgument);
+}
+
+const ParsedHistoryOptions = struct {
+    format: cli_render.RenderFormat = .text,
+    options: app_history.Options = .{},
+};
+
+fn parseHistoryOptions(args: []const []const u8) !ParsedHistoryOptions {
+    var parsed = ParsedHistoryOptions{};
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        switch (cli_render.parseFormatArg(args, &index)) {
+            .matched => |format| {
+                parsed.format = format;
+                continue;
+            },
+            .missing_value => return error.MissingFormat,
+            .invalid_value => return error.InvalidFormat,
+            .no_match => {},
+        }
+        if (try cli_args.parsePositiveI64Arg(args, &index, .{"--limit"}, error.MissingHistoryLimit, error.InvalidHistoryLimit)) |limit| {
+            parsed.options.audit_limit = limit;
+            parsed.options.snapshot_limit = limit;
+            continue;
+        }
+        if (try cli_args.parsePositiveI64Arg(args, &index, .{ "--audit-limit", "--audit-events-limit" }, error.MissingHistoryLimit, error.InvalidHistoryLimit)) |limit| {
+            parsed.options.audit_limit = limit;
+            continue;
+        }
+        if (try cli_args.parsePositiveI64Arg(args, &index, .{ "--snapshot-limit", "--snapshots-limit" }, error.MissingHistoryLimit, error.InvalidHistoryLimit)) |limit| {
+            parsed.options.snapshot_limit = limit;
+            continue;
+        }
+        return error.UnexpectedHistoryArgument;
+    }
+    return parsed;
+}
+
+const ExportKind = enum {
+    snapshots,
+    history,
+};
+
+const ParsedExportOptions = struct {
+    kind: ExportKind = .snapshots,
+    history_options: app_history.Options = .{},
+};
+
+fn parseExportOptions(args: []const []const u8) !ParsedExportOptions {
+    var parsed = ParsedExportOptions{};
+    var saw_kind = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        switch (cli_render.parseFormatArg(args, &index)) {
+            .matched => |format| {
+                if (format != .json) return error.InvalidExportFormat;
+                continue;
+            },
+            .missing_value => return error.MissingFormat,
+            .invalid_value => return error.InvalidFormat,
+            .no_match => {},
+        }
+        if (try cli_args.parsePositiveI64Arg(args, &index, .{"--limit"}, error.MissingExportLimit, error.InvalidExportLimit)) |limit| {
+            parsed.history_options.audit_limit = limit;
+            parsed.history_options.snapshot_limit = limit;
+            continue;
+        }
+        if (try cli_args.parsePositiveI64Arg(args, &index, .{ "--audit-limit", "--audit-events-limit" }, error.MissingExportLimit, error.InvalidExportLimit)) |limit| {
+            parsed.history_options.audit_limit = limit;
+            continue;
+        }
+        if (try cli_args.parsePositiveI64Arg(args, &index, .{ "--snapshot-limit", "--snapshots-limit" }, error.MissingExportLimit, error.InvalidExportLimit)) |limit| {
+            parsed.history_options.snapshot_limit = limit;
+            continue;
+        }
+        if (std.mem.eql(u8, args[index], "snapshots")) {
+            if (saw_kind) return error.DuplicateExportKind;
+            parsed.kind = .snapshots;
+            saw_kind = true;
+            continue;
+        }
+        if (std.mem.eql(u8, args[index], "history") or std.mem.eql(u8, args[index], "operational-history")) {
+            if (saw_kind) return error.DuplicateExportKind;
+            parsed.kind = .history;
+            saw_kind = true;
+            continue;
+        }
+        return error.UnexpectedExportArgument;
+    }
+    return parsed;
 }
 
 fn parseFormatOnly(args: []const []const u8, comptime unexpected_error: anyerror) !cli_render.RenderFormat {
@@ -477,6 +587,47 @@ test "overview parser supports text and json formats" {
     try std.testing.expectError(error.UnexpectedOverviewArgument, parseOverviewFormat(unexpected_args[0..]));
     try std.testing.expectEqual(cli_render.RenderFormat.json, try parseFormatOnly(json_args[0..], error.UnexpectedDoctorArgument));
     try std.testing.expectError(error.UnexpectedLogArgument, parseFormatOnly(unexpected_args[0..], error.UnexpectedLogArgument));
+}
+
+test "history parser supports shared format and limit options" {
+    const no_args = [_][]const u8{};
+    const defaults = try parseHistoryOptions(no_args[0..]);
+    try std.testing.expectEqual(cli_render.RenderFormat.text, defaults.format);
+    try std.testing.expectEqual(@as(i64, app_history.default_audit_limit), defaults.options.audit_limit);
+    try std.testing.expectEqual(@as(i64, app_history.default_snapshot_limit), defaults.options.snapshot_limit);
+
+    const json_args = [_][]const u8{ "--json", "--limit", "25" };
+    const limited = try parseHistoryOptions(json_args[0..]);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, limited.format);
+    try std.testing.expectEqual(@as(i64, 25), limited.options.audit_limit);
+    try std.testing.expectEqual(@as(i64, 25), limited.options.snapshot_limit);
+
+    const split_args = [_][]const u8{ "--audit-limit=3", "--snapshot-limit", "4" };
+    const split = try parseHistoryOptions(split_args[0..]);
+    try std.testing.expectEqual(@as(i64, 3), split.options.audit_limit);
+    try std.testing.expectEqual(@as(i64, 4), split.options.snapshot_limit);
+
+    const invalid_args = [_][]const u8{ "--limit", "0" };
+    try std.testing.expectError(error.InvalidHistoryLimit, parseHistoryOptions(invalid_args[0..]));
+    const unexpected_args = [_][]const u8{"raw"};
+    try std.testing.expectError(error.UnexpectedHistoryArgument, parseHistoryOptions(unexpected_args[0..]));
+}
+
+test "export parser keeps snapshots default and supports history json" {
+    const no_args = [_][]const u8{};
+    const defaults = try parseExportOptions(no_args[0..]);
+    try std.testing.expectEqual(ExportKind.snapshots, defaults.kind);
+
+    const history_args = [_][]const u8{ "history", "--json", "--audit-limit", "5", "--snapshot-limit=6" };
+    const history = try parseExportOptions(history_args[0..]);
+    try std.testing.expectEqual(ExportKind.history, history.kind);
+    try std.testing.expectEqual(@as(i64, 5), history.history_options.audit_limit);
+    try std.testing.expectEqual(@as(i64, 6), history.history_options.snapshot_limit);
+
+    const text_args = [_][]const u8{ "history", "--format", "text" };
+    try std.testing.expectError(error.InvalidExportFormat, parseExportOptions(text_args[0..]));
+    const duplicate_args = [_][]const u8{ "history", "snapshots" };
+    try std.testing.expectError(error.DuplicateExportKind, parseExportOptions(duplicate_args[0..]));
 }
 
 test "sqlite schema initializes" {

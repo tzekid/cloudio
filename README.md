@@ -17,9 +17,13 @@ zig build run -- doctor --json
 zig build run -- refresh --all
 zig build run -- overview
 zig build run -- overview --json
+zig build run -- history
+zig build run -- history --json
+zig build run -- history --limit 50
 zig build run -- inventory
 zig build run -- log
 zig build run -- log --json
+zig build run -- export history --json
 zig build run -- projects correlate --json
 ```
 
@@ -43,6 +47,16 @@ api_token = "hapi_..."
 Cloudio also auto-loads ignored `.env` and `.env.fish` files before reading process environment. Supported credential names are `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, `HOSTINGER_API_TOKEN`, and `HAPI_API_TOKEN`.
 
 Each `refresh` writes a redacted `.cloudio/latest-run.log` with collector selection, credential presence, table counts, and the snapshots captured during that refresh. Empty provider response bodies are stored as structured diagnostic JSON with the HTTP status and endpoint so failed reads do not disappear as blank logs.
+
+Operational history reads SQLite only and combines audit events with recent snapshots for CLI review or future UI/API callers:
+
+```sh
+zig build run -- history
+zig build run -- history --json
+zig build run -- history --audit-limit 25 --snapshot-limit 50 --json
+zig build run -- audit --limit 100
+zig build run -- export history --json
+```
 
 Central inventory reads join the typed Cloudflare and Hostinger inventory projections without calling live provider APIs:
 

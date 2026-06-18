@@ -26,6 +26,7 @@ pub const app = struct {
     pub const coverage = @import("app_coverage");
     pub const doctor = @import("app_doctor");
     pub const exports = @import("app_export");
+    pub const history = @import("app_history");
     pub const hostinger = @import("app_hostinger");
     pub const init = @import("app_init");
     pub const inventory = @import("app_inventory");
@@ -70,6 +71,7 @@ test "facade exposes stable integration modules" {
     _ = app.coverage.CaptureOptions;
     _ = app.doctor.Report;
     _ = app.exports.writeRecentSnapshotsJson;
+    _ = app.history.History;
     _ = app.hostinger.Context;
     _ = app.hostinger.HostingArgs;
     _ = app.hostinger.VmEndpoint;

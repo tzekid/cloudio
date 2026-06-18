@@ -281,11 +281,23 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_overview_mod);
 
+    const app_history_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/history.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_history_mod);
+
     const app_export_mod = b.createModule(.{
         .root_source_file = b.path("src/app/export.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_history", .module = app_history_mod },
             .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
@@ -446,6 +458,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_coverage", .module = app_coverage_mod },
             .{ .name = "app_doctor", .module = app_doctor_mod },
             .{ .name = "app_export", .module = app_export_mod },
+            .{ .name = "app_history", .module = app_history_mod },
             .{ .name = "app_hostinger", .module = app_hostinger_mod },
             .{ .name = "app_init", .module = app_init_mod },
             .{ .name = "app_inventory", .module = app_inventory_mod },
@@ -585,12 +598,14 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "app_doctor", .module = app_doctor_mod },
             .{ .name = "app_export", .module = app_export_mod },
+            .{ .name = "app_history", .module = app_history_mod },
             .{ .name = "app_init", .module = app_init_mod },
             .{ .name = "app_log", .module = app_log_mod },
             .{ .name = "app_overview", .module = app_overview_mod },
             .{ .name = "app_refresh", .module = app_refresh_mod },
             .{ .name = "app_caddy", .module = app_caddy_mod },
             .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_caddy", .module = cli_caddy_mod },
             .{ .name = "cli_cloudflare", .module = cli_cloudflare_mod },
             .{ .name = "cli_coverage", .module = cli_coverage_mod },
@@ -642,6 +657,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cloudio_mod);
     addModuleTest(b, test_step, app_overview_mod);
     addModuleTest(b, test_step, app_export_mod);
+    addModuleTest(b, test_step, app_history_mod);
     addModuleTest(b, test_step, app_coverage_mod);
     addModuleTest(b, test_step, app_doctor_mod);
     addModuleTest(b, test_step, app_init_mod);

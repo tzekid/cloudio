@@ -11,6 +11,10 @@ pub const SnapshotListJsonOptions = struct {
     trailing_newline: bool = false,
 };
 
+pub const AuditEventJsonOptions = struct {
+    include_id: bool = false,
+};
+
 pub fn writeJsonStringField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
     try core_json.writeString(writer, name);
     try writer.writeByte(':');
@@ -104,6 +108,27 @@ pub fn writeSnapshotsJsonObject(writer: anytype, snapshots: []const db_store.Sna
     if (options.trailing_newline) try writer.writeByte('\n');
 }
 
+pub fn writeAuditEventJson(writer: anytype, row: db_store.AuditEvent, options: AuditEventJsonOptions) !void {
+    try writer.writeByte('{');
+    if (options.include_id) {
+        try writeJsonIntField(writer, "id", row.id, true);
+    }
+    try writeJsonStringField(writer, "action", row.action, true);
+    try writeJsonStringField(writer, "status", row.status, true);
+    try writeJsonStringField(writer, "detail", row.detail, true);
+    try writeJsonStringField(writer, "created_at", row.created_at, false);
+    try writer.writeByte('}');
+}
+
+pub fn writeAuditEventArrayJson(writer: anytype, events: []const db_store.AuditEvent, options: AuditEventJsonOptions) !void {
+    try writer.writeByte('[');
+    for (events, 0..) |row, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writeAuditEventJson(writer, row, options);
+    }
+    try writer.writeByte(']');
+}
+
 pub fn positiveLimit(value: i64, fallback: i64) i64 {
     return if (value > 0) value else fallback;
 }
@@ -164,6 +189,17 @@ test "app render helpers write common database rows" {
         .summary = summary[0..],
         .captured_at = snapshot_at[0..],
     }};
+    var audit_action = [_]u8{ 'c', 'a', 'd', 'd', 'y', '.', 'd', 'i', 'f', 'f' };
+    var audit_status = [_]u8{ 'd', 'r', 'y', '_', 'r', 'u', 'n' };
+    var audit_detail = [_]u8{ 'r', 'e', 'n', 'd', 'e', 'r', 'e', 'd' };
+    var audit_created_at = [_]u8{ '2', '0', '2', '6' };
+    const audit_events = [_]db_store.AuditEvent{.{
+        .id = 9,
+        .action = audit_action[0..],
+        .status = audit_status[0..],
+        .detail = audit_detail[0..],
+        .created_at = audit_created_at[0..],
+    }};
 
     const allocator = std.testing.allocator;
     var out = std.Io.Writer.Allocating.init(allocator);
@@ -173,6 +209,7 @@ test "app render helpers write common database rows" {
     try writeMetricRows(metric_rows[0..], &out.writer);
     try writeSnapshotRows(snapshots[0..], &out.writer);
     try writeSnapshotsJsonObject(&out.writer, snapshots[0..], .{ .include_id = true, .trailing_newline = true });
+    try writeAuditEventArrayJson(&out.writer, audit_events[0..], .{ .include_id = true });
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
 
@@ -181,4 +218,6 @@ test "app render helpers write common database rows" {
     try std.testing.expect(std.mem.indexOf(u8, text, "load\t0.12\t\t2026\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "uptime  [ok] up now\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"snapshots\":[{\"id\":7,\"source\":\"system\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"audit_events\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "{\"id\":9,\"action\":\"caddy.diff\",\"status\":\"dry_run\"") != null);
 }
