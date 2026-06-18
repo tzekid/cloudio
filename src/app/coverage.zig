@@ -3934,6 +3934,14 @@ fn isCloudflareTypedInventoryTag(tag: []const u8) bool {
         "Custom Origin Trust Store",
         "SSL",
         "TLS",
+        "Organization",
+        "Invite",
+        "Subscription",
+        "Worker Account Settings",
+        "R2",
+        "AI Gateway",
+        "SCIM",
+        "Magic",
     });
 }
 
@@ -4354,6 +4362,49 @@ test "closed Cloudflare security read slice has no capture candidates" {
     try std.testing.expect(std.mem.indexOf(u8, families_json, "\"pending_reads\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, families_json, "\"l3_typed_table_evidence\":4") != null);
     try std.testing.expect(std.mem.indexOf(u8, families_json, "Workers") == null);
+}
+
+test "closed Cloudflare accounts read slice has no capture candidates" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Organizations","method":"GET","path":"/organizations","operation_id":"Organization_listOrganizations","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"generic organization capture"}
+        \\{"provider":"cloudflare","tag":"OrganizationMembers","method":"GET","path":"/organizations/{organization_id}/members","operation_id":"Members_list","path_params":[{"name":"organization_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"generic organization members capture"}
+        \\{"provider":"cloudflare","tag":"SCIM Users","method":"GET","path":"/accounts/{account_id}/scim/v2/Users","operation_id":"scim-users-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"generic SCIM Resources capture"}
+        \\{"provider":"cloudflare","tag":"Worker Account Settings","method":"GET","path":"/accounts/{account_id}/workers/account-settings","operation_id":"worker-account-settings-fetch-worker-account-settings","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"generic worker account settings capture"}
+        \\{"provider":"cloudflare","tag":"Logs","method":"GET","path":"/accounts/{account_id}/logs","operation_id":"logs-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"not an account-family row"}
+        \\
+    ;
+
+    var candidates_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer candidates_json_out.deinit();
+    try writeCaptureCandidatesJsonFromText(allocator, cloudflare, "", .{
+        .filter = .{ .provider = .cloudflare, .family = .accounts },
+        .limit = 0,
+    }, &candidates_json_out.writer);
+    const candidates_json = try candidates_json_out.toOwnedSlice();
+    defer allocator.free(candidates_json);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "\"family\":\"accounts\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "\"total_candidates\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "Organization_listOrganizations") == null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "Members_list") == null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "scim-users-list") == null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "worker-account-settings-fetch-worker-account-settings") == null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "logs-list") == null);
+
+    var families_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer families_json_out.deinit();
+    try writeFamiliesJsonFromText(allocator, cloudflare, "", .{
+        .provider = .cloudflare,
+        .limit = 0,
+    }, &families_json_out.writer);
+    const families_json = try families_json_out.toOwnedSlice();
+    defer allocator.free(families_json);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "\"family\":\"accounts\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "\"priority\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "\"l2_read_evidence\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "\"pending_reads\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "\"l3_typed_table_evidence\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "Logs") == null);
 }
 
 test "lists route dry-run candidates for missing mutation review evidence" {

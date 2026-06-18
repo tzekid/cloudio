@@ -395,6 +395,8 @@ fn appendResourceRowsFromValue(gpa: Allocator, rows: *std.ArrayList(ResourceRow)
                 try appendResourceRowsFromValue(gpa, rows, kind, scope, scope_id, result);
             } else if (object.get("data")) |data| {
                 try appendResourceRowsFromValue(gpa, rows, kind, scope, scope_id, data);
+            } else if (object.get("Resources")) |resources| {
+                try appendResourceRowsFromValue(gpa, rows, kind, scope, scope_id, resources);
             } else {
                 try appendResourceRow(gpa, rows, kind, scope, scope_id, value);
             }
@@ -510,6 +512,7 @@ fn appendInventoryRowsFromValue(gpa: Allocator, rows: *std.ArrayList(InventoryRo
                 "rules_by_namespace",
                 "scoring_details",
                 "sources",
+                "Resources",
             })) {
                 return;
             } else if (object.get("rules")) |nested| {
@@ -607,7 +610,7 @@ fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: 
     errdefer if (created_at) |value| gpa.free(value);
     const updated_at = try dupeOptional(gpa, firstStringField(item, &.{ "updated_at", "updated_on", "modified_at", "modified_on", "modified", "last_updated", "last_seen", "last_active_at", "last_authenticated_at", "checked_time", "last_transferred_time", "timestamp" }));
     errdefer if (updated_at) |value| gpa.free(value);
-    const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expiration", "not_after", "expires", "current_period_end" }));
+    const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expiration", "not_after", "expires", "current_period_end", "build_minutes_refresh_on" }));
     errdefer if (expires_at) |value| gpa.free(value);
     const raw = try core_json.stringifyValue(gpa, item);
     errdefer gpa.free(raw);
@@ -803,6 +806,9 @@ fn resourceName(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "host",
         "address",
         "colo_name",
+        "business_name",
+        "userName",
+        "displayName",
     };
     for (fields) |field_name| {
         if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
@@ -1011,6 +1017,11 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "total_rules",
         "pending_approvals",
         "user_profiles",
+        "business_email",
+        "business_phone",
+        "business_address",
+        "userName",
+        "default_usage_model",
     };
     for (fields) |field_name| {
         if (core_json.fieldAnyString(gpa, item, field_name)) |value| return value;
@@ -1066,6 +1077,7 @@ fn resourceFlag(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldBool(item, "hold")) |hold| return try gpa.dupe(u8, if (hold) "hold" else "not_held");
     if (core_json.fieldBool(item, "include_subdomains")) |include| return try gpa.dupe(u8, if (include) "include_subdomains" else "zone_only");
     if (core_json.fieldBool(item, "locked_on_deployment")) |locked| return try gpa.dupe(u8, if (locked) "locked_on_deployment" else "deployment_editable");
+    if (core_json.fieldBool(item, "green_compute")) |enabled| return try gpa.dupe(u8, if (enabled) "green_compute" else "standard_compute");
     return null;
 }
 
@@ -1226,8 +1238,16 @@ fn fallbackInventoryResourceId(gpa: Allocator, item: std.json.Value) !?[]u8 {
         if (core_json.field(item, "dimensions")) |dimensions| {
             return try core_json.stringifyValue(gpa, dimensions);
         }
-        return try gpa.dupe(u8, "dns-analytics-row");
+        return try gpa.dupe(u8, "metrics-row");
     }
+    if (core_json.field(item, "build_minutes_refresh_on") != null or
+        core_json.field(item, "has_reached_build_minutes_limit") != null) return try gpa.dupe(u8, "account-build-limits");
+    if (core_json.field(item, "default_usage_model") != null or
+        core_json.field(item, "green_compute") != null) return try gpa.dupe(u8, "worker-account-settings");
+    if (core_json.field(item, "standard") != null or
+        core_json.field(item, "infrequentAccess") != null) return try gpa.dupe(u8, "r2-account-metrics");
+    if (core_json.field(item, "business_name") != null or
+        core_json.field(item, "business_email") != null) return try gpa.dupe(u8, "organization-profile");
     if (core_json.field(item, "zone_defaults") != null) return try gpa.dupe(u8, "account-dns-settings");
     if (isDnsSettingsShape(item)) return try gpa.dupe(u8, "dns-settings");
     if (core_json.field(item, "nameservers") != null) return try gpa.dupe(u8, "nameservers");
@@ -1537,6 +1557,39 @@ test "parses typed Cloudflare inventory rows from broad result shapes" {
     try std.testing.expectEqualStrings("acct-1", rows.items[2].account_id orelse "");
     try std.testing.expectEqualStrings("ssh.plosca.ru", rows.items[2].domain orelse "");
     try std.testing.expectEqualStrings("enabled", rows.items[2].flag orelse "");
+}
+
+test "parses typed Cloudflare account inventory rows from SCIM and settings shapes" {
+    const allocator = std.testing.allocator;
+    var rows = try parseInventoryRows(allocator, "cloudflare-account-inventory", "account", "acct-1",
+        \\{"result":[
+        \\  {"Resources":[{"id":"user-1","userName":"kid@example.com","active":true,"displayName":"Kid User"}]},
+        \\  {"build_minutes_refresh_on":"2026-07-01T00:00:00Z","has_reached_build_minutes_limit":false},
+        \\  {"default_usage_model":"standard","green_compute":true},
+        \\  {"standard":{"payloadSize":123},"infrequentAccess":{"payloadSize":4}},
+        \\  {"business_name":"Plosca","business_email":"ops@plosca.ru","business_phone":"+10000000000","business_address":"Example"}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    const scim = try expectInventoryRow(rows.items, "user-1");
+    try std.testing.expectEqualStrings("kid@example.com", scim.name orelse "");
+    try std.testing.expectEqualStrings("active", scim.status orelse "");
+    try std.testing.expectEqualStrings("acct-1", scim.account_id orelse "");
+
+    const limits = try expectInventoryRow(rows.items, "account-build-limits");
+    try std.testing.expectEqualStrings("2026-07-01T00:00:00Z", limits.expires_at orelse "");
+
+    const worker = try expectInventoryRow(rows.items, "worker-account-settings");
+    try std.testing.expectEqualStrings("standard", worker.related_id orelse "");
+    try std.testing.expectEqualStrings("green_compute", worker.flag orelse "");
+
+    const r2 = try expectInventoryRow(rows.items, "r2-account-metrics");
+    try std.testing.expectEqualStrings("acct-1", r2.account_id orelse "");
+
+    const profile = try expectInventoryRow(rows.items, "organization-profile");
+    try std.testing.expectEqualStrings("Plosca", profile.name orelse "");
+    try std.testing.expectEqualStrings("ops@plosca.ru", profile.related_id orelse "");
 }
 
 test "parses typed Cloudflare inventory rows from control plane nested shapes" {
