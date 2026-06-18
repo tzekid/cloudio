@@ -499,6 +499,67 @@ pub const AuditEvents = struct {
     }
 };
 
+pub const ProviderEvidenceFilter = struct {
+    provider: ?[]const u8 = null,
+    limit: i64 = 200,
+};
+
+pub const ProviderEvidenceEvent = struct {
+    row_id: i64,
+    source: []u8,
+    provider: []u8,
+    kind: []u8,
+    target: []u8,
+    status: []u8,
+    detail: []u8,
+    recorded_at: []u8,
+
+    pub fn deinit(self: ProviderEvidenceEvent, allocator: Allocator) void {
+        allocator.free(self.source);
+        allocator.free(self.provider);
+        allocator.free(self.kind);
+        allocator.free(self.target);
+        allocator.free(self.status);
+        allocator.free(self.detail);
+        allocator.free(self.recorded_at);
+    }
+};
+
+pub const ProviderEvidenceEvents = struct {
+    items: []ProviderEvidenceEvent,
+
+    pub fn deinit(self: *ProviderEvidenceEvents, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const ProviderEvidenceSummaryRow = struct {
+    source: []u8,
+    provider: []u8,
+    kind: []u8,
+    status: []u8,
+    count: i64,
+    latest_at: []u8,
+
+    pub fn deinit(self: ProviderEvidenceSummaryRow, allocator: Allocator) void {
+        allocator.free(self.source);
+        allocator.free(self.provider);
+        allocator.free(self.kind);
+        allocator.free(self.status);
+        allocator.free(self.latest_at);
+    }
+};
+
+pub const ProviderEvidenceSummaryRows = struct {
+    items: []ProviderEvidenceSummaryRow,
+
+    pub fn deinit(self: *ProviderEvidenceSummaryRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const Db = struct {
     handle: *sqlite.sqlite3,
 
@@ -1670,6 +1731,41 @@ pub const Db = struct {
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
 
+    pub fn providerEvidenceEvents(self: *Db, gpa: Allocator, filter: ProviderEvidenceFilter) !ProviderEvidenceEvents {
+        const stmt = try self.prepare(provider_evidence_events_sql);
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindTextOpt(stmt, 1, filter.provider);
+        try bindTextOpt(stmt, 2, filter.provider);
+        try bindI64(stmt, 3, positiveLimit(filter.limit, 200));
+        var rows = std.ArrayList(ProviderEvidenceEvent).empty;
+        errdefer deinitProviderEvidenceEventList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try providerEvidenceEventFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
+    pub fn providerEvidenceSummary(self: *Db, gpa: Allocator, provider: ?[]const u8) !ProviderEvidenceSummaryRows {
+        const stmt = try self.prepare(provider_evidence_summary_sql);
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindTextOpt(stmt, 1, provider);
+        try bindTextOpt(stmt, 2, provider);
+        var rows = std.ArrayList(ProviderEvidenceSummaryRow).empty;
+        errdefer deinitProviderEvidenceSummaryList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try providerEvidenceSummaryFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
     pub fn projectDetails(self: *Db, gpa: Allocator, name: []const u8) !?ProjectDetails {
         const stmt = try self.prepare(
             \\SELECT name, source, COALESCE(path,''), COALESCE(host,''), COALESCE(upstream,''), COALESCE(service,''), COALESCE(container,'')
@@ -1836,6 +1932,16 @@ fn deinitAuditEventList(rows: *std.ArrayList(AuditEvent), allocator: Allocator) 
     rows.deinit(allocator);
 }
 
+fn deinitProviderEvidenceEventList(rows: *std.ArrayList(ProviderEvidenceEvent), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
+fn deinitProviderEvidenceSummaryList(rows: *std.ArrayList(ProviderEvidenceSummaryRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
 fn snapshotSummaryFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !SnapshotSummary {
     const id = sqlite.sqlite3_column_int64(stmt, 0);
     const source = try dupeColumn(allocator, stmt, 1);
@@ -1877,6 +1983,55 @@ fn auditEventFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !AuditEv
         .status = status,
         .detail = detail,
         .created_at = created_at,
+    };
+}
+
+fn providerEvidenceEventFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !ProviderEvidenceEvent {
+    const row_id = sqlite.sqlite3_column_int64(stmt, 0);
+    const source = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(source);
+    const provider = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(provider);
+    const kind = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(kind);
+    const target = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(target);
+    const status = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(status);
+    const detail = try dupeColumn(allocator, stmt, 6);
+    errdefer allocator.free(detail);
+    const recorded_at = try dupeColumn(allocator, stmt, 7);
+    errdefer allocator.free(recorded_at);
+    return .{
+        .row_id = row_id,
+        .source = source,
+        .provider = provider,
+        .kind = kind,
+        .target = target,
+        .status = status,
+        .detail = detail,
+        .recorded_at = recorded_at,
+    };
+}
+
+fn providerEvidenceSummaryFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !ProviderEvidenceSummaryRow {
+    const source = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(source);
+    const provider = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(provider);
+    const kind = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(kind);
+    const status = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(status);
+    const latest_at = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(latest_at);
+    return .{
+        .source = source,
+        .provider = provider,
+        .kind = kind,
+        .status = status,
+        .count = sqlite.sqlite3_column_int64(stmt, 4),
+        .latest_at = latest_at,
     };
 }
 
@@ -2282,6 +2437,69 @@ pub fn columnText(stmt: *sqlite.sqlite3_stmt, idx: c_int) ?[]const u8 {
     return @as([*]const u8, @ptrCast(ptr))[0..len];
 }
 
+const provider_evidence_cte =
+    \\WITH evidence AS (
+    \\  SELECT id AS row_id,
+    \\         'provider_raw' AS source,
+    \\         provider AS provider,
+    \\         'http' AS kind,
+    \\         endpoint AS target,
+    \\         COALESCE(CAST(status AS TEXT), '') AS status,
+    \\         'body_bytes=' || length(COALESCE(body_json, '')) AS detail,
+    \\         captured_at AS recorded_at
+    \\  FROM provider_raw
+    \\  UNION ALL
+    \\  SELECT id AS row_id,
+    \\         'snapshot' AS source,
+    \\         source AS provider,
+    \\         kind AS kind,
+    \\         COALESCE(target, '') AS target,
+    \\         status AS status,
+    \\         COALESCE(summary, '') AS detail,
+    \\         captured_at AS recorded_at
+    \\  FROM snapshots
+    \\  UNION ALL
+    \\  SELECT id AS row_id,
+    \\         'audit' AS source,
+    \\         CASE
+    \\           WHEN lower(action || ' ' || COALESCE(detail, '')) LIKE '%cloudflare%' THEN 'cloudflare'
+    \\           WHEN lower(action || ' ' || COALESCE(detail, '')) LIKE '%hostinger%' THEN 'hostinger'
+    \\           WHEN lower(action || ' ' || COALESCE(detail, '')) LIKE '%caddy%' THEN 'caddy'
+    \\           WHEN lower(action || ' ' || COALESCE(detail, '')) LIKE '%system%' THEN 'system'
+    \\           WHEN lower(action || ' ' || COALESCE(detail, '')) LIKE '%project%' THEN 'projects'
+    \\           WHEN lower(action || ' ' || COALESCE(detail, '')) LIKE '%route%' THEN 'route'
+    \\           ELSE ''
+    \\         END AS provider,
+    \\         action AS kind,
+    \\         '' AS target,
+    \\         status AS status,
+    \\         COALESCE(detail, '') AS detail,
+    \\         created_at AS recorded_at
+    \\  FROM audit_events
+    \\)
+;
+
+const provider_evidence_events_sql = provider_evidence_cte ++
+    \\SELECT row_id, source, provider, kind, target, status, detail, recorded_at
+    \\FROM evidence
+    \\WHERE (? IS NULL OR provider = ?)
+    \\ORDER BY recorded_at DESC, row_id DESC
+    \\LIMIT ?
+;
+
+const provider_evidence_summary_sql = provider_evidence_cte ++
+    \\SELECT source,
+    \\       provider,
+    \\       kind,
+    \\       status,
+    \\       COUNT(*) AS event_count,
+    \\       COALESCE(MAX(recorded_at), '') AS latest_at
+    \\FROM evidence
+    \\WHERE (? IS NULL OR provider = ?)
+    \\GROUP BY source, provider, kind, status
+    \\ORDER BY latest_at DESC, event_count DESC, source, provider, kind, status
+;
+
 fn isKnownTable(table: []const u8) bool {
     const known = [_][]const u8{
         "snapshots",            "provider_raw",               "cloudflare_accounts",       "cloudflare_zones", "cloudflare_dns_records",
@@ -2325,6 +2543,41 @@ test "audit events can be inserted and queried as a read model" {
     try std.testing.expectEqualStrings("caddy.diff", rows.items[0].action);
     try std.testing.expectEqualStrings("dry_run", rows.items[0].status);
     try std.testing.expectEqualStrings("rendered only", rows.items[0].detail);
+}
+
+test "provider evidence read model joins raw captures snapshots and audit events" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudio-provider-evidence.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    try db.insertProviderRaw("hostinger", "/api/vps/v1/virtual-machines", 200, "{\"data\":[]}");
+    _ = try db.insertSnapshot("hostinger", "route-hostinger-vps", "vps", "ok", "captured 0 rows", null, null);
+    _ = try db.insertSnapshot("cloudflare", "route-cloudflare-dns", "plosca.ru", "error", "permission denied", null, null);
+    try db.insertAudit("route.capture", "ok", "hostinger vps captured");
+    try db.insertAudit("caddy.diff", "dry_run", "rendered only");
+
+    var hostinger_events = try db.providerEvidenceEvents(allocator, .{ .provider = "hostinger", .limit = 20 });
+    defer hostinger_events.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 3), hostinger_events.items.len);
+    try std.testing.expectEqualStrings("hostinger", hostinger_events.items[0].provider);
+
+    var all_summary = try db.providerEvidenceSummary(allocator, null);
+    defer all_summary.deinit(allocator);
+    try std.testing.expect(all_summary.items.len >= 5);
+
+    var saw_raw = false;
+    var saw_cloudflare_error = false;
+    for (all_summary.items) |row| {
+        if (std.mem.eql(u8, row.source, "provider_raw") and std.mem.eql(u8, row.provider, "hostinger")) saw_raw = true;
+        if (std.mem.eql(u8, row.provider, "cloudflare") and std.mem.eql(u8, row.status, "error")) saw_cloudflare_error = true;
+    }
+    try std.testing.expect(saw_raw);
+    try std.testing.expect(saw_cloudflare_error);
 }
 
 test "provider inventory read model joins and filters typed inventory" {

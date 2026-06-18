@@ -292,6 +292,18 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_history_mod);
 
+    const app_evidence_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/evidence.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_evidence_mod);
+
     const app_export_mod = b.createModule(.{
         .root_source_file = b.path("src/app/export.zig"),
         .target = target,
@@ -479,6 +491,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
             .{ .name = "app_coverage", .module = app_coverage_mod },
             .{ .name = "app_doctor", .module = app_doctor_mod },
+            .{ .name = "app_evidence", .module = app_evidence_mod },
             .{ .name = "app_export", .module = app_export_mod },
             .{ .name = "app_history", .module = app_history_mod },
             .{ .name = "app_hostinger", .module = app_hostinger_mod },
@@ -594,6 +607,18 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(cli_hostinger_mod);
+    const cli_evidence_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/evidence.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_evidence", .module = app_evidence_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(cli_evidence_mod);
     const cli_inventory_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/inventory.zig"),
         .target = target,
@@ -659,6 +684,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_caddy", .module = cli_caddy_mod },
             .{ .name = "cli_cloudflare", .module = cli_cloudflare_mod },
             .{ .name = "cli_coverage", .module = cli_coverage_mod },
+            .{ .name = "cli_evidence", .module = cli_evidence_mod },
             .{ .name = "cli_hostinger", .module = cli_hostinger_mod },
             .{ .name = "cli_inventory", .module = cli_inventory_mod },
             .{ .name = "cli_projects", .module = cli_projects_mod },
@@ -702,6 +728,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cli_route_mod);
     addModuleTest(b, test_step, cli_caddy_mod);
     addModuleTest(b, test_step, cli_cloudflare_mod);
+    addModuleTest(b, test_step, cli_evidence_mod);
     addModuleTest(b, test_step, cli_hostinger_mod);
     addModuleTest(b, test_step, cli_inventory_mod);
     addModuleTest(b, test_step, cli_projects_mod);
@@ -714,6 +741,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_history_mod);
     addModuleTest(b, test_step, app_coverage_mod);
     addModuleTest(b, test_step, app_doctor_mod);
+    addModuleTest(b, test_step, app_evidence_mod);
     addModuleTest(b, test_step, app_init_mod);
     addModuleTest(b, test_step, app_log_mod);
     addModuleTest(b, test_step, app_caddy_mod);

@@ -25,6 +25,7 @@ pub const app = struct {
     pub const cloudflare = @import("app_cloudflare");
     pub const coverage = @import("app_coverage");
     pub const doctor = @import("app_doctor");
+    pub const evidence = @import("app_evidence");
     pub const exports = @import("app_export");
     pub const history = @import("app_history");
     pub const hostinger = @import("app_hostinger");
@@ -72,6 +73,7 @@ test "facade exposes stable integration modules" {
     _ = app.coverage.Summary;
     _ = app.coverage.CaptureOptions;
     _ = app.doctor.Report;
+    _ = app.evidence.Evidence;
     _ = app.exports.writeRecentSnapshotsJson;
     _ = app.history.History;
     _ = app.hostinger.Context;

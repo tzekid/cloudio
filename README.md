@@ -22,6 +22,8 @@ zig build run -- topology --json
 zig build run -- history
 zig build run -- history --json
 zig build run -- history --limit 50
+zig build run -- evidence
+zig build run -- evidence hostinger --json
 zig build run -- inventory
 zig build run -- routes --json
 zig build run -- routes cloudflare dns --limit 25
@@ -60,6 +62,15 @@ zig build run -- history --json
 zig build run -- history --audit-limit 25 --snapshot-limit 50 --json
 zig build run -- audit --limit 100
 zig build run -- export history --json
+```
+
+Provider evidence reads SQLite only and joins redacted provider raw-capture metadata, snapshots, and audit events into one review surface:
+
+```sh
+zig build run -- evidence
+zig build run -- evidence --json
+zig build run -- evidence hostinger --limit 50 --json
+zig build run -- evidence --provider cloudflare
 ```
 
 Topology reads SQLite only and connects Cloudflare DNS records, Caddy routes, project metadata, listening sockets, systemd service state, and Docker container state:

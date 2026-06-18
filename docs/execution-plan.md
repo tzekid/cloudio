@@ -43,6 +43,7 @@ The POC already has:
 - Generated provider route metadata for Cloudflare and Hostinger.
 - Generic route plan/read/capture/dry-run surfaces.
 - L0/L1/L2/L3 provider coverage review commands.
+- Provider evidence read model over raw-capture metadata, snapshots, and audit events.
 - Broad Cloudflare and Hostinger inventory projections.
 - Caddy, system, project, project-correlation, overview, export, log, and doctor workflows.
 - A public `cloudio.zig` facade that keeps collectors out of future embedding code.
@@ -168,6 +169,7 @@ Acceptance:
    - Extend the app render helper pattern to any remaining repeated app-level JSON/text rendering.
    - Keep CLI rendering separate from reusable app read-model JSON.
    - Use `cloudio history --json` and `cloudio export history --json` as the first operational-history contract for UI/API consumers.
+   - Use `cloudio evidence --json` as the provider/system capture evidence contract over raw-capture metadata, snapshots, and audit events.
    - Use `cloudio routes --json` as the compact provider-route metadata contract for UI/API consumers.
    - Use `cloudio topology --json` as the operational graph contract for UI/API consumers.
 

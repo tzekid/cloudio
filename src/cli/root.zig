@@ -14,6 +14,7 @@ const cli_args = @import("cli_args");
 const cli_caddy = @import("cli_caddy");
 const cli_cloudflare = @import("cli_cloudflare");
 const cli_coverage = @import("cli_coverage");
+const cli_evidence = @import("cli_evidence");
 const cli_hostinger = @import("cli_hostinger");
 const cli_inventory = @import("cli_inventory");
 const cli_projects = @import("cli_projects");
@@ -63,6 +64,12 @@ pub fn run(init: std.process.Init) !void {
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "history") or std.mem.eql(u8, cmd, "audit")) {
         try commandHistory(init.io, init.gpa, &db, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "evidence")) {
+        try cli_evidence.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
+            .db = &db,
+        }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "inventory")) {
         try cli_inventory.run(.{
             .io = init.io,
@@ -145,6 +152,7 @@ fn usage() void {
         \\  cloudio overview [--json|--format json]
         \\  cloudio topology [--limit <n>] [--json|--format json]
         \\  cloudio history|audit [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json|--format json]
+        \\  cloudio evidence [all|cloudflare|hostinger|caddy|system|projects|route] [--provider <scope>] [--limit <n>] [--json|--format json]
         \\  cloudio inventory [summary|facets] [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>] [--json|--format json]
         \\  cloudio export [snapshots|history] [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json]
         \\  cloudio coverage summary [--json|--format json]
