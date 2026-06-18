@@ -154,23 +154,35 @@ fn parseCommand(args: []const []const u8) Command {
     return .{ .unknown = args[0] };
 }
 
+const CoverageFormatArg = union(enum) {
+    no_match,
+    matched,
+    unknown: []const u8,
+};
+
+fn parseCoverageFormatArg(args: []const []const u8, index: *usize, format: *RenderFormat) CoverageFormatArg {
+    return switch (cli_render.parseFormatArg(args, index)) {
+        .no_match => .no_match,
+        .matched => |parsed| blk: {
+            format.* = parsed;
+            break :blk .matched;
+        },
+        .missing_value => .{ .unknown = "--format" },
+        .invalid_value => |value| .{ .unknown = value },
+    };
+}
+
 fn parseSummary(args: []const []const u8) Command {
     var command = SummaryCommand{};
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        const arg = args[index];
-        if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
-        } else {
-            return .{ .unknown = arg };
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
         }
+        const arg = args[index];
+        return .{ .unknown = arg };
     }
     return .{ .summary = command };
 }
@@ -180,17 +192,13 @@ fn parseTags(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
-        } else if (!provider_set) {
+        if (!provider_set) {
             command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
         } else {
@@ -205,17 +213,13 @@ fn parseL1(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
-        } else if (!provider_set) {
+        if (!provider_set) {
             command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
         } else {
@@ -230,6 +234,11 @@ fn parseGaps(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--limit")) {
             index += 1;
@@ -238,15 +247,6 @@ fn parseGaps(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--limit=")) {
             const value = arg["--limit=".len..];
             command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (!provider_set) {
             command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
@@ -262,17 +262,13 @@ fn parseLevels(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
-        } else if (!provider_set) {
+        if (!provider_set) {
             command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
         } else {
@@ -287,6 +283,11 @@ fn parseLevelTags(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--limit")) {
             index += 1;
@@ -295,15 +296,6 @@ fn parseLevelTags(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--limit=")) {
             const value = arg["--limit=".len..];
             command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (!provider_set) {
             command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
@@ -319,6 +311,11 @@ fn parseFamilies(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--limit")) {
             index += 1;
@@ -327,15 +324,6 @@ fn parseFamilies(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--limit=")) {
             const value = arg["--limit=".len..];
             command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--focus")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--focus" };
@@ -362,6 +350,11 @@ fn parseTypedModels(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--limit")) {
             index += 1;
@@ -370,15 +363,6 @@ fn parseTypedModels(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--limit=")) {
             const value = arg["--limit=".len..];
             command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = arg };
@@ -409,6 +393,11 @@ fn parseWorkplan(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--limit")) {
             index += 1;
@@ -417,8 +406,6 @@ fn parseWorkplan(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--limit=")) {
             const value = arg["--limit=".len..];
             command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
         } else if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
             command.options.include_plans = true;
         } else if (std.mem.eql(u8, arg, "--bundle") or std.mem.eql(u8, arg, "--include-candidates") or std.mem.eql(u8, arg, "--with-candidates")) {
@@ -430,13 +417,6 @@ fn parseWorkplan(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--candidate-limit=")) {
             const value = arg["--candidate-limit=".len..];
             command.options.candidate_limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--focus")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--focus" };
@@ -513,6 +493,11 @@ fn parseRoutes(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--support")) {
             index += 1;
@@ -520,15 +505,6 @@ fn parseRoutes(args: []const []const u8) Command {
             command.filter.support = app_coverage.SupportFilter.parse(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.eql(u8, arg, "--detail") or std.mem.eql(u8, arg, "--details")) {
             command.filter.detail = true;
-        } else if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.startsWith(u8, arg, "--support=")) {
             const value = arg["--support=".len..];
             command.filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
@@ -598,6 +574,11 @@ fn parseCaptureCandidates(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--limit")) {
             index += 1;
@@ -606,17 +587,8 @@ fn parseCaptureCandidates(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--limit=")) {
             const value = arg["--limit=".len..];
             command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
         } else if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
             command.options.include_plans = true;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--support")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--support" };
@@ -676,6 +648,11 @@ fn parseDryRunCandidates(args: []const []const u8) Command {
     var provider_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        switch (parseCoverageFormatArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--limit")) {
             index += 1;
@@ -684,17 +661,8 @@ fn parseDryRunCandidates(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--limit=")) {
             const value = arg["--limit=".len..];
             command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
-        } else if (std.mem.eql(u8, arg, "--json")) {
-            command.format = .json;
         } else if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
             command.options.include_plans = true;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            const value = arg["--format=".len..];
-            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--support")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--support" };

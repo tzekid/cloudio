@@ -421,17 +421,14 @@ fn parseOverviewFormat(args: []const []const u8) !cli_render.RenderFormat {
     var format: cli_render.RenderFormat = .text;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
-        const arg = args[index];
-        if (std.mem.eql(u8, arg, "--json")) {
-            format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            index += 1;
-            if (index >= args.len) return error.MissingFormat;
-            format = try cli_render.parseFormatStrict(args[index]);
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            format = try cli_render.parseFormatStrict(arg["--format=".len..]);
-        } else {
-            return error.UnexpectedOverviewArgument;
+        switch (cli_render.parseFormatArg(args, &index)) {
+            .matched => |parsed| {
+                format = parsed;
+                continue;
+            },
+            .missing_value => return error.MissingFormat,
+            .invalid_value => return error.InvalidFormat,
+            .no_match => return error.UnexpectedOverviewArgument,
         }
     }
     return format;

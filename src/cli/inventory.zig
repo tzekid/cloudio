@@ -55,6 +55,15 @@ pub fn parseParsed(args: []const []const u8) !Parsed {
     var parsed = Parsed{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
+        switch (cli_render.parseFormatArg(args, &i)) {
+            .matched => |format| {
+                parsed.format = format;
+                continue;
+            },
+            .missing_value => return error.MissingFormat,
+            .invalid_value => return error.InvalidFormat,
+            .no_match => {},
+        }
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--provider")) {
             i += 1;
@@ -72,14 +81,6 @@ pub fn parseParsed(args: []const []const u8) !Parsed {
             i += 1;
             if (i >= args.len) return error.MissingLimit;
             parsed.options.limit = try parseLimit(args[i]);
-        } else if (std.mem.eql(u8, arg, "--json")) {
-            parsed.format = .json;
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            i += 1;
-            if (i >= args.len) return error.MissingFormat;
-            parsed.format = try cli_render.parseFormatStrict(args[i]);
-        } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            parsed.format = try cli_render.parseFormatStrict(arg["--format=".len..]);
         } else if (isProvider(arg) and parsed.options.provider == null) {
             parsed.options.provider = try parseProvider(arg);
         } else if (parsed.options.query == null) {

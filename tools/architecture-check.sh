@@ -90,6 +90,11 @@ check_no_matches \
     src/cli/root.zig src/cli/coverage.zig src/cli/inventory.zig
 
 check_no_matches \
+    "CLI command modules must use cli_render.parseFormatArg for format flags" \
+    'std\.mem\.eql\(u8, arg, "--json"\)|std\.mem\.eql\(u8, arg, "--format"\)|std\.mem\.startsWith\(u8, arg, "--format="\)' \
+    src/cli/root.zig src/cli/coverage.zig src/cli/inventory.zig
+
+check_no_matches \
     "coverage and inventory CLI output must use cli_render render helpers" \
     'Writer\.Allocating\.init\(ctx\.gpa\)' \
     src/cli/coverage.zig src/cli/inventory.zig
