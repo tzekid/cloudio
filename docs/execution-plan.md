@@ -150,6 +150,7 @@ Goal: make a web/native UI an adapter over existing app APIs, not a rewrite.
 Broad slices:
 
 - Stable app-level JSON structs/writers for overview, inventory, coverage, provider detail, Caddy, projects, system, logs, and operational history/audits.
+- A compact route-catalog read model over the spec-generated manifests so UI/API callers can review L0/L1 provider metadata without scraping coverage text.
 - Facade-level API examples that call `cloudio.app.*` directly.
 - UI/API read-only command contract docs.
 - Optional local HTTP server module only after CLI/app boundaries are stable.
@@ -166,6 +167,7 @@ Acceptance:
    - Extend the app render helper pattern to any remaining repeated app-level JSON/text rendering.
    - Keep CLI rendering separate from reusable app read-model JSON.
    - Use `cloudio history --json` and `cloudio export history --json` as the first operational-history contract for UI/API consumers.
+   - Use `cloudio routes --json` as the compact provider-route metadata contract for UI/API consumers.
 
 2. Clean command parsing and option handling.
    - Consolidate repeated `--json`, `--format`, `--limit`, `--domain`, `--query`, `--path-param`, `--query-param`, and `--header-param` handling.

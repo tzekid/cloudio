@@ -19,6 +19,7 @@ const cli_inventory = @import("cli_inventory");
 const cli_projects = @import("cli_projects");
 const cli_render = @import("cli_render");
 const cli_route = @import("cli_route");
+const cli_routes = @import("cli_routes");
 const cli_system = @import("cli_system");
 const db_store = @import("db_store");
 
@@ -75,6 +76,11 @@ pub fn run(init: std.process.Init) !void {
             .cloudflare_auth = .{ .cloudflare = cloudflareAuth(cfg) },
             .hostinger_token = cfg.hostinger_api_token,
             .db = &db,
+        }, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "routes")) {
+        try cli_routes.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "log")) {
         try commandLog(init.io, init.gpa, cfg, args[2..]);
@@ -145,6 +151,7 @@ fn usage() void {
         \\  cloudio coverage gaps|levels|level-tags [all|cloudflare|hostinger] [--limit <n>] [--json|--format json]
         \\  cloudio coverage help
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]
+        \\  cloudio routes [all|cloudflare|hostinger] [query] [--provider <provider>] [--query <text>] [--limit <n>] [--json|--format json]
         \\  cloudio route plan|read|capture|dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--paginate] [--max-pages <n>] [--body-present|--body-content-type <type>]
         \\  cloudio log [--json|--format json]
         \\  cloudio cloudflare account [list]|account show <account-id>|account profile <account-id>|account organizations <account-id>

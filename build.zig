@@ -448,6 +448,17 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_inventory_mod);
 
+    const app_route_catalog_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/route_catalog.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+
     const cloudio_mod = b.createModule(.{
         .root_source_file = b.path("src/cloudio.zig"),
         .target = target,
@@ -467,6 +478,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_projects", .module = app_projects_mod },
             .{ .name = "app_provider_list", .module = app_provider_list_mod },
             .{ .name = "app_refresh", .module = app_refresh_mod },
+            .{ .name = "app_route_catalog", .module = app_route_catalog_mod },
             .{ .name = "app_system", .module = app_system_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_fs", .module = core_fs_mod },
@@ -522,6 +534,16 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_coverage", .module = app_coverage_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_coverage", .module = cli_coverage_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
+        },
+    });
+    const cli_routes_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/routes.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_route_catalog", .module = app_route_catalog_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
         },
     });
@@ -618,6 +640,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_projects", .module = cli_projects_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "cli_route", .module = cli_route_mod },
+            .{ .name = "cli_routes", .module = cli_routes_mod },
             .{ .name = "cli_system", .module = cli_system_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_version", .module = core_version_mod },
@@ -657,6 +680,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cli_hostinger_mod);
     addModuleTest(b, test_step, cli_inventory_mod);
     addModuleTest(b, test_step, cli_projects_mod);
+    addModuleTest(b, test_step, cli_routes_mod);
     addModuleTest(b, test_step, cli_system_mod);
     addModuleTest(b, test_step, cloudio_mod);
     addModuleTest(b, test_step, app_overview_mod);
@@ -671,6 +695,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_system_mod);
     addModuleTest(b, test_step, app_provider_list_mod);
     addModuleTest(b, test_step, app_render_mod);
+    addModuleTest(b, test_step, app_route_catalog_mod);
     addModuleTest(b, test_step, app_cloudflare_mod);
     addModuleTest(b, test_step, app_hostinger_mod);
     addModuleTest(b, test_step, app_inventory_mod);
