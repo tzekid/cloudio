@@ -45,6 +45,7 @@ pub const Client = struct {
         if (route.provider != self.provider()) return error.ProviderRouteAuthMismatch;
         if (!route.isRoutable()) return error.UnsupportedProviderRoute;
         if (route.method != .GET or route.mode != .read) return error.ProviderRouteRequiresDryRun;
+        if (!routeSupportAllowsLiveRead(route)) return error.UnsupportedProviderRoute;
         if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
         try route.validateRequestHeaders(request);
         try validateRouteAuth(route, self.auth);
@@ -432,11 +433,18 @@ pub fn cloudioSupportsRouteAuth(route: provider_routes.Route) bool {
 }
 
 pub fn routeLiveCallSupported(route: provider_routes.Route) bool {
-    return route.isRoutable() and route.mode == .read and route.method == .GET and !route.request_body.required and cloudioSupportsRouteAuth(route);
+    return routeSupportAllowsLiveRead(route) and route.isRoutable() and route.mode == .read and route.method == .GET and !route.request_body.required and cloudioSupportsRouteAuth(route);
 }
 
 pub fn routeDryRunSupported(route: provider_routes.Route) bool {
     return route.isRoutable() and route.isDryRunMutation();
+}
+
+fn routeSupportAllowsLiveRead(route: provider_routes.Route) bool {
+    return switch (route.support) {
+        .planned, .partial, .implemented => true,
+        .blocked_permission, .unsafe_mutation, .deprecated, .not_applicable => false,
+    };
 }
 
 fn cloudflareSecurityAcceptsApiToken(security: provider_routes.Security) bool {
@@ -845,6 +853,37 @@ test "generic dispatch validates auth provider and read safety before HTTP" {
 
     const cloudflare_client = Client.init(.{ .cloudflare = .{} });
     try std.testing.expectError(error.MissingCloudflareAuth, cloudflare_client.callReadRoute(std.testing.io, allocator, route, &.{.{ .name = "account_id", .value = "acct/1" }}));
+}
+
+test "generic dispatch plans but does not execute policy-blocked read routes" {
+    const allocator = std.testing.allocator;
+    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "brapi-get_DevtoolsJsonClose")) orelse return error.TestExpectedRoute;
+    defer route.deinit(allocator);
+
+    var planned_route = route;
+    planned_route.support = .planned;
+    try std.testing.expect(routeLiveCallSupported(planned_route));
+
+    var blocked_route = route;
+    blocked_route.support = .blocked_permission;
+    try std.testing.expect(!routeLiveCallSupported(blocked_route));
+
+    const request = provider_routes.Request{
+        .path_params = &.{
+            .{ .name = "account_id", .value = "acct/1" },
+            .{ .name = "session_id", .value = "00000000-0000-0000-0000-000000000000" },
+            .{ .name = "target_id", .value = "target-1" },
+        },
+    };
+
+    const plan = try planRouteJsonRequest(allocator, blocked_route, request);
+    defer allocator.free(plan);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"support\":\"blocked_permission\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"dispatch\":{\"live_call_supported\":false,\"dry_run_supported\":false}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
+
+    const client = Client.init(.{ .cloudflare = .{ .token = "test-token" } });
+    try std.testing.expectError(error.UnsupportedProviderRoute, client.callReadRouteRequest(std.testing.io, allocator, blocked_route, request));
 }
 
 test "generic dispatch validates Cloudflare auth scheme compatibility before HTTP" {
