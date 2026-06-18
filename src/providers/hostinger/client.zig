@@ -66,6 +66,10 @@ pub const ReachArgs = routes.ReachArgs;
 pub const ReachEndpoint = routes.ReachEndpoint;
 pub const ReachMutationEndpoint = routes.ReachMutationEndpoint;
 pub const ReachMutationArgs = routes.ReachMutationArgs;
+pub const VpsApiFamily = routes.VpsApiFamily;
+pub const vps_api_families = routes.vps_api_families;
+pub const vps_api_family_count = routes.vps_api_family_count;
+pub const vpsApiRouteTotals = routes.vpsApiRouteTotals;
 
 pub const virtualMachinesUrl = routes.virtualMachinesUrl;
 pub const virtualMachineDetailsUrl = routes.virtualMachineDetailsUrl;

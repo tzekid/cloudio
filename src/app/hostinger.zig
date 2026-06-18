@@ -58,6 +58,7 @@ pub const Context = struct {
 
 pub const VpsOverviewOptions = struct {
     limit: i64 = 20,
+    snapshot_limit: i64 = 12,
 };
 
 pub const AccountOverviewOptions = struct {
@@ -163,6 +164,29 @@ pub const VpsOverviewSummary = struct {
     inventory_kinds: usize = 0,
     metric_summaries: usize = 0,
     family_summaries: usize = 0,
+    recent_snapshots: usize = 0,
+    api_routes: usize = 0,
+    api_read_routes: usize = 0,
+    api_dry_run_routes: usize = 0,
+    api_families: usize = 0,
+    observed_read_families: usize = 0,
+    missing_read_families: usize = 0,
+    dry_run_only_families: usize = 0,
+};
+
+pub const VpsApiFamilySummary = struct {
+    label: []const u8,
+    official_routes: usize,
+    read_routes: usize,
+    dry_run_routes: usize,
+    observed_items: i64 = 0,
+    observed_kinds: usize = 0,
+
+    fn status(self: VpsApiFamilySummary) []const u8 {
+        if (self.read_routes == 0 and self.dry_run_routes != 0) return "dry_run_only";
+        if (self.observed_items != 0) return "observed";
+        return "missing_read";
+    }
 };
 
 const VpsCoverage = struct {
@@ -230,9 +254,9 @@ pub const AccountOverview = struct {
             .partial_vps_core_coverage = vps_summary.partial_core_coverage,
             .resources = self.resource_count,
             .inventory_items = self.inventory_count,
-            .resource_kinds = self.vps_overview.resource_kinds.items.len,
-            .inventory_kinds = self.vps_overview.inventory_kinds.items.len,
-            .inventory_facets = self.inventory_facets.items.len,
+            .resource_kinds = self.vps_overview.summary_resource_kinds.items.len,
+            .inventory_kinds = self.vps_overview.summary_inventory_kinds.items.len,
+            .inventory_facets = self.family_facets.items.len,
             .recent_snapshots = self.recent_snapshots.items.len,
         };
         for (self.family_facets.items) |facet| {
@@ -321,8 +345,12 @@ pub const VpsOverview = struct {
     inventory_kinds: db_store.HostingerKindCounts,
     metric_summaries: db_store.HostingerMetricSummaries,
     family_summaries: db_store.HostingerVpsFamilySummaries,
-    coverage_metric_summaries: db_store.HostingerMetricSummaries,
-    coverage_family_summaries: db_store.HostingerVpsFamilySummaries,
+    recent_snapshots: db_store.SnapshotSummaries,
+    summary_vps: db_store.HostingerVpsRows,
+    summary_resource_kinds: db_store.HostingerKindCounts,
+    summary_inventory_kinds: db_store.HostingerKindCounts,
+    summary_metric_summaries: db_store.HostingerMetricSummaries,
+    summary_family_summaries: db_store.HostingerVpsFamilySummaries,
 
     pub fn load(ctx: Context, options: VpsOverviewOptions) !VpsOverview {
         const limit = positiveLimit(options.limit, 20);
@@ -336,18 +364,30 @@ pub const VpsOverview = struct {
         errdefer metric_summaries.deinit(ctx.gpa);
         var family_summaries = try ctx.db.hostingerVpsFamilySummaries(ctx.gpa, limit);
         errdefer family_summaries.deinit(ctx.gpa);
-        var coverage_metric_summaries = try ctx.db.hostingerMetricSummaries(ctx.gpa, 5000);
-        errdefer coverage_metric_summaries.deinit(ctx.gpa);
-        var coverage_family_summaries = try ctx.db.hostingerVpsFamilySummaries(ctx.gpa, 5000);
-        errdefer coverage_family_summaries.deinit(ctx.gpa);
+        var recent_snapshots = try ctx.db.snapshotsForSource(ctx.gpa, "hostinger", positiveLimit(options.snapshot_limit, 12));
+        errdefer recent_snapshots.deinit(ctx.gpa);
+        var summary_vps = try ctx.db.hostingerVpsRows(ctx.gpa, 5000);
+        errdefer summary_vps.deinit(ctx.gpa);
+        var summary_resource_kinds = try ctx.db.hostingerResourceKindCounts(ctx.gpa, 5000);
+        errdefer summary_resource_kinds.deinit(ctx.gpa);
+        var summary_inventory_kinds = try ctx.db.hostingerInventoryKindCounts(ctx.gpa, 5000);
+        errdefer summary_inventory_kinds.deinit(ctx.gpa);
+        var summary_metric_summaries = try ctx.db.hostingerMetricSummaries(ctx.gpa, 5000);
+        errdefer summary_metric_summaries.deinit(ctx.gpa);
+        var summary_family_summaries = try ctx.db.hostingerVpsFamilySummaries(ctx.gpa, 5000);
+        errdefer summary_family_summaries.deinit(ctx.gpa);
         return .{
             .vps = vps,
             .resource_kinds = resource_kinds,
             .inventory_kinds = inventory_kinds,
             .metric_summaries = metric_summaries,
             .family_summaries = family_summaries,
-            .coverage_metric_summaries = coverage_metric_summaries,
-            .coverage_family_summaries = coverage_family_summaries,
+            .recent_snapshots = recent_snapshots,
+            .summary_vps = summary_vps,
+            .summary_resource_kinds = summary_resource_kinds,
+            .summary_inventory_kinds = summary_inventory_kinds,
+            .summary_metric_summaries = summary_metric_summaries,
+            .summary_family_summaries = summary_family_summaries,
         };
     }
 
@@ -357,19 +397,29 @@ pub const VpsOverview = struct {
         self.inventory_kinds.deinit(allocator);
         self.metric_summaries.deinit(allocator);
         self.family_summaries.deinit(allocator);
-        self.coverage_metric_summaries.deinit(allocator);
-        self.coverage_family_summaries.deinit(allocator);
+        self.recent_snapshots.deinit(allocator);
+        self.summary_vps.deinit(allocator);
+        self.summary_resource_kinds.deinit(allocator);
+        self.summary_inventory_kinds.deinit(allocator);
+        self.summary_metric_summaries.deinit(allocator);
+        self.summary_family_summaries.deinit(allocator);
     }
 
     pub fn summary(self: VpsOverview) VpsOverviewSummary {
+        const route_totals = provider_hostinger.vpsApiRouteTotals();
         var out = VpsOverviewSummary{
-            .vps = self.vps.items.len,
-            .resource_kinds = self.resource_kinds.items.len,
-            .inventory_kinds = self.inventory_kinds.items.len,
-            .metric_summaries = self.metric_summaries.items.len,
-            .family_summaries = self.family_summaries.items.len,
+            .vps = self.summary_vps.items.len,
+            .resource_kinds = self.summary_resource_kinds.items.len,
+            .inventory_kinds = self.summary_inventory_kinds.items.len,
+            .metric_summaries = self.summary_metric_summaries.items.len,
+            .family_summaries = self.summary_family_summaries.items.len,
+            .recent_snapshots = self.recent_snapshots.items.len,
+            .api_routes = route_totals.official_routes,
+            .api_read_routes = route_totals.read_routes,
+            .api_dry_run_routes = route_totals.dry_run_routes,
+            .api_families = provider_hostinger.vps_api_family_count,
         };
-        for (self.vps.items) |row| {
+        for (self.summary_vps.items) |row| {
             if (stateLooksRunning(row.status)) {
                 out.running += 1;
             } else {
@@ -390,17 +440,52 @@ pub const VpsOverview = struct {
             if (coverage.security) out.with_security += 1;
             if (coverage.docker) out.with_docker += 1;
         }
+        for (self.apiFamilySummaries()) |family| {
+            if (family.read_routes == 0 and family.dry_run_routes != 0) {
+                out.dry_run_only_families += 1;
+            } else if (family.read_routes != 0 and family.observed_items != 0) {
+                out.observed_read_families += 1;
+            } else if (family.read_routes != 0) {
+                out.missing_read_families += 1;
+            }
+        }
         return out;
     }
 
     fn coverageFor(self: VpsOverview, vm_id: []const u8) VpsCoverage {
         var out = VpsCoverage{};
-        for (self.coverage_metric_summaries.items) |row| {
+        for (self.summary_metric_summaries.items) |row| {
             if (std.mem.eql(u8, row.vm_id, vm_id) and row.count > 0) out.metrics = true;
         }
-        for (self.coverage_family_summaries.items) |row| {
+        for (self.summary_family_summaries.items) |row| {
             if (!std.mem.eql(u8, row.vm_id, vm_id) or row.count <= 0) continue;
             addCoverageKind(&out, row.kind);
+        }
+        return out;
+    }
+
+    fn apiFamilySummaries(self: VpsOverview) [provider_hostinger.vps_api_family_count]VpsApiFamilySummary {
+        var out: [provider_hostinger.vps_api_family_count]VpsApiFamilySummary = undefined;
+        for (provider_hostinger.vps_api_families, 0..) |family, index| {
+            out[index] = .{
+                .label = family.label,
+                .official_routes = family.official_routes,
+                .read_routes = family.read_routes,
+                .dry_run_routes = family.dry_run_routes,
+            };
+        }
+
+        if (self.summary_vps.items.len != 0) {
+            addVpsApiFamilyObserved(&out, "vps", @intCast(self.summary_vps.items.len));
+        }
+        for (self.summary_resource_kinds.items) |row| {
+            addVpsApiFamilyObserved(&out, row.kind, row.count);
+        }
+        for (self.summary_inventory_kinds.items) |row| {
+            addVpsApiFamilyObserved(&out, row.kind, row.count);
+        }
+        for (self.summary_metric_summaries.items) |row| {
+            addVpsApiFamilyObserved(&out, "metrics", row.count);
         }
         return out;
     }
@@ -408,7 +493,7 @@ pub const VpsOverview = struct {
     pub fn writeText(self: VpsOverview, writer: anytype) !void {
         const counts = self.summary();
         try writer.writeAll("Hostinger VPS overview\n");
-        try writer.print("summary vps={d} running={d} stopped_or_other={d} complete_core_coverage={d} partial_core_coverage={d} details={d} metrics={d} actions={d} backups={d} snapshot={d} public_keys={d} security={d} docker={d} missing_details={d} missing_metrics={d} missing_actions={d} missing_backups={d} missing_snapshot={d} resource_kinds={d} inventory_kinds={d} metric_summaries={d} family_summaries={d}\n", .{
+        try writer.print("summary vps={d} running={d} stopped_or_other={d} complete_core_coverage={d} partial_core_coverage={d} details={d} metrics={d} actions={d} backups={d} snapshot={d} public_keys={d} security={d} docker={d} missing_details={d} missing_metrics={d} missing_actions={d} missing_backups={d} missing_snapshot={d} resource_kinds={d} inventory_kinds={d} metric_summaries={d} family_summaries={d} recent_snapshots={d}\n", .{
             counts.vps,
             counts.running,
             counts.stopped_or_other,
@@ -431,6 +516,16 @@ pub const VpsOverview = struct {
             counts.inventory_kinds,
             counts.metric_summaries,
             counts.family_summaries,
+            counts.recent_snapshots,
+        });
+        try writer.print("api_routes total={d} read={d} dry_run={d} families={d} observed_read_families={d} missing_read_families={d} dry_run_only_families={d}\n", .{
+            counts.api_routes,
+            counts.api_read_routes,
+            counts.api_dry_run_routes,
+            counts.api_families,
+            counts.observed_read_families,
+            counts.missing_read_families,
+            counts.dry_run_only_families,
         });
         try writer.writeAll("vps\n");
         if (self.vps.items.len == 0) {
@@ -466,6 +561,16 @@ pub const VpsOverview = struct {
         } else {
             for (self.family_summaries.items) |row| try writeVpsFamilySummaryText(row, writer);
         }
+
+        try writer.writeAll("api families\n");
+        for (self.apiFamilySummaries()) |row| try writeVpsApiFamilySummaryText(row, writer);
+
+        try writer.writeAll("recent snapshots\n");
+        if (self.recent_snapshots.items.len == 0) {
+            try writer.writeAll("none\n");
+        } else {
+            for (self.recent_snapshots.items) |row| try writeSnapshotText(row, writer);
+        }
     }
 
     pub fn writeJson(self: VpsOverview, writer: anytype) !void {
@@ -495,6 +600,16 @@ pub const VpsOverview = struct {
         for (self.family_summaries.items, 0..) |row, index| {
             if (index != 0) try writer.writeByte(',');
             try writeVpsFamilySummaryJson(row, writer);
+        }
+        try writer.writeAll("],\"api_families\":[");
+        for (self.apiFamilySummaries(), 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeVpsApiFamilySummaryJson(row, writer);
+        }
+        try writer.writeAll("],\"recent_snapshots\":[");
+        for (self.recent_snapshots.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try app_render.writeSnapshotJson(writer, row, .{ .include_id = true });
         }
         try writer.writeAll("]}");
         try writer.writeByte('\n');
@@ -731,6 +846,36 @@ fn hostingerFamilyForKind(kind: []const u8) HostingerFamily {
     return .other;
 }
 
+fn addVpsApiFamilyObserved(summaries: *[provider_hostinger.vps_api_family_count]VpsApiFamilySummary, kind: []const u8, count: i64) void {
+    const index = vpsApiFamilyIndexForKind(kind) orelse return;
+    summaries[index].observed_items += count;
+    summaries[index].observed_kinds += 1;
+}
+
+fn vpsApiFamilyIndexForKind(kind: []const u8) ?usize {
+    if (std.ascii.eqlIgnoreCase(kind, "data-centers") or containsIgnoreCase(kind, "data-center") or containsIgnoreCase(kind, "datacenter")) return vpsApiFamilyIndexByLabel("data_centers");
+    if (std.ascii.eqlIgnoreCase(kind, "firewalls") or std.ascii.eqlIgnoreCase(kind, "firewall-detail") or containsIgnoreCase(kind, "firewall")) return vpsApiFamilyIndexByLabel("firewall");
+    if (kindLooksLikeDocker(kind) or containsIgnoreCase(kind, "project") or containsIgnoreCase(kind, "container")) return vpsApiFamilyIndexByLabel("docker");
+    if (containsIgnoreCase(kind, "post-install") or containsIgnoreCase(kind, "post_install")) return vpsApiFamilyIndexByLabel("post_install_scripts");
+    if (kindLooksLikeSnapshot(kind)) return vpsApiFamilyIndexByLabel("snapshots");
+    if (std.ascii.eqlIgnoreCase(kind, "public-keys-global")) return vpsApiFamilyIndexByLabel("public_keys");
+    if (kindLooksLikeSecurity(kind) or containsIgnoreCase(kind, "scanmetrics")) return vpsApiFamilyIndexByLabel("malware_scanner");
+    if (kindLooksLikeActions(kind)) return vpsApiFamilyIndexByLabel("actions");
+    if (kindLooksLikeBackups(kind)) return vpsApiFamilyIndexByLabel("backups");
+    if (std.ascii.eqlIgnoreCase(kind, "templates") or std.ascii.eqlIgnoreCase(kind, "template-detail") or containsIgnoreCase(kind, "template")) return vpsApiFamilyIndexByLabel("os_templates");
+    if (containsIgnoreCase(kind, "ptr")) return vpsApiFamilyIndexByLabel("ptr_records");
+    if (containsIgnoreCase(kind, "recovery")) return vpsApiFamilyIndexByLabel("recovery");
+    if (std.ascii.eqlIgnoreCase(kind, "vps") or kindLooksLikeDetails(kind) or kindLooksLikeMetrics(kind) or std.ascii.eqlIgnoreCase(kind, "public-keys")) return vpsApiFamilyIndexByLabel("virtual_machine");
+    return null;
+}
+
+fn vpsApiFamilyIndexByLabel(label: []const u8) ?usize {
+    for (provider_hostinger.vps_api_families, 0..) |family, index| {
+        if (std.mem.eql(u8, family.label, label)) return index;
+    }
+    return null;
+}
+
 fn stateLooksRunning(value: []const u8) bool {
     return containsIgnoreCase(value, "running") or containsIgnoreCase(value, "active") or containsIgnoreCase(value, "up");
 }
@@ -788,6 +933,18 @@ fn writeVpsFamilySummaryText(row: db_store.HostingerVpsFamilySummary, writer: an
     try writer.writeByte('\n');
 }
 
+fn writeVpsApiFamilySummaryText(row: VpsApiFamilySummary, writer: anytype) !void {
+    try writer.print("{s}\tofficial_routes={d}\tread_routes={d}\tdry_run_routes={d}\tobserved_items={d}\tobserved_kinds={d}\tstatus={s}\n", .{
+        row.label,
+        row.official_routes,
+        row.read_routes,
+        row.dry_run_routes,
+        row.observed_items,
+        row.observed_kinds,
+        row.status(),
+    });
+}
+
 fn writeAccountOverviewSummaryText(summary: AccountOverviewSummary, writer: anytype) !void {
     try writer.print("summary vps={d} running_vps={d} stopped_or_other_vps={d} complete_vps_core_coverage={d} partial_vps_core_coverage={d} resources={d} inventory_items={d} resource_kinds={d} inventory_kinds={d} inventory_facets={d} recent_snapshots={d}\n", .{
         summary.vps,
@@ -840,7 +997,15 @@ fn writeVpsOverviewSummaryJson(summary: VpsOverviewSummary, writer: anytype) !vo
     try app_render.writeJsonIntField(writer, "resource_kinds", summary.resource_kinds, true);
     try app_render.writeJsonIntField(writer, "inventory_kinds", summary.inventory_kinds, true);
     try app_render.writeJsonIntField(writer, "metric_summaries", summary.metric_summaries, true);
-    try app_render.writeJsonIntField(writer, "family_summaries", summary.family_summaries, false);
+    try app_render.writeJsonIntField(writer, "family_summaries", summary.family_summaries, true);
+    try app_render.writeJsonIntField(writer, "recent_snapshots", summary.recent_snapshots, true);
+    try app_render.writeJsonIntField(writer, "api_routes", summary.api_routes, true);
+    try app_render.writeJsonIntField(writer, "api_read_routes", summary.api_read_routes, true);
+    try app_render.writeJsonIntField(writer, "api_dry_run_routes", summary.api_dry_run_routes, true);
+    try app_render.writeJsonIntField(writer, "api_families", summary.api_families, true);
+    try app_render.writeJsonIntField(writer, "observed_read_families", summary.observed_read_families, true);
+    try app_render.writeJsonIntField(writer, "missing_read_families", summary.missing_read_families, true);
+    try app_render.writeJsonIntField(writer, "dry_run_only_families", summary.dry_run_only_families, false);
     try writer.writeByte('}');
 }
 
@@ -990,6 +1155,18 @@ fn writeVpsFamilySummaryJson(row: db_store.HostingerVpsFamilySummary, writer: an
     try writeJsonStringField(writer, "kind", row.kind, true);
     try app_render.writeJsonIntField(writer, "count", row.count, true);
     try writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
+    try writer.writeByte('}');
+}
+
+fn writeVpsApiFamilySummaryJson(row: VpsApiFamilySummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonStringField(writer, "label", row.label, true);
+    try app_render.writeJsonIntField(writer, "official_routes", row.official_routes, true);
+    try app_render.writeJsonIntField(writer, "read_routes", row.read_routes, true);
+    try app_render.writeJsonIntField(writer, "dry_run_routes", row.dry_run_routes, true);
+    try app_render.writeJsonIntField(writer, "observed_items", row.observed_items, true);
+    try app_render.writeJsonIntField(writer, "observed_kinds", row.observed_kinds, true);
+    try writeJsonStringField(writer, "status", row.status(), false);
     try writer.writeByte('}');
 }
 
@@ -1195,9 +1372,19 @@ test "hostinger app renders VPS overview from normalized storage" {
     try db.upsertHostingerResource("hostinger-vps-detail||12345", "vps-detail", "12345", "12345", "srv12345.hstgr.cloud", "running", null, "{\"id\":\"12345\"}");
     try db.upsertHostingerResource("hostinger-vps-actions||12345||reboot", "hostinger-vps-actions", "reboot", "12345", "Reboot", "available", null, "{\"id\":\"reboot\"}");
     try db.upsertHostingerResource("hostinger-vps-action-detail||12345/reboot||step-1", "hostinger-vps-action-detail", "step-1", "12345/reboot", "Step 1", "complete", null, "{\"id\":\"step-1\"}");
+    try db.upsertHostingerResource("hostinger-vps-public-keys||12345||key-1", "public-keys", "key-1", "12345", "deploy", "attached", null, "{\"id\":\"key-1\"}");
+    try db.upsertHostingerResource("hostinger-vps-docker||12345||stack", "docker", "stack", "12345", "stack", "running", null, "{\"name\":\"stack\"}");
+    try db.upsertHostingerResource("hostinger-vps-monarx||12345||scan", "monarx", "scan", "12345", "Monarx", "enabled", null, "{\"state\":\"enabled\"}");
     try db.upsertHostingerInventoryItem("hostinger-vps-templates||ubuntu", "hostinger-vps-templates", "ubuntu", "Ubuntu", "available", "linux", null, null, null, "enabled", null, null, null, "{\"id\":\"ubuntu\"}");
+    try db.upsertHostingerInventoryItem("hostinger-vps-data-centers||eu-west", "data-centers", "eu-west", "EU West", "available", "location", null, null, null, null, null, null, null, "{\"id\":\"eu-west\"}");
+    try db.upsertHostingerInventoryItem("hostinger-vps-firewalls||fw-1", "firewalls", "fw-1", "default", "active", "firewall", null, null, null, null, null, null, null, "{\"id\":\"fw-1\"}");
+    try db.upsertHostingerInventoryItem("hostinger-vps-post-install||script-1", "post-install-scripts", "script-1", "bootstrap", "active", "script", null, null, null, null, null, null, null, "{\"id\":\"script-1\"}");
+    try db.upsertHostingerInventoryItem("hostinger-vps-public-keys-global||key-1", "public-keys-global", "key-1", "deploy", "active", "ssh", null, null, null, null, null, null, null, "{\"id\":\"key-1\"}");
     try db.upsertHostingerInventoryItem("hostinger-vps-backups|12345|backup-1", "hostinger-vps-backups", "backup-1", "Backup 1", "available", "backup", null, null, null, null, "2026-01-01T00:00:00Z", null, null, "{\"id\":\"backup-1\"}");
     try db.upsertHostingerInventoryItem("snapshot|12345|snapshot", "snapshot", "snapshot", "Snapshot", "available", "snapshot", null, null, null, null, "2026-01-02T00:00:00Z", null, null, "{\"id\":\"snapshot\"}");
+    _ = try db.insertSnapshot("hostinger", "vps", null, "ok", "vps list", null, null);
+    _ = try db.insertSnapshot("hostinger", "monarx", "12345", "ok", "scan metrics", null, null);
+    _ = try db.insertSnapshot("cloudflare", "zone", "plosca.ru", "ok", "zone", null, null);
 
     const domains = [_][]const u8{"plosca.ru"};
     const ctx = Context{
@@ -1208,15 +1395,21 @@ test "hostinger app renders VPS overview from normalized storage" {
         .db = &db,
     };
 
-    var overview = try VpsOverview.load(ctx, .{ .limit = 10 });
+    var limited_overview = try VpsOverview.load(ctx, .{ .limit = 1, .snapshot_limit = 1 });
+    defer limited_overview.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), limited_overview.vps.items.len);
+    try std.testing.expectEqual(@as(usize, 2), limited_overview.summary().vps);
+    try std.testing.expectEqual(@as(usize, 1), limited_overview.recent_snapshots.items.len);
+
+    var overview = try VpsOverview.load(ctx, .{ .limit = 10, .snapshot_limit = 2 });
     defer overview.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 2), overview.vps.items.len);
     try std.testing.expectEqualStrings("12345", overview.vps.items[0].id);
-    try std.testing.expectEqual(@as(usize, 3), overview.resource_kinds.items.len);
-    try std.testing.expectEqual(@as(usize, 3), overview.inventory_kinds.items.len);
+    try std.testing.expectEqual(@as(usize, 6), overview.resource_kinds.items.len);
+    try std.testing.expectEqual(@as(usize, 7), overview.inventory_kinds.items.len);
     try std.testing.expectEqual(@as(usize, 1), overview.metric_summaries.items.len);
     try std.testing.expectEqualStrings("cpu", overview.metric_summaries.items[0].metric);
-    try std.testing.expectEqual(@as(usize, 6), overview.family_summaries.items.len);
+    try std.testing.expectEqual(@as(usize, 9), overview.family_summaries.items.len);
     const summary = overview.summary();
     try std.testing.expectEqual(@as(usize, 2), summary.vps);
     try std.testing.expectEqual(@as(usize, 1), summary.running);
@@ -1228,20 +1421,36 @@ test "hostinger app renders VPS overview from normalized storage" {
     try std.testing.expectEqual(@as(usize, 1), summary.with_actions);
     try std.testing.expectEqual(@as(usize, 1), summary.with_backups);
     try std.testing.expectEqual(@as(usize, 1), summary.with_snapshot);
+    try std.testing.expectEqual(@as(usize, 1), summary.with_public_keys);
+    try std.testing.expectEqual(@as(usize, 1), summary.with_security);
+    try std.testing.expectEqual(@as(usize, 1), summary.with_docker);
     try std.testing.expectEqual(@as(usize, 1), summary.missing_details);
     try std.testing.expectEqual(@as(usize, 1), summary.missing_metrics);
     try std.testing.expectEqual(@as(usize, 1), summary.missing_actions);
     try std.testing.expectEqual(@as(usize, 1), summary.missing_backups);
     try std.testing.expectEqual(@as(usize, 1), summary.missing_snapshot);
+    try std.testing.expectEqual(@as(usize, 6), summary.resource_kinds);
+    try std.testing.expectEqual(@as(usize, 7), summary.inventory_kinds);
+    try std.testing.expectEqual(@as(usize, 1), summary.metric_summaries);
+    try std.testing.expectEqual(@as(usize, 9), summary.family_summaries);
+    try std.testing.expectEqual(@as(usize, 2), summary.recent_snapshots);
+    try std.testing.expectEqual(@as(usize, 62), summary.api_routes);
+    try std.testing.expectEqual(@as(usize, 21), summary.api_read_routes);
+    try std.testing.expectEqual(@as(usize, 41), summary.api_dry_run_routes);
+    try std.testing.expectEqual(@as(usize, 13), summary.api_families);
+    try std.testing.expectEqual(@as(usize, 11), summary.observed_read_families);
+    try std.testing.expectEqual(@as(usize, 0), summary.missing_read_families);
+    try std.testing.expectEqual(@as(usize, 2), summary.dry_run_only_families);
 
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
-    try writeVpsOverviewText(ctx, .{ .limit = 10 }, &out.writer);
+    try writeVpsOverviewText(ctx, .{ .limit = 10, .snapshot_limit = 2 }, &out.writer);
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Hostinger VPS overview\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "summary vps=2 running=1 stopped_or_other=1 complete_core_coverage=1 partial_core_coverage=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "12345\tname=srv12345.hstgr.cloud\tstatus=running\tipv4=76.13.130.170\tplan=KVM 2\tcoverage=complete\tdetails=true\tmetrics=true\tactions=true\tbackups=true\tsnapshot=true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "api_routes total=62 read=21 dry_run=41 families=13 observed_read_families=11 missing_read_families=0 dry_run_only_families=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "12345\tname=srv12345.hstgr.cloud\tstatus=running\tipv4=76.13.130.170\tplan=KVM 2\tcoverage=complete\tdetails=true\tmetrics=true\tactions=true\tbackups=true\tsnapshot=true\tpublic_keys=true\tsecurity=true\tdocker=true") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "67890\tname=srv67890.hstgr.cloud\tstatus=stopped\tplan=KVM 1\tcoverage=partial\tdetails=false\tmetrics=false\tactions=false\tbackups=false\tsnapshot=false") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "coverage_issues=missing_details,missing_metrics,missing_actions,missing_backups,missing_snapshot") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger-vps-actions\tcount=1") != null);
@@ -1253,16 +1462,23 @@ test "hostinger app renders VPS overview from normalized storage" {
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/inventory/hostinger-vps-backups\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/inventory/snapshot\tcount=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "12345/metric/cpu\tcount=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "api families\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "virtual_machine\tofficial_routes=15\tread_routes=4\tdry_run_routes=11\tobserved_items=5\tobserved_kinds=4\tstatus=observed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "ptr_records\tofficial_routes=2\tread_routes=0\tdry_run_routes=2\tobserved_items=0\tobserved_kinds=0\tstatus=dry_run_only") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "recent snapshots\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "hostinger/monarx\ttarget=12345\tstatus=ok\tsummary=scan metrics") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare/zone") == null);
 
     var json_out = std.Io.Writer.Allocating.init(allocator);
     defer json_out.deinit();
-    try writeVpsOverviewJson(ctx, .{ .limit = 10 }, &json_out.writer);
+    try writeVpsOverviewJson(ctx, .{ .limit = 10, .snapshot_limit = 2 }, &json_out.writer);
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"hostinger_vps_overview\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"summary\":{\"vps\":2,\"running\":1,\"stopped_or_other\":1,\"complete_core_coverage\":1,\"partial_core_coverage\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"api_routes\":62,\"api_read_routes\":21,\"api_dry_run_routes\":41,\"api_families\":13,\"observed_read_families\":11,\"missing_read_families\":0,\"dry_run_only_families\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\":\"12345\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"coverage_status\":\"complete\",\"coverage\":{\"details\":true,\"metrics\":true,\"actions\":true,\"backups\":true,\"snapshot\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"coverage_status\":\"complete\",\"coverage\":{\"details\":true,\"metrics\":true,\"actions\":true,\"backups\":true,\"snapshot\":true,\"public_keys\":true,\"security\":true,\"docker\":true}") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\":\"67890\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"coverage_status\":\"partial\",\"coverage\":{\"details\":false,\"metrics\":false,\"actions\":false,\"backups\":false,\"snapshot\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"coverage_issues\":[\"missing_details\",\"missing_metrics\",\"missing_actions\",\"missing_backups\",\"missing_snapshot\"]") != null);
@@ -1275,4 +1491,10 @@ test "hostinger app renders VPS overview from normalized storage" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"resource\",\"kind\":\"hostinger-vps-actions\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"inventory\",\"kind\":\"hostinger-vps-backups\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"inventory\",\"kind\":\"snapshot\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"api_families\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"label\":\"virtual_machine\",\"official_routes\":15,\"read_routes\":4,\"dry_run_routes\":11,\"observed_items\":5,\"observed_kinds\":4,\"status\":\"observed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"label\":\"recovery\",\"official_routes\":2,\"read_routes\":0,\"dry_run_routes\":2,\"observed_items\":0,\"observed_kinds\":0,\"status\":\"dry_run_only\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"recent_snapshots\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"hostinger\",\"kind\":\"monarx\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"cloudflare\"") == null);
 }
