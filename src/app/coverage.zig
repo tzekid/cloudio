@@ -774,6 +774,7 @@ pub const RouteFilter = struct {
 pub const CaptureCandidateOptions = struct {
     filter: RouteFilter = .{},
     limit: usize = 25,
+    include_plans: bool = false,
 };
 
 pub const DryRunCandidateOptions = struct {
@@ -1866,6 +1867,7 @@ fn writeCaptureCandidatesText(gpa: Allocator, routes: []const CoverageRoute, opt
     if (options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
     if (options.filter.family != .all) try writer.print(" family={s}", .{options.filter.family.name()});
     if (options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
+    if (options.include_plans) try writer.writeAll(" plans=true");
     try writer.writeAll(" limit=");
     if (options.limit == 0) {
         try writer.writeAll("all\n");
@@ -1908,6 +1910,11 @@ fn writeCaptureCandidatesText(gpa: Allocator, routes: []const CoverageRoute, opt
         const command = try routeCaptureCommand(gpa, row.route);
         defer gpa.free(command);
         try writer.print("      capture: {s}\n", .{command});
+        if (options.include_plans) {
+            const plan = try routeReadPlanJson(gpa, row.route);
+            defer gpa.free(plan);
+            try writer.print("      read-plan: {s}\n", .{plan});
+        }
     }
 
     if (total == 0) {
@@ -1924,6 +1931,7 @@ fn writeCaptureCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, opt
     try writeRouteFilterJson(captureCandidateRouteFilter(options.filter), writer);
     try writer.writeByte(',');
     try writeJsonCountField(writer, "limit", options.limit, true);
+    try writeJsonBoolField(writer, "include_plans", options.include_plans, true);
     try writeJsonField(writer, "rank", "generated bodyless GET/read routes missing L2 capture evidence", true);
     try writer.writeAll("\"candidates\":[");
 
@@ -1940,7 +1948,7 @@ fn writeCaptureCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, opt
         }
         visible += 1;
         try writeMaybeJsonComma(writer, &first);
-        try writeCaptureCandidateJson(gpa, row, writer);
+        try writeCaptureCandidateJson(gpa, row, options, writer);
     }
 
     try writer.writeAll("],");
@@ -2453,7 +2461,7 @@ fn routeDryRunPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
     return try provider_dispatch.dryRunPlanJsonRequest(gpa, route, example.request);
 }
 
-fn writeCaptureCandidateJson(gpa: Allocator, row: CoverageRoute, writer: anytype) !void {
+fn writeCaptureCandidateJson(gpa: Allocator, row: CoverageRoute, options: CaptureCandidateOptions, writer: anytype) !void {
     const route = row.route;
     const command = try routeCaptureCommand(gpa, route);
     defer gpa.free(command);
@@ -2475,8 +2483,20 @@ fn writeCaptureCandidateJson(gpa: Allocator, row: CoverageRoute, writer: anytype
     try writer.writeAll("\"required_header_params\":");
     try writeRequiredParamNamesJson(writer, route.header_params);
     try writer.writeByte(',');
-    try writeJsonField(writer, "capture_command", command, false);
+    try writeJsonField(writer, "capture_command", command, options.include_plans);
+    if (options.include_plans) {
+        const plan = try routeReadPlanJson(gpa, route);
+        defer gpa.free(plan);
+        try writer.writeAll("\"read_plan\":");
+        try writer.writeAll(plan);
+    }
     try writer.writeByte('}');
+}
+
+fn routeReadPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
+    const example = try route.exampleRequest(gpa);
+    defer example.deinit(gpa);
+    return try provider_dispatch.planRouteJsonRequest(gpa, route, example.request);
 }
 
 fn routeCaptureCommand(gpa: Allocator, route: provider_routes.Route) ![]u8 {
@@ -3823,6 +3843,23 @@ test "lists route capture candidates for missing L2 read evidence" {
     try std.testing.expect(std.mem.indexOf(u8, family_json, "\"total_candidates\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, family_json, "\"operation_id\":\"logs-list\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, family_json, "VPS_getVirtualMachinesV1") == null);
+
+    var plan_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer plan_json_out.deinit();
+    try writeCaptureCandidatesJsonFromText(allocator, cloudflare, hostinger, .{
+        .filter = .{ .provider = .cloudflare, .family = .logs },
+        .limit = 1,
+        .include_plans = true,
+    }, &plan_json_out.writer);
+    const plan_json = try plan_json_out.toOwnedSlice();
+    defer allocator.free(plan_json);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"include_plans\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"read_plan\":{\"provider\":\"cloudflare\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"operation_id\":\"logs-list\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"path\":\"/accounts/example/logs\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"request_body_input\":{\"present\":false,\"content_type\":null,\"required_missing\":false}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"mode\":\"read\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"will_execute\":false") != null);
 }
 
 test "lists route dry-run candidates for missing mutation review evidence" {

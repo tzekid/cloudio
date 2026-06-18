@@ -129,7 +129,7 @@ fn usage() void {
         \\  cloudio coverage summary [--json|--format json]
         \\  cloudio coverage tags [all|cloudflare|hostinger] [--json|--format json]
         \\  cloudio coverage l1 [all|cloudflare|hostinger] [--json|--format json]
-        \\  cloudio coverage capture-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--json|--format json]
+        \\  cloudio coverage capture-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--plans] [--json|--format json]
         \\  cloudio coverage dry-run-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--plans] [--json|--format json]
         \\  cloudio coverage families [all|cloudflare|hostinger] [--focus all|control-plane] [--limit <n>] [--json|--format json]
         \\  cloudio coverage workplan [all|cloudflare|hostinger] [--focus all|control-plane] [--family <family>] [--limit <n>] [--json|--format json]
