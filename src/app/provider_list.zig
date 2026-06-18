@@ -1,4 +1,5 @@
 const std = @import("std");
+const app_render = @import("app_render");
 const core_output = @import("core_output");
 const db_store = @import("db_store");
 const provider_routes = @import("provider_routes");
@@ -47,9 +48,7 @@ pub fn text(ctx: Context, options: Options) !Output {
 }
 
 pub fn writeText(result: db_store.NameValueRows, writer: anytype) !void {
-    for (result.items) |row| {
-        try writer.print("{s}\t{s}\n", .{ row.name, row.value });
-    }
+    try app_render.writeNameValueRows(result.items, writer);
 }
 
 pub fn resources(ctx: Context, provider: Provider) !Output {

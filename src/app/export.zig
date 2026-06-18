@@ -1,5 +1,5 @@
 const std = @import("std");
-const core_json = @import("core_json");
+const app_render = @import("app_render");
 const db_store = @import("db_store");
 
 const Allocator = std.mem.Allocator;
@@ -14,24 +14,7 @@ pub fn writeRecentSnapshotsJson(gpa: Allocator, db: *Db, writer: anytype) !void 
 }
 
 pub fn writeSnapshotsJson(snapshots: []const db_store.SnapshotSummary, writer: anytype) !void {
-    try writer.writeAll("{\"snapshots\":[");
-    for (snapshots, 0..) |row, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.print("{{\"id\":{d},\"source\":", .{row.id});
-        try core_json.writeString(writer, row.source);
-        try writer.writeAll(",\"kind\":");
-        try core_json.writeString(writer, row.kind);
-        try writer.writeAll(",\"target\":");
-        try core_json.writeString(writer, row.target);
-        try writer.writeAll(",\"status\":");
-        try core_json.writeString(writer, row.status);
-        try writer.writeAll(",\"summary\":");
-        try core_json.writeString(writer, row.summary);
-        try writer.writeAll(",\"captured_at\":");
-        try core_json.writeString(writer, row.captured_at);
-        try writer.writeByte('}');
-    }
-    try writer.writeAll("]}\n");
+    try app_render.writeSnapshotsJsonObject(writer, snapshots, .{ .include_id = true, .trailing_newline = true });
 }
 
 test "export writes recent snapshots json through app service" {

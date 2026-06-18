@@ -265,8 +265,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "db_store", .module = db_store_mod },
         },
     });
+    linkSqlite(app_render_mod);
 
     const app_overview_mod = b.createModule(.{
         .root_source_file = b.path("src/app/overview.zig"),
@@ -284,7 +286,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
     });
@@ -343,6 +345,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "collector_caddy", .module = collector_caddy_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -355,6 +358,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "collector_projects", .module = collector_projects_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
@@ -366,6 +370,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "collector_system", .module = collector_system_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -378,6 +383,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },

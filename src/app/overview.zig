@@ -134,14 +134,7 @@ fn writeCounts(writer: anytype, counts: Counts) !void {
 }
 
 fn writeSnapshotJson(row: db_store.SnapshotSummary, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "source", row.source, true);
-    try app_render.writeJsonStringField(writer, "kind", row.kind, true);
-    try app_render.writeJsonStringField(writer, "target", row.target, true);
-    try app_render.writeJsonStringField(writer, "status", row.status, true);
-    try app_render.writeJsonStringField(writer, "summary", row.summary, true);
-    try app_render.writeJsonStringField(writer, "captured_at", row.captured_at, false);
-    try writer.writeByte('}');
+    try app_render.writeSnapshotJson(writer, row, .{});
 }
 
 test "overview loads typed counts and renders recent snapshots" {

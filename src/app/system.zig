@@ -1,4 +1,5 @@
 const std = @import("std");
+const app_render = @import("app_render");
 const collector_system = @import("collector_system");
 const core_output = @import("core_output");
 const db_store = @import("db_store");
@@ -22,59 +23,39 @@ pub fn collectAndWriteSummary(ctx: Context, writer: anytype) !void {
     try collector_system.collect(ctx.io, ctx.gpa, ctx.db);
     var rows = try ctx.db.snapshotsForSource(ctx.gpa, "system", snapshot_limit);
     defer rows.deinit(ctx.gpa);
-    try writeSnapshotRows(rows.items, writer);
+    try app_render.writeSnapshotRows(rows.items, writer);
 }
 
 pub fn collectAndWriteServices(ctx: Context, writer: anytype) !void {
     try collector_system.collectServices(ctx.io, ctx.gpa, ctx.db);
     var rows = try ctx.db.serviceList(ctx.gpa);
     defer rows.deinit(ctx.gpa);
-    try writeNameValueRows(rows.items, writer);
+    try app_render.writeNameValueRows(rows.items, writer);
 }
 
 pub fn collectAndWritePorts(ctx: Context, writer: anytype) !void {
     try collector_system.collectSockets(ctx.io, ctx.gpa, ctx.db);
     var rows = try ctx.db.socketList(ctx.gpa);
     defer rows.deinit(ctx.gpa);
-    try writeNameValueRows(rows.items, writer);
+    try app_render.writeNameValueRows(rows.items, writer);
 }
 
 pub fn collectAndWriteContainers(ctx: Context, writer: anytype) !void {
     try collector_system.collectContainers(ctx.io, ctx.gpa, ctx.db);
     var rows = try ctx.db.containerList(ctx.gpa);
     defer rows.deinit(ctx.gpa);
-    try writeNameValueRows(rows.items, writer);
+    try app_render.writeNameValueRows(rows.items, writer);
 }
 
 pub fn collectAndWriteMetrics(ctx: Context, writer: anytype) !void {
     try collector_system.collectMetrics(ctx.io, ctx.gpa, ctx.db);
     var rows = try ctx.db.recentMetrics(ctx.gpa, metric_limit);
     defer rows.deinit(ctx.gpa);
-    try writeMetricRows(rows.items, writer);
+    try app_render.writeMetricRows(rows.items, writer);
 }
 
 pub fn logs(ctx: Context, unit: []const u8) !Output {
     return try collector_system.logs(ctx.io, ctx.gpa, ctx.db, unit);
-}
-
-fn writeSnapshotRows(rows: []const db_store.SnapshotSummary, writer: anytype) !void {
-    for (rows) |row| {
-        try writer.print("{s} {s} [{s}] {s} {s}\n", .{
-            row.kind,
-            row.target,
-            row.status,
-            row.summary,
-            row.captured_at,
-        });
-    }
-}
-
-fn writeNameValueRows(rows: []const db_store.NameValueRow, writer: anytype) !void {
-    for (rows) |row| try writer.print("{s}\t{s}\n", .{ row.name, row.value });
-}
-
-fn writeMetricRows(rows: []const db_store.MetricRow, writer: anytype) !void {
-    for (rows) |row| try writer.print("{s}\t{s}\t{s}\t{s}\n", .{ row.metric, row.value, row.unit, row.captured_at });
 }
 
 test "system read models render snapshots, lists, and metrics" {
@@ -105,11 +86,11 @@ test "system read models render snapshots, lists, and metrics" {
 
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
-    try writeSnapshotRows(snapshots.items, &out.writer);
-    try writeNameValueRows(services.items, &out.writer);
-    try writeNameValueRows(sockets.items, &out.writer);
-    try writeNameValueRows(containers.items, &out.writer);
-    try writeMetricRows(metrics.items, &out.writer);
+    try app_render.writeSnapshotRows(snapshots.items, &out.writer);
+    try app_render.writeNameValueRows(services.items, &out.writer);
+    try app_render.writeNameValueRows(sockets.items, &out.writer);
+    try app_render.writeNameValueRows(containers.items, &out.writer);
+    try app_render.writeMetricRows(metrics.items, &out.writer);
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
 

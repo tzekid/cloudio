@@ -1,4 +1,5 @@
 const std = @import("std");
+const app_render = @import("app_render");
 const collector_caddy = @import("collector_caddy");
 const core_output = @import("core_output");
 const db_store = @import("db_store");
@@ -27,7 +28,7 @@ pub fn collectAndWriteUpstreams(ctx: Context, writer: anytype) !void {
     try collector_caddy.collect(ctx.io, ctx.gpa, ctx.paths, ctx.db);
     var rows = try ctx.db.caddyUpstreams(ctx.gpa);
     defer rows.deinit(ctx.gpa);
-    try writeUpstreamRows(rows.items, writer);
+    try app_render.writeArrowNameValueRows(rows.items, writer);
 }
 
 pub fn render(ctx: Context) !Output {
@@ -56,10 +57,6 @@ fn writeSiteRows(sites: []const collector_caddy.Site, writer: anytype) !void {
     }
 }
 
-fn writeUpstreamRows(rows: []const db_store.NameValueRow, writer: anytype) !void {
-    for (rows) |row| try writer.print("{s} -> {s}\n", .{ row.name, row.value });
-}
-
 test "caddy site and upstream rendering stays stable" {
     const allocator = std.testing.allocator;
     var parsed = try collector_caddy.parseSites(allocator,
@@ -86,7 +83,7 @@ test "caddy site and upstream rendering stays stable" {
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
     try writeSiteRows(parsed.items, &out.writer);
-    try writeUpstreamRows(upstreams.items, &out.writer);
+    try app_render.writeArrowNameValueRows(upstreams.items, &out.writer);
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
 

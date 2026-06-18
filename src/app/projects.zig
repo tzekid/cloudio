@@ -1,4 +1,5 @@
 const std = @import("std");
+const app_render = @import("app_render");
 const collector_projects = @import("collector_projects");
 const db_store = @import("db_store");
 
@@ -17,7 +18,7 @@ pub fn writeList(ctx: Context, writer: anytype) !void {
     try collector_projects.collect(ctx.io, ctx.gpa, ctx.projects_root, ctx.db);
     var rows = try ctx.db.projectList(ctx.gpa);
     defer rows.deinit(ctx.gpa);
-    try writeNameValueRows(rows.items, writer);
+    try app_render.writeNameValueRows(rows.items, writer);
 }
 
 pub fn writeShow(gpa: Allocator, db: *Db, name: []const u8, writer: anytype) !void {
@@ -35,10 +36,6 @@ pub fn writeShow(gpa: Allocator, db: *Db, name: []const u8, writer: anytype) !vo
         details.service,
         details.container,
     });
-}
-
-fn writeNameValueRows(rows: []const db_store.NameValueRow, writer: anytype) !void {
-    for (rows) |row| try writer.print("{s}\t{s}\n", .{ row.name, row.value });
 }
 
 test "projects show renders project details and not-found states" {
