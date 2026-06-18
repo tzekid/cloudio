@@ -3892,6 +3892,8 @@ fn isCloudflareSecurityTypedTableTag(tag: []const u8) bool {
 fn isCloudflareTypedInventoryTag(tag: []const u8) bool {
     return tagContainsAny(tag, &.{
         "Tunnel",
+        "Account",
+        "User",
         "Ruleset",
         "Rules List",
         "Access",

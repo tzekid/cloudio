@@ -461,6 +461,18 @@ fn appendInventoryRowsFromValue(gpa: Allocator, rows: *std.ArrayList(InventoryRo
             } else if (object.get("soa")) |nested| {
                 try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
                 try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
+            } else if (try appendInventoryRowWithNestedFields(gpa, rows, kind, scope, scope_id, value, object, &.{
+                "roles",
+                "policies",
+                "permission_groups",
+                "resource_groups",
+                "scope",
+                "objects",
+                "user",
+                "organizations",
+                "configuration",
+            })) {
+                return;
             } else if (object.get("rules")) |nested| {
                 try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
                 try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
@@ -503,6 +515,25 @@ fn appendInventoryRowsFromValue(gpa: Allocator, rows: *std.ArrayList(InventoryRo
         },
         else => {},
     }
+}
+
+fn appendInventoryRowWithNestedFields(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, value: std.json.Value, object: anytype, nested_fields: []const []const u8) anyerror!bool {
+    var found_nested = false;
+    for (nested_fields) |field_name| {
+        if (object.get(field_name) != null) {
+            found_nested = true;
+            break;
+        }
+    }
+    if (!found_nested) return false;
+
+    try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+    for (nested_fields) |field_name| {
+        if (object.get(field_name)) |nested| {
+            try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
+        }
+    }
+    return true;
 }
 
 fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, item: std.json.Value) !void {
@@ -701,6 +732,7 @@ fn resourceName(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "account_name",
         "dataset",
         "key",
+        "label",
         "display_name",
         "description",
         "comment",
@@ -763,6 +795,8 @@ fn resourceType(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "key_type",
         "algo",
         "zone_mode",
+        "access",
+        "target",
     };
     for (fields) |field_name| {
         if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
@@ -821,6 +855,12 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "ruleset_id",
         "rule_id",
         "policy_id",
+        "member_id",
+        "user_id",
+        "role_id",
+        "permission_group_id",
+        "resource_group_id",
+        "user_group_id",
         "colo_name",
         "client_id",
         "connector_id",
@@ -856,7 +896,10 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "source",
         "network",
         "action",
+        "value",
         "target",
+        "url",
+        "user_agent",
         "content",
         "public_key",
         "digest",
@@ -871,10 +914,19 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "sender",
         "email",
         "username",
-        "value",
     };
     for (fields) |field_name| {
         if (core_json.fieldAnyString(gpa, item, field_name)) |value| return value;
+    }
+    if (core_json.field(item, "meta")) |meta| {
+        if (core_json.fieldAnyString(gpa, meta, "label")) |value| return value;
+        if (core_json.fieldAnyString(gpa, meta, "scopes")) |value| return value;
+        if (core_json.fieldAnyString(gpa, meta, "value")) |value| return value;
+        if (core_json.fieldAnyString(gpa, meta, "key")) |value| return value;
+    }
+    if (core_json.field(item, "user")) |user| {
+        if (core_json.fieldAnyString(gpa, user, "email")) |value| return value;
+        if (core_json.fieldAnyString(gpa, user, "id")) |value| return value;
     }
     return null;
 }
@@ -898,6 +950,12 @@ fn resourceFlag(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldBool(item, "foundation_dns")) |enabled| return try gpa.dupe(u8, if (enabled) "foundation_dns" else "standard_dns");
     if (core_json.fieldBool(item, "multi_provider")) |enabled| return try gpa.dupe(u8, if (enabled) "multi_provider" else "single_provider");
     if (core_json.fieldBool(item, "secondary_overrides")) |enabled| return try gpa.dupe(u8, if (enabled) "secondary_overrides" else "no_secondary_overrides");
+    if (core_json.fieldBool(item, "two_factor_authentication_enabled")) |enabled| return try gpa.dupe(u8, if (enabled) "2fa_enabled" else "2fa_disabled");
+    if (core_json.fieldBool(item, "two_factor_authentication_locked")) |locked| return try gpa.dupe(u8, if (locked) "2fa_locked" else "2fa_unlocked");
+    if (core_json.fieldBool(item, "suspended")) |suspended| return try gpa.dupe(u8, if (suspended) "suspended" else "not_suspended");
+    if (core_json.fieldBool(item, "has_business_zones")) |has| return try gpa.dupe(u8, if (has) "has_business_zones" else "no_business_zones");
+    if (core_json.fieldBool(item, "has_enterprise_zones")) |has| return try gpa.dupe(u8, if (has) "has_enterprise_zones" else "no_enterprise_zones");
+    if (core_json.fieldBool(item, "has_pro_zones")) |has| return try gpa.dupe(u8, if (has) "has_pro_zones" else "no_pro_zones");
     if (core_json.fieldBool(item, "is_deleted")) |deleted| return try gpa.dupe(u8, if (deleted) "deleted" else "not_deleted");
     if (core_json.fieldBool(item, "deleted")) |deleted| return try gpa.dupe(u8, if (deleted) "deleted" else "not_deleted");
     if (core_json.fieldBool(item, "temporary")) |temporary| return try gpa.dupe(u8, if (temporary) "temporary" else "persistent");
@@ -1015,12 +1073,14 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "dataset",
         "hostname",
         "Name",
+        "key",
         "network",
         "cidr",
         "prefix",
         "name",
         "tag",
         "address",
+        "target",
     };
     for (fields) |field_name| {
         const value = core_json.field(item, field_name) orelse continue;
@@ -1400,6 +1460,67 @@ test "parses typed Cloudflare DNS control plane inventory shapes" {
     try std.testing.expectEqualStrings("result", scalar.items[0].resource_id);
     try std.testing.expectEqualStrings("Enabled", scalar.items[0].status orelse "");
     try std.testing.expectEqualStrings("zone-1", scalar.items[0].zone_id orelse "");
+}
+
+test "parses typed Cloudflare account IAM inventory shapes" {
+    const allocator = std.testing.allocator;
+    var rows = try parseInventoryRows(allocator, "cloudflare-account", "account", "acct-1",
+        \\{"result":[
+        \\  {"id":"member-1","email":"owner@example.com","status":"accepted","user":{"id":"user-1","email":"owner@example.com","first_name":"Kid","two_factor_authentication_enabled":true},"roles":[{"id":"role-1","name":"Account Administrator","description":"Administrative access"}],"policies":[{"id":"policy-1","access":"allow","permission_groups":[{"id":"pg-1","name":"DNS Read","meta":{"label":"dns_read","scopes":"com.cloudflare.api.account"}}],"resource_groups":[{"id":"rg-1","name":"Account resources","scope":[{"key":"com.cloudflare.api.account.acct-1","objects":[{"key":"com.cloudflare.api.zone.zone-1"}]}]}]}]},
+        \\  {"id":"ug-1","name":"Admins","created_on":"2026-06-17T00:00:00Z","modified_on":"2026-06-17T01:00:00Z","policies":[{"id":"policy-2","access":"allow","permission_groups":[{"id":"pg-2"}],"resource_groups":[{"id":"rg-2"}]}]},
+        \\  {"id":"ug-member-1","email":"ops@example.com","status":"pending","created_at":"2026-06-17T02:00:00Z","user":{"id":"user-2","email":"ops@example.com","first_name":"Ops"}},
+        \\  {"name":"logo.svg","description":"Logo asset","url":"https://assets.example/logo.svg","last_updated":"2026-06-17T03:00:00Z"},
+        \\  {"id":"ua-1","mode":"block","paused":false,"description":"Bad crawler","configuration":{"target":"ua","value":"BadBot"}},
+        \\  {"id":"current-user","email":"kid@example.com","first_name":"Kid","two_factor_authentication_enabled":true,"suspended":false,"organizations":[{"id":"org-1","name":"Main Org","status":"active","roles":["Super Administrator"]}]}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 19), rows.items.len);
+    try std.testing.expectEqualStrings("member-1", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("owner@example.com", rows.items[0].name orelse "");
+    try std.testing.expectEqualStrings("accepted", rows.items[0].status orelse "");
+    try std.testing.expectEqualStrings("acct-1", rows.items[0].account_id orelse "");
+    try std.testing.expectEqualStrings("role-1", rows.items[1].resource_id);
+    try std.testing.expectEqualStrings("Account Administrator", rows.items[1].name orelse "");
+    try std.testing.expectEqualStrings("policy-1", rows.items[2].resource_id);
+    try std.testing.expectEqualStrings("allow", rows.items[2].category orelse "");
+    try std.testing.expectEqualStrings("pg-1", rows.items[3].resource_id);
+    try std.testing.expectEqualStrings("DNS Read", rows.items[3].name orelse "");
+    try std.testing.expectEqualStrings("dns_read", rows.items[3].related_id orelse "");
+    try std.testing.expectEqualStrings("rg-1", rows.items[4].resource_id);
+    try std.testing.expectEqualStrings("Account resources", rows.items[4].name orelse "");
+    try std.testing.expectEqualStrings("com.cloudflare.api.account.acct-1", rows.items[5].resource_id);
+    try std.testing.expectEqualStrings("com.cloudflare.api.zone.zone-1", rows.items[6].resource_id);
+    try std.testing.expectEqualStrings("user-1", rows.items[7].resource_id);
+    try std.testing.expectEqualStrings("owner@example.com", rows.items[7].name orelse "");
+    try std.testing.expectEqualStrings("2fa_enabled", rows.items[7].flag orelse "");
+    try std.testing.expectEqualStrings("ug-1", rows.items[8].resource_id);
+    try std.testing.expectEqualStrings("Admins", rows.items[8].name orelse "");
+    try std.testing.expectEqualStrings("2026-06-17T00:00:00Z", rows.items[8].created_at orelse "");
+    try std.testing.expectEqualStrings("2026-06-17T01:00:00Z", rows.items[8].updated_at orelse "");
+    try std.testing.expectEqualStrings("policy-2", rows.items[9].resource_id);
+    try std.testing.expectEqualStrings("pg-2", rows.items[10].resource_id);
+    try std.testing.expectEqualStrings("rg-2", rows.items[11].resource_id);
+    try std.testing.expectEqualStrings("ug-member-1", rows.items[12].resource_id);
+    try std.testing.expectEqualStrings("pending", rows.items[12].status orelse "");
+    try std.testing.expectEqualStrings("2026-06-17T02:00:00Z", rows.items[12].created_at orelse "");
+    try std.testing.expectEqualStrings("user-2", rows.items[13].resource_id);
+    try std.testing.expectEqualStrings("logo.svg", rows.items[14].resource_id);
+    try std.testing.expectEqualStrings("logo.svg", rows.items[14].name orelse "");
+    try std.testing.expectEqualStrings("https://assets.example/logo.svg", rows.items[14].related_id orelse "");
+    try std.testing.expectEqualStrings("2026-06-17T03:00:00Z", rows.items[14].updated_at orelse "");
+    try std.testing.expectEqualStrings("ua-1", rows.items[15].resource_id);
+    try std.testing.expectEqualStrings("block", rows.items[15].status orelse "");
+    try std.testing.expectEqualStrings("Bad crawler", rows.items[15].name orelse "");
+    try std.testing.expectEqualStrings("active", rows.items[15].flag orelse "");
+    try std.testing.expectEqualStrings("ua", rows.items[16].resource_id);
+    try std.testing.expectEqualStrings("BadBot", rows.items[16].related_id orelse "");
+    try std.testing.expectEqualStrings("current-user", rows.items[17].resource_id);
+    try std.testing.expectEqualStrings("kid@example.com", rows.items[17].name orelse "");
+    try std.testing.expectEqualStrings("2fa_enabled", rows.items[17].flag orelse "");
+    try std.testing.expectEqualStrings("org-1", rows.items[18].resource_id);
+    try std.testing.expectEqualStrings("active", rows.items[18].status orelse "");
 }
 
 test "parses typed Cloudflare security rows from broad security result shapes" {
