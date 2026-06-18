@@ -382,6 +382,78 @@ pub const CloudflareKindCounts = struct {
     }
 };
 
+pub const CloudflareResourceHintRow = struct {
+    kind: []u8,
+    resource_id: []u8,
+    scope: []u8,
+    scope_id: []u8,
+    name: []u8,
+    status: []u8,
+    resource_type: []u8,
+    updated_at: []u8,
+
+    pub fn deinit(self: CloudflareResourceHintRow, allocator: Allocator) void {
+        allocator.free(self.kind);
+        allocator.free(self.resource_id);
+        allocator.free(self.scope);
+        allocator.free(self.scope_id);
+        allocator.free(self.name);
+        allocator.free(self.status);
+        allocator.free(self.resource_type);
+        allocator.free(self.updated_at);
+    }
+};
+
+pub const CloudflareResourceHintRows = struct {
+    items: []CloudflareResourceHintRow,
+
+    pub fn deinit(self: *CloudflareResourceHintRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const CloudflareInventoryHintRow = struct {
+    kind: []u8,
+    resource_id: []u8,
+    scope: []u8,
+    scope_id: []u8,
+    display_name: []u8,
+    status: []u8,
+    category: []u8,
+    domain: []u8,
+    account_id: []u8,
+    zone_id: []u8,
+    related_id: []u8,
+    flag: []u8,
+    updated_at: []u8,
+
+    pub fn deinit(self: CloudflareInventoryHintRow, allocator: Allocator) void {
+        allocator.free(self.kind);
+        allocator.free(self.resource_id);
+        allocator.free(self.scope);
+        allocator.free(self.scope_id);
+        allocator.free(self.display_name);
+        allocator.free(self.status);
+        allocator.free(self.category);
+        allocator.free(self.domain);
+        allocator.free(self.account_id);
+        allocator.free(self.zone_id);
+        allocator.free(self.related_id);
+        allocator.free(self.flag);
+        allocator.free(self.updated_at);
+    }
+};
+
+pub const CloudflareInventoryHintRows = struct {
+    items: []CloudflareInventoryHintRow,
+
+    pub fn deinit(self: *CloudflareInventoryHintRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const HostingerVpsRow = struct {
     id: []u8,
     name: []u8,
@@ -1443,6 +1515,50 @@ pub const Db = struct {
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
 
+    pub fn cloudflareResourceHints(self: *Db, gpa: Allocator, limit: i64) !CloudflareResourceHintRows {
+        const stmt = try self.prepare(
+            \\SELECT kind, resource_id, COALESCE(scope,''), COALESCE(scope_id,''), COALESCE(name,''), COALESCE(status,''), COALESCE(resource_type,''), updated_at
+            \\FROM cloudflare_resources
+            \\WHERE resource_id != ''
+            \\ORDER BY updated_at DESC, kind, resource_id DESC
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 5000));
+        var rows = std.ArrayList(CloudflareResourceHintRow).empty;
+        errdefer deinitCloudflareResourceHintRowList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try cloudflareResourceHintRowFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
+    pub fn cloudflareInventoryHints(self: *Db, gpa: Allocator, limit: i64) !CloudflareInventoryHintRows {
+        const stmt = try self.prepare(
+            \\SELECT kind, resource_id, COALESCE(scope,''), COALESCE(scope_id,''), COALESCE(display_name,''), COALESCE(status,''), COALESCE(category,''), COALESCE(domain,''), COALESCE(account_id,''), COALESCE(zone_id,''), COALESCE(related_id,''), COALESCE(flag,''), updated_at
+            \\FROM cloudflare_inventory_items
+            \\WHERE resource_id != '' OR COALESCE(scope_id,'') != '' OR COALESCE(domain,'') != '' OR COALESCE(account_id,'') != '' OR COALESCE(zone_id,'') != '' OR COALESCE(related_id,'') != ''
+            \\ORDER BY updated_at DESC, kind, resource_id DESC
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 5000));
+        var rows = std.ArrayList(CloudflareInventoryHintRow).empty;
+        errdefer deinitCloudflareInventoryHintRowList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try cloudflareInventoryHintRowFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
     pub fn cloudflareResourceKindCounts(self: *Db, gpa: Allocator, limit: i64) !CloudflareKindCounts {
         return try self.cloudflareKindCounts(gpa,
             \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
@@ -2064,6 +2180,16 @@ fn deinitCloudflareKindCountList(rows: *std.ArrayList(CloudflareKindCount), allo
     rows.deinit(allocator);
 }
 
+fn deinitCloudflareResourceHintRowList(rows: *std.ArrayList(CloudflareResourceHintRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
+fn deinitCloudflareInventoryHintRowList(rows: *std.ArrayList(CloudflareInventoryHintRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
 fn deinitHostingerVpsRowList(rows: *std.ArrayList(HostingerVpsRow), allocator: Allocator) void {
     for (rows.items) |row| row.deinit(allocator);
     rows.deinit(allocator);
@@ -2332,6 +2458,79 @@ fn cloudflareKindCountFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt)
         .kind = kind,
         .count = sqlite.sqlite3_column_int64(stmt, 1),
         .latest_updated = latest_updated,
+    };
+}
+
+fn cloudflareResourceHintRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !CloudflareResourceHintRow {
+    const kind = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(kind);
+    const resource_id = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(resource_id);
+    const scope = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(scope);
+    const scope_id = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(scope_id);
+    const name = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(name);
+    const status = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(status);
+    const resource_type = try dupeColumn(allocator, stmt, 6);
+    errdefer allocator.free(resource_type);
+    const updated_at = try dupeColumn(allocator, stmt, 7);
+    errdefer allocator.free(updated_at);
+    return .{
+        .kind = kind,
+        .resource_id = resource_id,
+        .scope = scope,
+        .scope_id = scope_id,
+        .name = name,
+        .status = status,
+        .resource_type = resource_type,
+        .updated_at = updated_at,
+    };
+}
+
+fn cloudflareInventoryHintRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !CloudflareInventoryHintRow {
+    const kind = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(kind);
+    const resource_id = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(resource_id);
+    const scope = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(scope);
+    const scope_id = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(scope_id);
+    const display_name = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(display_name);
+    const status = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(status);
+    const category = try dupeColumn(allocator, stmt, 6);
+    errdefer allocator.free(category);
+    const domain = try dupeColumn(allocator, stmt, 7);
+    errdefer allocator.free(domain);
+    const account_id = try dupeColumn(allocator, stmt, 8);
+    errdefer allocator.free(account_id);
+    const zone_id = try dupeColumn(allocator, stmt, 9);
+    errdefer allocator.free(zone_id);
+    const related_id = try dupeColumn(allocator, stmt, 10);
+    errdefer allocator.free(related_id);
+    const flag = try dupeColumn(allocator, stmt, 11);
+    errdefer allocator.free(flag);
+    const updated_at = try dupeColumn(allocator, stmt, 12);
+    errdefer allocator.free(updated_at);
+    return .{
+        .kind = kind,
+        .resource_id = resource_id,
+        .scope = scope,
+        .scope_id = scope_id,
+        .display_name = display_name,
+        .status = status,
+        .category = category,
+        .domain = domain,
+        .account_id = account_id,
+        .zone_id = zone_id,
+        .related_id = related_id,
+        .flag = flag,
+        .updated_at = updated_at,
     };
 }
 
