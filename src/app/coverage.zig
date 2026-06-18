@@ -952,6 +952,115 @@ const ActualCaptureHints = struct {
     hostinger_inventory: []const db_store.HostingerInventoryHintRow = &.{},
 };
 
+const ActualCaptureInputSource = struct {
+    operation_id: []const u8,
+    hint_kind: []const u8,
+    purpose: []const u8,
+};
+
+const hostinger_domain_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "domains_getDomainListV1",
+    .hint_kind = "domains_getDomainListV1",
+    .purpose = "discover account domains",
+}};
+
+const hostinger_vps_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "VPS_getVirtualMachinesV1",
+    .hint_kind = "VPS_getVirtualMachinesV1",
+    .purpose = "discover VPS ids",
+}};
+
+const hostinger_action_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "VPS_getActionsV1",
+    .hint_kind = "VPS_getActionsV1",
+    .purpose = "discover VPS action ids",
+}};
+
+const hostinger_template_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "VPS_getTemplatesV1",
+    .hint_kind = "VPS_getTemplatesV1",
+    .purpose = "discover VPS template ids",
+}};
+
+const hostinger_firewall_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "VPS_getFirewallListV1",
+    .hint_kind = "VPS_getFirewallListV1",
+    .purpose = "discover VPS firewall ids",
+}};
+
+const hostinger_post_install_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "VPS_getPostInstallScriptsV1",
+    .hint_kind = "VPS_getPostInstallScriptsV1",
+    .purpose = "discover post-install script ids",
+}};
+
+const hostinger_dns_snapshot_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "DNS_getDNSSnapshotListV1",
+    .hint_kind = "DNS_getDNSSnapshotListV1",
+    .purpose = "discover DNS snapshot ids for the selected domain",
+}};
+
+const hostinger_whois_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "domains_getWHOISProfileListV1",
+    .hint_kind = "domains_getWHOISProfileListV1",
+    .purpose = "discover WHOIS profile ids",
+}};
+
+const hostinger_horizons_website_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "horizons_getWebsitesV1",
+    .hint_kind = "horizons_getWebsitesV1",
+    .purpose = "discover Horizons website ids",
+}};
+
+const hostinger_username_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "hosting_listWebsitesV1",
+    .hint_kind = "hosting_listWebsitesV1",
+    .purpose = "discover hosting account usernames from websites",
+}};
+
+const hostinger_order_sources = [_]ActualCaptureInputSource{
+    .{
+        .operation_id = "hosting_listOrdersV1",
+        .hint_kind = "hosting_listOrdersV1",
+        .purpose = "discover hosting order ids",
+    },
+    .{
+        .operation_id = "hosting_listWebsitesV1",
+        .hint_kind = "hosting_listWebsitesV1",
+        .purpose = "reuse website inventory related order ids",
+    },
+};
+
+const hostinger_database_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "hosting_listAccountDatabasesV1",
+    .hint_kind = "hosting_listAccountDatabasesV1",
+    .purpose = "discover database names for a hosting account",
+}};
+
+const hostinger_nodejs_build_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "hosting_listNodeJSBuildsV1",
+    .hint_kind = "hosting_listNodeJSBuildsV1",
+    .purpose = "discover NodeJS build UUIDs for a website",
+}};
+
+const hostinger_docker_project_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "VPS_getProjectListV1",
+    .hint_kind = "VPS_getProjectListV1",
+    .purpose = "discover Docker Manager project names for a VPS",
+}};
+
+const hostinger_reach_profile_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "reach_listProfilesV1",
+    .hint_kind = "reach_listProfilesV1",
+    .purpose = "discover Reach profile UUIDs",
+}};
+
+const hostinger_reach_segment_sources = [_]ActualCaptureInputSource{.{
+    .operation_id = "reach_listSegmentsV1",
+    .hint_kind = "reach_listSegmentsV1",
+    .purpose = "discover Reach segment UUIDs",
+}};
+
 const ActualCapturePlan = struct {
     options: ActualCaptureOptions,
     routes: CoverageRoutes,
@@ -1122,6 +1231,9 @@ const ActualCapturePlan = struct {
             });
             try writeActualMissingInputsText(writer, row.route, hints_value);
             try writer.writeByte('\n');
+            if (actualCaptureMissingInputCount(row.route, hints_value) != 0) {
+                try writeActualMissingInputSourcesText(gpa, writer, row.route, self.routes.items, self.captures.items, hints_value);
+            }
             const command = try actualCaptureCommand(gpa, row.route, hints_value);
             defer gpa.free(command);
             try writer.print("      capture: {s}\n", .{command});
@@ -1175,7 +1287,7 @@ const ActualCapturePlan = struct {
             }
             visible += 1;
             try writeMaybeJsonComma(writer, &first);
-            try writeActualCaptureCandidateJson(gpa, row, state, self.captures.items, hints_value, self.options, writer);
+            try writeActualCaptureCandidateJson(gpa, row, state, self.routes.items, self.captures.items, hints_value, self.options, writer);
         }
 
         try writer.writeAll("],");
@@ -3046,6 +3158,278 @@ fn writeActualMissingInputsJson(writer: anytype, route: provider_routes.Route, h
     try writer.writeByte(']');
 }
 
+fn writeActualMissingInputSourcesText(
+    gpa: Allocator,
+    writer: anytype,
+    route: provider_routes.Route,
+    routes: []const CoverageRoute,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    hints: ActualCaptureHints,
+) !void {
+    var wrote = false;
+    for (route.path_params) |param| {
+        if (!param.required) continue;
+        if (actualCapturePathParamHint(route, param.name, hints) != null) continue;
+        try writeActualMissingInputSourceRowsText(gpa, writer, route, routes, captures, hints, "path", param.name, &wrote);
+    }
+    for (route.query_params) |param| {
+        if (!param.required) continue;
+        if (actualCaptureHasQueryParamHint(route, param.name, hints)) continue;
+        try writeActualMissingInputSourceRowsText(gpa, writer, route, routes, captures, hints, "query", param.name, &wrote);
+    }
+    for (route.header_params) |param| {
+        if (!param.required) continue;
+        try writeActualMissingInputSourceRowsText(gpa, writer, route, routes, captures, hints, "header", param.name, &wrote);
+    }
+    if (!wrote) try writer.writeAll("      source: -\n");
+}
+
+fn writeActualMissingInputSourceRowsText(
+    gpa: Allocator,
+    writer: anytype,
+    route: provider_routes.Route,
+    routes: []const CoverageRoute,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    hints: ActualCaptureHints,
+    input_source: []const u8,
+    input_name: []const u8,
+    wrote: *bool,
+) !void {
+    const sources = actualCaptureMissingInputSources(route, input_source, input_name);
+    if (sources.len == 0) {
+        wrote.* = true;
+        try writer.print("      source: {s}:{s} <- unmapped\n", .{ input_source, input_name });
+        return;
+    }
+    for (sources) |source| {
+        wrote.* = true;
+        const source_route = actualCaptureFindRouteByOperationId(routes, route.provider, source.operation_id);
+        if (source_route) |found| {
+            const source_state = actualCaptureState(found, captures);
+            const command = try actualCaptureCommand(gpa, found, hints);
+            defer gpa.free(command);
+            try writer.print("      source: {s}:{s} <- {s} state={s} ready={s} diagnostic_ready={s} hint_count={d} capture: {s}\n", .{
+                input_source,
+                input_name,
+                source.operation_id,
+                if (source_state) |state| state.name() else "unknown",
+                if (actualCaptureReady(found, hints)) "true" else "false",
+                if (actualCaptureReadyWithPolicy(found, hints, true)) "true" else "false",
+                actualCaptureSourceHintCount(route, hints, input_source, input_name, source),
+                command,
+            });
+        } else {
+            try writer.print("      source: {s}:{s} <- {s} state=not_in_catalog hint_kind={s} hint_count={d} purpose=", .{
+                input_source,
+                input_name,
+                source.operation_id,
+                source.hint_kind,
+                actualCaptureSourceHintCount(route, hints, input_source, input_name, source),
+            });
+            try writer.writeAll(source.purpose);
+            try writer.writeByte('\n');
+        }
+    }
+}
+
+fn writeActualMissingInputSourcesJson(
+    gpa: Allocator,
+    writer: anytype,
+    route: provider_routes.Route,
+    routes: []const CoverageRoute,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    hints: ActualCaptureHints,
+) !void {
+    try writer.writeByte('[');
+    var first = true;
+    for (route.path_params) |param| {
+        if (!param.required) continue;
+        if (actualCapturePathParamHint(route, param.name, hints) != null) continue;
+        try writeActualMissingInputSourceRowsJson(gpa, writer, route, routes, captures, hints, "path", param.name, &first);
+    }
+    for (route.query_params) |param| {
+        if (!param.required) continue;
+        if (actualCaptureHasQueryParamHint(route, param.name, hints)) continue;
+        try writeActualMissingInputSourceRowsJson(gpa, writer, route, routes, captures, hints, "query", param.name, &first);
+    }
+    for (route.header_params) |param| {
+        if (!param.required) continue;
+        try writeActualMissingInputSourceRowsJson(gpa, writer, route, routes, captures, hints, "header", param.name, &first);
+    }
+    try writer.writeByte(']');
+}
+
+fn writeActualMissingInputSourceRowsJson(
+    gpa: Allocator,
+    writer: anytype,
+    route: provider_routes.Route,
+    routes: []const CoverageRoute,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    hints: ActualCaptureHints,
+    input_source: []const u8,
+    input_name: []const u8,
+    first: *bool,
+) !void {
+    const sources = actualCaptureMissingInputSources(route, input_source, input_name);
+    if (sources.len == 0) {
+        try writeMaybeJsonComma(writer, first);
+        try writer.writeByte('{');
+        try writeJsonField(writer, "input_source", input_source, true);
+        try writeJsonField(writer, "input_name", input_name, true);
+        try writeJsonNullableStringField(writer, "source_operation_id", null, true);
+        try writeJsonNullableStringField(writer, "hint_kind", null, true);
+        try writeJsonCountField(writer, "hint_count", 0, true);
+        try writeJsonField(writer, "purpose", "no source mapping", true);
+        try writeJsonField(writer, "catalog_state", "unmapped", true);
+        try writeJsonNullableStringField(writer, "actual_state", null, true);
+        try writeJsonNullableBoolField(writer, "ready", null, true);
+        try writeJsonNullableBoolField(writer, "diagnostic_ready", null, true);
+        try writeJsonNullableBoolField(writer, "live_read_supported", null, true);
+        try writeJsonNullableBoolField(writer, "diagnostic_read_supported", null, true);
+        try writeJsonNullableStringField(writer, "capture_command", null, false);
+        try writer.writeByte('}');
+        return;
+    }
+
+    for (sources) |source| {
+        try writeMaybeJsonComma(writer, first);
+        try writeActualMissingInputSourceJson(gpa, writer, route, routes, captures, hints, input_source, input_name, source);
+    }
+}
+
+fn writeActualMissingInputSourceJson(
+    gpa: Allocator,
+    writer: anytype,
+    route: provider_routes.Route,
+    routes: []const CoverageRoute,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    hints: ActualCaptureHints,
+    input_source: []const u8,
+    input_name: []const u8,
+    source: ActualCaptureInputSource,
+) !void {
+    const source_route = actualCaptureFindRouteByOperationId(routes, route.provider, source.operation_id);
+    var command: ?[]u8 = null;
+    defer if (command) |owned| gpa.free(owned);
+    if (source_route) |found| command = try actualCaptureCommand(gpa, found, hints);
+    const source_state = if (source_route) |found| actualCaptureState(found, captures) else null;
+
+    try writer.writeByte('{');
+    try writeJsonField(writer, "input_source", input_source, true);
+    try writeJsonField(writer, "input_name", input_name, true);
+    try writeJsonNullableStringField(writer, "source_operation_id", source.operation_id, true);
+    try writeJsonNullableStringField(writer, "hint_kind", source.hint_kind, true);
+    try writeJsonCountField(writer, "hint_count", actualCaptureSourceHintCount(route, hints, input_source, input_name, source), true);
+    try writeJsonField(writer, "purpose", source.purpose, true);
+    try writeJsonField(writer, "catalog_state", if (source_route != null) "present" else "not_in_catalog", true);
+    try writeJsonNullableStringField(writer, "actual_state", if (source_state) |state| state.name() else null, true);
+    try writeJsonNullableBoolField(writer, "ready", if (source_route) |found| actualCaptureReady(found, hints) else null, true);
+    try writeJsonNullableBoolField(writer, "diagnostic_ready", if (source_route) |found| actualCaptureReadyWithPolicy(found, hints, true) else null, true);
+    try writeJsonNullableBoolField(writer, "live_read_supported", if (source_route) |found| provider_dispatch.routeLiveCallSupported(found) else null, true);
+    try writeJsonNullableBoolField(writer, "diagnostic_read_supported", if (source_route) |found| provider_dispatch.routeDiagnosticReadSupported(found) else null, true);
+    try writeJsonNullableStringField(writer, "capture_command", command, false);
+    try writer.writeByte('}');
+}
+
+fn actualCaptureFindRouteByOperationId(routes: []const CoverageRoute, provider: provider_routes.Provider, operation_id: []const u8) ?provider_routes.Route {
+    for (routes) |row| {
+        if (row.route.provider != provider) continue;
+        if (row.route.operation_id == null) continue;
+        if (std.mem.eql(u8, row.route.operation_id.?, operation_id)) return row.route;
+    }
+    return null;
+}
+
+fn actualCaptureSourceHintCount(
+    route: provider_routes.Route,
+    hints: ActualCaptureHints,
+    input_source: []const u8,
+    input_name: []const u8,
+    source: ActualCaptureInputSource,
+) usize {
+    if (route.provider != .hostinger) return 0;
+    if (std.mem.eql(u8, input_source, "path")) {
+        if (std.mem.eql(u8, input_name, "domain")) {
+            var count = hints.configured_domains.len;
+            for (hints.hostinger_inventory) |row| {
+                if (!std.mem.eql(u8, row.kind, source.hint_kind)) continue;
+                if (actualCaptureLooksLikeDomain(row.domain) or actualCaptureLooksLikeDomain(row.display_name) or actualCaptureLooksLikeDomain(row.resource_id)) count += 1;
+            }
+            for (hints.hostinger_resources) |row| {
+                if (!std.mem.eql(u8, row.kind, source.hint_kind)) continue;
+                if (actualCaptureLooksLikeDomain(row.domain) or actualCaptureLooksLikeDomain(row.name) or actualCaptureLooksLikeDomain(row.resource_id)) count += 1;
+            }
+            return count;
+        }
+        if (std.mem.eql(u8, input_name, "virtualMachineId")) {
+            var count = hints.hostinger_vps.len;
+            count += actualCaptureHostingerKindHintCount(hints, source.hint_kind);
+            return count;
+        }
+        if (std.mem.eql(u8, input_name, "username")) {
+            var count: usize = 0;
+            for (hints.hostinger_inventory) |row| {
+                if (!std.mem.eql(u8, row.kind, source.hint_kind)) continue;
+                if (row.username.len != 0) count += 1;
+            }
+            return count;
+        }
+    }
+
+    if (std.mem.eql(u8, input_source, "query") and std.mem.eql(u8, input_name, "order_id")) {
+        if (std.mem.eql(u8, source.hint_kind, "hosting_listWebsitesV1")) {
+            var count: usize = 0;
+            for (hints.hostinger_inventory) |row| {
+                if (!std.mem.eql(u8, row.kind, source.hint_kind)) continue;
+                if (row.related_id.len != 0) count += 1;
+            }
+            return count;
+        }
+    }
+
+    return actualCaptureHostingerKindHintCount(hints, source.hint_kind);
+}
+
+fn actualCaptureHostingerKindHintCount(hints: ActualCaptureHints, kind: []const u8) usize {
+    var count: usize = 0;
+    for (hints.hostinger_resources) |row| {
+        if (std.mem.eql(u8, row.kind, kind) and row.resource_id.len != 0) count += 1;
+    }
+    for (hints.hostinger_inventory) |row| {
+        if (std.mem.eql(u8, row.kind, kind) and row.resource_id.len != 0) count += 1;
+    }
+    return count;
+}
+
+fn actualCaptureMissingInputSources(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) []const ActualCaptureInputSource {
+    if (route.provider != .hostinger) return &.{};
+    const operation_id = route.operation_id orelse return &.{};
+
+    if (std.mem.eql(u8, input_source, "path")) {
+        if (std.mem.eql(u8, input_name, "domain")) return hostinger_domain_sources[0..];
+        if (std.mem.eql(u8, input_name, "virtualMachineId")) return hostinger_vps_sources[0..];
+        if (std.mem.eql(u8, input_name, "actionId")) return hostinger_action_sources[0..];
+        if (std.mem.eql(u8, input_name, "templateId")) return hostinger_template_sources[0..];
+        if (std.mem.eql(u8, input_name, "firewallId")) return hostinger_firewall_sources[0..];
+        if (std.mem.eql(u8, input_name, "postInstallScriptId")) return hostinger_post_install_sources[0..];
+        if (std.mem.eql(u8, input_name, "snapshotId") and std.mem.eql(u8, operation_id, "DNS_getDNSSnapshotV1")) return hostinger_dns_snapshot_sources[0..];
+        if (std.mem.eql(u8, input_name, "whoisId") and (std.mem.eql(u8, operation_id, "domains_getWHOISProfileV1") or std.mem.eql(u8, operation_id, "domains_getWHOISProfileUsageV1"))) return hostinger_whois_sources[0..];
+        if (std.mem.eql(u8, input_name, "websiteId") and std.mem.eql(u8, operation_id, "horizons_getWebsiteV1")) return hostinger_horizons_website_sources[0..];
+        if (std.mem.eql(u8, input_name, "username") and std.mem.startsWith(u8, operation_id, "hosting_")) return hostinger_username_sources[0..];
+        if (std.mem.eql(u8, input_name, "name") and std.mem.eql(u8, operation_id, "hosting_getPhpMyAdminLinkV1")) return hostinger_database_sources[0..];
+        if (std.mem.eql(u8, input_name, "uuid") and std.mem.eql(u8, operation_id, "hosting_getNodeJSBuildLogsV1")) return hostinger_nodejs_build_sources[0..];
+        if (std.mem.eql(u8, input_name, "projectName") and std.mem.startsWith(u8, operation_id, "VPS_getProject")) return hostinger_docker_project_sources[0..];
+        if (std.mem.eql(u8, input_name, "profileUuid") and std.mem.eql(u8, operation_id, "reach_listProfileSegmentContactsV1")) return hostinger_reach_profile_sources[0..];
+        if (std.mem.eql(u8, input_name, "segmentUuid") and (std.mem.eql(u8, operation_id, "reach_getSegmentDetailsV1") or std.mem.eql(u8, operation_id, "reach_listSegmentContactsV1") or std.mem.eql(u8, operation_id, "reach_listProfileSegmentContactsV1"))) return hostinger_reach_segment_sources[0..];
+    }
+
+    if (std.mem.eql(u8, input_source, "query")) {
+        if (std.mem.eql(u8, input_name, "order_id") and std.mem.eql(u8, operation_id, "hosting_listAvailableDatacentersV1")) return hostinger_order_sources[0..];
+    }
+
+    return &.{};
+}
+
 fn writeActualCaptureTotalsJson(totals_value: ActualCaptureTotals, writer: anytype) !void {
     try writer.writeByte('{');
     try writeJsonCountField(writer, "official_read_routes", totals_value.official_read_routes, true);
@@ -3063,6 +3447,7 @@ fn writeActualCaptureCandidateJson(
     gpa: Allocator,
     row: CoverageRoute,
     state: ActualCaptureState,
+    routes: []const CoverageRoute,
     captures: []const db_store.RouteCaptureEvidenceRow,
     hints: ActualCaptureHints,
     options: ActualCaptureOptions,
@@ -3097,6 +3482,9 @@ fn writeActualCaptureCandidateJson(
     try writeJsonBoolField(writer, "diagnostic_read_supported", provider_dispatch.routeDiagnosticReadSupported(route), true);
     try writer.writeAll("\"missing_inputs\":");
     try writeActualMissingInputsJson(writer, route, hints);
+    try writer.writeByte(',');
+    try writer.writeAll("\"missing_input_sources\":");
+    try writeActualMissingInputSourcesJson(gpa, writer, route, routes, captures, hints);
     try writer.writeByte(',');
     try writeJsonField(writer, "capture_command", command, options.include_plans);
     if (options.include_plans) {
@@ -6380,6 +6768,85 @@ test "plans Hostinger Docker and Reach child captures from scoped resource hints
     try std.testing.expect(std.mem.indexOf(u8, wrong_json, "\"operation_id\":\"VPS_getProjectContentsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, wrong_json, "\"missing_inputs\":[{\"source\":\"path\",\"name\":\"projectName\"}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, wrong_json, "cloudio route capture hostinger --operation VPS_getProjectContentsV1 --path-param virtualMachineId='1307809' --path-param projectName='wrong-project'") == null);
+}
+
+test "explains Hostinger missing input source routes for broad child groups" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-capture-hostinger-source-plan.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertHostingerVps("1307809", "srv1307809.hstgr.cloud", "running", "76.13.130.170", "KVM 4", "{\"id\":1307809}");
+    try db.insertAudit("route.capture", "permission", "hostinger/reach_listProfilesV1 /api/reach/v1/profiles");
+    try db.insertAudit("route.capture", "http_error", "hostinger/VPS_getProjectListV1 /api/vps/v1/virtual-machines/1307809/docker");
+
+    const hostinger =
+        \\{"provider":"hostinger","tag":"DNS: Snapshot","method":"GET","path":"/api/dns/v1/snapshots/{domain}","operation_id":"DNS_getDNSSnapshotListV1","path_params":[{"name":"domain","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"domain read"}
+        \\{"provider":"hostinger","tag":"DNS: Snapshot","method":"GET","path":"/api/dns/v1/snapshots/{domain}/{snapshotId}","operation_id":"DNS_getDNSSnapshotV1","path_params":[{"name":"domain","required":true},{"name":"snapshotId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"snapshot detail"}
+        \\{"provider":"hostinger","tag":"Domains: WHOIS","method":"GET","path":"/api/domains/v1/whois","operation_id":"domains_getWHOISProfileListV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"whois list"}
+        \\{"provider":"hostinger","tag":"Domains: WHOIS","method":"GET","path":"/api/domains/v1/whois/{whoisId}","operation_id":"domains_getWHOISProfileV1","path_params":[{"name":"whoisId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"whois detail"}
+        \\{"provider":"hostinger","tag":"Horizons: Websites","method":"GET","path":"/api/horizons/v1/websites/{websiteId}","operation_id":"horizons_getWebsiteV1","path_params":[{"name":"websiteId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"website detail"}
+        \\{"provider":"hostinger","tag":"Hosting: Websites","method":"GET","path":"/api/hosting/v1/websites","operation_id":"hosting_listWebsitesV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"website list"}
+        \\{"provider":"hostinger","tag":"Hosting: Orders","method":"GET","path":"/api/hosting/v1/orders","operation_id":"hosting_listOrdersV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"orders"}
+        \\{"provider":"hostinger","tag":"Hosting: Databases","method":"GET","path":"/api/hosting/v1/accounts/{username}/databases","operation_id":"hosting_listAccountDatabasesV1","path_params":[{"name":"username","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"database list"}
+        \\{"provider":"hostinger","tag":"Hosting: Databases","method":"GET","path":"/api/hosting/v1/accounts/{username}/databases/{name}/phpmyadmin-link","operation_id":"hosting_getPhpMyAdminLinkV1","path_params":[{"name":"username","required":true},{"name":"name","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"database detail"}
+        \\{"provider":"hostinger","tag":"Hosting: Datacenters","method":"GET","path":"/api/hosting/v1/datacenters","operation_id":"hosting_listAvailableDatacentersV1","path_params":[],"query_params":[{"name":"order_id","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"order-scoped"}
+        \\{"provider":"hostinger","tag":"Hosting: NodeJS","method":"GET","path":"/api/hosting/v1/accounts/{username}/websites/{domain}/nodejs/builds","operation_id":"hosting_listNodeJSBuildsV1","path_params":[{"name":"username","required":true},{"name":"domain","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"build list"}
+        \\{"provider":"hostinger","tag":"Hosting: NodeJS","method":"GET","path":"/api/hosting/v1/accounts/{username}/websites/{domain}/nodejs/builds/{uuid}/logs","operation_id":"hosting_getNodeJSBuildLogsV1","path_params":[{"name":"username","required":true},{"name":"domain","required":true},{"name":"uuid","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"build logs"}
+        \\{"provider":"hostinger","tag":"Reach: Profiles","method":"GET","path":"/api/reach/v1/profiles","operation_id":"reach_listProfilesV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"403","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"blocked diagnostic"}
+        \\{"provider":"hostinger","tag":"Reach: Segments","method":"GET","path":"/api/reach/v1/segmentation/segments","operation_id":"reach_listSegmentsV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"403","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"blocked diagnostic"}
+        \\{"provider":"hostinger","tag":"Reach: Segments","method":"GET","path":"/api/reach/v1/profiles/{profileUuid}/segmentation/segments/{segmentUuid}/contacts","operation_id":"reach_listProfileSegmentContactsV1","path_params":[{"name":"profileUuid","required":true},{"name":"segmentUuid","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"403","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"blocked child"}
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker","operation_id":"VPS_getProjectListV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"400","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"unsupported OS diagnostic"}
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker/{projectName}","operation_id":"VPS_getProjectContentsV1","path_params":[{"name":"virtualMachineId","required":true},{"name":"projectName","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"400","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"project detail"}
+        \\{"provider":"hostinger","tag":"VPS: Firewall","method":"GET","path":"/api/vps/v1/firewall","operation_id":"VPS_getFirewallListV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"firewall list"}
+        \\{"provider":"hostinger","tag":"VPS: Firewall","method":"GET","path":"/api/vps/v1/firewall/{firewallId}","operation_id":"VPS_getFirewallDetailsV1","path_params":[{"name":"firewallId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"firewall detail"}
+        \\{"provider":"hostinger","tag":"VPS: Post-install scripts","method":"GET","path":"/api/vps/v1/post-install-scripts","operation_id":"VPS_getPostInstallScriptsV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"scripts"}
+        \\{"provider":"hostinger","tag":"VPS: Post-install scripts","method":"GET","path":"/api/vps/v1/post-install-scripts/{postInstallScriptId}","operation_id":"VPS_getPostInstallScriptV1","path_params":[{"name":"postInstallScriptId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"script detail"}
+        \\
+    ;
+    const configured_domains = [_][]const u8{"plosca.ru"};
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, "", hostinger, &db, .{
+        .filter = .{ .provider = .hostinger },
+        .limit = 0,
+        .configured_domains = configured_domains[0..],
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_input_sources\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"snapshotId\",\"source_operation_id\":\"DNS_getDNSSnapshotListV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"whoisId\",\"source_operation_id\":\"domains_getWHOISProfileListV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"websiteId\",\"source_operation_id\":\"horizons_getWebsitesV1\",\"hint_kind\":\"horizons_getWebsitesV1\",\"hint_count\":0,\"purpose\":\"discover Horizons website ids\",\"catalog_state\":\"not_in_catalog\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"username\",\"source_operation_id\":\"hosting_listWebsitesV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"name\",\"source_operation_id\":\"hosting_listAccountDatabasesV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"order_id\",\"source_operation_id\":\"hosting_listOrdersV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"uuid\",\"source_operation_id\":\"hosting_listNodeJSBuildsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"profileUuid\",\"source_operation_id\":\"reach_listProfilesV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"segmentUuid\",\"source_operation_id\":\"reach_listSegmentsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"projectName\",\"source_operation_id\":\"VPS_getProjectListV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"firewallId\",\"source_operation_id\":\"VPS_getFirewallListV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"postInstallScriptId\",\"source_operation_id\":\"VPS_getPostInstallScriptsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation hosting_listWebsitesV1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getProjectListV1 --path-param virtualMachineId='1307809' --diagnostic") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_ready\":true") != null);
+
+    var text_out = std.Io.Writer.Allocating.init(allocator);
+    defer text_out.deinit();
+    try writeActualCapturesTextFromText(allocator, "", hostinger, &db, .{
+        .filter = .{ .provider = .hostinger },
+        .limit = 0,
+        .configured_domains = configured_domains[0..],
+    }, &text_out.writer);
+    const text = try text_out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "source: path:snapshotId <- DNS_getDNSSnapshotListV1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "source: path:websiteId <- horizons_getWebsitesV1 state=not_in_catalog") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "source: path:projectName <- VPS_getProjectListV1 state=non_ok ready=false diagnostic_ready=true") != null);
 }
 
 test "closed Cloudflare security read slice has no capture candidates" {
