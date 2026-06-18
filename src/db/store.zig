@@ -409,6 +409,33 @@ pub const HostingerVpsRows = struct {
     }
 };
 
+pub const HostingerResourceHintRow = struct {
+    kind: []u8,
+    resource_id: []u8,
+    target: []u8,
+    name: []u8,
+    status: []u8,
+    updated_at: []u8,
+
+    pub fn deinit(self: HostingerResourceHintRow, allocator: Allocator) void {
+        allocator.free(self.kind);
+        allocator.free(self.resource_id);
+        allocator.free(self.target);
+        allocator.free(self.name);
+        allocator.free(self.status);
+        allocator.free(self.updated_at);
+    }
+};
+
+pub const HostingerResourceHintRows = struct {
+    items: []HostingerResourceHintRow,
+
+    pub fn deinit(self: *HostingerResourceHintRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const HostingerKindCount = struct {
     kind: []u8,
     count: i64,
@@ -1450,6 +1477,28 @@ pub const Db = struct {
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
 
+    pub fn hostingerResourceHints(self: *Db, gpa: Allocator, limit: i64) !HostingerResourceHintRows {
+        const stmt = try self.prepare(
+            \\SELECT kind, resource_id, COALESCE(target,''), COALESCE(name,''), COALESCE(status,''), updated_at
+            \\FROM hostinger_resources
+            \\WHERE kind LIKE 'VPS_%' AND resource_id != ''
+            \\ORDER BY updated_at DESC, kind, resource_id DESC
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 500));
+        var rows = std.ArrayList(HostingerResourceHintRow).empty;
+        errdefer deinitHostingerResourceHintRowList(&rows, gpa);
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = try hostingerResourceHintRowFromStmt(gpa, stmt);
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
+    }
+
     pub fn hostingerResourceKindCounts(self: *Db, gpa: Allocator, limit: i64) !HostingerKindCounts {
         return try self.hostingerKindCounts(gpa,
             \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
@@ -1961,6 +2010,11 @@ fn deinitHostingerVpsRowList(rows: *std.ArrayList(HostingerVpsRow), allocator: A
     rows.deinit(allocator);
 }
 
+fn deinitHostingerResourceHintRowList(rows: *std.ArrayList(HostingerResourceHintRow), allocator: Allocator) void {
+    for (rows.items) |row| row.deinit(allocator);
+    rows.deinit(allocator);
+}
+
 fn deinitHostingerKindCountList(rows: *std.ArrayList(HostingerKindCount), allocator: Allocator) void {
     for (rows.items) |row| row.deinit(allocator);
     rows.deinit(allocator);
@@ -2236,6 +2290,29 @@ fn hostingerVpsRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !Ho
         .status = status,
         .ipv4 = ipv4,
         .plan = plan,
+        .updated_at = updated_at,
+    };
+}
+
+fn hostingerResourceHintRowFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !HostingerResourceHintRow {
+    const kind = try dupeColumn(allocator, stmt, 0);
+    errdefer allocator.free(kind);
+    const resource_id = try dupeColumn(allocator, stmt, 1);
+    errdefer allocator.free(resource_id);
+    const target = try dupeColumn(allocator, stmt, 2);
+    errdefer allocator.free(target);
+    const name = try dupeColumn(allocator, stmt, 3);
+    errdefer allocator.free(name);
+    const status = try dupeColumn(allocator, stmt, 4);
+    errdefer allocator.free(status);
+    const updated_at = try dupeColumn(allocator, stmt, 5);
+    errdefer allocator.free(updated_at);
+    return .{
+        .kind = kind,
+        .resource_id = resource_id,
+        .target = target,
+        .name = name,
+        .status = status,
         .updated_at = updated_at,
     };
 }
