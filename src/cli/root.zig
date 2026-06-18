@@ -132,7 +132,7 @@ fn usage() void {
         \\  cloudio coverage capture-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--plans] [--json|--format json]
         \\  cloudio coverage dry-run-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--plans] [--json|--format json]
         \\  cloudio coverage families [all|cloudflare|hostinger] [--focus all|control-plane] [--limit <n>] [--json|--format json]
-        \\  cloudio coverage workplan [all|cloudflare|hostinger] [--focus all|control-plane] [--family <family>] [--limit <n>] [--plans] [--json|--format json]
+        \\  cloudio coverage workplan [all|cloudflare|hostinger] [--focus all|control-plane] [--family <family>] [--limit <n>] [--plans] [--bundle] [--candidate-limit <n>] [--json|--format json]
         \\  cloudio coverage routes [all|cloudflare|hostinger] [tag-query] [--family <family>] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>] [--json|--format json]
         \\  cloudio coverage gaps|levels|level-tags [all|cloudflare|hostinger] [--limit <n>] [--json|--format json]
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]

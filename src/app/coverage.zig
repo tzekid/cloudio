@@ -510,6 +510,8 @@ pub const WorkplanOptions = struct {
     focus: WorkplanFocus = .all,
     family: WorkplanFamily = .all,
     include_plans: bool = false,
+    bundle_candidates: bool = false,
+    candidate_limit: usize = 25,
 };
 
 pub const LevelTagEvidence = struct {
@@ -1248,25 +1250,49 @@ pub fn writeFamiliesJsonFromText(gpa: Allocator, cloudflare_text: []const u8, ho
 pub fn writeWorkplanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions, writer: anytype) !void {
     var report = try loadLevelTags(io, gpa, paths, options.provider);
     defer report.deinit(gpa);
-    try writeWorkplanText(gpa, report.items, options, writer);
+    var bundle_routes = try loadWorkplanBundleRoutesFromFiles(io, gpa, paths, options);
+    defer if (bundle_routes) |*routes| routes.deinit(gpa);
+    try writeWorkplanText(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
 }
 
 pub fn writeWorkplanJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions, writer: anytype) !void {
     var report = try loadLevelTags(io, gpa, paths, options.provider);
     defer report.deinit(gpa);
-    try writeWorkplanJson(gpa, report.items, options, writer);
+    var bundle_routes = try loadWorkplanBundleRoutesFromFiles(io, gpa, paths, options);
+    defer if (bundle_routes) |*routes| routes.deinit(gpa);
+    try writeWorkplanJson(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
 }
 
 pub fn writeWorkplanTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: WorkplanOptions, writer: anytype) !void {
     var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
     defer report.deinit(gpa);
-    try writeWorkplanText(gpa, report.items, options, writer);
+    var bundle_routes = try loadWorkplanBundleRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
+    defer if (bundle_routes) |*routes| routes.deinit(gpa);
+    try writeWorkplanText(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
 }
 
 pub fn writeWorkplanJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: WorkplanOptions, writer: anytype) !void {
     var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
     defer report.deinit(gpa);
-    try writeWorkplanJson(gpa, report.items, options, writer);
+    var bundle_routes = try loadWorkplanBundleRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
+    defer if (bundle_routes) |*routes| routes.deinit(gpa);
+    try writeWorkplanJson(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
+}
+
+fn loadWorkplanBundleRoutesFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions) !?CoverageRoutes {
+    if (!options.bundle_candidates) return null;
+    return try loadRoutes(io, gpa, paths, .{
+        .provider = options.provider,
+        .family = options.family,
+    });
+}
+
+fn loadWorkplanBundleRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: WorkplanOptions) !?CoverageRoutes {
+    if (!options.bundle_candidates) return null;
+    return try loadRoutesFromText(gpa, cloudflare_text, hostinger_text, .{
+        .provider = options.provider,
+        .family = options.family,
+    });
 }
 
 pub fn auditL1(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !L1Audit {
@@ -2052,13 +2078,14 @@ fn writeFamilyRowJson(row: FamilyEvidence, writer: anytype) !void {
     try writer.writeAll(" --limit 25\"}]}");
 }
 
-fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: WorkplanOptions, writer: anytype) !void {
+fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, bundle_routes: ?[]const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
     const effective_focus = workplanEffectiveFocus(options);
     try writer.writeAll("Cloudio provider coverage workplan\n");
     try writer.writeAll("rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n");
     try writer.writeAll("scope: broad provider tag slices with exact no-execute planning commands\n");
     try writer.print("filter={s} focus={s} family={s}", .{ options.provider.name(), effective_focus.name(), options.family.name() });
     if (options.include_plans) try writer.writeAll(" plans=true");
+    if (options.bundle_candidates) try writer.writeAll(" bundle_candidates=true");
     try writer.writeAll(" limit=");
     if (options.limit == 0) {
         try writer.writeAll("all\n");
@@ -2090,7 +2117,7 @@ fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
             continue;
         }
         visible += 1;
-        try writeWorkplanTextRow(gpa, row, options.include_plans, writer);
+        try writeWorkplanTextRow(gpa, row, bundle_routes, options, writer);
     }
 
     if (visible == 0) {
@@ -2103,7 +2130,7 @@ fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     }
 }
 
-fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: WorkplanOptions, writer: anytype) !void {
+fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, bundle_routes: ?[]const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
     const effective_focus = workplanEffectiveFocus(options);
     try writer.writeByte('{');
     try writeJsonField(writer, "kind", "coverage_workplan", true);
@@ -2112,6 +2139,8 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     try writeJsonField(writer, "family", options.family.name(), true);
     try writeJsonCountField(writer, "limit", options.limit, true);
     try writeJsonBoolField(writer, "include_plans", options.include_plans, true);
+    try writeJsonBoolField(writer, "bundle_candidates", options.bundle_candidates, true);
+    try writeJsonCountField(writer, "candidate_limit", options.candidate_limit, true);
     try writeJsonField(writer, "rank", "pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs", true);
     try writeJsonField(writer, "scope", "broad provider tag slices with exact no-execute planning commands", true);
     try writer.writeAll("\"items\":[");
@@ -2142,7 +2171,7 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
         }
         visible += 1;
         try writeMaybeJsonComma(writer, &first);
-        try writeWorkplanRowJson(gpa, row, options.include_plans, writer);
+        try writeWorkplanRowJson(gpa, row, bundle_routes, options, writer);
     }
 
     try writer.writeAll("],");
@@ -2155,7 +2184,7 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     try writer.writeByte('\n');
 }
 
-fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, include_plans: bool, writer: anytype) !void {
+fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, bundle_routes: ?[]const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
     const evidence = row.evidence;
     const family = workplanTagFamily(row.provider, row.tag);
     try writer.print("{s} | {s}: priority={d} pending_reads={d} diagnostic_blocked_reads={d} pending_mutation_dry_runs={d} L2_read_evidence={d} dry_run_evidence={d} L3_generic={d} typed={d} family={s}\n", .{
@@ -2175,18 +2204,33 @@ fn writeWorkplanTextRow(gpa: Allocator, row: LevelTagEvidence, include_plans: bo
     defer gpa.free(routes);
     try writer.print("  routes: {s}\n", .{routes});
     if (workplanNeedsCapture(row)) {
-        const capture = try workplanCaptureCommand(gpa, row, include_plans);
+        const capture = try workplanCaptureCommand(gpa, row, options.include_plans);
         defer gpa.free(capture);
         try writer.print("  capture-candidates: {s}\n", .{capture});
     }
     if (workplanNeedsDryRun(row)) {
-        const dry_run = try workplanDryRunCommand(gpa, row, include_plans);
+        const dry_run = try workplanDryRunCommand(gpa, row, options.include_plans);
         defer gpa.free(dry_run);
         try writer.print("  dry-run-candidates: {s}\n", .{dry_run});
     }
+    if (options.bundle_candidates) {
+        const counts = workplanCandidateBundleCounts(row, bundle_routes orelse &.{}, options);
+        try writer.writeAll("  candidate-bundle: candidate_limit=");
+        if (options.candidate_limit == 0) {
+            try writer.writeAll("all");
+        } else {
+            try writer.print("{d}", .{options.candidate_limit});
+        }
+        try writer.print(" capture_visible={d} capture_omitted={d} dry_run_visible={d} dry_run_omitted={d}\n", .{
+            counts.capture.visible,
+            counts.capture.omitted,
+            counts.dry_run.visible,
+            counts.dry_run.omitted,
+        });
+    }
 }
 
-fn writeWorkplanRowJson(gpa: Allocator, row: LevelTagEvidence, include_plans: bool, writer: anytype) !void {
+fn writeWorkplanRowJson(gpa: Allocator, row: LevelTagEvidence, bundle_routes: ?[]const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
     const family = workplanTagFamily(row.provider, row.tag);
     try writer.writeByte('{');
     try writeJsonField(writer, "provider", row.provider, true);
@@ -2202,16 +2246,21 @@ fn writeWorkplanRowJson(gpa: Allocator, row: LevelTagEvidence, include_plans: bo
     defer gpa.free(routes);
     try writeWorkplanCommandJson(writer, &first, "routes_detail", routes);
     if (workplanNeedsCapture(row)) {
-        const capture = try workplanCaptureCommand(gpa, row, include_plans);
+        const capture = try workplanCaptureCommand(gpa, row, options.include_plans);
         defer gpa.free(capture);
         try writeWorkplanCommandJson(writer, &first, "capture_candidates", capture);
     }
     if (workplanNeedsDryRun(row)) {
-        const dry_run = try workplanDryRunCommand(gpa, row, include_plans);
+        const dry_run = try workplanDryRunCommand(gpa, row, options.include_plans);
         defer gpa.free(dry_run);
         try writeWorkplanCommandJson(writer, &first, "dry_run_candidates", dry_run);
     }
-    try writer.writeAll("]}");
+    try writer.writeByte(']');
+    if (options.bundle_candidates) {
+        try writer.writeByte(',');
+        try writeWorkplanCandidateBundleJson(gpa, row, bundle_routes orelse &.{}, options, writer);
+    }
+    try writer.writeByte('}');
 }
 
 fn writeWorkplanCommandJson(writer: anytype, first: *bool, kind: []const u8, command: []const u8) !void {
@@ -2220,6 +2269,109 @@ fn writeWorkplanCommandJson(writer: anytype, first: *bool, kind: []const u8, com
     try writeJsonField(writer, "kind", kind, true);
     try writeJsonField(writer, "command", command, false);
     try writer.writeByte('}');
+}
+
+const WorkplanCandidateKind = enum {
+    capture,
+    dry_run,
+};
+
+const WorkplanCandidateSetCounts = struct {
+    total: usize = 0,
+    visible: usize = 0,
+    omitted: usize = 0,
+};
+
+const WorkplanCandidateBundleCounts = struct {
+    capture: WorkplanCandidateSetCounts = .{},
+    dry_run: WorkplanCandidateSetCounts = .{},
+};
+
+fn writeWorkplanCandidateBundleJson(gpa: Allocator, row: LevelTagEvidence, routes: []const CoverageRoute, options: WorkplanOptions, writer: anytype) !void {
+    try writer.writeAll("\"candidate_bundle\":{");
+    try writeJsonCountField(writer, "candidate_limit", options.candidate_limit, true);
+    try writeJsonBoolField(writer, "include_plans", options.include_plans, true);
+    try writeWorkplanCandidateSetJson(gpa, row, routes, options, .capture, writer);
+    try writer.writeByte(',');
+    try writeWorkplanCandidateSetJson(gpa, row, routes, options, .dry_run, writer);
+    try writer.writeByte('}');
+}
+
+fn writeWorkplanCandidateSetJson(gpa: Allocator, row: LevelTagEvidence, routes: []const CoverageRoute, options: WorkplanOptions, kind: WorkplanCandidateKind, writer: anytype) !void {
+    const counts = workplanCandidateSetCounts(row, routes, options, kind);
+    try core_json.writeString(writer, switch (kind) {
+        .capture => "capture",
+        .dry_run => "dry_run",
+    });
+    try writer.writeAll(":{");
+    try writeJsonCountField(writer, "total", counts.total, true);
+    try writeJsonCountField(writer, "visible", counts.visible, true);
+    try writeJsonCountField(writer, "omitted", counts.omitted, true);
+    try writer.writeAll("\"candidates\":[");
+    var first = true;
+    var visible: usize = 0;
+    for (routes) |route_row| {
+        if (!routeMatchesWorkplanRow(route_row, row)) continue;
+        if (!routeIsWorkplanCandidate(route_row, options, kind)) continue;
+        if (options.candidate_limit != 0 and visible >= options.candidate_limit) continue;
+        visible += 1;
+        try writeMaybeJsonComma(writer, &first);
+        switch (kind) {
+            .capture => try writeCaptureCandidateJson(gpa, route_row, .{
+                .filter = .{},
+                .limit = options.candidate_limit,
+                .include_plans = options.include_plans,
+            }, writer),
+            .dry_run => try writeDryRunCandidateJson(gpa, route_row, .{
+                .filter = .{},
+                .limit = options.candidate_limit,
+                .include_plans = options.include_plans,
+            }, writer),
+        }
+    }
+    try writer.writeAll("]}");
+}
+
+fn workplanCandidateBundleCounts(row: LevelTagEvidence, routes: []const CoverageRoute, options: WorkplanOptions) WorkplanCandidateBundleCounts {
+    return .{
+        .capture = workplanCandidateSetCounts(row, routes, options, .capture),
+        .dry_run = workplanCandidateSetCounts(row, routes, options, .dry_run),
+    };
+}
+
+fn workplanCandidateSetCounts(row: LevelTagEvidence, routes: []const CoverageRoute, options: WorkplanOptions, kind: WorkplanCandidateKind) WorkplanCandidateSetCounts {
+    var counts = WorkplanCandidateSetCounts{};
+    for (routes) |route_row| {
+        if (!routeMatchesWorkplanRow(route_row, row)) continue;
+        if (!routeIsWorkplanCandidate(route_row, options, kind)) continue;
+        counts.total += 1;
+        if (options.candidate_limit == 0 or counts.visible < options.candidate_limit) {
+            counts.visible += 1;
+        } else {
+            counts.omitted += 1;
+        }
+    }
+    return counts;
+}
+
+fn routeIsWorkplanCandidate(route_row: CoverageRoute, options: WorkplanOptions, kind: WorkplanCandidateKind) bool {
+    return switch (kind) {
+        .capture => routeIsCaptureCandidate(route_row, .{
+            .filter = .{},
+            .limit = options.candidate_limit,
+            .include_plans = options.include_plans,
+        }),
+        .dry_run => routeIsDryRunCandidate(route_row, .{
+            .filter = .{},
+            .limit = options.candidate_limit,
+            .include_plans = options.include_plans,
+        }),
+    };
+}
+
+fn routeMatchesWorkplanRow(route_row: CoverageRoute, row: LevelTagEvidence) bool {
+    return std.mem.eql(u8, route_row.route.provider.name(), row.provider) and
+        std.mem.eql(u8, route_row.route.tag, row.tag);
 }
 
 fn workplanNeedsCapture(row: LevelTagEvidence) bool {
@@ -4126,6 +4278,27 @@ test "renders broad provider coverage workplan commands by tag" {
     try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"command\":\"cloudio coverage routes cloudflare 'Workers' --detail\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"command\":\"cloudio coverage capture-candidates cloudflare 'Workers' --limit 25 --plans\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plans_json, "\"command\":\"cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25 --plans\"") != null);
+
+    var bundle_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer bundle_json_out.deinit();
+    try writeWorkplanJsonFromText(allocator, cloudflare, hostinger, .{
+        .provider = .all,
+        .limit = 1,
+        .include_plans = true,
+        .bundle_candidates = true,
+        .candidate_limit = 1,
+    }, &bundle_json_out.writer);
+    const bundle_json = try bundle_json_out.toOwnedSlice();
+    defer allocator.free(bundle_json);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"bundle_candidates\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"candidate_limit\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"candidate_bundle\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"capture\":{\"total\":1,\"visible\":1,\"omitted\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"dry_run\":{\"total\":1,\"visible\":1,\"omitted\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"capture_command\":\"cloudio route capture cloudflare --operation workers-list --path-param account_id=<account_id>\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"read_plan\":{\"provider\":\"cloudflare\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"dry_run_command\":\"cloudio route dry-run cloudflare --operation workers-create --path-param account_id=<account_id> --body-content-type application/json\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bundle_json, "\"dry_run_plan\":{\"provider\":\"cloudflare\"") != null);
 
     var focused_out = std.Io.Writer.Allocating.init(allocator);
     defer focused_out.deinit();
