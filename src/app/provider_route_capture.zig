@@ -3,6 +3,7 @@ const collector_route_capture = @import("collector_route_capture");
 const app_provider_route_plan = @import("app_provider_route_plan");
 const core_json = @import("core_json");
 const db_store = @import("db_store");
+const provider_capabilities = @import("provider_capabilities");
 const provider_dispatch = @import("provider_dispatch");
 const provider_routes = @import("provider_routes");
 
@@ -48,11 +49,11 @@ pub fn callReadRouteResultRequest(io: Io, gpa: Allocator, client: provider_dispa
 }
 
 pub fn routeSupportsPageQuery(route: provider_routes.Route) bool {
-    return collector_route_capture.routeSupportsPageQuery(route);
+    return provider_capabilities.routePaginationKind(route) == .page;
 }
 
 pub fn routeSupportsCursorQuery(route: provider_routes.Route) bool {
-    return collector_route_capture.routeSupportsCursorQuery(route);
+    return provider_capabilities.routePaginationKind(route) == .cursor;
 }
 
 fn routeCaptureMetadataJson(gpa: Allocator, route: provider_routes.Route, result: provider_dispatch.ReadRouteResult, snapshot_id: i64, endpoint: []const u8, kind: []const u8, target: []const u8, normalized_resources: usize, typed_rows: usize) ![]u8 {

@@ -6,6 +6,7 @@ const app_provider_coverage_routes = @import("app_provider_coverage_routes");
 const app_provider_route_capture = @import("app_provider_route_capture");
 const core_json = @import("core_json");
 const db_store = @import("db_store");
+const provider_capabilities = @import("provider_capabilities");
 const provider_dispatch = @import("provider_dispatch");
 const provider_routes = @import("provider_routes");
 
@@ -289,7 +290,7 @@ const ActualCapturePlan = struct {
             try writer.print(" pagination={s}\n", .{routePaginationKind(row.route) orelse "none"});
             try writer.print("      ready={s} live_read_supported={s} missing_inputs=", .{
                 if (actualCaptureReady(row.route, hints_value)) "true" else "false",
-                if (provider_dispatch.routeLiveCallSupported(row.route)) "true" else "false",
+                if (provider_capabilities.routeLiveReadSupported(row.route)) "true" else "false",
             });
             try writeActualMissingInputsText(writer, row.route, hints_value);
             try writer.writeByte('\n');
@@ -787,8 +788,8 @@ fn writeActualMissingInputSourceJson(
     try writeJsonNullableStringField(writer, "actual_state", if (source_state) |state| state.name() else null, true);
     try writeJsonNullableBoolField(writer, "ready", if (source_route) |found| actualCaptureReady(found, hints) else null, true);
     try writeJsonNullableBoolField(writer, "diagnostic_ready", if (source_route) |found| actualCaptureReadyWithPolicy(found, hints, true) else null, true);
-    try writeJsonNullableBoolField(writer, "live_read_supported", if (source_route) |found| provider_dispatch.routeLiveCallSupported(found) else null, true);
-    try writeJsonNullableBoolField(writer, "diagnostic_read_supported", if (source_route) |found| provider_dispatch.routeDiagnosticReadSupported(found) else null, true);
+    try writeJsonNullableBoolField(writer, "live_read_supported", if (source_route) |found| provider_capabilities.routeLiveReadSupported(found) else null, true);
+    try writeJsonNullableBoolField(writer, "diagnostic_read_supported", if (source_route) |found| provider_capabilities.routeDiagnosticReadSupported(found) else null, true);
     try writeJsonNullableStringField(writer, "capture_command", command, false);
     try writer.writeByte('}');
 }
@@ -866,8 +867,8 @@ fn writeActualCaptureCandidateJson(
     try writeRequiredParamNamesJson(writer, route.header_params);
     try writer.writeByte(',');
     try writeJsonBoolField(writer, "ready", actualCaptureReady(route, hints), true);
-    try writeJsonBoolField(writer, "live_read_supported", provider_dispatch.routeLiveCallSupported(route), true);
-    try writeJsonBoolField(writer, "diagnostic_read_supported", provider_dispatch.routeDiagnosticReadSupported(route), true);
+    try writeJsonBoolField(writer, "live_read_supported", provider_capabilities.routeLiveReadSupported(route), true);
+    try writeJsonBoolField(writer, "diagnostic_read_supported", provider_capabilities.routeDiagnosticReadSupported(route), true);
     try writer.writeAll("\"missing_inputs\":");
     try writeActualMissingInputsJson(writer, route, hints);
     try writer.writeByte(',');
@@ -899,7 +900,7 @@ fn actualCaptureCommand(gpa: Allocator, route: provider_routes.Route, hints: Act
     try writeActualQueryParams(gpa, writer, route, hints);
     try writeActualRequiredParamPlaceholders(writer, "--header-param", route.header_params);
     if (routePaginationKind(route) != null) try writer.writeAll(" --paginate");
-    if (provider_dispatch.routeDiagnosticReadSupported(route)) try writer.writeAll(" --diagnostic");
+    if (provider_capabilities.routeDiagnosticReadSupported(route)) try writer.writeAll(" --diagnostic");
     return try out.toOwnedSlice();
 }
 
@@ -1062,7 +1063,7 @@ fn writeActualReadyCaptureItemJson(
     try writeJsonField(writer, "path_template", route.path_template, true);
     try writeJsonField(writer, "actual_state", state.name(), true);
     try writeJsonNullableStringField(writer, "pagination", routePaginationKind(route), true);
-    try writeJsonBoolField(writer, "live_read_supported", provider_dispatch.routeLiveCallSupported(route), true);
+    try writeJsonBoolField(writer, "live_read_supported", provider_capabilities.routeLiveReadSupported(route), true);
     try writeJsonBoolField(writer, "diagnostic_read", actualCaptureUsesDiagnosticRead(route, options.include_blocked), true);
     try writeJsonField(writer, "capture_command", command, true);
     if (!options.execute) {
@@ -1143,7 +1144,7 @@ fn routeReadPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
 }
 
 fn routePaginationKind(route: provider_routes.Route) ?[]const u8 {
-    return app_provider_coverage_candidates.paginationKind(route);
+    return provider_capabilities.routePaginationName(route);
 }
 
 fn writeRequiredParamNamesText(writer: anytype, params: []const provider_routes.RouteParam) !void {

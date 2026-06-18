@@ -47,6 +47,7 @@ pub const net = struct {
 };
 
 pub const providers = struct {
+    pub const capabilities = @import("provider_capabilities");
     pub const dispatch = @import("provider_dispatch");
     pub const routes = @import("provider_routes");
 
@@ -99,6 +100,7 @@ test "facade exposes stable integration modules" {
     _ = db.store.Db;
     _ = net.http.Response;
     _ = net.pagination.PageInfo;
+    _ = providers.capabilities.RouteCapabilities;
     _ = providers.dispatch.Client;
     _ = providers.dispatch.ReadRouteResult;
     _ = providers.routes.Route;

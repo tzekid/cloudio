@@ -3,6 +3,7 @@ const collector_capture = @import("collector_capture");
 const collector_capture_normalize = @import("collector_capture_normalize");
 const db_store = @import("db_store");
 const net_pagination = @import("net_pagination");
+const provider_capabilities = @import("provider_capabilities");
 const provider_dispatch = @import("provider_dispatch");
 const provider_routes = @import("provider_routes");
 
@@ -86,9 +87,10 @@ pub fn readPaginatedRoute(
     request: Request,
     options: CaptureOptions,
 ) !CapturedRoutePages {
-    if (routeSupportsPageQuery(route)) return try capturePagePaginatedRouteRead(io, gpa, db, client, route, request, options);
-    if (routeSupportsCursorQuery(route)) return try captureCursorPaginatedRouteRead(io, gpa, db, client, route, request, options);
-    return error.RoutePaginationUnsupported;
+    return switch (provider_capabilities.routePaginationKind(route) orelse return error.RoutePaginationUnsupported) {
+        .page => try capturePagePaginatedRouteRead(io, gpa, db, client, route, request, options),
+        .cursor => try captureCursorPaginatedRouteRead(io, gpa, db, client, route, request, options),
+    };
 }
 
 pub fn captureReadResult(
@@ -153,17 +155,11 @@ pub fn callReadRouteResultRequest(
 }
 
 pub fn routeSupportsPageQuery(route: provider_routes.Route) bool {
-    for (route.query_params) |param| {
-        if (std.mem.eql(u8, param.name, "page")) return true;
-    }
-    return false;
+    return provider_capabilities.routePaginationKind(route) == .page;
 }
 
 pub fn routeSupportsCursorQuery(route: provider_routes.Route) bool {
-    for (route.query_params) |param| {
-        if (std.mem.eql(u8, param.name, "cursor")) return true;
-    }
-    return false;
+    return provider_capabilities.routePaginationKind(route) == .cursor;
 }
 
 fn capturePagePaginatedRouteRead(

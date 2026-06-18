@@ -3,7 +3,7 @@ const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
 const core_time = @import("core_time");
 const db_store = @import("db_store");
-const provider_dispatch = @import("provider_dispatch");
+const provider_capabilities = @import("provider_capabilities");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -303,11 +303,11 @@ pub fn actualCaptureReadyWithPolicy(route: provider_routes.Route, hints: Hints, 
 }
 
 fn actualCaptureRouteExecutable(route: provider_routes.Route, include_blocked: bool) bool {
-    return provider_dispatch.routeLiveCallSupported(route) or (include_blocked and provider_dispatch.routeDiagnosticReadSupported(route));
+    return provider_capabilities.routeLiveReadSupported(route) or (include_blocked and provider_capabilities.routeDiagnosticReadSupported(route));
 }
 
 pub fn actualCaptureUsesDiagnosticRead(route: provider_routes.Route, include_blocked: bool) bool {
-    return include_blocked and !provider_dispatch.routeLiveCallSupported(route) and provider_dispatch.routeDiagnosticReadSupported(route);
+    return include_blocked and !provider_capabilities.routeLiveReadSupported(route) and provider_capabilities.routeDiagnosticReadSupported(route);
 }
 
 pub fn actualCaptureMissingInputCount(route: provider_routes.Route, hints: Hints) usize {
@@ -1028,7 +1028,7 @@ pub fn actualCaptureSourceResult(route: ?provider_routes.Route, state: ?CaptureS
         else
             "captured_unknown_body",
         .missing => if (actualCaptureReadyWithPolicy(source_route, hints, true)) "ready_to_capture" else "waiting_for_inputs",
-        .non_ok => if (!provider_dispatch.routeLiveCallSupported(source_route) and provider_dispatch.routeDiagnosticReadSupported(source_route)) "diagnostic_blocked" else "captured_error",
+        .non_ok => if (!provider_capabilities.routeLiveReadSupported(source_route) and provider_capabilities.routeDiagnosticReadSupported(source_route)) "diagnostic_blocked" else "captured_error",
     };
 }
 
@@ -1048,7 +1048,7 @@ pub fn actualCaptureSourceNextAction(route: ?provider_routes.Route, state: ?Capt
             "capture the source route to discover identifiers"
         else
             "capture the source route prerequisites first",
-        .non_ok => if (!provider_dispatch.routeLiveCallSupported(source_route) and provider_dispatch.routeDiagnosticReadSupported(source_route))
+        .non_ok => if (!provider_capabilities.routeLiveReadSupported(source_route) and provider_capabilities.routeDiagnosticReadSupported(source_route))
             "diagnostic-only source is blocked; child identifiers are unavailable"
         else
             "inspect source capture error before child captures",

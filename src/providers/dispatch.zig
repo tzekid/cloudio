@@ -1,6 +1,7 @@
 const std = @import("std");
 const core_json = @import("core_json");
 const net_http = @import("net_http");
+const provider_capabilities = @import("provider_capabilities");
 const provider_cloudflare = @import("provider_cloudflare");
 const provider_hostinger = @import("provider_hostinger");
 const provider_routes = @import("provider_routes");
@@ -53,7 +54,7 @@ pub const Client = struct {
         if (route.provider != self.provider()) return error.ProviderRouteAuthMismatch;
         if (!route.isRoutable()) return error.UnsupportedProviderRoute;
         if (route.method != .GET or route.mode != .read) return error.ProviderRouteRequiresDryRun;
-        if (!routeSupportAllowsLiveRead(route) and !(include_blocked_diagnostic and routeSupportAllowsBlockedDiagnosticRead(route))) return error.UnsupportedProviderRoute;
+        if (!provider_capabilities.routeLiveReadSupported(route) and !(include_blocked_diagnostic and provider_capabilities.routeDiagnosticReadSupported(route))) return error.UnsupportedProviderRoute;
         if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
         try route.validateRequestHeaders(request);
         try validateRouteAuth(route, self.auth);
@@ -432,8 +433,8 @@ fn validateRouteAuth(route: provider_routes.Route, auth: Auth) !void {
 }
 
 fn validateCloudflareRouteAuth(security: provider_routes.Security, auth: provider_cloudflare.Auth) !void {
-    if (auth.hasApiToken() and cloudflareSecurityAcceptsApiToken(security)) return;
-    if (hasCloudflareLegacyAuth(auth) and cloudflareSecurityAcceptsLegacyAuth(security)) return;
+    if (auth.hasApiToken() and provider_capabilities.cloudflareSecurityAcceptsApiToken(security)) return;
+    if (hasCloudflareLegacyAuth(auth) and provider_capabilities.cloudflareSecurityAcceptsLegacyAuth(security)) return;
     if (!auth.hasApiToken() and !hasCloudflareLegacyAuth(auth)) return error.MissingCloudflareAuth;
     return error.UnsupportedRouteAuthScheme;
 }
@@ -445,46 +446,19 @@ fn validateHostingerRouteAuth(security: provider_routes.Security, token: []const
 }
 
 pub fn cloudioSupportsRouteAuth(route: provider_routes.Route) bool {
-    if (!route.security.required) return true;
-    return switch (route.provider) {
-        .cloudflare => cloudflareSecurityAcceptsApiToken(route.security) or cloudflareSecurityAcceptsLegacyAuth(route.security),
-        .hostinger => route.security.acceptsSchemeSet(&.{"apiToken"}),
-    };
+    return provider_capabilities.cloudioSupportsRouteAuth(route);
 }
 
 pub fn routeLiveCallSupported(route: provider_routes.Route) bool {
-    return routeSupportAllowsLiveRead(route) and route.isRoutable() and route.mode == .read and route.method == .GET and !route.request_body.required and cloudioSupportsRouteAuth(route);
+    return provider_capabilities.routeLiveReadSupported(route);
 }
 
 pub fn routeDiagnosticReadSupported(route: provider_routes.Route) bool {
-    return routeSupportAllowsBlockedDiagnosticRead(route) and route.isRoutable() and route.mode == .read and route.method == .GET and !route.request_body.required and cloudioSupportsRouteAuth(route);
+    return provider_capabilities.routeDiagnosticReadSupported(route);
 }
 
 pub fn routeDryRunSupported(route: provider_routes.Route) bool {
-    return route.isRoutable() and route.isDryRunMutation();
-}
-
-fn routeSupportAllowsLiveRead(route: provider_routes.Route) bool {
-    return switch (route.support) {
-        .planned, .partial, .implemented => true,
-        .blocked_permission, .unsafe_mutation, .deprecated, .not_applicable => false,
-    };
-}
-
-fn routeSupportAllowsBlockedDiagnosticRead(route: provider_routes.Route) bool {
-    return route.support == .blocked_permission;
-}
-
-fn cloudflareSecurityAcceptsApiToken(security: provider_routes.Security) bool {
-    return security.acceptsSchemeSet(&.{"api_token"}) or security.acceptsSchemeSet(&.{"bearerAuth"}) or cloudflareSecurityHasTokenOrLegacyBundle(security);
-}
-
-fn cloudflareSecurityAcceptsLegacyAuth(security: provider_routes.Security) bool {
-    return security.acceptsSchemeSet(&.{ "api_email", "api_key" }) or cloudflareSecurityHasTokenOrLegacyBundle(security);
-}
-
-fn cloudflareSecurityHasTokenOrLegacyBundle(security: provider_routes.Security) bool {
-    return security.hasAlternativeContainingSchemes(&.{ "api_email", "api_key", "api_token" });
+    return provider_capabilities.routeDryRunSupported(route);
 }
 
 fn hasCloudflareLegacyAuth(auth: provider_cloudflare.Auth) bool {

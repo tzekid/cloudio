@@ -1,6 +1,6 @@
 const std = @import("std");
 const app_render = @import("app_render");
-const provider_dispatch = @import("provider_dispatch");
+const provider_capabilities = @import("provider_capabilities");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -203,16 +203,16 @@ fn auditRoute(gpa: Allocator, route: provider_routes.Route, audit_value: *L1Prov
             audit_value.read_routes += 1;
             if (route.method != .GET) audit_value.failures.read_not_get += 1;
             if (route.request_body.required) audit_value.failures.read_body_required += 1;
-            if (provider_dispatch.routeLiveCallSupported(route)) {
+            if (provider_capabilities.routeLiveReadSupported(route)) {
                 audit_value.live_read_supported += 1;
-            } else if (!route.request_body.required and route.method == .GET and !provider_dispatch.cloudioSupportsRouteAuth(route)) {
+            } else if (!route.request_body.required and route.method == .GET and !provider_capabilities.cloudioSupportsRouteAuth(route)) {
                 audit_value.failures.read_auth_unsupported += 1;
             }
         },
         .dry_run => {
             audit_value.dry_run_routes += 1;
             if (route.method == .GET or route.method == .HEAD) audit_value.failures.dry_run_method_invalid += 1;
-            if (provider_dispatch.routeDryRunSupported(route)) {
+            if (provider_capabilities.routeDryRunSupported(route)) {
                 audit_value.dry_run_supported += 1;
             } else {
                 audit_value.failures.dry_run_not_supported += 1;

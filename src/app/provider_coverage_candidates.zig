@@ -1,8 +1,8 @@
 const std = @import("std");
 const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
-const app_provider_route_capture = @import("app_provider_route_capture");
 const core_json = @import("core_json");
+const provider_capabilities = @import("provider_capabilities");
 const provider_dispatch = @import("provider_dispatch");
 const provider_routes = @import("provider_routes");
 
@@ -469,9 +469,7 @@ pub fn primaryRequestBodyContentType(body: provider_routes.RequestBody) ?[]const
 }
 
 pub fn paginationKind(route: provider_routes.Route) ?[]const u8 {
-    if (app_provider_route_capture.routeSupportsPageQuery(route)) return "page";
-    if (app_provider_route_capture.routeSupportsCursorQuery(route)) return "cursor";
-    return null;
+    return provider_capabilities.routePaginationName(route);
 }
 
 fn writeRequiredParamPlaceholders(writer: anytype, option: []const u8, params: []const provider_routes.RouteParam) !void {
