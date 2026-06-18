@@ -267,6 +267,7 @@ fn isInlineSecretTerminator(ch: u8) bool {
 }
 
 fn shouldRedactLine(line: []const u8) bool {
+    if (looksLikeJsonLine(line)) return false;
     if (std.mem.indexOfScalar(u8, line, '=')) |idx| {
         return containsSecretWord(line[0..idx]);
     }
@@ -276,6 +277,11 @@ fn shouldRedactLine(line: []const u8) bool {
         if (isLikelyHeaderName(header_name) and containsSecretWord(header_name)) return true;
     }
     return false;
+}
+
+fn looksLikeJsonLine(line: []const u8) bool {
+    const value = trim(line);
+    return value.len > 0 and (value[0] == '{' or value[0] == '[');
 }
 
 fn isLikelyHeaderName(value: []const u8) bool {
@@ -313,6 +319,8 @@ fn containsSecretWord(line: []const u8) bool {
         "provisioningkey",
         "credential",
         "credentials",
+        "cookie",
+        "set-cookie",
     };
     for (words) |word| {
         if (indexOfIgnoreCase(line, word) != null) return true;
@@ -443,6 +451,19 @@ test "provider response redaction hides provider credentials without hiding publ
     try std.testing.expect(std.mem.indexOf(u8, redacted, "credential-secret") == null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"credentials\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"credential_id\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"public_key\":\"public-material\"") != null);
+}
+
+test "provider response redaction hides cookie material" {
+    const allocator = std.testing.allocator;
+    const input =
+        \\{"result":{"headers":{"set-cookie":"session=abc123; HttpOnly","cookie":"session=abc123"},"public_key":"public-material"},"success":true}
+    ;
+    const redacted = try providerResponse(allocator, input);
+    defer allocator.free(redacted);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "session=abc123") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"set-cookie\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"cookie\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"public_key\":\"public-material\"") != null);
 }
 
