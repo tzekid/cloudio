@@ -4,6 +4,7 @@ const core_time = @import("core_time");
 const core_process = @import("core_process");
 const core_redact = @import("core_redact");
 const collector_capture = @import("collector_capture");
+const collector_capture_normalize = @import("collector_capture_normalize");
 const db_store = @import("db_store");
 const net_http = @import("net_http");
 const provider_cloudflare = @import("provider_cloudflare");
@@ -4205,44 +4206,9 @@ fn storeCloudflareResponse(gpa: Allocator, db: *Db, input: collector_capture.Res
     const stored = try collector_capture.storeResponseWithSnapshotId(gpa, db, input);
     errdefer stored.deinit(gpa);
     if (net_http.isOk(input.status)) {
-        try persistResourceRows(gpa, db, input.kind, resourceScope(input.kind), input.target, stored.redacted);
+        _ = try collector_capture_normalize.persistCloudflareResourceRows(gpa, db, input.kind, resourceScope(input.kind), input.target, stored.redacted);
     }
     return stored.redacted;
-}
-
-fn persistResourceRows(gpa: Allocator, db: *Db, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, body: []const u8) !void {
-    var rows = try provider_cloudflare_models.parseResourceRows(gpa, kind, scope, scope_id, body);
-    defer rows.deinit(gpa);
-    for (rows.items) |row| {
-        try db.upsertCloudflareResource(row.key, row.kind, row.resource_id, row.scope, row.scope_id, row.name, row.status, row.resource_type, row.raw_json);
-    }
-    try persistInventoryRows(gpa, db, kind, scope, scope_id, body);
-}
-
-fn persistInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, body: []const u8) !void {
-    var rows = try provider_cloudflare_models.parseInventoryRows(gpa, kind, scope, scope_id, body);
-    defer rows.deinit(gpa);
-    for (rows.items) |row| {
-        try db.upsertCloudflareInventoryItem(
-            row.key,
-            row.kind,
-            row.resource_id,
-            row.scope,
-            row.scope_id,
-            row.name,
-            row.status,
-            row.category,
-            row.domain,
-            row.account_id,
-            row.zone_id,
-            row.related_id,
-            row.flag,
-            row.created_at,
-            row.updated_at,
-            row.expires_at,
-            row.raw_json,
-        );
-    }
 }
 
 fn resourceScope(kind: []const u8) ?[]const u8 {

@@ -31,33 +31,23 @@ pub fn normalizeRouteCapture(
 
 fn normalizeCloudflareRouteModels(gpa: Allocator, db: *Db, route: provider_routes.Route, request: provider_routes.Request, kind: []const u8, redacted_body: []const u8) !Counts {
     const scope = cloudflareRouteScope(route, request);
-    var rows = try provider_cloudflare_models.parseResourceRows(gpa, kind, scope.name, scope.id, redacted_body);
-    defer rows.deinit(gpa);
-    for (rows.items) |row| {
-        try db.upsertCloudflareResource(row.key, row.kind, row.resource_id, row.scope, row.scope_id, row.name, row.status, row.resource_type, row.raw_json);
-    }
-    const inventory_rows = try normalizeCloudflareInventoryRows(gpa, db, kind, scope.name, scope.id, redacted_body);
+    const persisted = try persistCloudflareResourceRows(gpa, db, kind, scope.name, scope.id, redacted_body);
     const security_rows = if (isCloudflareSecurityRouteTag(route.tag))
         try normalizeCloudflareSecurityRows(gpa, db, kind, scope.name, scope.id, redacted_body)
     else
         0;
     return .{
-        .resources = rows.items.len,
-        .typed_rows = inventory_rows + security_rows + try normalizeCloudflareTypedRows(gpa, db, route, request, redacted_body),
+        .resources = persisted.resources,
+        .typed_rows = persisted.typed_rows + security_rows + try normalizeCloudflareTypedRows(gpa, db, route, request, redacted_body),
     };
 }
 
 fn normalizeHostingerRouteModels(gpa: Allocator, db: *Db, route: provider_routes.Route, request: provider_routes.Request, kind: []const u8, explicit_target: ?[]const u8, redacted_body: []const u8) !Counts {
     const target = explicit_target orelse firstPathParamValue(request) orelse route.operation_id orelse route.path_template;
-    var rows = try provider_hostinger_models.parseResourceRows(gpa, kind, target, redacted_body);
-    defer rows.deinit(gpa);
-    for (rows.items) |row| {
-        try db.upsertHostingerResource(row.key, row.kind, row.resource_id, row.target, row.name, row.status, row.domain, row.raw_json);
-    }
-    const inventory_rows = try normalizeHostingerInventoryRows(gpa, db, kind, target, redacted_body);
+    const persisted = try persistHostingerResourceRows(gpa, db, kind, target, redacted_body);
     return .{
-        .resources = rows.items.len,
-        .typed_rows = inventory_rows + try normalizeHostingerTypedRows(gpa, db, route, redacted_body),
+        .resources = persisted.resources,
+        .typed_rows = persisted.typed_rows + try normalizeHostingerTypedRows(gpa, db, route, redacted_body),
     };
 }
 
@@ -85,7 +75,19 @@ fn normalizeCloudflareTypedRows(gpa: Allocator, db: *Db, route: provider_routes.
     return 0;
 }
 
-fn normalizeCloudflareInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, redacted_body: []const u8) !usize {
+pub fn persistCloudflareResourceRows(gpa: Allocator, db: *Db, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, redacted_body: []const u8) !Counts {
+    var rows = try provider_cloudflare_models.parseResourceRows(gpa, kind, scope, scope_id, redacted_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertCloudflareResource(row.key, row.kind, row.resource_id, row.scope, row.scope_id, row.name, row.status, row.resource_type, row.raw_json);
+    }
+    return .{
+        .resources = rows.items.len,
+        .typed_rows = try persistCloudflareInventoryRows(gpa, db, kind, scope, scope_id, redacted_body),
+    };
+}
+
+pub fn persistCloudflareInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, redacted_body: []const u8) !usize {
     var rows = try provider_cloudflare_models.parseInventoryRows(gpa, kind, scope, scope_id, redacted_body);
     defer rows.deinit(gpa);
     for (rows.items) |row| {
@@ -150,7 +152,19 @@ fn normalizeHostingerTypedRows(gpa: Allocator, db: *Db, route: provider_routes.R
     return rows.items.len;
 }
 
-fn normalizeHostingerInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[]const u8, redacted_body: []const u8) !usize {
+pub fn persistHostingerResourceRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[]const u8, redacted_body: []const u8) !Counts {
+    var rows = try provider_hostinger_models.parseResourceRows(gpa, kind, target, redacted_body);
+    defer rows.deinit(gpa);
+    for (rows.items) |row| {
+        try db.upsertHostingerResource(row.key, row.kind, row.resource_id, row.target, row.name, row.status, row.domain, row.raw_json);
+    }
+    return .{
+        .resources = rows.items.len,
+        .typed_rows = try persistHostingerInventoryRows(gpa, db, kind, target, redacted_body),
+    };
+}
+
+pub fn persistHostingerInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[]const u8, redacted_body: []const u8) !usize {
     var rows = try provider_hostinger_models.parseInventoryRows(gpa, kind, target, redacted_body);
     defer rows.deinit(gpa);
     for (rows.items) |row| {

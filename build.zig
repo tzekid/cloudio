@@ -119,23 +119,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_json", .module = core_json_mod },
         },
     });
-    const collector_cloudflare_mod = b.createModule(.{
-        .root_source_file = b.path("src/collectors/cloudflare.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "sqlite", .module = sqlite_mod },
-            .{ .name = "core_time", .module = core_time_mod },
-            .{ .name = "core_process", .module = core_process_mod },
-            .{ .name = "core_redact", .module = core_redact_mod },
-            .{ .name = "collector_capture", .module = collector_capture_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "net_http", .module = net_http_mod },
-            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
-            .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
-        },
-    });
-    linkSqlite(collector_cloudflare_mod);
     const collector_caddy_mod = b.createModule(.{
         .root_source_file = b.path("src/collectors/caddy.zig"),
         .target = target,
@@ -199,6 +182,24 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(collector_capture_normalize_mod);
+    const collector_cloudflare_mod = b.createModule(.{
+        .root_source_file = b.path("src/collectors/cloudflare.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "core_time", .module = core_time_mod },
+            .{ .name = "core_process", .module = core_process_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
+            .{ .name = "collector_capture", .module = collector_capture_mod },
+            .{ .name = "collector_capture_normalize", .module = collector_capture_normalize_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "net_http", .module = net_http_mod },
+            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
+            .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
+        },
+    });
+    linkSqlite(collector_cloudflare_mod);
     const provider_dispatch_mod = b.createModule(.{
         .root_source_file = b.path("src/providers/dispatch.zig"),
         .target = target,
@@ -218,6 +219,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "sqlite", .module = sqlite_mod },
             .{ .name = "collector_capture", .module = collector_capture_mod },
+            .{ .name = "collector_capture_normalize", .module = collector_capture_normalize_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "net_http", .module = net_http_mod },
             .{ .name = "provider_hostinger", .module = provider_hostinger_mod },

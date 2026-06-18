@@ -3,6 +3,7 @@ const sqlite = @import("sqlite");
 const db_store = @import("db_store");
 const net_http = @import("net_http");
 const collector_capture = @import("collector_capture");
+const collector_capture_normalize = @import("collector_capture_normalize");
 const provider_hostinger = @import("provider_hostinger");
 const provider_hostinger_models = @import("provider_hostinger_models");
 
@@ -468,35 +469,11 @@ pub fn persistVpsRows(gpa: Allocator, db: *Db, body: []const u8) !void {
 }
 
 pub fn persistResourceRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[]const u8, body: []const u8) !void {
-    var rows = try provider_hostinger_models.parseResourceRows(gpa, kind, target, body);
-    defer rows.deinit(gpa);
-    for (rows.items) |row| {
-        try db.upsertHostingerResource(row.key, row.kind, row.resource_id, row.target, row.name, row.status, row.domain, row.raw_json);
-    }
-    try persistInventoryRows(gpa, db, kind, target, body);
+    _ = try collector_capture_normalize.persistHostingerResourceRows(gpa, db, kind, target, body);
 }
 
 pub fn persistInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[]const u8, body: []const u8) !void {
-    var rows = try provider_hostinger_models.parseInventoryRows(gpa, kind, target, body);
-    defer rows.deinit(gpa);
-    for (rows.items) |row| {
-        try db.upsertHostingerInventoryItem(
-            row.key,
-            row.kind,
-            row.resource_id,
-            row.name,
-            row.status,
-            row.category,
-            row.domain,
-            row.username,
-            row.related_id,
-            row.flag,
-            row.created_at,
-            row.updated_at,
-            row.expires_at,
-            row.raw_json,
-        );
-    }
+    _ = try collector_capture_normalize.persistHostingerInventoryRows(gpa, db, kind, target, body);
 }
 
 fn collectPagedVmEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, vm_id: []const u8, endpoint: VmEndpoint, capture_output: bool) !Output {
