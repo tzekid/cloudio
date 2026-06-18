@@ -195,25 +195,33 @@ pub fn loadFamiliesFromText(gpa: Allocator, cloudflare_text: []const u8, hosting
 pub fn writeFamiliesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: FamilyOptions, writer: anytype) !void {
     var report = try loadFamilies(io, gpa, paths, options);
     defer report.deinit(gpa);
-    try report.writeText(writer, options);
+    var bundle_routes = try app_provider_coverage_families.loadBundleRoutesFromFiles(io, gpa, paths, options);
+    defer if (bundle_routes) |*routes| routes.deinit(gpa);
+    try report.writeText(gpa, writer, if (bundle_routes) |routes| routes.items else null, options);
 }
 
 pub fn writeFamiliesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: FamilyOptions, writer: anytype) !void {
     var report = try loadFamilies(io, gpa, paths, options);
     defer report.deinit(gpa);
-    try report.writeJson(writer, options);
+    var bundle_routes = try app_provider_coverage_families.loadBundleRoutesFromFiles(io, gpa, paths, options);
+    defer if (bundle_routes) |*routes| routes.deinit(gpa);
+    try report.writeJson(gpa, writer, if (bundle_routes) |routes| routes.items else null, options);
 }
 
 pub fn writeFamiliesTextFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: FamilyOptions, writer: anytype) !void {
     var report = try loadFamiliesFromText(gpa, cloudflare_text, hostinger_text, options);
     defer report.deinit(gpa);
-    try report.writeText(writer, options);
+    var bundle_routes = try app_provider_coverage_families.loadBundleRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
+    defer if (bundle_routes) |*routes| routes.deinit(gpa);
+    try report.writeText(gpa, writer, if (bundle_routes) |routes| routes.items else null, options);
 }
 
 pub fn writeFamiliesJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: FamilyOptions, writer: anytype) !void {
     var report = try loadFamiliesFromText(gpa, cloudflare_text, hostinger_text, options);
     defer report.deinit(gpa);
-    try report.writeJson(writer, options);
+    var bundle_routes = try app_provider_coverage_families.loadBundleRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
+    defer if (bundle_routes) |*routes| routes.deinit(gpa);
+    try report.writeJson(gpa, writer, if (bundle_routes) |routes| routes.items else null, options);
 }
 
 pub fn writeTypedModelsTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: TypedModelOptions, writer: anytype) !void {
@@ -1148,7 +1156,7 @@ test "aggregates provider coverage evidence by control-plane family" {
     try std.testing.expect(std.mem.indexOf(u8, text, "filter=all focus=control-plane limit=all") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | dns: priority=1 tags=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "dry_run_evidence=1 generated_dry_run_policy_evidence=1 pending_mutation_dry_runs=0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "workplan: cloudio coverage workplan cloudflare --family dns --limit 25") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "workplan: cloudio coverage workplan cloudflare --family dns --limit 0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | tokens: priority=0 tags=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger | hostinger-vps: priority=0 tags=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger | docker: priority=0 tags=1") != null);

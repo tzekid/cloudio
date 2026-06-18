@@ -432,6 +432,11 @@ fn parseFamilies(args: []const []const u8) Command {
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
+        switch (parseCoverageUnsignedArg(args, &index, .{"--candidate-limit"}, &command.options.candidate_limit)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         switch (parseCoverageFocusArg(args, &index, &command.options.focus)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
@@ -440,6 +445,10 @@ fn parseFamilies(args: []const []const u8) Command {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--control-plane") or std.mem.eql(u8, arg, "--cloudio-relevant")) {
             command.options.focus = .control_plane;
+        } else if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
+            command.options.include_plans = true;
+        } else if (std.mem.eql(u8, arg, "--bundle") or std.mem.eql(u8, arg, "--include-candidates") or std.mem.eql(u8, arg, "--with-candidates")) {
+            command.options.bundle_candidates = true;
         } else if (app_coverage.WorkplanFocus.parse(arg)) |focus| {
             command.options.focus = focus;
         } else if (!provider_set) {
@@ -548,7 +557,7 @@ pub const usage_text =
     \\  cloudio coverage tags [all|cloudflare|hostinger] [--json|--format json]
     \\  cloudio coverage l1 [all|cloudflare|hostinger] [--json|--format json]
     \\  cloudio coverage gaps|levels|level-tags [all|cloudflare|hostinger] [--limit <n>] [--json|--format json]
-    \\  cloudio coverage families [all|cloudflare|hostinger] [--focus all|control-plane] [--limit <n>] [--json|--format json]
+    \\  cloudio coverage families [all|cloudflare|hostinger] [--focus all|control-plane] [--limit <n>] [--bundle] [--plans] [--candidate-limit <n>] [--json|--format json]
     \\  cloudio coverage typed-models [all|cloudflare|hostinger] [--family <family>] [--limit <n>] [--include-complete] [--json|--format json]
     \\  cloudio coverage workplan [all|cloudflare|hostinger] [all|control-plane|<family>] [--focus all|control-plane] [--family <family>] [--limit <n>] [--plans] [--bundle] [--candidate-limit <n>] [--json|--format json]
     \\  cloudio coverage capture-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--plans] [--json|--format json]
@@ -562,7 +571,7 @@ pub const usage_text =
     \\  cloudio coverage workplan security --plans --json
     \\  cloudio coverage workplan hostinger hostinger-vps --bundle --plans --json
     \\  cloudio coverage actual-captures hostinger --family hostinger-vps --limit 20 --json
-    \\  cloudio coverage families control-plane --limit 0 --json
+    \\  cloudio coverage families control-plane --limit 0 --bundle --plans --json
     \\
     \\Families include accounts, zones, dns, ssl-tls, access, tunnels, rulesets, logs, cache, security, tokens, memberships, billing, domains, hosting, docker, hostinger-vps, public-keys, custom-pages, healthchecks, and load-balancing.
     \\
@@ -1097,6 +1106,18 @@ test "coverage command parser defaults to summary" {
         .families => |command| {
             try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, command.options.provider);
             try std.testing.expectEqual(app_coverage.WorkplanFocus.control_plane, command.options.focus);
+        },
+        else => return error.ExpectedCoverageFamilies,
+    }
+
+    const bundled_families_args = [_][]const u8{ "families", "hostinger", "--bundle", "--plans", "--candidate-limit=3", "--json" };
+    switch (parseCommand(bundled_families_args[0..])) {
+        .families => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, command.options.provider);
+            try std.testing.expect(command.options.bundle_candidates);
+            try std.testing.expect(command.options.include_plans);
+            try std.testing.expectEqual(@as(usize, 3), command.options.candidate_limit);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
         },
         else => return error.ExpectedCoverageFamilies,
     }

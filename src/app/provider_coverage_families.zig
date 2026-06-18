@@ -1,20 +1,29 @@
 const std = @import("std");
+const app_provider_coverage_candidates = @import("app_provider_coverage_candidates");
 const app_provider_coverage_render = @import("app_provider_coverage_render");
+const app_provider_coverage_routes = @import("app_provider_coverage_routes");
 const app_provider_coverage_workplan = @import("app_provider_coverage_workplan");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const writeJsonCountField = app_provider_coverage_render.writeJsonCountField;
 const writeJsonField = app_provider_coverage_render.writeJsonField;
 const writeMaybeJsonComma = app_provider_coverage_render.writeMaybeJsonComma;
 
 pub const WorkplanFocus = app_provider_coverage_workplan.WorkplanFocus;
 pub const WorkplanFamily = app_provider_coverage_workplan.WorkplanFamily;
+pub const Paths = provider_routes.Paths;
+pub const CoverageRoute = app_provider_coverage_workplan.CoverageRoute;
+pub const CoverageRoutes = app_provider_coverage_workplan.CoverageRoutes;
 
 pub const FamilyOptions = struct {
     provider: provider_routes.ProviderFilter = .all,
     limit: usize = 25,
     focus: WorkplanFocus = .control_plane,
+    include_plans: bool = false,
+    bundle_candidates: bool = false,
+    candidate_limit: usize = 25,
 };
 
 pub const ProviderEvidence = struct {
@@ -76,12 +85,15 @@ pub const FamilyReport = struct {
         gpa.free(self.items);
     }
 
-    pub fn writeText(self: FamilyReport, writer: anytype, options: FamilyOptions) !void {
+    pub fn writeText(self: FamilyReport, gpa: Allocator, writer: anytype, bundle_routes: ?[]const CoverageRoute, options: FamilyOptions) !void {
         try writer.writeAll("Cloudio provider coverage families\n");
         try writer.writeAll("evidence: generated manifest + Cloudio support overlay, not final completion proof\n");
         try writer.writeAll("rank: pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence\n");
         try writer.writeAll("scope: control-plane provider families for broad implementation slices\n");
-        try writer.print("filter={s} focus={s} limit=", .{ options.provider.name(), options.focus.name() });
+        try writer.print("filter={s} focus={s}", .{ options.provider.name(), options.focus.name() });
+        if (options.include_plans) try writer.writeAll(" plans=true");
+        if (options.bundle_candidates) try writer.writeAll(" bundle_candidates=true");
+        try writer.writeAll(" limit=");
         if (options.limit == 0) {
             try writer.writeAll("all\n");
         } else {
@@ -96,7 +108,7 @@ pub const FamilyReport = struct {
                 continue;
             }
             visible += 1;
-            try writeFamilyRowText(row, writer);
+            try writeFamilyRowText(gpa, row, writer, bundle_routes, options);
         }
 
         if (visible == 0) {
@@ -106,12 +118,15 @@ pub const FamilyReport = struct {
         }
     }
 
-    pub fn writeJson(self: FamilyReport, writer: anytype, options: FamilyOptions) !void {
+    pub fn writeJson(self: FamilyReport, gpa: Allocator, writer: anytype, bundle_routes: ?[]const CoverageRoute, options: FamilyOptions) !void {
         try writer.writeByte('{');
         try writeJsonField(writer, "kind", "coverage_families", true);
         try writeJsonField(writer, "filter", options.provider.name(), true);
         try writeJsonField(writer, "focus", options.focus.name(), true);
         try writeJsonCountField(writer, "limit", options.limit, true);
+        try app_provider_coverage_render.writeJsonBoolField(writer, "include_plans", options.include_plans, true);
+        try app_provider_coverage_render.writeJsonBoolField(writer, "bundle_candidates", options.bundle_candidates, true);
+        try writeJsonCountField(writer, "candidate_limit", options.candidate_limit, true);
         try writeJsonField(writer, "evidence", "generated manifest + Cloudio support overlay, not final completion proof", true);
         try writeJsonField(writer, "rank", "pending_reads + pending_mutation_dry_runs; diagnostic_blocked_reads are evidence", true);
         try writeJsonField(writer, "scope", "control-plane provider families for broad implementation slices", true);
@@ -127,7 +142,7 @@ pub const FamilyReport = struct {
             }
             try writeMaybeJsonComma(writer, &first);
             visible += 1;
-            try writeFamilyRowJson(row, writer);
+            try writeFamilyRowJson(gpa, row, writer, bundle_routes, options);
         }
 
         try writer.writeAll("],");
@@ -137,6 +152,20 @@ pub const FamilyReport = struct {
         try writer.writeByte('\n');
     }
 };
+
+pub fn loadBundleRoutesFromFiles(io: Io, gpa: Allocator, paths: Paths, options: FamilyOptions) !?CoverageRoutes {
+    if (!options.bundle_candidates) return null;
+    return try app_provider_coverage_routes.loadRoutes(io, gpa, paths, .{
+        .provider = options.provider,
+    });
+}
+
+pub fn loadBundleRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, options: FamilyOptions) !?CoverageRoutes {
+    if (!options.bundle_candidates) return null;
+    return try app_provider_coverage_routes.loadRoutesFromText(gpa, cloudflare_text, hostinger_text, .{
+        .provider = options.provider,
+    });
+}
 
 pub fn buildReport(gpa: Allocator, rows: anytype, options: FamilyOptions) !FamilyReport {
     validateRowsSlice(@TypeOf(rows));
@@ -221,7 +250,7 @@ fn familyLessThan(lhs: FamilyEvidence, rhs: FamilyEvidence) bool {
     return std.mem.order(u8, lhs.family.name(), rhs.family.name()) == .lt;
 }
 
-fn writeFamilyRowText(row: FamilyEvidence, writer: anytype) !void {
+fn writeFamilyRowText(gpa: Allocator, row: FamilyEvidence, writer: anytype, bundle_routes: ?[]const CoverageRoute, options: FamilyOptions) !void {
     const evidence = row.evidence;
     try writer.print("{s} | {s}: priority={d} tags={d} L0={d} non_deprecated={d} deprecated={d} not_applicable={d} L1_routable={d} read={d} dry_run={d}", .{
         row.provider,
@@ -252,10 +281,53 @@ fn writeFamilyRowText(row: FamilyEvidence, writer: anytype) !void {
         evidence.l3_generic_inventory_candidates,
         evidence.l3_typed_table_evidence,
     });
-    try writer.print("  workplan: cloudio coverage workplan {s} --family {s} --limit 25\n", .{ row.provider, row.family.name() });
+    const readiness = familyReadiness(row);
+    try writer.print("  readiness: l1={s} l2={s} l3={s} dry_run={s} next={s}\n", .{
+        readiness.l1,
+        readiness.l2,
+        readiness.l3,
+        readiness.dry_run,
+        readiness.next_action,
+    });
+    const workplan = try familyCommand(gpa, row, .workplan, options);
+    defer gpa.free(workplan);
+    try writer.print("  workplan: {s}\n", .{workplan});
+    if (needsCapture(row)) {
+        const capture = try familyCommand(gpa, row, .capture_candidates, options);
+        defer gpa.free(capture);
+        try writer.print("  capture-candidates: {s}\n", .{capture});
+        const actual = try familyCommand(gpa, row, .actual_captures, options);
+        defer gpa.free(actual);
+        try writer.print("  actual-captures: {s}\n", .{actual});
+    }
+    if (needsDryRun(row)) {
+        const dry_run = try familyCommand(gpa, row, .dry_run_candidates, options);
+        defer gpa.free(dry_run);
+        try writer.print("  dry-run-candidates: {s}\n", .{dry_run});
+    }
+    if (needsTypedModelReview(row)) {
+        const typed = try familyCommand(gpa, row, .typed_models, options);
+        defer gpa.free(typed);
+        try writer.print("  typed-models: {s}\n", .{typed});
+    }
+    if (options.bundle_candidates) {
+        const counts = candidateBundleCounts(row, bundle_routes orelse &.{}, options);
+        try writer.writeAll("  candidate-bundle: candidate_limit=");
+        if (options.candidate_limit == 0) {
+            try writer.writeAll("all");
+        } else {
+            try writer.print("{d}", .{options.candidate_limit});
+        }
+        try writer.print(" capture_visible={d} capture_omitted={d} dry_run_visible={d} dry_run_omitted={d}\n", .{
+            counts.capture.visible,
+            counts.capture.omitted,
+            counts.dry_run.visible,
+            counts.dry_run.omitted,
+        });
+    }
 }
 
-fn writeFamilyRowJson(row: FamilyEvidence, writer: anytype) !void {
+fn writeFamilyRowJson(gpa: Allocator, row: FamilyEvidence, writer: anytype, bundle_routes: ?[]const CoverageRoute, options: FamilyOptions) !void {
     try writer.writeByte('{');
     try writeJsonField(writer, "provider", row.provider, true);
     try writeJsonField(writer, "family", row.family.name(), true);
@@ -264,11 +336,294 @@ fn writeFamilyRowJson(row: FamilyEvidence, writer: anytype) !void {
     try writer.writeAll("\"evidence\":");
     try writeProviderEvidenceJson(row.evidence, writer);
     try writer.writeByte(',');
+    try writer.writeAll("\"readiness\":");
+    try writeFamilyReadinessJson(row, writer);
+    try writer.writeByte(',');
     try writer.writeAll("\"commands\":[{\"kind\":\"workplan\",\"command\":\"cloudio coverage workplan ");
     try writer.writeAll(row.provider);
     try writer.writeAll(" --family ");
     try writer.writeAll(row.family.name());
-    try writer.writeAll(" --limit 25\"}]}");
+    try writer.writeAll(" --limit 25\"}]");
+    try writer.writeByte(',');
+    try writer.writeAll("\"slice_commands\":[");
+    try writeSliceCommandsJson(gpa, row, options, writer);
+    try writer.writeByte(']');
+    if (options.bundle_candidates) {
+        try writer.writeByte(',');
+        try writeCandidateBundleJson(gpa, row, bundle_routes orelse &.{}, options, writer);
+    }
+    try writer.writeByte('}');
+}
+
+const FamilyReadiness = struct {
+    l1: []const u8,
+    l2: []const u8,
+    l3: []const u8,
+    dry_run: []const u8,
+    next_action: []const u8,
+};
+
+fn familyReadiness(row: FamilyEvidence) FamilyReadiness {
+    const evidence = row.evidence;
+    return .{
+        .l1 = familyL1Status(evidence),
+        .l2 = familyL2Status(evidence),
+        .l3 = familyL3Status(evidence),
+        .dry_run = familyDryRunStatus(evidence),
+        .next_action = familyNextAction(evidence),
+    };
+}
+
+fn familyL1Status(evidence: ProviderEvidence) []const u8 {
+    if (evidence.non_deprecated == 0) return "not_applicable";
+    if (evidence.routable + evidence.not_applicable >= evidence.non_deprecated) return "complete";
+    if (evidence.routable != 0) return "partial";
+    return "pending";
+}
+
+fn familyL2Status(evidence: ProviderEvidence) []const u8 {
+    if (evidence.read_routes == 0) return "not_applicable";
+    if (evidence.pending_reads == 0) return "complete";
+    if (evidence.l2_read_evidence != 0 or evidence.l2_partial_reads != 0 or evidence.l2_diagnostic_reads != 0) return "partial";
+    return "pending";
+}
+
+fn familyL3Status(evidence: ProviderEvidence) []const u8 {
+    if (evidence.read_routes == 0) return "not_applicable";
+    if (evidence.l3_typed_table_evidence != 0) return "typed";
+    if (evidence.l3_generic_inventory_candidates != 0) return "generic";
+    return "pending";
+}
+
+fn familyDryRunStatus(evidence: ProviderEvidence) []const u8 {
+    if (evidence.dry_run_routes == 0) return "not_applicable";
+    if (evidence.pending_mutation_dry_runs == 0) return "complete";
+    if (evidence.dry_run_evidence != 0 or evidence.generated_dry_run_policy_evidence != 0) return "partial";
+    return "pending";
+}
+
+fn familyNextAction(evidence: ProviderEvidence) []const u8 {
+    if (evidence.pending_reads != 0 and evidence.pending_mutation_dry_runs != 0) return "capture_reads_and_review_dry_runs";
+    if (evidence.pending_reads != 0) return "capture_reads";
+    if (evidence.pending_mutation_dry_runs != 0) return "review_dry_runs";
+    if (evidence.l3_generic_inventory_candidates != 0 and evidence.l3_typed_table_evidence == 0) return "promote_generic_inventory_to_typed_models";
+    return "review_evidence";
+}
+
+fn writeFamilyReadinessJson(row: FamilyEvidence, writer: anytype) !void {
+    const readiness = familyReadiness(row);
+    try writer.writeByte('{');
+    try writeJsonField(writer, "l1", readiness.l1, true);
+    try writeJsonField(writer, "l2", readiness.l2, true);
+    try writeJsonField(writer, "l3", readiness.l3, true);
+    try writeJsonField(writer, "dry_run", readiness.dry_run, true);
+    try writeJsonField(writer, "next_action", readiness.next_action, false);
+    try writer.writeByte('}');
+}
+
+const SliceCommandKind = enum {
+    routes_detail,
+    workplan,
+    capture_candidates,
+    actual_captures,
+    dry_run_candidates,
+    typed_models,
+};
+
+fn writeSliceCommandsJson(gpa: Allocator, row: FamilyEvidence, options: FamilyOptions, writer: anytype) !void {
+    var first = true;
+    try writeSliceCommandJson(gpa, row, .routes_detail, options, writer, &first);
+    try writeSliceCommandJson(gpa, row, .workplan, options, writer, &first);
+    if (needsCapture(row)) {
+        try writeSliceCommandJson(gpa, row, .capture_candidates, options, writer, &first);
+        try writeSliceCommandJson(gpa, row, .actual_captures, options, writer, &first);
+    }
+    if (needsDryRun(row)) try writeSliceCommandJson(gpa, row, .dry_run_candidates, options, writer, &first);
+    if (needsTypedModelReview(row)) try writeSliceCommandJson(gpa, row, .typed_models, options, writer, &first);
+}
+
+fn writeSliceCommandJson(gpa: Allocator, row: FamilyEvidence, kind: SliceCommandKind, options: FamilyOptions, writer: anytype, first: *bool) !void {
+    const command = try familyCommand(gpa, row, kind, options);
+    defer gpa.free(command);
+    try writeMaybeJsonComma(writer, first);
+    try writer.writeByte('{');
+    try writeJsonField(writer, "kind", sliceCommandKindName(kind), true);
+    try writeJsonField(writer, "command", command, false);
+    try writer.writeByte('}');
+}
+
+fn familyCommand(gpa: Allocator, row: FamilyEvidence, kind: SliceCommandKind, options: FamilyOptions) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    const writer = &out.writer;
+    switch (kind) {
+        .routes_detail => try writer.print("cloudio coverage routes {s} --family {s} --detail", .{ row.provider, row.family.name() }),
+        .workplan => {
+            try writer.print("cloudio coverage workplan {s} --family {s} --limit 0", .{ row.provider, row.family.name() });
+            if (options.bundle_candidates) try writer.writeAll(" --bundle");
+            if (options.include_plans) try writer.writeAll(" --plans");
+            if (options.candidate_limit != 25) try writer.print(" --candidate-limit {d}", .{options.candidate_limit});
+        },
+        .capture_candidates => {
+            try writer.print("cloudio coverage capture-candidates {s} --family {s} --limit ", .{ row.provider, row.family.name() });
+            try writeLimit(writer, options.candidate_limit);
+            if (options.include_plans) try writer.writeAll(" --plans");
+        },
+        .actual_captures => {
+            try writer.print("cloudio coverage actual-captures {s} --family {s} --limit ", .{ row.provider, row.family.name() });
+            try writeLimit(writer, options.candidate_limit);
+            if (options.include_plans) try writer.writeAll(" --plans");
+        },
+        .dry_run_candidates => {
+            try writer.print("cloudio coverage dry-run-candidates {s} --family {s} --limit ", .{ row.provider, row.family.name() });
+            try writeLimit(writer, options.candidate_limit);
+            if (options.include_plans) try writer.writeAll(" --plans");
+        },
+        .typed_models => {
+            try writer.print("cloudio coverage typed-models {s} --family {s} --limit ", .{ row.provider, row.family.name() });
+            try writeLimit(writer, options.candidate_limit);
+        },
+    }
+    return try out.toOwnedSlice();
+}
+
+fn writeLimit(writer: anytype, limit: usize) !void {
+    if (limit == 0) {
+        try writer.writeAll("0");
+    } else {
+        try writer.print("{d}", .{limit});
+    }
+}
+
+fn sliceCommandKindName(kind: SliceCommandKind) []const u8 {
+    return switch (kind) {
+        .routes_detail => "routes_detail",
+        .workplan => "workplan",
+        .capture_candidates => "capture_candidates",
+        .actual_captures => "actual_captures",
+        .dry_run_candidates => "dry_run_candidates",
+        .typed_models => "typed_models",
+    };
+}
+
+const CandidateKind = enum {
+    capture,
+    dry_run,
+};
+
+const CandidateSetCounts = struct {
+    total: usize = 0,
+    visible: usize = 0,
+    omitted: usize = 0,
+};
+
+const CandidateBundleCounts = struct {
+    capture: CandidateSetCounts = .{},
+    dry_run: CandidateSetCounts = .{},
+};
+
+fn writeCandidateBundleJson(gpa: Allocator, row: FamilyEvidence, routes: []const CoverageRoute, options: FamilyOptions, writer: anytype) !void {
+    try writer.writeAll("\"candidate_bundle\":{");
+    try writeJsonCountField(writer, "candidate_limit", options.candidate_limit, true);
+    try app_provider_coverage_render.writeJsonBoolField(writer, "include_plans", options.include_plans, true);
+    try writeCandidateSetJson(gpa, row, routes, options, .capture, writer);
+    try writer.writeByte(',');
+    try writeCandidateSetJson(gpa, row, routes, options, .dry_run, writer);
+    try writer.writeByte('}');
+}
+
+fn writeCandidateSetJson(gpa: Allocator, row: FamilyEvidence, routes: []const CoverageRoute, options: FamilyOptions, kind: CandidateKind, writer: anytype) !void {
+    const counts = candidateSetCounts(row, routes, options, kind);
+    try writer.writeByte('"');
+    try writer.writeAll(candidateKindName(kind));
+    try writer.writeAll("\":{");
+    try writeJsonCountField(writer, "total", counts.total, true);
+    try writeJsonCountField(writer, "visible", counts.visible, true);
+    try writeJsonCountField(writer, "omitted", counts.omitted, true);
+    try writer.writeAll("\"candidates\":[");
+    var first = true;
+    var visible: usize = 0;
+    for (routes) |route_row| {
+        if (!routeMatchesFamily(route_row, row)) continue;
+        if (!routeIsCandidate(route_row, options, kind)) continue;
+        if (options.candidate_limit != 0 and visible >= options.candidate_limit) continue;
+        visible += 1;
+        try writeMaybeJsonComma(writer, &first);
+        switch (kind) {
+            .capture => try app_provider_coverage_candidates.writeCaptureCandidateJson(gpa, route_row, captureCandidateOptions(options), writer),
+            .dry_run => try app_provider_coverage_candidates.writeDryRunCandidateJson(gpa, route_row, dryRunCandidateOptions(options), writer),
+        }
+    }
+    try writer.writeAll("]}");
+}
+
+fn candidateBundleCounts(row: FamilyEvidence, routes: []const CoverageRoute, options: FamilyOptions) CandidateBundleCounts {
+    return .{
+        .capture = candidateSetCounts(row, routes, options, .capture),
+        .dry_run = candidateSetCounts(row, routes, options, .dry_run),
+    };
+}
+
+fn candidateSetCounts(row: FamilyEvidence, routes: []const CoverageRoute, options: FamilyOptions, kind: CandidateKind) CandidateSetCounts {
+    var counts = CandidateSetCounts{};
+    for (routes) |route_row| {
+        if (!routeMatchesFamily(route_row, row)) continue;
+        if (!routeIsCandidate(route_row, options, kind)) continue;
+        counts.total += 1;
+        if (options.candidate_limit == 0 or counts.visible < options.candidate_limit) {
+            counts.visible += 1;
+        } else {
+            counts.omitted += 1;
+        }
+    }
+    return counts;
+}
+
+fn routeMatchesFamily(route_row: CoverageRoute, row: FamilyEvidence) bool {
+    if (!std.mem.eql(u8, route_row.route.provider.name(), row.provider)) return false;
+    return (app_provider_coverage_workplan.tagFamily(row.provider, route_row.route.tag) orelse return false) == row.family;
+}
+
+fn routeIsCandidate(route_row: CoverageRoute, options: FamilyOptions, kind: CandidateKind) bool {
+    return switch (kind) {
+        .capture => app_provider_coverage_candidates.isCaptureCandidate(route_row, captureCandidateOptions(options)),
+        .dry_run => app_provider_coverage_candidates.isDryRunCandidate(route_row, dryRunCandidateOptions(options)),
+    };
+}
+
+fn captureCandidateOptions(options: FamilyOptions) app_provider_coverage_candidates.CaptureCandidateOptions {
+    return .{
+        .filter = .{},
+        .limit = options.candidate_limit,
+        .include_plans = options.include_plans,
+    };
+}
+
+fn dryRunCandidateOptions(options: FamilyOptions) app_provider_coverage_candidates.DryRunCandidateOptions {
+    return .{
+        .filter = .{},
+        .limit = options.candidate_limit,
+        .include_plans = options.include_plans,
+    };
+}
+
+fn candidateKindName(kind: CandidateKind) []const u8 {
+    return switch (kind) {
+        .capture => "capture",
+        .dry_run => "dry_run",
+    };
+}
+
+fn needsCapture(row: FamilyEvidence) bool {
+    return row.evidence.pending_reads != 0;
+}
+
+fn needsDryRun(row: FamilyEvidence) bool {
+    return row.evidence.pending_mutation_dry_runs != 0;
+}
+
+fn needsTypedModelReview(row: FamilyEvidence) bool {
+    return row.evidence.l3_generic_inventory_candidates != 0 or row.evidence.l2_read_evidence != 0;
 }
 
 fn writeProviderEvidenceJson(evidence: ProviderEvidence, writer: anytype) !void {
@@ -400,24 +755,95 @@ test "builds and renders provider family coverage rollups" {
 
     var text_out = std.Io.Writer.Allocating.init(allocator);
     defer text_out.deinit();
-    try report.writeText(&text_out.writer, .{ .provider = .all, .limit = 0 });
+    try report.writeText(allocator, &text_out.writer, null, .{ .provider = .all, .limit = 0 });
     const text = try text_out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio provider coverage families\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "cloudflare | dns: priority=1 tags=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "workplan: cloudio coverage workplan cloudflare --family dns --limit 25") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "readiness: l1=complete l2=partial l3=typed dry_run=complete next=capture_reads") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "workplan: cloudio coverage workplan cloudflare --family dns --limit 0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "capture-candidates: cloudio coverage capture-candidates cloudflare --family dns --limit 25") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "typed-models: cloudio coverage typed-models cloudflare --family dns --limit 25") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Workers") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Catalog") == null);
 
     var json_out = std.Io.Writer.Allocating.init(allocator);
     defer json_out.deinit();
-    try report.writeJson(&json_out.writer, .{ .provider = .all, .limit = 1 });
+    try report.writeJson(allocator, &json_out.writer, null, .{ .provider = .all, .limit = 1 });
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
+    var parsed_json = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed_json.deinit();
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_families\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"family\":\"dns\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"readiness\":{\"l1\":\"complete\",\"l2\":\"partial\",\"l3\":\"typed\",\"dry_run\":\"complete\",\"next_action\":\"capture_reads\"}") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"pending_reads\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"command\":\"cloudio coverage workplan cloudflare --family dns --limit 25\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"slice_commands\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"command\":\"cloudio coverage routes cloudflare --family dns --detail\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"visible\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"omitted\":1") != null);
+}
+
+test "renders bundled family capture and dry-run candidates" {
+    const allocator = std.testing.allocator;
+    const rows = [_]TestRow{
+        .{
+            .provider = "hostinger",
+            .tag = "VPS: Virtual machine",
+            .evidence = .{
+                .name = "VPS: Virtual machine",
+                .total = 2,
+                .non_deprecated = 2,
+                .routable = 2,
+                .read_routes = 1,
+                .dry_run_routes = 1,
+                .pending_reads = 1,
+                .pending_mutation_dry_runs = 1,
+            },
+        },
+    };
+    const slice: []const TestRow = rows[0..];
+    var report = try buildReport(allocator, slice, .{ .provider = .hostinger, .limit = 0 });
+    defer report.deinit(allocator);
+
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"GET","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_getVirtualMachinesV1","path_params":[],"query_params":[{"name":"page","required":false}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"pending read"}
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"POST","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_purchaseNewVirtualMachineV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":["#/components/schemas/VpsPurchaseRequest"]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"unsafe_mutation","mode":"dry_run","tests":"missing","deprecated":false,"notes":"pending mutation review"}
+        \\{"provider":"hostinger","tag":"Billing: Catalog","method":"GET","path":"/api/billing/v1/catalog","operation_id":"billing_getCatalogItemListV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"different family"}
+        \\
+    ;
+    var bundle_routes = (try loadBundleRoutesFromText(allocator, "", hostinger, .{
+        .provider = .hostinger,
+        .limit = 0,
+        .include_plans = true,
+        .bundle_candidates = true,
+        .candidate_limit = 1,
+    })).?;
+    defer bundle_routes.deinit(allocator);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try report.writeJson(allocator, &json_out.writer, bundle_routes.items, .{
+        .provider = .hostinger,
+        .limit = 0,
+        .include_plans = true,
+        .bundle_candidates = true,
+        .candidate_limit = 1,
+    });
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    var parsed_json = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed_json.deinit();
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"bundle_candidates\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_bundle\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"capture\":{\"total\":1,\"visible\":1,\"omitted\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"dry_run\":{\"total\":1,\"visible\":1,\"omitted\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachinesV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_purchaseNewVirtualMachineV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"read_plan\":{\"provider\":\"hostinger\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"dry_run_plan\":{\"provider\":\"hostinger\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"safety_policy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "billing_getCatalogItemListV1") == null);
 }

@@ -582,6 +582,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
+            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
             .{ .name = "app_provider_coverage_workplan", .module = app_provider_coverage_workplan_mod },
             .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
