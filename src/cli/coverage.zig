@@ -316,6 +316,15 @@ fn parseWorkplan(args: []const []const u8) Command {
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
             command.format = parseFormat(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--focus")) {
+            index += 1;
+            if (index >= args.len) return .{ .unknown = "--focus" };
+            command.options.focus = app_coverage.WorkplanFocus.parse(args[index]) orelse return .{ .unknown = args[index] };
+        } else if (std.mem.startsWith(u8, arg, "--focus=")) {
+            const value = arg["--focus=".len..];
+            command.options.focus = app_coverage.WorkplanFocus.parse(value) orelse return .{ .unknown = value };
+        } else if (std.mem.eql(u8, arg, "--control-plane") or std.mem.eql(u8, arg, "--cloudio-relevant")) {
+            command.options.focus = .control_plane;
         } else if (!provider_set) {
             command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
@@ -885,6 +894,28 @@ test "coverage command parser defaults to summary" {
         .workplan => |command| {
             try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.provider);
             try std.testing.expectEqual(@as(usize, 6), command.options.limit);
+            try std.testing.expectEqual(app_coverage.WorkplanFocus.all, command.options.focus);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageWorkplan,
+    }
+
+    const focused_workplan_args = [_][]const u8{ "slices", "cloudflare", "--focus=control-plane", "--limit", "4" };
+    switch (parseCommand(focused_workplan_args[0..])) {
+        .workplan => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.provider);
+            try std.testing.expectEqual(@as(usize, 4), command.options.limit);
+            try std.testing.expectEqual(app_coverage.WorkplanFocus.control_plane, command.options.focus);
+            try std.testing.expectEqual(RenderFormat.text, command.format);
+        },
+        else => return error.ExpectedCoverageWorkplan,
+    }
+
+    const relevant_workplan_args = [_][]const u8{ "workplan", "--cloudio-relevant", "--json" };
+    switch (parseCommand(relevant_workplan_args[0..])) {
+        .workplan => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.all, command.options.provider);
+            try std.testing.expectEqual(app_coverage.WorkplanFocus.control_plane, command.options.focus);
             try std.testing.expectEqual(RenderFormat.json, command.format);
         },
         else => return error.ExpectedCoverageWorkplan,

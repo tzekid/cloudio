@@ -398,9 +398,29 @@ pub const LevelTagOptions = struct {
     limit: usize = 25,
 };
 
+pub const WorkplanFocus = enum {
+    all,
+    control_plane,
+
+    pub fn parse(value: []const u8) ?WorkplanFocus {
+        if (std.mem.eql(u8, value, "all")) return .all;
+        if (std.mem.eql(u8, value, "control-plane") or std.mem.eql(u8, value, "control_plane")) return .control_plane;
+        if (std.mem.eql(u8, value, "cloudio") or std.mem.eql(u8, value, "cloudio-relevant")) return .control_plane;
+        return null;
+    }
+
+    pub fn name(self: WorkplanFocus) []const u8 {
+        return switch (self) {
+            .all => "all",
+            .control_plane => "control-plane",
+        };
+    }
+};
+
 pub const WorkplanOptions = struct {
     provider: ProviderFilter = .all,
     limit: usize = 10,
+    focus: WorkplanFocus = .all,
 };
 
 pub const LevelTagEvidence = struct {
@@ -1711,7 +1731,7 @@ fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     try writer.writeAll("Cloudio provider coverage workplan\n");
     try writer.writeAll("rank: pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs\n");
     try writer.writeAll("scope: broad provider tag slices with exact no-execute planning commands\n");
-    try writer.print("filter={s} limit=", .{options.provider.name()});
+    try writer.print("filter={s} focus={s} limit=", .{ options.provider.name(), options.focus.name() });
     if (options.limit == 0) {
         try writer.writeAll("all\n");
     } else {
@@ -1721,10 +1741,15 @@ fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     var visible: usize = 0;
     var omitted: usize = 0;
     var hidden_closed: usize = 0;
+    var hidden_focus: usize = 0;
     for (rows) |row| {
         const priority = row.priority();
         if (priority == 0) {
             hidden_closed += 1;
+            continue;
+        }
+        if (!workplanFocusIncludes(options.focus, row)) {
+            hidden_focus += 1;
             continue;
         }
         if (options.limit != 0 and visible >= options.limit) {
@@ -1739,6 +1764,7 @@ fn writeWorkplanText(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
         try writer.writeAll("no unresolved provider tag slices for filter\n");
     } else {
         if (omitted != 0) try writer.print("omitted={d}\n", .{omitted});
+        if (hidden_focus != 0) try writer.print("focus_filtered_rows_hidden={d}\n", .{hidden_focus});
         if (hidden_closed != 0) try writer.print("closed_or_evidence_only_rows_hidden={d}\n", .{hidden_closed});
     }
 }
@@ -1747,6 +1773,7 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     try writer.writeByte('{');
     try writeJsonField(writer, "kind", "coverage_workplan", true);
     try writeJsonField(writer, "filter", options.provider.name(), true);
+    try writeJsonField(writer, "focus", options.focus.name(), true);
     try writeJsonCountField(writer, "limit", options.limit, true);
     try writeJsonField(writer, "rank", "pending_reads + diagnostic_blocked_reads + pending_mutation_dry_runs", true);
     try writeJsonField(writer, "scope", "broad provider tag slices with exact no-execute planning commands", true);
@@ -1755,11 +1782,16 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     var visible: usize = 0;
     var omitted: usize = 0;
     var hidden_closed: usize = 0;
+    var hidden_focus: usize = 0;
     var first = true;
     for (rows) |row| {
         const priority = row.priority();
         if (priority == 0) {
             hidden_closed += 1;
+            continue;
+        }
+        if (!workplanFocusIncludes(options.focus, row)) {
+            hidden_focus += 1;
             continue;
         }
         if (options.limit != 0 and visible >= options.limit) {
@@ -1774,6 +1806,7 @@ fn writeWorkplanJson(gpa: Allocator, rows: []const LevelTagEvidence, options: Wo
     try writer.writeAll("],");
     try writeJsonCountField(writer, "visible", visible, true);
     try writeJsonCountField(writer, "omitted", omitted, true);
+    try writeJsonCountField(writer, "focus_filtered_rows_hidden", hidden_focus, true);
     try writeJsonCountField(writer, "closed_or_evidence_only_rows_hidden", hidden_closed, false);
     try writer.writeByte('}');
     try writer.writeByte('\n');
@@ -1848,6 +1881,68 @@ fn workplanNeedsCapture(row: LevelTagEvidence) bool {
 
 fn workplanNeedsDryRun(row: LevelTagEvidence) bool {
     return row.evidence.pending_mutation_dry_runs != 0;
+}
+
+fn workplanFocusIncludes(focus: WorkplanFocus, row: LevelTagEvidence) bool {
+    return switch (focus) {
+        .all => true,
+        .control_plane => workplanTagIsControlPlane(row.provider, row.tag),
+    };
+}
+
+fn workplanTagIsControlPlane(provider: []const u8, tag: []const u8) bool {
+    if (std.mem.eql(u8, provider, "hostinger")) {
+        return tagContainsAny(tag, &.{
+            "VPS",
+            "Virtual machine",
+            "Docker",
+            "Malware",
+            "Firewall",
+            "DNS",
+            "Domain",
+            "Hosting",
+            "Billing",
+            "Public key",
+            "Post-install",
+        });
+    }
+    if (std.mem.eql(u8, provider, "cloudflare")) {
+        return tagContainsAny(tag, &.{
+            "Account",
+            "Membership",
+            "IAM",
+            "Token",
+            "Zone",
+            "DNS",
+            "SSL",
+            "Certificate",
+            "Access",
+            "Tunnel",
+            "Ruleset",
+            "Rules List",
+            "Log",
+            "Cache",
+            "Argo",
+            "Security",
+            "Firewall",
+            "WAF",
+            "Bot",
+            "Page Shield",
+            "IP Access",
+            "Custom Pages",
+            "Healthcheck",
+            "Load Balancer",
+            "Email Security",
+        });
+    }
+    return false;
+}
+
+fn tagContainsAny(tag: []const u8, needles: []const []const u8) bool {
+    for (needles) |needle| {
+        if (containsIgnoreCase(tag, needle)) return true;
+    }
+    return false;
 }
 
 fn workplanRoutesCommand(gpa: Allocator, row: LevelTagEvidence) ![]u8 {
@@ -3556,6 +3651,35 @@ test "renders broad provider coverage workplan commands by tag" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"dry_run_candidates\",\"command\":\"cloudio coverage dry-run-candidates cloudflare 'Workers' --limit 25\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Reach: Segments\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"closed_or_evidence_only_rows_hidden\":1") != null);
+
+    var focused_out = std.Io.Writer.Allocating.init(allocator);
+    defer focused_out.deinit();
+    try writeWorkplanTextFromText(allocator, cloudflare, hostinger, .{
+        .provider = .all,
+        .limit = 0,
+        .focus = .control_plane,
+    }, &focused_out.writer);
+    const focused_text = try focused_out.toOwnedSlice();
+    defer allocator.free(focused_text);
+    try std.testing.expect(std.mem.indexOf(u8, focused_text, "filter=all focus=control-plane limit=all") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_text, "cloudflare | Tokens: priority=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_text, "cloudflare | Workers") == null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_text, "Reach: Segments") == null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_text, "focus_filtered_rows_hidden=2") != null);
+
+    var focused_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer focused_json_out.deinit();
+    try writeWorkplanJsonFromText(allocator, cloudflare, hostinger, .{
+        .provider = .all,
+        .limit = 0,
+        .focus = .control_plane,
+    }, &focused_json_out.writer);
+    const focused_json = try focused_json_out.toOwnedSlice();
+    defer allocator.free(focused_json);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"focus\":\"control-plane\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"tag\":\"Tokens\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"tag\":\"Workers\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"focus_filtered_rows_hidden\":2") != null);
 }
 
 test "audits L1 routability invariants across provider manifests" {
