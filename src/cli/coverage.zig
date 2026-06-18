@@ -585,6 +585,8 @@ fn parseDryRunCandidates(args: []const []const u8) Command {
             command.options.limit = std.fmt.parseUnsigned(usize, value, 10) catch return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--json")) {
             command.format = .json;
+        } else if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
+            command.options.include_plans = true;
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
@@ -1160,11 +1162,12 @@ test "coverage command parser defaults to summary" {
         else => return error.ExpectedCoverageDryRunCandidates,
     }
 
-    const dry_run_candidates_family_args = [_][]const u8{ "dry-run-plan", "cloudflare", "--control-plane-family", "security", "--json" };
+    const dry_run_candidates_family_args = [_][]const u8{ "dry-run-plan", "cloudflare", "--control-plane-family", "security", "--plans", "--json" };
     switch (parseCommand(dry_run_candidates_family_args[0..])) {
         .dry_run_candidates => |command| {
             try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.filter.provider);
             try std.testing.expectEqual(app_coverage.WorkplanFamily.security, command.options.filter.family);
+            try std.testing.expect(command.options.include_plans);
             try std.testing.expectEqual(RenderFormat.json, command.format);
         },
         else => return error.ExpectedCoverageDryRunCandidates,

@@ -136,6 +136,22 @@ pub const Request = struct {
     body: BodyInput = .{},
 };
 
+pub const OwnedExampleRequest = struct {
+    request: Request,
+    path_params: []PathParam,
+    query_params: []QueryParam,
+    header_params: []HeaderParam,
+    values: [][]u8,
+
+    pub fn deinit(self: OwnedExampleRequest, gpa: Allocator) void {
+        for (self.values) |value| gpa.free(value);
+        gpa.free(self.values);
+        gpa.free(self.path_params);
+        gpa.free(self.query_params);
+        gpa.free(self.header_params);
+    }
+};
+
 pub const RouteParam = struct {
     name: []u8,
     required: bool,
@@ -402,6 +418,50 @@ pub const Route = struct {
     pub fn validateRequestHeaders(self: Route, request: Request) !void {
         try validateHeaderParams(self.header_params, request.header_params);
     }
+
+    pub fn exampleRequest(self: Route, gpa: Allocator) !OwnedExampleRequest {
+        var values = std.ArrayList([]u8).empty;
+        errdefer deinitOwnedStringList(&values, gpa);
+        var path_params = std.ArrayList(PathParam).empty;
+        errdefer path_params.deinit(gpa);
+        var query_params = std.ArrayList(QueryParam).empty;
+        errdefer query_params.deinit(gpa);
+        var header_params = std.ArrayList(HeaderParam).empty;
+        errdefer header_params.deinit(gpa);
+
+        try appendRequiredExamplePathParams(gpa, self.path_params, &values, &path_params);
+        try appendRequiredExampleQueryParams(gpa, self.query_params, &values, &query_params);
+        try appendRequiredExampleHeaderParams(gpa, self.header_params, &values, &header_params);
+
+        const owned_path = try path_params.toOwnedSlice(gpa);
+        errdefer gpa.free(owned_path);
+        const owned_query = try query_params.toOwnedSlice(gpa);
+        errdefer gpa.free(owned_query);
+        const owned_header = try header_params.toOwnedSlice(gpa);
+        errdefer gpa.free(owned_header);
+        const owned_values = try values.toOwnedSlice(gpa);
+        errdefer {
+            for (owned_values) |value| gpa.free(value);
+            gpa.free(owned_values);
+        }
+        const body = if (self.request_body.required and self.request_body.content_types.len != 0)
+            BodyInput{ .present = true, .content_type = self.request_body.content_types[0] }
+        else
+            BodyInput{};
+
+        return .{
+            .request = .{
+                .path_params = owned_path,
+                .query_params = owned_query,
+                .header_params = owned_header,
+                .body = body,
+            },
+            .path_params = owned_path,
+            .query_params = owned_query,
+            .header_params = owned_header,
+            .values = owned_values,
+        };
+    }
 };
 
 pub const RouteSet = struct {
@@ -657,6 +717,49 @@ fn validateHeaderParams(allowed_params: []const RouteParam, params: []const Head
     for (allowed_params) |allowed| {
         if (allowed.required and !containsHeaderParam(params, allowed.name)) return error.MissingRouteHeaderParameter;
     }
+}
+
+fn appendRequiredExamplePathParams(gpa: Allocator, allowed_params: []const RouteParam, values: *std.ArrayList([]u8), out: *std.ArrayList(PathParam)) !void {
+    for (allowed_params) |param| {
+        if (!param.required) continue;
+        const value = try exampleParamValue(gpa, param);
+        errdefer gpa.free(value);
+        try out.append(gpa, .{ .name = param.name, .value = value });
+        try values.append(gpa, value);
+    }
+}
+
+fn appendRequiredExampleQueryParams(gpa: Allocator, allowed_params: []const RouteParam, values: *std.ArrayList([]u8), out: *std.ArrayList(QueryParam)) !void {
+    for (allowed_params) |param| {
+        if (!param.required) continue;
+        const value = try exampleParamValue(gpa, param);
+        errdefer gpa.free(value);
+        try out.append(gpa, .{ .name = param.name, .value = value });
+        try values.append(gpa, value);
+    }
+}
+
+fn appendRequiredExampleHeaderParams(gpa: Allocator, allowed_params: []const RouteParam, values: *std.ArrayList([]u8), out: *std.ArrayList(HeaderParam)) !void {
+    for (allowed_params) |param| {
+        if (!param.required) continue;
+        const value = try exampleParamValue(gpa, param);
+        errdefer gpa.free(value);
+        try out.append(gpa, .{ .name = param.name, .value = value });
+        try values.append(gpa, value);
+    }
+}
+
+fn exampleParamValue(gpa: Allocator, param: RouteParam) ![]u8 {
+    if (param.schema.enum_values.len != 0) return try gpa.dupe(u8, param.schema.enum_values[0]);
+    if (containsString(param.schema.types, "boolean")) return try gpa.dupe(u8, "true");
+    if (containsString(param.schema.types, "integer")) return try gpa.dupe(u8, "1");
+    if (containsString(param.schema.types, "number")) return try gpa.dupe(u8, "1");
+    return try gpa.dupe(u8, "example");
+}
+
+fn deinitOwnedStringList(rows: *std.ArrayList([]u8), gpa: Allocator) void {
+    for (rows.items) |item| gpa.free(item);
+    rows.deinit(gpa);
 }
 
 fn appendProvider(gpa: Allocator, provider: Provider, text: []const u8, rows: *std.ArrayList(Route)) !void {
@@ -1164,6 +1267,30 @@ test "loads generated parameter schema metadata" {
     try expectString(states.schema.types, "string");
     try std.testing.expectEqualStrings("form", states.style orelse "");
     try std.testing.expectEqual(true, states.explode orelse false);
+}
+
+test "builds schema-compatible example requests from generated metadata" {
+    const allocator = std.testing.allocator;
+    const metrics_route = (try findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getMetricsV1")) orelse return error.TestExpectedRoute;
+    defer metrics_route.deinit(allocator);
+
+    const metrics_example = try metrics_route.exampleRequest(allocator);
+    defer metrics_example.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), metrics_example.path_params.len);
+    try std.testing.expectEqualStrings("virtualMachineId", metrics_example.path_params[0].name);
+    try std.testing.expectEqualStrings("1", metrics_example.path_params[0].value);
+    try std.testing.expectEqual(@as(usize, 2), metrics_example.query_params.len);
+    const metrics_path = try metrics_route.renderRequestPath(allocator, metrics_example.request);
+    defer allocator.free(metrics_path);
+    try std.testing.expectEqualStrings("/api/vps/v1/virtual-machines/1/metrics?date_from=example&date_to=example", metrics_path);
+
+    const body_route = (try findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
+    defer body_route.deinit(allocator);
+    const body_example = try body_route.exampleRequest(allocator);
+    defer body_example.deinit(allocator);
+    try std.testing.expect(body_example.request.body.present);
+    try std.testing.expectEqualStrings("multipart/form-data", body_example.request.body.content_type orelse "");
+    try body_route.validateProvidedBodyInput(body_example.request);
 }
 
 test "loads generated security metadata" {

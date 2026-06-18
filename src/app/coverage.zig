@@ -779,6 +779,7 @@ pub const CaptureCandidateOptions = struct {
 pub const DryRunCandidateOptions = struct {
     filter: RouteFilter = .{},
     limit: usize = 25,
+    include_plans: bool = false,
 };
 
 pub fn parseRouteMethod(value: []const u8) ?provider_routes.Method {
@@ -2314,6 +2315,7 @@ fn writeDryRunCandidatesText(gpa: Allocator, routes: []const CoverageRoute, opti
     if (options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
     if (options.filter.family != .all) try writer.print(" family={s}", .{options.filter.family.name()});
     if (options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
+    if (options.include_plans) try writer.writeAll(" plans=true");
     try writer.writeAll(" limit=");
     if (options.limit == 0) {
         try writer.writeAll("all\n");
@@ -2360,6 +2362,11 @@ fn writeDryRunCandidatesText(gpa: Allocator, routes: []const CoverageRoute, opti
         const command = try routeDryRunCommand(gpa, row.route);
         defer gpa.free(command);
         try writer.print("      dry-run: {s}\n", .{command});
+        if (options.include_plans) {
+            const plan = try routeDryRunPlanJson(gpa, row.route);
+            defer gpa.free(plan);
+            try writer.print("      dry-run-plan: {s}\n", .{plan});
+        }
     }
 
     if (total == 0) {
@@ -2376,6 +2383,7 @@ fn writeDryRunCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, opti
     try writeRouteFilterJson(dryRunCandidateRouteFilter(options.filter), writer);
     try writer.writeByte(',');
     try writeJsonCountField(writer, "limit", options.limit, true);
+    try writeJsonBoolField(writer, "include_plans", options.include_plans, true);
     try writeJsonField(writer, "rank", "generated mutation routes missing dry-run review evidence", true);
     try writer.writeAll("\"candidates\":[");
 
@@ -2392,7 +2400,7 @@ fn writeDryRunCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, opti
         }
         visible += 1;
         try writeMaybeJsonComma(writer, &first);
-        try writeDryRunCandidateJson(gpa, row, writer);
+        try writeDryRunCandidateJson(gpa, row, options, writer);
     }
 
     try writer.writeAll("],");
@@ -2403,7 +2411,7 @@ fn writeDryRunCandidatesJson(gpa: Allocator, routes: []const CoverageRoute, opti
     try writer.writeByte('\n');
 }
 
-fn writeDryRunCandidateJson(gpa: Allocator, row: CoverageRoute, writer: anytype) !void {
+fn writeDryRunCandidateJson(gpa: Allocator, row: CoverageRoute, options: DryRunCandidateOptions, writer: anytype) !void {
     const route = row.route;
     const command = try routeDryRunCommand(gpa, route);
     defer gpa.free(command);
@@ -2429,8 +2437,20 @@ fn writeDryRunCandidateJson(gpa: Allocator, row: CoverageRoute, writer: anytype)
     try writer.writeAll("\"request_body_schema_refs\":");
     try writeJsonStringArray(writer, route.request_body.schema_refs);
     try writer.writeByte(',');
-    try writeJsonField(writer, "dry_run_command", command, false);
+    try writeJsonField(writer, "dry_run_command", command, options.include_plans);
+    if (options.include_plans) {
+        const plan = try routeDryRunPlanJson(gpa, route);
+        defer gpa.free(plan);
+        try writer.writeAll("\"dry_run_plan\":");
+        try writer.writeAll(plan);
+    }
     try writer.writeByte('}');
+}
+
+fn routeDryRunPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
+    const example = try route.exampleRequest(gpa);
+    defer example.deinit(gpa);
+    return try provider_dispatch.dryRunPlanJsonRequest(gpa, route, example.request);
 }
 
 fn writeCaptureCandidateJson(gpa: Allocator, row: CoverageRoute, writer: anytype) !void {
@@ -3865,6 +3885,22 @@ test "lists route dry-run candidates for missing mutation review evidence" {
     try std.testing.expect(std.mem.indexOf(u8, family_text, "filter provider=all family=logs limit=all") != null);
     try std.testing.expect(std.mem.indexOf(u8, family_text, "logs-create") != null);
     try std.testing.expect(std.mem.indexOf(u8, family_text, "VPS_purchaseNewVirtualMachineV1") == null);
+
+    var plan_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer plan_json_out.deinit();
+    try writeDryRunCandidatesJsonFromText(allocator, cloudflare, hostinger, .{
+        .filter = .{ .provider = .cloudflare, .family = .logs },
+        .limit = 1,
+        .include_plans = true,
+    }, &plan_json_out.writer);
+    const plan_json = try plan_json_out.toOwnedSlice();
+    defer allocator.free(plan_json);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"include_plans\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"dry_run_plan\":{\"provider\":\"cloudflare\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"operation_id\":\"logs-create\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"path\":\"/accounts/example/logs\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"request_body_input\":{\"present\":true,\"content_type\":\"application/json\",\"required_missing\":false}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"will_execute\":false") != null);
 }
 
 test "summarizes manifest-backed provider coverage levels" {
