@@ -20,12 +20,14 @@ const Action = enum {
     plan,
     read,
     capture,
+    capture_ready,
     dry_run,
 
     fn parse(value: []const u8) ?Action {
         if (std.mem.eql(u8, value, "plan")) return .plan;
         if (std.mem.eql(u8, value, "read") or std.mem.eql(u8, value, "get")) return .read;
         if (std.mem.eql(u8, value, "capture") or std.mem.eql(u8, value, "collect")) return .capture;
+        if (std.mem.eql(u8, value, "capture-ready") or std.mem.eql(u8, value, "capture_ready") or std.mem.eql(u8, value, "capture-actual-ready")) return .capture_ready;
         if (std.mem.eql(u8, value, "dry-run") or std.mem.eql(u8, value, "dry_run")) return .dry_run;
         return null;
     }
@@ -35,6 +37,7 @@ const Action = enum {
             .plan => "plan",
             .read => "read",
             .capture => "capture",
+            .capture_ready => "capture-ready",
             .dry_run => "dry-run",
         };
     }
@@ -50,6 +53,10 @@ const ParsedCaptureArgs = struct {
     fn deinit(self: ParsedCaptureArgs, gpa: Allocator) void {
         gpa.free(self.plan_args);
     }
+};
+
+const ParsedCaptureReadyArgs = struct {
+    options: app_coverage.ActualReadyCaptureOptions = .{},
 };
 
 pub fn run(ctx: Context, args: []const []const u8) !void {
@@ -100,6 +107,30 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         return;
     }
 
+    if (action == .capture_ready) {
+        const parsed = parseCaptureReadyArgs(args[1..]) catch |err| {
+            std.debug.print("invalid route capture-ready arguments: {s}\n", .{@errorName(err)});
+            return;
+        };
+        const json = app_coverage.actualReadyCaptureJsonFromFiles(
+            ctx.io,
+            ctx.gpa,
+            ctx.paths,
+            ctx.db,
+            authFor(ctx, parsed.options.filter.provider) catch |err| {
+                std.debug.print("route capture-ready failed: {s}\n", .{@errorName(err)});
+                return;
+            },
+            parsed.options,
+        ) catch |err| {
+            std.debug.print("route capture-ready failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer ctx.gpa.free(json);
+        try cli_render.writeLine(ctx.io, json);
+        return;
+    }
+
     const parsed = cli_coverage.parsePlan(ctx.gpa, args[1..]) catch |err| {
         std.debug.print("invalid route {s} arguments: {s}\n", .{ action.name(), @errorName(err) });
         return;
@@ -113,6 +144,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
             return;
         }),
         .capture => unreachable,
+        .capture_ready => unreachable,
         .dry_run => app_coverage.routeDryRunJson(ctx.io, ctx.gpa, ctx.paths, parsed.plan, authFor(ctx, parsed.plan.filter.provider) catch |err| {
             std.debug.print("route dry-run failed: {s}\n", .{@errorName(err)});
             return;
@@ -131,6 +163,50 @@ fn authFor(ctx: Context, provider: app_coverage.ProviderFilter) !app_coverage.Au
         .hostinger => .{ .hostinger = ctx.hostinger_token orelse "" },
         .all => error.RouteProviderRequired,
     };
+}
+
+fn parseCaptureReadyArgs(args: []const []const u8) !ParsedCaptureReadyArgs {
+    var parsed = ParsedCaptureReadyArgs{};
+    var provider_set = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--execute")) {
+            parsed.options.execute = true;
+        } else if (std.mem.eql(u8, arg, "--dry-run") or std.mem.eql(u8, arg, "--plan-only")) {
+            parsed.options.execute = false;
+        } else if (try parseCaptureReadyValue(args, &index, .{"--limit"})) |value| {
+            parsed.options.limit = try cli_args.parseUnsignedUsize(value, error.InvalidRouteCaptureReadyLimit);
+        } else if (try parseCaptureReadyValue(args, &index, .{"--max-pages"})) |value| {
+            parsed.options.max_pages = try cli_args.parsePositiveUsize(value, error.InvalidRouteCaptureReadyMaxPages);
+        } else if (try parseCaptureReadyValue(args, &index, .{ "--family", "--control-plane-family" })) |value| {
+            parsed.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return error.InvalidRouteCaptureReadyFamily;
+        } else if (try parseCaptureReadyValue(args, &index, .{ "--operation", "--operation-id" })) |value| {
+            parsed.options.filter.operation_id = value;
+        } else if (try parseCaptureReadyValue(args, &index, .{ "--path", "--path-template" })) |value| {
+            parsed.options.filter.path_template = value;
+        } else if (try parseCaptureReadyValue(args, &index, .{"--support"})) |value| {
+            parsed.options.filter.support = app_coverage.SupportFilter.parse(value) orelse return error.InvalidRouteCaptureReadySupport;
+        } else if (!provider_set) {
+            if (app_coverage.ProviderFilter.parse(arg)) |provider| {
+                parsed.options.filter.provider = provider;
+                provider_set = true;
+            } else if (parsed.options.filter.tag_query == null) {
+                parsed.options.filter.tag_query = arg;
+            } else {
+                return error.UnknownRouteCaptureReadyArgument;
+            }
+        } else if (parsed.options.filter.tag_query == null) {
+            parsed.options.filter.tag_query = arg;
+        } else {
+            return error.UnknownRouteCaptureReadyArgument;
+        }
+    }
+    return parsed;
+}
+
+fn parseCaptureReadyValue(args: []const []const u8, index: *usize, comptime names: anytype) !?[]const u8 {
+    return try cli_args.parseRequiredValueArg(args, index, names, error.MissingRouteCaptureReadyOptionValue);
 }
 
 fn parseCaptureArgs(gpa: Allocator, args: []const []const u8) !ParsedCaptureArgs {
@@ -172,6 +248,7 @@ fn usage() void {
         \\  cloudio route plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\  cloudio route read <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value]
         \\  cloudio route capture <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--kind <snapshot-kind>] [--target <snapshot-target>] [--paginate] [--max-pages <n>]
+        \\  cloudio route capture-ready <cloudflare|hostinger> [tag-query] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--execute]
         \\  cloudio route dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\
     , .{});
@@ -183,9 +260,42 @@ test "route action parser accepts stable command names" {
     try std.testing.expectEqual(Action.read, Action.parse("get").?);
     try std.testing.expectEqual(Action.capture, Action.parse("capture").?);
     try std.testing.expectEqual(Action.capture, Action.parse("collect").?);
+    try std.testing.expectEqual(Action.capture_ready, Action.parse("capture-ready").?);
+    try std.testing.expectEqual(Action.capture_ready, Action.parse("capture_ready").?);
     try std.testing.expectEqual(Action.dry_run, Action.parse("dry-run").?);
     try std.testing.expectEqual(Action.dry_run, Action.parse("dry_run").?);
     try std.testing.expect(Action.parse("write") == null);
+}
+
+test "route capture-ready parser builds provider family execution options" {
+    const args = [_][]const u8{
+        "hostinger",
+        "--family",
+        "hostinger-vps",
+        "--limit=0",
+        "--max-pages",
+        "3",
+        "--operation",
+        "VPS_getBackupsV1",
+        "--execute",
+    };
+    const parsed = try parseCaptureReadyArgs(args[0..]);
+    try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, parsed.options.filter.provider);
+    try std.testing.expectEqual(app_coverage.WorkplanFamily.hostinger_vps, parsed.options.filter.family);
+    try std.testing.expectEqualStrings("VPS_getBackupsV1", parsed.options.filter.operation_id orelse "");
+    try std.testing.expectEqual(@as(usize, 0), parsed.options.limit);
+    try std.testing.expectEqual(@as(usize, 3), parsed.options.max_pages);
+    try std.testing.expect(parsed.options.execute);
+
+    const tag_args = [_][]const u8{ "cloudflare", "Logs", "--support=partial", "--plan-only" };
+    const tag = try parseCaptureReadyArgs(tag_args[0..]);
+    try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, tag.options.filter.provider);
+    try std.testing.expectEqualStrings("Logs", tag.options.filter.tag_query orelse "");
+    try std.testing.expectEqual(app_coverage.SupportFilter.partial, tag.options.filter.support.?);
+    try std.testing.expect(!tag.options.execute);
+
+    try std.testing.expectError(error.InvalidRouteCaptureReadyMaxPages, parseCaptureReadyArgs(&.{ "--max-pages", "0" }));
+    try std.testing.expectError(error.MissingRouteCaptureReadyOptionValue, parseCaptureReadyArgs(&.{"--family"}));
 }
 
 test "route capture parser separates snapshot labels from route request arguments" {

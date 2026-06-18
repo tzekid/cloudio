@@ -781,6 +781,13 @@ pub const ActualCaptureOptions = struct {
     include_plans: bool = false,
 };
 
+pub const ActualReadyCaptureOptions = struct {
+    filter: RouteFilter = .{},
+    limit: usize = 25,
+    max_pages: usize = default_capture_max_pages,
+    execute: bool = false,
+};
+
 pub const DryRunCandidateOptions = struct {
     filter: RouteFilter = .{},
     limit: usize = 25,
@@ -1034,7 +1041,10 @@ const ActualCapturePlan = struct {
             try writer.writeAll(" required_header=");
             try writeRequiredParamNamesText(writer, row.route.header_params);
             try writer.print(" pagination={s}\n", .{routePaginationKind(row.route) orelse "none"});
-            try writer.print("      ready={s} missing_inputs=", .{if (actualCaptureReady(row.route, hostinger_rows)) "true" else "false"});
+            try writer.print("      ready={s} live_read_supported={s} missing_inputs=", .{
+                if (actualCaptureReady(row.route, hostinger_rows)) "true" else "false",
+                if (provider_dispatch.routeLiveCallSupported(row.route)) "true" else "false",
+            });
             try writeActualMissingInputsText(writer, row.route, hostinger_rows);
             try writer.writeByte('\n');
             const command = try actualCaptureCommand(gpa, row.route, hostinger_rows);
@@ -1637,6 +1647,28 @@ pub fn writeActualCapturesJsonFromText(gpa: Allocator, cloudflare_text: []const 
     var plan = try loadActualCapturePlanFromText(gpa, cloudflare_text, hostinger_text, db, options);
     defer plan.deinit(gpa);
     try plan.writeJson(gpa, writer);
+}
+
+pub fn actualReadyCaptureJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, auth: Auth, options: ActualReadyCaptureOptions) ![]u8 {
+    try validateActualReadyCaptureProvider(auth, options.filter.provider);
+    var plan = try loadActualCapturePlanFromFiles(io, gpa, paths, db, .{
+        .filter = options.filter,
+        .limit = 0,
+        .include_plans = false,
+    });
+    defer plan.deinit(gpa);
+    return try actualReadyCaptureJson(io, gpa, db, auth, plan, options);
+}
+
+pub fn actualReadyCaptureJsonFromText(io: Io, gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, db: *Db, auth: Auth, options: ActualReadyCaptureOptions) ![]u8 {
+    try validateActualReadyCaptureProvider(auth, options.filter.provider);
+    var plan = try loadActualCapturePlanFromText(gpa, cloudflare_text, hostinger_text, db, .{
+        .filter = options.filter,
+        .limit = 0,
+        .include_plans = false,
+    });
+    defer plan.deinit(gpa);
+    return try actualReadyCaptureJson(io, gpa, db, auth, plan, options);
 }
 
 pub fn writeDryRunCandidatesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: DryRunCandidateOptions, writer: anytype) !void {
@@ -2256,7 +2288,7 @@ fn actualLatestAtLessThan(current: []const u8, candidate: []const u8) bool {
 }
 
 fn actualCaptureReady(route: provider_routes.Route, hostinger_rows: []const db_store.HostingerVpsRow) bool {
-    return actualCaptureMissingInputCount(route, hostinger_rows) == 0;
+    return provider_dispatch.routeLiveCallSupported(route) and actualCaptureMissingInputCount(route, hostinger_rows) == 0;
 }
 
 fn actualCaptureMissingInputCount(route: provider_routes.Route, hostinger_rows: []const db_store.HostingerVpsRow) usize {
@@ -2382,6 +2414,7 @@ fn writeActualCaptureCandidateJson(
     try writeRequiredParamNamesJson(writer, route.header_params);
     try writer.writeByte(',');
     try writeJsonBoolField(writer, "ready", actualCaptureReady(route, hostinger_rows), true);
+    try writeJsonBoolField(writer, "live_read_supported", provider_dispatch.routeLiveCallSupported(route), true);
     try writer.writeAll("\"missing_inputs\":");
     try writeActualMissingInputsJson(writer, route, hostinger_rows);
     try writer.writeByte(',');
@@ -2430,6 +2463,177 @@ fn writeActualRequiredParamPlaceholders(writer: anytype, option: []const u8, par
         if (!param.required) continue;
         try writer.print(" {s} {s}=REPLACE_{s}", .{ option, param.name, param.name });
     }
+}
+
+const ActualReadyCaptureSummary = struct {
+    candidate_routes: usize = 0,
+    ready_routes: usize = 0,
+    skipped_unready: usize = 0,
+    omitted_ready: usize = 0,
+    planned: usize = 0,
+    attempted: usize = 0,
+    captured: usize = 0,
+    failed: usize = 0,
+};
+
+const ActualReadyRequest = struct {
+    request: Request,
+    path_params: []PathParam,
+
+    fn deinit(self: ActualReadyRequest, gpa: Allocator) void {
+        gpa.free(self.path_params);
+    }
+};
+
+fn validateActualReadyCaptureProvider(auth: Auth, provider: ProviderFilter) !void {
+    if (provider == .all) return error.ActualReadyCaptureProviderRequired;
+    if (!provider.includes(auth.provider().name())) return error.ProviderRouteAuthMismatch;
+}
+
+fn actualReadyCaptureJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, plan: ActualCapturePlan, options: ActualReadyCaptureOptions) ![]u8 {
+    const hostinger_rows = plan.hostingerRows();
+    var summary = ActualReadyCaptureSummary{};
+    var items_out = std.Io.Writer.Allocating.init(gpa);
+    defer items_out.deinit();
+    const items_writer = &items_out.writer;
+    try items_writer.writeByte('[');
+    var first = true;
+
+    for (plan.routes.items) |row| {
+        const state = actualCaptureState(row.route, plan.captures.items) orelse continue;
+        if (state == .ok) continue;
+        summary.candidate_routes += 1;
+        if (!actualCaptureReady(row.route, hostinger_rows)) {
+            summary.skipped_unready += 1;
+            continue;
+        }
+        summary.ready_routes += 1;
+        if (options.limit != 0 and summary.planned + summary.attempted >= options.limit) {
+            summary.omitted_ready += 1;
+            continue;
+        }
+        try writeMaybeJsonComma(items_writer, &first);
+        if (options.execute) {
+            summary.attempted += 1;
+        } else {
+            summary.planned += 1;
+        }
+        try writeActualReadyCaptureItemJson(io, gpa, db, auth, row.route, state, hostinger_rows, options, &summary, items_writer);
+    }
+
+    try items_writer.writeByte(']');
+    const items_json = try items_out.toOwnedSlice();
+    defer gpa.free(items_json);
+
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    const writer = &out.writer;
+    try writer.writeByte('{');
+    try writeJsonField(writer, "kind", "actual_ready_capture_run", true);
+    try writeJsonBoolField(writer, "execute", options.execute, true);
+    try writer.writeAll("\"filter\":");
+    try writeRouteFilterJson(actualCaptureRouteFilter(options.filter), writer);
+    try writer.writeByte(',');
+    try writeJsonCountField(writer, "limit", options.limit, true);
+    try writeJsonCountField(writer, "max_pages", options.max_pages, true);
+    try writer.writeAll("\"summary\":");
+    try writeActualReadyCaptureSummaryJson(summary, writer);
+    try writer.writeAll(",\"items\":");
+    try writer.writeAll(items_json);
+    try writer.writeByte('}');
+    return try out.toOwnedSlice();
+}
+
+fn writeActualReadyCaptureSummaryJson(summary: ActualReadyCaptureSummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonCountField(writer, "candidate_routes", summary.candidate_routes, true);
+    try writeJsonCountField(writer, "ready_routes", summary.ready_routes, true);
+    try writeJsonCountField(writer, "skipped_unready", summary.skipped_unready, true);
+    try writeJsonCountField(writer, "omitted_ready", summary.omitted_ready, true);
+    try writeJsonCountField(writer, "planned", summary.planned, true);
+    try writeJsonCountField(writer, "attempted", summary.attempted, true);
+    try writeJsonCountField(writer, "captured", summary.captured, true);
+    try writeJsonCountField(writer, "failed", summary.failed, false);
+    try writer.writeByte('}');
+}
+
+fn writeActualReadyCaptureItemJson(
+    io: Io,
+    gpa: Allocator,
+    db: *Db,
+    auth: Auth,
+    route: provider_routes.Route,
+    state: ActualCaptureState,
+    hostinger_rows: []const db_store.HostingerVpsRow,
+    options: ActualReadyCaptureOptions,
+    summary: *ActualReadyCaptureSummary,
+    writer: anytype,
+) !void {
+    const command = try actualCaptureCommand(gpa, route, hostinger_rows);
+    defer gpa.free(command);
+    try writer.writeByte('{');
+    try writeJsonField(writer, "provider", route.provider.name(), true);
+    try writeJsonField(writer, "tag", route.tag, true);
+    try writeJsonField(writer, "operation_id", route.operation_id orelse route.path_template, true);
+    try writeJsonField(writer, "method", route.method.name(), true);
+    try writeJsonField(writer, "path_template", route.path_template, true);
+    try writeJsonField(writer, "actual_state", state.name(), true);
+    try writeJsonNullableStringField(writer, "pagination", routePaginationKind(route), true);
+    try writeJsonField(writer, "capture_command", command, true);
+    if (!options.execute) {
+        try writeJsonField(writer, "status", "planned", false);
+        try writer.writeByte('}');
+        return;
+    }
+
+    const result_json = actualReadyCaptureRouteJson(io, gpa, db, auth, route, hostinger_rows, options) catch |err| {
+        summary.failed += 1;
+        try writeJsonField(writer, "status", "error", true);
+        try writeJsonField(writer, "error", @errorName(err), false);
+        try writer.writeByte('}');
+        return;
+    };
+    defer gpa.free(result_json);
+    summary.captured += 1;
+    try writeJsonField(writer, "status", "captured", true);
+    try writer.writeAll("\"capture_result\":");
+    try writer.writeAll(result_json);
+    try writer.writeByte('}');
+}
+
+fn actualReadyCaptureRouteJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, route: provider_routes.Route, hostinger_rows: []const db_store.HostingerVpsRow, options: ActualReadyCaptureOptions) ![]u8 {
+    if (!actualCaptureReady(route, hostinger_rows)) return error.ActualCaptureRouteNotReady;
+    const owned_request = try actualReadyCaptureRequest(gpa, route, hostinger_rows);
+    defer owned_request.deinit(gpa);
+    const client = provider_dispatch.Client.init(auth);
+    const capture_options = CaptureOptions{
+        .paginate = routePaginationKind(route) != null,
+        .max_pages = options.max_pages,
+    };
+    if (capture_options.paginate) return try capturePaginatedRouteReadMetadataJson(io, gpa, db, client, route, owned_request.request, capture_options);
+    const result = try client.callReadRouteResultRequest(io, gpa, route, owned_request.request);
+    defer result.deinit(gpa);
+    return try captureRouteReadResultJson(gpa, db, route, owned_request.request, result, capture_options);
+}
+
+fn actualReadyCaptureRequest(gpa: Allocator, route: provider_routes.Route, hostinger_rows: []const db_store.HostingerVpsRow) !ActualReadyRequest {
+    var path_params = std.ArrayList(PathParam).empty;
+    errdefer path_params.deinit(gpa);
+    for (route.path_params) |param| {
+        if (!param.required) continue;
+        const value = actualCapturePathParamHint(route, param.name, hostinger_rows) orelse return error.ActualCaptureRouteNotReady;
+        try path_params.append(gpa, .{ .name = param.name, .value = value });
+    }
+    const owned_path_params = try path_params.toOwnedSlice(gpa);
+    return .{
+        .request = .{
+            .path_params = owned_path_params,
+            .query_params = &.{},
+            .header_params = &.{},
+            .body = .{},
+        },
+        .path_params = owned_path_params,
+    };
 }
 
 fn writeCaptureCandidatesText(gpa: Allocator, routes: []const CoverageRoute, options: CaptureCandidateOptions, writer: anytype) !void {
@@ -4972,7 +5176,7 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio actual route capture plan\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "state=missing support=partial op=VPS_getVirtualMachineDetailsV1 events=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "state=non_ok support=partial op=VPS_getBackupsV1 events=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "ready=true missing_inputs=-") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "ready=true live_read_supported=true missing_inputs=-") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
 }
 
