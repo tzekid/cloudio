@@ -26,6 +26,8 @@ zig build run -- evidence
 zig build run -- evidence hostinger --json
 zig build run -- evidence matrix cloudflare --limit 25
 zig build run -- evidence routes hostinger --json
+zig build run -- evidence coverage all --json
+zig build run -- evidence coverage hostinger --limit 25
 zig build run -- inventory
 zig build run -- routes --json
 zig build run -- routes cloudflare dns --limit 25
@@ -77,9 +79,11 @@ zig build run -- evidence matrix cloudflare --limit 25
 zig build run -- evidence matrix hostinger --json
 zig build run -- evidence routes
 zig build run -- evidence routes hostinger --json
+zig build run -- evidence coverage
+zig build run -- evidence coverage cloudflare --json
 ```
 
-`evidence matrix` rolls stored evidence into provider family/status/source groups for broad review. `evidence routes` reads `route.capture` audit rows and extracts provider operation IDs, so L2 route-capture proof can be inspected without scraping recent logs or calling provider APIs.
+`evidence matrix` rolls stored evidence into provider family/status/source groups for broad review. `evidence routes` reads `route.capture` audit rows and extracts provider operation IDs, so L2 route-capture proof can be inspected without scraping recent logs or calling provider APIs. `evidence coverage` joins those DB captures to the generated Cloudflare/Hostinger route manifests and prints official tag, method, path, support, mode, deprecation, and test metadata for each captured operation without making live provider calls.
 
 Topology reads SQLite only and connects Cloudflare DNS records, Caddy routes, project metadata, listening sockets, systemd service state, and Docker container state:
 

@@ -2,15 +2,19 @@ const std = @import("std");
 const app_render = @import("app_render");
 const core_redact = @import("core_redact");
 const db_store = @import("db_store");
+const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
+const Io = std.Io;
 
 pub const default_limit = 200;
 
 pub const Context = struct {
+    io: Io,
     gpa: Allocator,
     db: *Db,
+    routes: provider_routes.Paths = .{},
 };
 
 pub const ProviderFilter = enum {
@@ -72,6 +76,7 @@ pub const Options = struct {
 
 pub const MatrixOptions = Options;
 pub const RouteCaptureOptions = Options;
+pub const RouteCoverageOptions = Options;
 
 pub const Totals = struct {
     groups: usize = 0,
@@ -270,6 +275,156 @@ pub const RouteCaptures = struct {
     }
 };
 
+pub const RouteCoverageTotals = struct {
+    official_operations: usize = 0,
+    captured_operations: usize = 0,
+    captures: i64 = 0,
+    matched: usize = 0,
+    missing: usize = 0,
+    read: usize = 0,
+    dry_run: usize = 0,
+    write: usize = 0,
+    deprecated: usize = 0,
+    ok: i64 = 0,
+    errors: i64 = 0,
+};
+
+pub const RouteCoverage = struct {
+    options: RouteCoverageOptions,
+    rows: db_store.RouteCaptureEvidenceRows,
+    routes: provider_routes.RouteSet,
+
+    pub fn load(ctx: Context, options: RouteCoverageOptions) !RouteCoverage {
+        const normalized = options.normalized();
+        const route_filter = try routeCoverageProviderFilter(normalized.provider);
+        var rows = try ctx.db.routeCaptureEvidence(ctx.gpa, .{
+            .provider = normalized.provider.dbValue(),
+            .limit = normalized.limit,
+        });
+        errdefer rows.deinit(ctx.gpa);
+        var routes = switch (route_filter) {
+            .all => try provider_routes.loadAll(ctx.io, ctx.gpa, ctx.routes),
+            .cloudflare => try provider_routes.loadProvider(ctx.io, ctx.gpa, ctx.routes, .cloudflare),
+            .hostinger => try provider_routes.loadProvider(ctx.io, ctx.gpa, ctx.routes, .hostinger),
+        };
+        errdefer routes.deinit(ctx.gpa);
+        return .{
+            .options = normalized,
+            .rows = rows,
+            .routes = routes,
+        };
+    }
+
+    pub fn deinit(self: *RouteCoverage, gpa: Allocator) void {
+        self.rows.deinit(gpa);
+        self.routes.deinit(gpa);
+    }
+
+    pub fn totals(self: RouteCoverage) RouteCoverageTotals {
+        var out = RouteCoverageTotals{
+            .official_operations = self.routes.items.len,
+            .captured_operations = self.rows.items.len,
+        };
+        for (self.rows.items) |row| {
+            out.captures += row.count;
+            if (statusIsOk(row.status)) out.ok += row.count;
+            if (statusIsError(row.status)) out.errors += row.count;
+            if (self.findRoute(row)) |route| {
+                out.matched += 1;
+                if (route.deprecated) out.deprecated += 1;
+                switch (route.mode) {
+                    .read => out.read += 1,
+                    .dry_run => out.dry_run += 1,
+                    .write => out.write += 1,
+                    .none => {},
+                }
+            } else {
+                out.missing += 1;
+            }
+        }
+        return out;
+    }
+
+    pub fn findRoute(self: RouteCoverage, row: db_store.RouteCaptureEvidenceRow) ?*const provider_routes.Route {
+        const provider = provider_routes.Provider.parse(row.provider) orelse return null;
+        for (self.routes.items) |*route| {
+            if (route.provider != provider) continue;
+            const operation_id = route.operation_id orelse continue;
+            if (std.mem.eql(u8, operation_id, row.operation_id)) return route;
+        }
+        return null;
+    }
+
+    pub fn writeText(self: RouteCoverage, gpa: Allocator, writer: anytype) !void {
+        const counts = self.totals();
+        try writer.writeAll("Cloudio route coverage evidence\n");
+        try writer.print("provider={s} limit={d} official_operations={d} captured_operations={d} captures={d} matched={d} missing={d} read={d} dry_run={d} write={d} deprecated={d} ok={d} errors={d}\n", .{
+            self.options.provider.label(),
+            self.options.limit,
+            counts.official_operations,
+            counts.captured_operations,
+            counts.captures,
+            counts.matched,
+            counts.missing,
+            counts.read,
+            counts.dry_run,
+            counts.write,
+            counts.deprecated,
+            counts.ok,
+            counts.errors,
+        });
+        if (self.rows.items.len == 0) {
+            try writer.writeAll("none\n");
+            return;
+        }
+        for (self.rows.items) |row| {
+            const route = self.findRoute(row);
+            if (route) |matched| {
+                try writer.print("{s}\t{s}\t{s}\t{s}\t{s}\t{s}\tsupport={s}\tmode={s}\ttests={s}\tdeprecated={}\tstatus={s}\tcount={d}\tlatest={s}\tendpoint=", .{
+                    row.provider,
+                    evidenceFamily(row.provider, row.operation_id),
+                    matched.tag,
+                    row.operation_id,
+                    matched.method.name(),
+                    matched.path_template,
+                    @tagName(matched.support),
+                    @tagName(matched.mode),
+                    matched.tests,
+                    matched.deprecated,
+                    row.status,
+                    row.count,
+                    row.latest_at,
+                });
+            } else {
+                try writer.print("{s}\t{s}\tunmatched\t{s}\tmethod=unknown\tpath=unknown\tsupport=unknown\tmode=unknown\ttests=unknown\tdeprecated=false\tstatus={s}\tcount={d}\tlatest={s}\tendpoint=", .{
+                    row.provider,
+                    evidenceFamily(row.provider, row.operation_id),
+                    row.operation_id,
+                    row.status,
+                    row.count,
+                    row.latest_at,
+                });
+            }
+            try writeRedactedValue(gpa, writer, row.endpoint_sample);
+            try writer.writeByte('\n');
+        }
+    }
+
+    pub fn writeJson(self: RouteCoverage, gpa: Allocator, writer: anytype) !void {
+        try writer.writeAll("{\"kind\":\"route_coverage_evidence\",");
+        try app_render.writeJsonStringField(writer, "provider", self.options.provider.label(), true);
+        try app_render.writeJsonIntField(writer, "limit", self.options.limit, true);
+        try writer.writeAll("\"summary\":");
+        try writeRouteCoverageTotalsJson(self.totals(), writer);
+        try writer.writeAll(",\"routes\":[");
+        for (self.rows.items, 0..) |row, index| {
+            if (index != 0) try writer.writeByte(',');
+            try writeRouteCoverageRowJson(gpa, row, self.findRoute(row), writer);
+        }
+        try writer.writeAll("]}\n");
+    }
+};
+
 pub const Evidence = struct {
     options: Options,
     summaries: db_store.ProviderEvidenceSummaryRows,
@@ -394,6 +549,18 @@ pub fn writeRouteCapturesJson(ctx: Context, options: RouteCaptureOptions, writer
     try captures.writeJson(ctx.gpa, writer);
 }
 
+pub fn writeRouteCoverageText(ctx: Context, options: RouteCoverageOptions, writer: anytype) !void {
+    var coverage = try RouteCoverage.load(ctx, options);
+    defer coverage.deinit(ctx.gpa);
+    try coverage.writeText(ctx.gpa, writer);
+}
+
+pub fn writeRouteCoverageJson(ctx: Context, options: RouteCoverageOptions, writer: anytype) !void {
+    var coverage = try RouteCoverage.load(ctx, options);
+    defer coverage.deinit(ctx.gpa);
+    try coverage.writeJson(ctx.gpa, writer);
+}
+
 fn totalsFromSummaries(rows: []const db_store.ProviderEvidenceSummaryRow) Totals {
     var out = Totals{ .groups = rows.len };
     for (rows) |row| {
@@ -467,6 +634,22 @@ fn writeRouteCaptureTotalsJson(summary: RouteCaptureTotals, writer: anytype) !vo
     try writer.writeByte('}');
 }
 
+fn writeRouteCoverageTotalsJson(summary: RouteCoverageTotals, writer: anytype) !void {
+    try writer.writeByte('{');
+    try app_render.writeJsonIntField(writer, "official_operations", summary.official_operations, true);
+    try app_render.writeJsonIntField(writer, "captured_operations", summary.captured_operations, true);
+    try app_render.writeJsonIntField(writer, "captures", summary.captures, true);
+    try app_render.writeJsonIntField(writer, "matched", summary.matched, true);
+    try app_render.writeJsonIntField(writer, "missing", summary.missing, true);
+    try app_render.writeJsonIntField(writer, "read", summary.read, true);
+    try app_render.writeJsonIntField(writer, "dry_run", summary.dry_run, true);
+    try app_render.writeJsonIntField(writer, "write", summary.write, true);
+    try app_render.writeJsonIntField(writer, "deprecated", summary.deprecated, true);
+    try app_render.writeJsonIntField(writer, "ok", summary.ok, true);
+    try app_render.writeJsonIntField(writer, "errors", summary.errors, false);
+    try writer.writeByte('}');
+}
+
 fn writeMatrixRowJson(row: db_store.ProviderEvidenceSummaryRow, writer: anytype) !void {
     try writer.writeByte('{');
     try app_render.writeJsonStringField(writer, "provider", row.provider, true);
@@ -496,6 +679,39 @@ fn writeRouteCaptureJson(gpa: Allocator, row: db_store.RouteCaptureEvidenceRow, 
     try app_render.writeJsonStringField(writer, "provider", row.provider, true);
     try app_render.writeJsonStringField(writer, "family", evidenceFamily(row.provider, row.operation_id), true);
     try app_render.writeJsonStringField(writer, "operation_id", row.operation_id, true);
+    try app_render.writeJsonStringField(writer, "status", row.status, true);
+    try app_render.writeJsonStringField(writer, "status_class", statusClass(row.status), true);
+    try writeRedactedJsonStringField(gpa, writer, "endpoint_sample", row.endpoint_sample, true);
+    try app_render.writeJsonIntField(writer, "count", row.count, true);
+    try app_render.writeJsonStringField(writer, "latest_at", row.latest_at, false);
+    try writer.writeByte('}');
+}
+
+fn writeRouteCoverageRowJson(gpa: Allocator, row: db_store.RouteCaptureEvidenceRow, route: ?*const provider_routes.Route, writer: anytype) !void {
+    try writer.writeByte('{');
+    try app_render.writeJsonStringField(writer, "provider", row.provider, true);
+    try app_render.writeJsonStringField(writer, "family", evidenceFamily(row.provider, row.operation_id), true);
+    try app_render.writeJsonBoolField(writer, "matched", route != null, true);
+    try app_render.writeJsonStringField(writer, "operation_id", row.operation_id, true);
+    if (route) |matched| {
+        try app_render.writeJsonStringField(writer, "tag", matched.tag, true);
+        try app_render.writeJsonStringField(writer, "method", matched.method.name(), true);
+        try app_render.writeJsonStringField(writer, "path_template", matched.path_template, true);
+        try app_render.writeJsonStringField(writer, "support", @tagName(matched.support), true);
+        try app_render.writeJsonStringField(writer, "mode", @tagName(matched.mode), true);
+        try app_render.writeJsonStringField(writer, "tests", matched.tests, true);
+        try app_render.writeJsonBoolField(writer, "deprecated", matched.deprecated, true);
+        try app_render.writeJsonBoolField(writer, "routable", matched.isRoutable(), true);
+    } else {
+        try app_render.writeJsonStringField(writer, "tag", "", true);
+        try app_render.writeJsonStringField(writer, "method", "", true);
+        try app_render.writeJsonStringField(writer, "path_template", "", true);
+        try app_render.writeJsonStringField(writer, "support", "unknown", true);
+        try app_render.writeJsonStringField(writer, "mode", "unknown", true);
+        try app_render.writeJsonStringField(writer, "tests", "unknown", true);
+        try app_render.writeJsonBoolField(writer, "deprecated", false, true);
+        try app_render.writeJsonBoolField(writer, "routable", false, true);
+    }
     try app_render.writeJsonStringField(writer, "status", row.status, true);
     try app_render.writeJsonStringField(writer, "status_class", statusClass(row.status), true);
     try writeRedactedJsonStringField(gpa, writer, "endpoint_sample", row.endpoint_sample, true);
@@ -583,6 +799,15 @@ fn evidenceFamily(provider: []const u8, kind: []const u8) []const u8 {
     return "unclassified";
 }
 
+fn routeCoverageProviderFilter(provider: ProviderFilter) !provider_routes.ProviderFilter {
+    return switch (provider) {
+        .all => .all,
+        .cloudflare => .cloudflare,
+        .hostinger => .hostinger,
+        .caddy, .system, .projects, .route => error.InvalidRouteCoverageProvider,
+    };
+}
+
 fn cloudflareFamily(kind: []const u8) []const u8 {
     if (contains(kind, "dns")) return "dns";
     if (contains(kind, "tls") or contains(kind, "ssl") or contains(kind, "certificate") or contains(kind, "cert")) return "ssl-tls";
@@ -650,7 +875,7 @@ test "evidence read model summarizes and redacts event details" {
     try db.insertAudit("route.capture", "http_error", "cloudflare/accounts-list-accounts /accounts");
     try db.insertAudit("caddy.diff", "dry_run", "rendered only");
 
-    const ctx = Context{ .gpa = allocator, .db = &db };
+    const ctx = Context{ .io = std.testing.io, .gpa = allocator, .db = &db };
     var evidence = try Evidence.load(ctx, .{ .limit = 20 });
     defer evidence.deinit(allocator);
     const totals = evidence.totals();
@@ -713,4 +938,22 @@ test "evidence read model summarizes and redacts event details" {
     defer parsed_routes.deinit();
     try std.testing.expectEqualStrings("route_capture_evidence", parsed_routes.value.object.get("kind").?.string);
     try std.testing.expectEqual(@as(usize, 1), parsed_routes.value.object.get("routes").?.array.items.len);
+
+    var route_coverage = try RouteCoverage.load(ctx, .{ .limit = 10 });
+    defer route_coverage.deinit(allocator);
+    const route_coverage_totals = route_coverage.totals();
+    try std.testing.expect(route_coverage_totals.matched >= 2);
+    try std.testing.expect(route_coverage_totals.missing >= 1);
+    var route_coverage_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer route_coverage_json_out.deinit();
+    try route_coverage.writeJson(allocator, &route_coverage_json_out.writer);
+    const route_coverage_json = try route_coverage_json_out.toOwnedSlice();
+    defer allocator.free(route_coverage_json);
+    try std.testing.expect(std.mem.indexOf(u8, route_coverage_json, "secret-value") == null);
+    var parsed_route_coverage = try std.json.parseFromSlice(std.json.Value, allocator, route_coverage_json, .{});
+    defer parsed_route_coverage.deinit();
+    try std.testing.expectEqualStrings("route_coverage_evidence", parsed_route_coverage.value.object.get("kind").?.string);
+    try std.testing.expect(parsed_route_coverage.value.object.get("routes").?.array.items.len >= 2);
+    try std.testing.expect(parsed_route_coverage.value.object.get("summary").?.object.get("official_operations").?.integer > 0);
+    try std.testing.expect(parsed_route_coverage.value.object.get("summary").?.object.get("missing").?.integer >= 1);
 }

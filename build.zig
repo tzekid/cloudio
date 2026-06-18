@@ -300,6 +300,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
     linkSqlite(app_evidence_mod);

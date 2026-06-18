@@ -296,6 +296,7 @@ pub const Route = struct {
     security: Security,
     support: Support,
     mode: Mode,
+    tests: []u8,
     deprecated: bool,
 
     pub fn init(gpa: Allocator, expected_provider: Provider, value: std.json.Value) !Route {
@@ -309,6 +310,7 @@ pub const Route = struct {
         const operation_id = core_json.fieldString(value, "operation_id");
         const support_text = core_json.fieldString(value, "support") orelse return error.InvalidProviderRoute;
         const mode_text = core_json.fieldString(value, "mode") orelse return error.InvalidProviderRoute;
+        const tests = core_json.fieldString(value, "tests") orelse return error.InvalidProviderRoute;
         const deprecated = core_json.fieldBool(value, "deprecated") orelse return error.InvalidProviderRoute;
         const method = Method.parse(method_text) orelse return error.InvalidProviderRoute;
         const support = Support.parse(support_text) orelse return error.InvalidProviderRoute;
@@ -320,6 +322,8 @@ pub const Route = struct {
         errdefer gpa.free(path_owned);
         const operation_id_owned = if (operation_id) |id| try gpa.dupe(u8, id) else null;
         errdefer if (operation_id_owned) |id| gpa.free(id);
+        const tests_owned = try gpa.dupe(u8, tests);
+        errdefer gpa.free(tests_owned);
         const path_params = try parseRouteParams(gpa, value, "path_params");
         errdefer freeRouteParams(gpa, path_params);
         const query_params = try parseRouteParams(gpa, value, "query_params");
@@ -347,6 +351,7 @@ pub const Route = struct {
             .security = security,
             .support = support,
             .mode = mode,
+            .tests = tests_owned,
             .deprecated = deprecated,
         };
     }
@@ -361,6 +366,7 @@ pub const Route = struct {
         freeRequestBody(gpa, self.request_body);
         freeResponses(gpa, self.responses);
         freeSecurity(gpa, self.security);
+        gpa.free(self.tests);
     }
 
     pub fn isRoutable(self: Route) bool {

@@ -324,6 +324,7 @@ fn writeRouteJson(writer: anytype, route: provider_routes.Route) !void {
     try writeNullableJsonStringField(writer, "operation_id", route.operation_id, true);
     try app_render.writeJsonStringField(writer, "support", @tagName(route.support), true);
     try app_render.writeJsonStringField(writer, "mode", @tagName(route.mode), true);
+    try app_render.writeJsonStringField(writer, "tests", route.tests, true);
     try app_render.writeJsonBoolField(writer, "deprecated", route.deprecated, true);
     try app_render.writeJsonBoolField(writer, "routable", route.isRoutable(), true);
     try app_render.writeJsonIntField(writer, "path_params", route.path_params.len, true);
