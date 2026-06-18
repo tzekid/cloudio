@@ -307,6 +307,10 @@ fn containsSecretWord(line: []const u8) bool {
         "streamkey",
         "ingest_key",
         "ingestkey",
+        "license_key",
+        "licensekey",
+        "provisioning_key",
+        "provisioningkey",
     };
     for (words) |word| {
         if (indexOfIgnoreCase(line, word) != null) return true;
@@ -409,6 +413,20 @@ test "provider response redaction hides realtime stream keys without hiding publ
     try std.testing.expect(std.mem.indexOf(u8, redacted, "ingest-secret-key") == null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"stream_key\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"ingestKey\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"public_key\":\"public-material\"") != null);
+}
+
+test "provider response redaction hides connector license and provisioning keys" {
+    const allocator = std.testing.allocator;
+    const input =
+        \\{"result":{"connector_id":"connector-1","license_key":"license-secret","provisioningKey":"provision-secret","public_key":"public-material"},"success":true}
+    ;
+    const redacted = try providerResponse(allocator, input);
+    defer allocator.free(redacted);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "license-secret") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "provision-secret") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"license_key\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"provisioningKey\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"public_key\":\"public-material\"") != null);
 }
 
