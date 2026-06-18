@@ -696,7 +696,11 @@ fn appendSecurityRowsFromValue(gpa: Allocator, rows: *std.ArrayList(SecurityRow)
 
 fn appendSecurityRow(gpa: Allocator, rows: *std.ArrayList(SecurityRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, item: std.json.Value) !void {
     if (item != .object) return;
-    const resource_id = try resourceIdValue(gpa, item) orelse return;
+    const maybe_resource_id = try resourceIdValue(gpa, item);
+    const resource_id = maybe_resource_id orelse blk: {
+        const fallback = try fallbackSecurityResourceId(gpa, item);
+        break :blk fallback orelse return;
+    };
     errdefer gpa.free(resource_id);
     const key = try resourceKey(gpa, kind, scope, scope_id, resource_id);
     errdefer gpa.free(key);
@@ -730,7 +734,7 @@ fn appendSecurityRow(gpa: Allocator, rows: *std.ArrayList(SecurityRow), kind: []
     errdefer if (created_at) |value| gpa.free(value);
     const updated_at = try dupeOptional(gpa, firstStringField(item, &.{ "updated_at", "modified_on", "modified", "last_updated", "last_seen", "detected_at" }));
     errdefer if (updated_at) |value| gpa.free(value);
-    const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expiration", "not_after", "valid_until" }));
+    const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expires", "expiration", "not_after", "valid_until" }));
     errdefer if (expires_at) |value| gpa.free(value);
     const raw = try core_json.stringifyValue(gpa, item);
     errdefer gpa.free(raw);
@@ -756,6 +760,18 @@ fn appendSecurityRow(gpa: Allocator, rows: *std.ArrayList(SecurityRow), kind: []
         .expires_at = expires_at,
         .raw_json = raw,
     });
+}
+
+fn fallbackSecurityResourceId(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    if (isSecurityTxtShape(item)) return try gpa.dupe(u8, "security.txt");
+    return null;
+}
+
+fn isSecurityTxtShape(item: std.json.Value) bool {
+    return core_json.field(item, "contact") != null or
+        core_json.field(item, "canonical") != null or
+        core_json.field(item, "policy") != null or
+        core_json.field(item, "preferred_languages") != null;
 }
 
 fn resourceKey(gpa: Allocator, kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, resource_id: []const u8) ![]u8 {
@@ -1881,12 +1897,13 @@ test "parses typed Cloudflare security rows from broad security result shapes" {
         \\{"result":[
         \\  {"policy_id":"policy-1","name":"Trusted sender","is_enabled":true,"action":"allow","pattern":"*@example.com","domain":"example.com","created_at":"2026-06-17T00:00:00Z"},
         \\  {"issue_id":"issue-1","severity":"high","status":"open","class":"dns","domain":"plosca.ru","dismissed":false,"last_seen":"2026-06-17T01:00:00Z"},
-        \\  {"id":"cred-1","domain":"admin.plosca.ru","risk_level":"critical","username":"kid@example.com","created_at":"2026-06-17T02:00:00Z"}
+        \\  {"id":"cred-1","domain":"admin.plosca.ru","risk_level":"critical","username":"kid@example.com","created_at":"2026-06-17T02:00:00Z"},
+        \\  {"enabled":true,"contact":["mailto:security@example.com"],"expires":"2026-12-17T00:00:00Z","preferred_languages":"en"}
         \\]}
     );
     defer rows.deinit(allocator);
 
-    try std.testing.expectEqual(@as(usize, 3), rows.items.len);
+    try std.testing.expectEqual(@as(usize, 4), rows.items.len);
     try std.testing.expectEqualStrings("cloudflare-security|account|acct-1|policy-1", rows.items[0].key);
     try std.testing.expectEqualStrings("Trusted sender", rows.items[0].name orelse "");
     try std.testing.expectEqualStrings("enabled", rows.items[0].status orelse "");
@@ -1903,4 +1920,8 @@ test "parses typed Cloudflare security rows from broad security result shapes" {
     try std.testing.expectEqualStrings("critical", rows.items[2].severity orelse "");
     try std.testing.expectEqualStrings("admin.plosca.ru", rows.items[2].domain orelse "");
     try std.testing.expectEqualStrings("kid@example.com", rows.items[2].related_id orelse "");
+    try std.testing.expectEqualStrings("security.txt", rows.items[3].resource_id);
+    try std.testing.expectEqualStrings("enabled", rows.items[3].status orelse "");
+    try std.testing.expectEqualStrings("enabled", rows.items[3].flag orelse "");
+    try std.testing.expectEqualStrings("2026-12-17T00:00:00Z", rows.items[3].expires_at orelse "");
 }

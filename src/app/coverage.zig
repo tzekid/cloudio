@@ -3886,6 +3886,7 @@ fn isCloudflareSecurityTypedTableTag(tag: []const u8) bool {
         "Token Validation",
         "Vulnerability Scanner",
         "AI Security",
+        "security.txt",
     });
 }
 
@@ -4310,6 +4311,49 @@ test "lists route capture candidates for missing L2 read evidence" {
     try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"request_body_input\":{\"present\":false,\"content_type\":null,\"required_missing\":false}") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"mode\":\"read\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan_json, "\"will_execute\":false") != null);
+}
+
+test "closed Cloudflare security read slice has no capture candidates" {
+    const allocator = std.testing.allocator;
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Radar Bots","method":"GET","path":"/radar/bots","operation_id":"radar-get-bots","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"generic Radar bot telemetry capture"}
+        \\{"provider":"cloudflare","tag":"Email Security","method":"GET","path":"/accounts/{account_id}/email-security/investigate","operation_id":"email_security_investigate","path_params":[{"name":"account_id","required":true}],"query_params":[{"name":"cursor","required":false},{"name":"page","required":false}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"generic Email Security capture"}
+        \\{"provider":"cloudflare","tag":"Security Center Scans","method":"GET","path":"/zones/{zone_id}/security-center/insights/scans","operation_id":"get-security-center-zone-scans","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"generic Security Center scan capture"}
+        \\{"provider":"cloudflare","tag":"security.txt","method":"GET","path":"/zones/{zone_id}/security-center/securitytxt","operation_id":"get-security-txt","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"generic security.txt capture"}
+        \\{"provider":"cloudflare","tag":"Workers","method":"GET","path":"/accounts/{account_id}/workers","operation_id":"workers-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"not a control-plane security family"}
+        \\
+    ;
+
+    var candidates_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer candidates_json_out.deinit();
+    try writeCaptureCandidatesJsonFromText(allocator, cloudflare, "", .{
+        .filter = .{ .provider = .cloudflare, .family = .security },
+        .limit = 0,
+    }, &candidates_json_out.writer);
+    const candidates_json = try candidates_json_out.toOwnedSlice();
+    defer allocator.free(candidates_json);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "\"family\":\"security\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "\"total_candidates\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "radar-get-bots") == null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "email_security_investigate") == null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "get-security-center-zone-scans") == null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "get-security-txt") == null);
+    try std.testing.expect(std.mem.indexOf(u8, candidates_json, "workers-list") == null);
+
+    var families_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer families_json_out.deinit();
+    try writeFamiliesJsonFromText(allocator, cloudflare, "", .{
+        .provider = .cloudflare,
+        .limit = 0,
+    }, &families_json_out.writer);
+    const families_json = try families_json_out.toOwnedSlice();
+    defer allocator.free(families_json);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "\"family\":\"security\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "\"priority\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "\"l2_read_evidence\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "\"pending_reads\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "\"l3_typed_table_evidence\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, families_json, "Workers") == null);
 }
 
 test "lists route dry-run candidates for missing mutation review evidence" {

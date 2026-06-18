@@ -222,6 +222,7 @@ fn isCloudflareSecurityRouteTag(tag: []const u8) bool {
         "Token Validation",
         "Vulnerability Scanner",
         "AI Security",
+        "security.txt",
     };
     for (needles) |needle| {
         if (containsIgnoreCase(tag, needle)) return true;
