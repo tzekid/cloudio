@@ -431,6 +431,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
     linkSqlite(app_cloudflare_mod);
