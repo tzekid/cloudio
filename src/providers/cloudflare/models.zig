@@ -438,13 +438,40 @@ fn appendResourceRow(gpa: Allocator, rows: *std.ArrayList(ResourceRow), kind: []
 fn appendInventoryRowsFromValue(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, value: std.json.Value) !void {
     switch (value) {
         .array => |array| {
-            for (array.items) |item| try appendInventoryRow(gpa, rows, kind, scope, scope_id, item);
+            for (array.items) |item| try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, item);
         },
         .object => |object| {
             if (object.get("result")) |result| {
                 try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, result);
             } else if (object.get("data")) |data| {
                 try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, data);
+            } else if (object.get("rules")) |nested| {
+                try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
+            } else if (object.get("policies")) |nested| {
+                try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
+            } else if (object.get("routes")) |nested| {
+                try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
+            } else if (object.get("connections")) |nested| {
+                try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
+            } else if (object.get("connectors")) |nested| {
+                try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
+            } else if (object.get("versions")) |nested| {
+                try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
+            } else if (object.get("settings")) |nested| {
+                try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
+            } else if (object.get("origins")) |nested| {
+                try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
+            } else if (object.get("pools")) |nested| {
+                try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, scope, scope_id, nested);
             } else {
                 try appendInventoryRow(gpa, rows, kind, scope, scope_id, value);
             }
@@ -483,9 +510,9 @@ fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: 
     errdefer if (flag) |value| gpa.free(value);
     const created_at = try dupeOptional(gpa, firstStringField(item, &.{ "created_at", "created_on", "created" }));
     errdefer if (created_at) |value| gpa.free(value);
-    const updated_at = try dupeOptional(gpa, firstStringField(item, &.{ "updated_at", "modified_on", "modified", "last_updated", "last_seen" }));
+    const updated_at = try dupeOptional(gpa, firstStringField(item, &.{ "updated_at", "updated_on", "modified_on", "modified", "last_updated", "last_seen", "last_active_at", "last_authenticated_at" }));
     errdefer if (updated_at) |value| gpa.free(value);
-    const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expiration", "not_after" }));
+    const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expiration", "not_after", "expires" }));
     errdefer if (expires_at) |value| gpa.free(value);
     const raw = try core_json.stringifyValue(gpa, item);
     errdefer gpa.free(raw);
@@ -608,6 +635,15 @@ fn resourceName(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "dataset",
         "key",
         "display_name",
+        "description",
+        "comment",
+        "title",
+        "email",
+        "aud",
+        "subdomain",
+        "host",
+        "address",
+        "colo_name",
     };
     for (fields) |field_name| {
         if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
@@ -621,6 +657,8 @@ fn resourceStatus(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "state",
         "phase",
         "mode",
+        "decision",
+        "health",
     };
     for (fields) |field_name| {
         if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
@@ -645,6 +683,14 @@ fn resourceType(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "risk_type",
         "rule_type",
         "profile_type",
+        "phase",
+        "action",
+        "decision",
+        "protocol",
+        "service",
+        "scheme",
+        "mechanism",
+        "ui_readable_name",
     };
     for (fields) |field_name| {
         if (core_json.fieldString(item, field_name)) |value| return try gpa.dupe(u8, value);
@@ -653,7 +699,7 @@ fn resourceType(gpa: Allocator, item: std.json.Value) !?[]u8 {
 }
 
 fn resourceDomain(gpa: Allocator, item: std.json.Value, name: ?[]const u8, scope: ?[]const u8, scope_id: ?[]const u8) !?[]u8 {
-    const fields = [_][]const u8{ "domain", "domain_name", "hostname", "zone_name", "host", "address" };
+    const fields = [_][]const u8{ "domain", "domain_name", "hostname", "zone_name", "host", "address", "target" };
     for (fields) |field_name| {
         if (core_json.fieldString(item, field_name)) |value| {
             if (isDomainLike(value)) return try gpa.dupe(u8, value);
@@ -703,6 +749,12 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "ruleset_id",
         "rule_id",
         "policy_id",
+        "colo_name",
+        "client_id",
+        "connector_id",
+        "tunnel_id",
+        "virtual_network_id",
+        "route_id",
         "pattern_id",
         "domain_id",
         "trusted_domain_id",
@@ -721,6 +773,15 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
         "ray_id",
         "version",
         "phase",
+        "expression",
+        "endpoint",
+        "address",
+        "ip",
+        "aud",
+        "destination",
+        "source",
+        "network",
+        "action",
         "target",
         "content",
         "pattern",
@@ -745,6 +806,10 @@ fn resourceFlag(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldBool(item, "is_default")) |default| return try gpa.dupe(u8, if (default) "default" else "not_default");
     if (core_json.fieldBool(item, "verified")) |verified| return try gpa.dupe(u8, if (verified) "verified" else "unverified");
     if (core_json.fieldBool(item, "healthy")) |healthy| return try gpa.dupe(u8, if (healthy) "healthy" else "unhealthy");
+    if (core_json.fieldBool(item, "is_deleted")) |deleted| return try gpa.dupe(u8, if (deleted) "deleted" else "not_deleted");
+    if (core_json.fieldBool(item, "deleted")) |deleted| return try gpa.dupe(u8, if (deleted) "deleted" else "not_deleted");
+    if (core_json.fieldBool(item, "temporary")) |temporary| return try gpa.dupe(u8, if (temporary) "temporary" else "persistent");
+    if (core_json.fieldBool(item, "required")) |required| return try gpa.dupe(u8, if (required) "required" else "optional");
     return null;
 }
 
@@ -834,6 +899,13 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "id",
         "uid",
         "policy_id",
+        "rule_id",
+        "ruleset_id",
+        "client_id",
+        "connector_id",
+        "tunnel_id",
+        "route_id",
+        "virtual_network_id",
         "pattern_id",
         "domain_id",
         "trusted_domain_id",
@@ -849,8 +921,12 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "dataset_id",
         "dataset",
         "hostname",
+        "network",
+        "cidr",
+        "prefix",
         "name",
         "tag",
+        "address",
     };
     for (fields) |field_name| {
         const value = core_json.field(item, field_name) orelse continue;
@@ -1081,6 +1157,58 @@ test "parses typed Cloudflare inventory rows from broad result shapes" {
     try std.testing.expectEqualStrings("acct-1", rows.items[2].account_id orelse "");
     try std.testing.expectEqualStrings("ssh.plosca.ru", rows.items[2].domain orelse "");
     try std.testing.expectEqualStrings("enabled", rows.items[2].flag orelse "");
+}
+
+test "parses typed Cloudflare inventory rows from control plane nested shapes" {
+    const allocator = std.testing.allocator;
+    var rows = try parseInventoryRows(allocator, "cloudflare-control-plane", "account", "acct-1",
+        \\{"result":[
+        \\  {"id":"ruleset-1","name":"HTTP custom rules","kind":"zone","phase":"http_request_firewall_custom","last_updated":"2026-06-17T00:00:00Z","rules":[
+        \\    {"id":"rule-1","action":"block","expression":"ip.src eq 203.0.113.10","enabled":true}
+        \\  ]},
+        \\  {"id":"tun-1","name":"plosca-tunnel","status":"healthy","tun_type":"cfd_tunnel","account_id":"acct-1","connections":[
+        \\    {"client_id":"client-1","colo_name":"WAW","is_pending_reconnect":false,"origin_ip":"76.13.130.170","opened_at":"2026-06-17T01:00:00Z"}
+        \\  ]},
+        \\  {"route_id":"route-1","network":"10.0.0.0/24","virtual_network_id":"vnet-1","comment":"private subnet","deleted":false},
+        \\  {"id":"access-app-1","name":"SSH","domain":"ssh.plosca.ru","type":"ssh","aud":"aud-1","policies":[
+        \\    {"id":"policy-1","name":"Admins","decision":"allow","include":[{"email":"kid@example.com"}]}
+        \\  ]},
+        \\  {"id":"lb-pool-1","name":"origin pool","enabled":true,"origins":[
+        \\    {"name":"origin-1","address":"76.13.130.170","enabled":true}
+        \\  ]},
+        \\  {"id":"cache_reserve","value":"on","editable":true,"modified_on":"2026-06-17T02:00:00Z"}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 10), rows.items.len);
+    try std.testing.expectEqualStrings("ruleset-1", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("http_request_firewall_custom", rows.items[0].status orelse "");
+    try std.testing.expectEqualStrings("zone", rows.items[0].category orelse "");
+    try std.testing.expectEqualStrings("rule-1", rows.items[1].resource_id);
+    try std.testing.expectEqualStrings("enabled", rows.items[1].status orelse "");
+    try std.testing.expectEqualStrings("block", rows.items[1].category orelse "");
+    try std.testing.expectEqualStrings("ip.src eq 203.0.113.10", rows.items[1].related_id orelse "");
+    try std.testing.expectEqualStrings("tun-1", rows.items[2].resource_id);
+    try std.testing.expectEqualStrings("healthy", rows.items[2].status orelse "");
+    try std.testing.expectEqualStrings("acct-1", rows.items[2].account_id orelse "");
+    try std.testing.expectEqualStrings("client-1", rows.items[3].resource_id);
+    try std.testing.expectEqualStrings("WAW", rows.items[3].related_id orelse "");
+    try std.testing.expectEqualStrings("route-1", rows.items[4].resource_id);
+    try std.testing.expectEqualStrings("vnet-1", rows.items[4].related_id orelse "");
+    try std.testing.expectEqualStrings("not_deleted", rows.items[4].flag orelse "");
+    try std.testing.expectEqualStrings("access-app-1", rows.items[5].resource_id);
+    try std.testing.expectEqualStrings("ssh.plosca.ru", rows.items[5].domain orelse "");
+    try std.testing.expectEqualStrings("aud-1", rows.items[5].related_id orelse "");
+    try std.testing.expectEqualStrings("policy-1", rows.items[6].resource_id);
+    try std.testing.expectEqualStrings("allow", rows.items[6].status orelse "");
+    try std.testing.expectEqualStrings("lb-pool-1", rows.items[7].resource_id);
+    try std.testing.expectEqualStrings("enabled", rows.items[7].flag orelse "");
+    try std.testing.expectEqualStrings("origin-1", rows.items[8].resource_id);
+    try std.testing.expectEqualStrings("76.13.130.170", rows.items[8].related_id orelse "");
+    try std.testing.expectEqualStrings("cache_reserve", rows.items[9].resource_id);
+    try std.testing.expectEqualStrings("on", rows.items[9].related_id orelse "");
+    try std.testing.expectEqualStrings("2026-06-17T02:00:00Z", rows.items[9].updated_at orelse "");
 }
 
 test "parses typed Cloudflare security rows from broad security result shapes" {

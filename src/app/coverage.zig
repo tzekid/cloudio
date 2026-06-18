@@ -3848,7 +3848,8 @@ fn isTypedTableCoverageCandidate(provider: []const u8, tag: []const u8) bool {
         return std.mem.eql(u8, tag, "Accounts") or
             std.mem.eql(u8, tag, "Zone") or
             std.mem.eql(u8, tag, "DNS Records for a Zone") or
-            isCloudflareSecurityTypedTableTag(tag);
+            isCloudflareSecurityTypedTableTag(tag) or
+            isCloudflareTypedInventoryTag(tag);
     }
     return false;
 }
@@ -3883,6 +3884,34 @@ fn isCloudflareSecurityTypedTableTag(tag: []const u8) bool {
         "Token Validation",
         "Vulnerability Scanner",
         "AI Security",
+    });
+}
+
+fn isCloudflareTypedInventoryTag(tag: []const u8) bool {
+    return tagContainsAny(tag, &.{
+        "Tunnel",
+        "Ruleset",
+        "Rules List",
+        "Access",
+        "Zero Trust",
+        "Log",
+        "Zone Settings",
+        "Zone Cache Settings",
+        "Cache",
+        "Load Balancer",
+        "Health Checks",
+        "Resource Tagging",
+        "API Tokens",
+        "Token",
+        "Membership",
+        "IAM",
+        "Custom Pages",
+        "Email Routing",
+        "Email Sending",
+        "Authenticated Origin Pull",
+        "Certificate",
+        "SSL",
+        "TLS",
     });
 }
 
@@ -4462,7 +4491,7 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
     const allocator = std.testing.allocator;
     const cloudflare =
         \\{"provider":"cloudflare","tag":"Security Center Insights","method":"GET","path":"/accounts/{account_id}/security-center/insights","operation_id":"security-insights-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,live_smoke","deprecated":false,"notes":"generic inventory only"}
-        \\{"provider":"cloudflare","tag":"Logs","method":"GET","path":"/accounts/{account_id}/logs/received","operation_id":"logs-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"generic inventory only"}
+        \\{"provider":"cloudflare","tag":"Workers","method":"GET","path":"/accounts/{account_id}/workers","operation_id":"workers-list","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"generic inventory only"}
         \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"typed account rows"}
         \\
     ;
@@ -4496,10 +4525,10 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_typed_model_candidates\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Logs\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"focus_family\":\"logs\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Workers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"focus_family\":null") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_gap\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Logs' --support partial --mode read --detail\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Workers' --support partial --mode read --detail\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Horizons: Websites\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Security Center Insights\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Accounts\"") == null);
