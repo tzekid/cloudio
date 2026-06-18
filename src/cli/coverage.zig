@@ -5,15 +5,12 @@ const cli_render = @import("cli_render");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+pub const RenderFormat = cli_render.RenderFormat;
+
 pub const Context = struct {
     io: Io,
     gpa: Allocator,
     paths: app_coverage.Paths = .{},
-};
-
-pub const RenderFormat = enum {
-    text,
-    json,
 };
 
 const SummaryCommand = struct {
@@ -167,10 +164,10 @@ fn parseSummary(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else {
             return .{ .unknown = arg };
         }
@@ -189,10 +186,10 @@ fn parseTags(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (!provider_set) {
             command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
@@ -214,10 +211,10 @@ fn parseL1(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (!provider_set) {
             command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
@@ -246,10 +243,10 @@ fn parseGaps(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (!provider_set) {
             command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
@@ -271,10 +268,10 @@ fn parseLevels(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (!provider_set) {
             command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
@@ -303,10 +300,10 @@ fn parseLevelTags(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (!provider_set) {
             command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
             provider_set = true;
@@ -335,10 +332,10 @@ fn parseFamilies(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--focus")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--focus" };
@@ -378,10 +375,10 @@ fn parseTypedModels(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--family") or std.mem.eql(u8, arg, "--control-plane-family") or std.mem.eql(u8, arg, "--focus-family")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = arg };
@@ -436,10 +433,10 @@ fn parseWorkplan(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--focus")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--focus" };
@@ -511,12 +508,6 @@ fn commandHelp(ctx: Context) !void {
     try cli_render.writeAll(ctx.io, usage_text);
 }
 
-fn parseFormat(value: []const u8) ?RenderFormat {
-    if (std.mem.eql(u8, value, "text")) return .text;
-    if (std.mem.eql(u8, value, "json")) return .json;
-    return null;
-}
-
 fn parseRoutes(args: []const []const u8) Command {
     var command = RouteCommand{};
     var provider_set = false;
@@ -534,10 +525,10 @@ fn parseRoutes(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.startsWith(u8, arg, "--support=")) {
             const value = arg["--support=".len..];
             command.filter.support = app_coverage.SupportFilter.parse(value) orelse return .{ .unknown = value };
@@ -622,10 +613,10 @@ fn parseCaptureCandidates(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--support")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--support" };
@@ -700,10 +691,10 @@ fn parseDryRunCandidates(args: []const []const u8) Command {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--format" };
-            command.format = parseFormat(args[index]) orelse return .{ .unknown = args[index] };
+            command.format = cli_render.parseFormat(args[index]) orelse return .{ .unknown = args[index] };
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             const value = arg["--format=".len..];
-            command.format = parseFormat(value) orelse return .{ .unknown = value };
+            command.format = cli_render.parseFormat(value) orelse return .{ .unknown = value };
         } else if (std.mem.eql(u8, arg, "--support")) {
             index += 1;
             if (index >= args.len) return .{ .unknown = "--support" };

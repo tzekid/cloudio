@@ -409,11 +409,6 @@ fn refreshSelectionFromArgs(args: []const []const u8) app_refresh.Selection {
     return out;
 }
 
-const OverviewFormat = enum {
-    text,
-    json,
-};
-
 fn commandOverview(io: Io, gpa: Allocator, db: *Db, args: []const []const u8) !void {
     const format = parseOverviewFormat(args) catch |err| {
         std.debug.print("invalid overview command: {s}\n", .{@errorName(err)});
@@ -428,8 +423,8 @@ fn commandOverview(io: Io, gpa: Allocator, db: *Db, args: []const []const u8) !v
     try cli_render.printOwned(io, gpa, &out);
 }
 
-fn parseOverviewFormat(args: []const []const u8) !OverviewFormat {
-    var format: OverviewFormat = .text;
+fn parseOverviewFormat(args: []const []const u8) !cli_render.RenderFormat {
+    var format: cli_render.RenderFormat = .text;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
@@ -438,20 +433,14 @@ fn parseOverviewFormat(args: []const []const u8) !OverviewFormat {
         } else if (std.mem.eql(u8, arg, "--format")) {
             index += 1;
             if (index >= args.len) return error.MissingFormat;
-            format = try parseOverviewFormatValue(args[index]);
+            format = try cli_render.parseFormatStrict(args[index]);
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            format = try parseOverviewFormatValue(arg["--format=".len..]);
+            format = try cli_render.parseFormatStrict(arg["--format=".len..]);
         } else {
             return error.UnexpectedOverviewArgument;
         }
     }
     return format;
-}
-
-fn parseOverviewFormatValue(value: []const u8) !OverviewFormat {
-    if (std.mem.eql(u8, value, "text")) return .text;
-    if (std.mem.eql(u8, value, "json")) return .json;
-    return error.InvalidFormat;
 }
 
 fn cloudflareAuth(cfg: Config) app_cloudflare.Auth {
@@ -472,16 +461,16 @@ fn caddyPaths(cfg: Config) app_caddy.Paths {
 
 test "overview parser supports text and json formats" {
     const no_args = [_][]const u8{};
-    try std.testing.expectEqual(OverviewFormat.text, try parseOverviewFormat(no_args[0..]));
+    try std.testing.expectEqual(cli_render.RenderFormat.text, try parseOverviewFormat(no_args[0..]));
 
     const json_args = [_][]const u8{"--json"};
-    try std.testing.expectEqual(OverviewFormat.json, try parseOverviewFormat(json_args[0..]));
+    try std.testing.expectEqual(cli_render.RenderFormat.json, try parseOverviewFormat(json_args[0..]));
 
     const format_args = [_][]const u8{ "--format", "json" };
-    try std.testing.expectEqual(OverviewFormat.json, try parseOverviewFormat(format_args[0..]));
+    try std.testing.expectEqual(cli_render.RenderFormat.json, try parseOverviewFormat(format_args[0..]));
 
     const inline_format_args = [_][]const u8{"--format=text"};
-    try std.testing.expectEqual(OverviewFormat.text, try parseOverviewFormat(inline_format_args[0..]));
+    try std.testing.expectEqual(cli_render.RenderFormat.text, try parseOverviewFormat(inline_format_args[0..]));
 
     const invalid_args = [_][]const u8{ "--format", "yaml" };
     try std.testing.expectError(error.InvalidFormat, parseOverviewFormat(invalid_args[0..]));

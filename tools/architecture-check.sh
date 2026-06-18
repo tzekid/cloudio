@@ -85,6 +85,11 @@ check_no_matches \
     src/cli
 
 check_no_matches \
+    "CLI output format enums must reuse cli_render.RenderFormat" \
+    '(RenderFormat|OverviewFormat) = enum' \
+    src/cli/root.zig src/cli/coverage.zig src/cli/inventory.zig
+
+check_no_matches \
     "public cloudio facade must not expose collector internals" \
     '@import\("(collector_[^"]+)"\)|pub const collectors' \
     src/cloudio.zig

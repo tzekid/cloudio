@@ -13,10 +13,7 @@ pub const Context = struct {
     db: *Db,
 };
 
-pub const RenderFormat = enum {
-    text,
-    json,
-};
+pub const RenderFormat = cli_render.RenderFormat;
 
 pub const Parsed = struct {
     options: app_inventory.ListOptions = .{},
@@ -89,9 +86,9 @@ pub fn parseParsed(args: []const []const u8) !Parsed {
         } else if (std.mem.eql(u8, arg, "--format")) {
             i += 1;
             if (i >= args.len) return error.MissingFormat;
-            parsed.format = try parseFormat(args[i]);
+            parsed.format = try cli_render.parseFormatStrict(args[i]);
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
-            parsed.format = try parseFormat(arg["--format=".len..]);
+            parsed.format = try cli_render.parseFormatStrict(arg["--format=".len..]);
         } else if (isProvider(arg) and parsed.options.provider == null) {
             parsed.options.provider = try parseProvider(arg);
         } else if (parsed.options.query == null) {
@@ -115,12 +112,6 @@ fn parseLimit(value: []const u8) !i64 {
     const parsed = try std.fmt.parseInt(i64, value, 10);
     if (parsed < 1) return error.InvalidLimit;
     return parsed;
-}
-
-fn parseFormat(value: []const u8) !RenderFormat {
-    if (std.mem.eql(u8, value, "text")) return .text;
-    if (std.mem.eql(u8, value, "json")) return .json;
-    return error.InvalidFormat;
 }
 
 test "inventory parser maps positional provider and filters" {
