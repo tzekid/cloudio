@@ -4896,6 +4896,19 @@ test "classifies Cloudflare logs without catalog or logo substring noise" {
     try std.testing.expectEqual(@as(?WorkplanFamily, null), workplanTagFamily("cloudflare", "Changelog"));
 }
 
+test "classifies broad Cloudflare control-plane read groups" {
+    try std.testing.expectEqual(@as(?WorkplanFamily, .ssl_tls), workplanTagFamily("cloudflare", "Radar Certificate Transparency"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .ssl_tls), workplanTagFamily("cloudflare", "mTLS Certificate Management"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .zones), workplanTagFamily("cloudflare", "Custom Hostname for a Zone"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .zones), workplanTagFamily("cloudflare", "Zone Snippets"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .tunnels), workplanTagFamily("cloudflare", "Magic GRE tunnels"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .tunnels), workplanTagFamily("cloudflare", "Magic IPsec tunnels"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .tokens), workplanTagFamily("cloudflare", "AI Search Tokens"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .tokens), workplanTagFamily("cloudflare", "Token Validation Token Rules"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .dns), workplanTagFamily("cloudflare", "DNS Internal Views for an Account"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .access), workplanTagFamily("cloudflare", "Infrastructure Access Targets"));
+}
+
 test "audits L1 routability invariants across provider manifests" {
     const allocator = std.testing.allocator;
     const cloudflare =

@@ -1201,6 +1201,14 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "client_certificate_id",
         "detection_id",
         "expression_id",
+        "target_id",
+        "token_id",
+        "config_id",
+        "view_id",
+        "mtls_certificate_id",
+        "custom_hostname_id",
+        "gre_tunnel_id",
+        "ipsec_tunnel_id",
         "subscription_id",
         "plan_id",
         "rate_plan_id",
@@ -1213,6 +1221,9 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "uuid",
         "dataset_id",
         "dataset",
+        "snippet_name",
+        "ca_slug",
+        "log_slug",
         "ref",
         "hostname",
         "domain",
@@ -1627,6 +1638,40 @@ test "parses typed Cloudflare log inventory rows from gateway, CMB, and tail sha
     const tail = try expectInventoryRow(rows.items, "tail-1");
     try std.testing.expectEqualStrings("wss://tail.example.test", tail.related_id orelse "");
     try std.testing.expectEqualStrings("2026-06-18T01:00:00Z", tail.expires_at orelse "");
+}
+
+test "parses typed Cloudflare broad control-plane read identifiers" {
+    const allocator = std.testing.allocator;
+    var rows = try parseInventoryRows(allocator, "cloudflare-broad-control-plane", "account", "acct-1",
+        \\{"result":[
+        \\  {"mtls_certificate_id":"mtls-1","name":"client cert","expires_on":"2026-12-31T00:00:00Z"},
+        \\  {"custom_hostname_id":"host-1","hostname":"edge.example.test","status":"active"},
+        \\  {"gre_tunnel_id":"gre-1","name":"gre tunnel","health_check_enabled":true},
+        \\  {"ipsec_tunnel_id":"ipsec-1","name":"ipsec tunnel","enabled":true},
+        \\  {"view_id":"view-1","name":"private dns view"},
+        \\  {"target_id":"target-1","hostname":"ssh.example.test"},
+        \\  {"config_id":"config-1","enabled":true},
+        \\  {"token_id":"token-1","name":"build token"},
+        \\  {"snippet_name":"snippet-1","created_on":"2026-06-18T00:00:00Z"},
+        \\  {"ca_slug":"ca-1","name":"Example CA"},
+        \\  {"log_slug":"ct-log-1","description":"Example CT log"}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqualStrings("mtls-1", (try expectInventoryRow(rows.items, "mtls-1")).resource_id);
+    const custom_hostname = try expectInventoryRow(rows.items, "host-1");
+    try std.testing.expectEqualStrings("edge.example.test", custom_hostname.domain orelse "");
+    try std.testing.expectEqualStrings("active", custom_hostname.status orelse "");
+    try std.testing.expectEqualStrings("gre-1", (try expectInventoryRow(rows.items, "gre-1")).resource_id);
+    try std.testing.expectEqualStrings("ipsec-1", (try expectInventoryRow(rows.items, "ipsec-1")).resource_id);
+    try std.testing.expectEqualStrings("view-1", (try expectInventoryRow(rows.items, "view-1")).resource_id);
+    try std.testing.expectEqualStrings("target-1", (try expectInventoryRow(rows.items, "target-1")).resource_id);
+    try std.testing.expectEqualStrings("config-1", (try expectInventoryRow(rows.items, "config-1")).resource_id);
+    try std.testing.expectEqualStrings("token-1", (try expectInventoryRow(rows.items, "token-1")).resource_id);
+    try std.testing.expectEqualStrings("snippet-1", (try expectInventoryRow(rows.items, "snippet-1")).resource_id);
+    try std.testing.expectEqualStrings("ca-1", (try expectInventoryRow(rows.items, "ca-1")).resource_id);
+    try std.testing.expectEqualStrings("ct-log-1", (try expectInventoryRow(rows.items, "ct-log-1")).resource_id);
 }
 
 test "parses typed Cloudflare inventory rows from control plane nested shapes" {
