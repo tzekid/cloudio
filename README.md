@@ -4,6 +4,8 @@ Cloudio is a Zig CLI-first POC for reading this VPS control-plane state into SQL
 
 The POC is intentionally read-only for infrastructure. It may create or update its own SQLite database, but it does not write Caddy configs, reload services, or mutate Cloudflare/Hostinger resources.
 
+The broad execution plan is tracked in [docs/execution-plan.md](docs/execution-plan.md).
+
 ## Quick Start
 
 ```sh
