@@ -340,6 +340,15 @@ fn appendInventoryRowsFromValue(gpa: Allocator, rows: *std.ArrayList(InventoryRo
             } else if (object.get("entries")) |entries| {
                 try appendInventoryRow(gpa, rows, kind, target, value);
                 try appendInventoryRowsFromValue(gpa, rows, kind, target, entries);
+            } else if (object.get("profiles")) |profiles| {
+                try appendInventoryRow(gpa, rows, kind, target, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, target, profiles);
+            } else if (object.get("logs")) |logs| {
+                try appendInventoryRow(gpa, rows, kind, target, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, target, logs);
+            } else if (object.get("lines")) |lines| {
+                try appendInventoryRow(gpa, rows, kind, target, value);
+                try appendInventoryRowsFromValue(gpa, rows, kind, target, lines);
             } else if (object.get("store")) |store| {
                 try appendInventoryRowsFromValue(gpa, rows, kind, target, store);
                 if (object.get("sales_channel")) |sales_channel| {
@@ -358,6 +367,7 @@ fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: 
     const resource_id = try resourceId(gpa, item) orelse blk: {
         if (target) |value| {
             if (core_json.fieldString(item, "website_url") != null) break :blk try gpa.dupe(u8, value);
+            if (item.object.get("logs") != null or item.object.get("lines") != null) break :blk try gpa.dupe(u8, value);
         }
         return;
     };
@@ -410,6 +420,8 @@ fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: 
 fn resourceId(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldAnyString(gpa, item, "id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "uuid")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "resource_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "resourceId")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "project_name")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "projectName")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "profile_uuid")) |value| return value;
@@ -422,10 +434,15 @@ fn resourceId(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldAnyString(gpa, item, "snapshotId")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "whois_id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "whoisId")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "website_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "websiteId")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "firewall_id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "firewallId")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "order_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "orderId")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "subscription_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "subscriptionId")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "code")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "name")) |name| {
         errdefer gpa.free(name);
         if (core_json.field(item, "user") != null or core_json.field(item, "permissions") != null or core_json.field(item, "disk_usage_mb") != null) return name;
@@ -442,6 +459,9 @@ fn resourceId(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldAnyString(gpa, item, "subdomain")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "parked_domain")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "address")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "title")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "email")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "url")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "name")) |name| {
         errdefer gpa.free(name);
         if (core_json.fieldAnyString(gpa, item, "type")) |typ| {
@@ -458,6 +478,7 @@ fn resourceId(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldAnyString(gpa, item, "external_id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "link")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "line")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "message")) |value| return value;
     return null;
 }
 
@@ -469,9 +490,9 @@ fn resourceName(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldString(item, "name")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "project_name")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "projectName")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "site_title")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "domain")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "hostname")) |value| return try gpa.dupe(u8, value);
-    if (core_json.fieldString(item, "site_title")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "company_name")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "website_url")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "username")) |value| return try gpa.dupe(u8, value);
@@ -479,11 +500,15 @@ fn resourceName(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldString(item, "identifier")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "city")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "location")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "title")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "email")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "url")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "subdomain")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "parked_domain")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "root_directory")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "app_type")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "address")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "code")) |value| return try gpa.dupe(u8, value);
     return null;
 }
 
@@ -491,6 +516,8 @@ fn resourceStatus(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldString(item, "status")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "state")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "health")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "subscription_status")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "subscriptionStatus")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldBool(item, "is_enabled")) |enabled| return try gpa.dupe(u8, if (enabled) "enabled" else "disabled");
     if (core_json.fieldBool(item, "is_disabled")) |disabled| return try gpa.dupe(u8, if (disabled) "disabled" else "enabled");
     if (core_json.fieldBool(item, "is_synced")) |synced| return try gpa.dupe(u8, if (synced) "synced" else "unsynced");
@@ -515,8 +542,10 @@ fn resourceCategory(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldString(item, "currency_code")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "default_currency_code")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "country")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "source_type")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "tld")) |value| return try gpa.dupe(u8, value);
     if (core_json.fieldString(item, "reason")) |value| return try gpa.dupe(u8, value);
+    if (core_json.fieldString(item, "validation_error")) |value| return try gpa.dupe(u8, value);
     if (core_json.field(item, "plan")) |plan| {
         if (core_json.fieldString(plan, "name")) |value| return try gpa.dupe(u8, value);
     }
@@ -547,8 +576,14 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
     if (core_json.fieldAnyString(gpa, item, "profileUuid")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "segment_uuid")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "segmentUuid")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "resource_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "resourceId")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "subscription_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "subscriptionId")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "order_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "orderId")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "website_id")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "websiteId")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "client_id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "owner_id")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "admin_id")) |value| return value;
@@ -560,6 +595,10 @@ fn resourceRelatedId(gpa: Allocator, item: std.json.Value) ?[]u8 {
     if (core_json.fieldAnyString(gpa, item, "ptr")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "address")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "link")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "url")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "email")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "title")) |value| return value;
+    if (core_json.fieldAnyString(gpa, item, "code")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "source_detail")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "source")) |value| return value;
     if (core_json.fieldAnyString(gpa, item, "port")) |value| return value;
@@ -591,7 +630,10 @@ fn resourceFlag(gpa: Allocator, item: std.json.Value) !?[]u8 {
     if (core_json.fieldBool(item, "is_auto_renewed")) |auto| return try gpa.dupe(u8, if (auto) "auto_renewed" else "not_auto_renewed");
     if (core_json.fieldBool(item, "is_privacy_protected")) |protected| return try gpa.dupe(u8, if (protected) "privacy_protected" else "privacy_unprotected");
     if (core_json.fieldBool(item, "is_locked")) |locked| return try gpa.dupe(u8, if (locked) "locked" else "unlocked");
+    if (core_json.fieldBool(item, "is_lockable")) |lockable| return try gpa.dupe(u8, if (lockable) "lockable" else "not_lockable");
     if (core_json.fieldBool(item, "is_valid")) |valid| return try gpa.dupe(u8, if (valid) "valid" else "invalid");
+    if (core_json.fieldBool(item, "is_available")) |available| return try gpa.dupe(u8, if (available) "available" else "unavailable");
+    if (core_json.fieldBool(item, "is_alternative")) |alternative| return try gpa.dupe(u8, if (alternative) "alternative" else "primary");
     if (core_json.fieldBool(item, "is_synced")) |synced| return try gpa.dupe(u8, if (synced) "synced" else "unsynced");
     if (core_json.fieldBool(item, "is_accessible")) |accessible| return try gpa.dupe(u8, if (accessible) "accessible" else "inaccessible");
     if (core_json.fieldBool(item, "sync")) |sync| return try gpa.dupe(u8, if (sync) "sync" else "async");
@@ -858,6 +900,45 @@ test "parses official Hostinger ecommerce and Horizons website shapes" {
     try std.testing.expectEqualStrings("site-id-1", rows.items[3].resource_id);
     try std.testing.expectEqualStrings("https://horizons.hostinger.com/123e4567-e89b-12d3-a456-426614174000?location=chatgpt", rows.items[3].name orelse "");
     try std.testing.expectEqualStrings("https://horizons.hostinger.com/123e4567-e89b-12d3-a456-426614174000?location=chatgpt", rows.items[3].related_id orelse "");
+}
+
+test "parses current Hostinger schema fields across reach hosting datacenters and logs" {
+    const allocator = std.testing.allocator;
+    var rows = try parseInventoryRows(allocator, "hostinger-current-schema", "build-uuid-1",
+        \\{"data":[
+        \\  {"code":"uk-fast","title":"Europe (UK)","coordinates":{"latitude":51.5,"longitude":-0.1}},
+        \\  {"uuid":"contact-1","name":"Ada","surname":"Lovelace","email":"ada@example.com","subscription_status":"subscribed","source":"manual"},
+        \\  {"resource_id":44340307,"status":"active","expires_at":"2027-10-21T05:38:23.000000Z","profiles":[{"uuid":"profile-1","domain":"plosca.ru","created_at":"2026-01-21T07:35:04.000000Z","updated_at":"2026-01-22T07:35:04.000000Z"}]},
+        \\  {"id":"wp-1","username":"u123","domain":"plosca.ru","site_title":"Cloudio","url":"https://plosca.ru","email":"owner@example.com","is_valid":true,"validation_error":null,"created_at":"2026-01-01T00:00:00Z"},
+        \\  {"domain":"plosca.dev","is_available":true,"is_alternative":false,"restriction":null},
+        \\  {"website_id":"site-1","website_url":"https://horizons.hostinger.com/site-1"},
+        \\  {"logs":"added 10 packages\\n","lines":2},
+        \\  {"line":"container log line"}
+        \\]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 9), rows.items.len);
+    try std.testing.expectEqualStrings("uk-fast", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("Europe (UK)", rows.items[0].name orelse "");
+    try std.testing.expectEqualStrings("Europe (UK)", rows.items[0].related_id orelse "");
+    try std.testing.expectEqualStrings("contact-1", rows.items[1].resource_id);
+    try std.testing.expectEqualStrings("Ada", rows.items[1].name orelse "");
+    try std.testing.expectEqualStrings("subscribed", rows.items[1].status orelse "");
+    try std.testing.expectEqualStrings("ada@example.com", rows.items[1].related_id orelse "");
+    try std.testing.expectEqualStrings("44340307", rows.items[2].resource_id);
+    try std.testing.expectEqualStrings("profile-1", rows.items[3].resource_id);
+    try std.testing.expectEqualStrings("plosca.ru", rows.items[3].domain orelse "");
+    try std.testing.expectEqualStrings("wp-1", rows.items[4].resource_id);
+    try std.testing.expectEqualStrings("Cloudio", rows.items[4].name orelse "");
+    try std.testing.expectEqualStrings("valid", rows.items[4].flag orelse "");
+    try std.testing.expectEqualStrings("https://plosca.ru", rows.items[4].related_id orelse "");
+    try std.testing.expectEqualStrings("plosca.dev", rows.items[5].resource_id);
+    try std.testing.expectEqualStrings("available", rows.items[5].flag orelse "");
+    try std.testing.expectEqualStrings("site-1", rows.items[6].resource_id);
+    try std.testing.expectEqualStrings("https://horizons.hostinger.com/site-1", rows.items[6].name orelse "");
+    try std.testing.expectEqualStrings("build-uuid-1", rows.items[7].resource_id);
+    try std.testing.expectEqualStrings("container log line", rows.items[8].resource_id);
 }
 
 test "parses Hostinger Docker and Reach child identifier spellings" {
