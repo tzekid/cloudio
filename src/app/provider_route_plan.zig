@@ -1,6 +1,7 @@
 const std = @import("std");
 const provider_dispatch = @import("provider_dispatch");
 const provider_route_plan = @import("provider_route_plan");
+const provider_route_result = @import("provider_route_result");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -139,7 +140,7 @@ pub fn readMetadataJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanIn
     const client = provider_dispatch.Client.init(auth);
     const result = try client.callReadRouteResultRequest(io, gpa, route.*, input.request);
     defer result.deinit(gpa);
-    return try provider_dispatch.readRouteResultMetadataJson(gpa, route.*, result);
+    return try provider_route_result.readRouteResultMetadataJson(gpa, route.*, result.view());
 }
 
 pub fn dryRunJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, auth: Auth) ![]u8 {

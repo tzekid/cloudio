@@ -50,6 +50,7 @@ pub const providers = struct {
     pub const capabilities = @import("provider_capabilities");
     pub const dispatch = @import("provider_dispatch");
     pub const route_plan = @import("provider_route_plan");
+    pub const route_result = @import("provider_route_result");
     pub const routes = @import("provider_routes");
 
     pub const cloudflare = struct {
@@ -105,6 +106,7 @@ test "facade exposes stable integration modules" {
     _ = providers.dispatch.Client;
     _ = providers.dispatch.ReadRouteResult;
     _ = providers.route_plan.planRouteJsonRequest;
+    _ = providers.route_result.ReadRouteResultView;
     _ = providers.routes.Route;
     _ = providers.cloudflare.client.Client;
     _ = providers.cloudflare.models.AccountRow;

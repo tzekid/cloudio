@@ -1,10 +1,10 @@
 const std = @import("std");
-const core_json = @import("core_json");
 const net_http = @import("net_http");
 const provider_capabilities = @import("provider_capabilities");
 const provider_cloudflare = @import("provider_cloudflare");
 const provider_hostinger = @import("provider_hostinger");
 const provider_route_plan = @import("provider_route_plan");
+const provider_route_result = @import("provider_route_result");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -136,6 +136,14 @@ pub const ReadRouteResult = struct {
     pub fn statusText(self: ReadRouteResult) []const u8 {
         return net_http.statusText(self.response.status);
     }
+
+    pub fn view(self: ReadRouteResult) provider_route_result.ReadRouteResultView {
+        return .{
+            .status = self.response.status,
+            .body_bytes = self.response.body.len,
+            .matched_response = self.matched_response,
+        };
+    }
 };
 
 pub fn matchReadRouteResponse(route: provider_routes.Route, response: net_http.Response) ReadRouteResult {
@@ -146,35 +154,7 @@ pub fn matchReadRouteResponse(route: provider_routes.Route, response: net_http.R
 }
 
 pub fn readRouteResultMetadataJson(gpa: Allocator, route: provider_routes.Route, result: ReadRouteResult) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    try writer.writeAll("{");
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "group", route.tag, true);
-    try writeJsonField(writer, "operation", route.operation_id orelse route.path_template, true);
-    if (route.operation_id) |id| {
-        try writeJsonField(writer, "operation_id", id, true);
-    } else {
-        try writer.writeAll("\"operation_id\":null,");
-    }
-    try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "path_template", route.path_template, true);
-    try writer.writeAll("\"http_status\":");
-    try writer.print("{d}", .{result.statusCode()});
-    try writer.writeByte(',');
-    try writeJsonField(writer, "status_text", result.statusText(), true);
-    if (result.matched_response) |matched| {
-        try writeResponseField(writer, "matched_response", matched.*, true);
-    } else {
-        try writer.writeAll("\"matched_response\":null,");
-    }
-    try writer.writeAll("\"body_bytes\":");
-    try writer.print("{d}", .{result.response.body.len});
-    try writer.writeByte(',');
-    try writer.writeAll("\"body_included\":false");
-    try writer.writeAll("}");
-    return try out.toOwnedSlice();
+    return try provider_route_result.readRouteResultMetadataJson(gpa, route, result.view());
 }
 
 pub fn dryRunPlanJson(gpa: Allocator, route: provider_routes.Route, params: []const provider_routes.PathParam) ![]u8 {
@@ -191,13 +171,6 @@ pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, reques
 
 pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
     return try provider_route_plan.dryRunPlanJsonRequest(gpa, route, request);
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 fn requestHeaders(gpa: Allocator, params: []const provider_routes.HeaderParam) ![]std.http.Header {
@@ -249,43 +222,6 @@ fn hasCloudflareLegacyAuth(auth: provider_cloudflare.Auth) bool {
     const email = auth.email orelse return false;
     const key = auth.key orelse return false;
     return email.len != 0 and key.len != 0;
-}
-
-fn writeResponsesField(writer: anytype, name: []const u8, responses: []const provider_routes.Response, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":[");
-    for (responses, 0..) |response, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writeResponseValue(writer, response);
-    }
-    try writer.writeByte(']');
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeResponseField(writer: anytype, name: []const u8, response: provider_routes.Response, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try writeResponseValue(writer, response);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeResponseValue(writer: anytype, response: provider_routes.Response) !void {
-    try writer.writeByte('{');
-    try writeJsonField(writer, "status", response.status, true);
-    try writeStringArrayField(writer, "content_types", response.content_types, true);
-    try writeStringArrayField(writer, "schema_refs", response.schema_refs, false);
-    try writer.writeByte('}');
-}
-
-fn writeStringArrayField(writer: anytype, name: []const u8, values: []const []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":[");
-    for (values, 0..) |value, index| {
-        if (index != 0) try writer.writeByte(',');
-        try core_json.writeString(writer, value);
-    }
-    try writer.writeByte(']');
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 test "generic dispatch renders dry-run plans without executing mutations" {
