@@ -3860,6 +3860,8 @@ fn isHostingerTypedInventoryTag(tag: []const u8) bool {
         "DNS:",
         "Domains:",
         "Hosting:",
+        "Ecommerce:",
+        "Horizons:",
         "VPS:",
         "Docker",
         "Monarx",
@@ -4529,10 +4531,10 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"focus_family\":null") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_gap\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Workers' --support partial --mode read --detail\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Horizons: Websites\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Horizons: Websites\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Security Center Insights\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Accounts\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_or_complete_rows_hidden\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_or_complete_rows_hidden\":3") != null);
 
     var complete_json_out = std.Io.Writer.Allocating.init(allocator);
     defer complete_json_out.deinit();
