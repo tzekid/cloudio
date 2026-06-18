@@ -793,6 +793,7 @@ pub const ActualReadyCaptureOptions = struct {
     max_pages: usize = default_capture_max_pages,
     execute: bool = false,
     include_blocked: bool = false,
+    diagnostic_only: bool = false,
     configured_domains: []const []const u8 = &.{},
 };
 
@@ -3162,6 +3163,7 @@ const ActualReadyCaptureSummary = struct {
     candidate_routes: usize = 0,
     ready_routes: usize = 0,
     skipped_unready: usize = 0,
+    skipped_non_diagnostic: usize = 0,
     omitted_ready: usize = 0,
     planned: usize = 0,
     attempted: usize = 0,
@@ -3206,6 +3208,10 @@ fn actualReadyCaptureJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, plan: Act
             continue;
         }
         summary.ready_routes += 1;
+        if (options.diagnostic_only and !actualCaptureUsesDiagnosticRead(row.route, options.include_blocked)) {
+            summary.skipped_non_diagnostic += 1;
+            continue;
+        }
         if (options.limit != 0 and summary.planned + summary.attempted >= options.limit) {
             summary.omitted_ready += 1;
             continue;
@@ -3230,6 +3236,7 @@ fn actualReadyCaptureJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, plan: Act
     try writeJsonField(writer, "kind", "actual_ready_capture_run", true);
     try writeJsonBoolField(writer, "execute", options.execute, true);
     try writeJsonBoolField(writer, "include_blocked", options.include_blocked, true);
+    try writeJsonBoolField(writer, "diagnostic_only", options.diagnostic_only, true);
     try writer.writeAll("\"filter\":");
     try writeRouteFilterJson(actualCaptureRouteFilter(options.filter), writer);
     try writer.writeByte(',');
@@ -3248,6 +3255,7 @@ fn writeActualReadyCaptureSummaryJson(summary: ActualReadyCaptureSummary, writer
     try writeJsonCountField(writer, "candidate_routes", summary.candidate_routes, true);
     try writeJsonCountField(writer, "ready_routes", summary.ready_routes, true);
     try writeJsonCountField(writer, "skipped_unready", summary.skipped_unready, true);
+    try writeJsonCountField(writer, "skipped_non_diagnostic", summary.skipped_non_diagnostic, true);
     try writeJsonCountField(writer, "omitted_ready", summary.omitted_ready, true);
     try writeJsonCountField(writer, "planned", summary.planned, true);
     try writeJsonCountField(writer, "attempted", summary.attempted, true);
@@ -6022,6 +6030,57 @@ test "plans blocked Hostinger diagnostic captures only when explicitly included"
     try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "\"operation_id\":\"reach_listProfilesV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "\"operation_id\":\"VPS_getProjectListV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, diagnostic_plan, "test-token") == null);
+}
+
+test "filters Hostinger capture-ready runs to diagnostic reads only" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-capture-diagnostic-only.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    const hostinger =
+        \\{"provider":"hostinger","tag":"Domains: Portfolio","method":"GET","path":"/api/domains/v1/portfolio/{domain}","operation_id":"domains_getDomainDetailsV1","path_params":[{"name":"domain","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"domain detail"}
+        \\{"provider":"hostinger","tag":"Reach: Profiles","method":"GET","path":"/api/reach/v1/profiles","operation_id":"reach_listProfilesV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"403","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"blocked diagnostic"}
+        \\
+    ;
+    const configured_domains = [_][]const u8{"plosca.ru"};
+
+    const mixed_plan = try actualReadyCaptureJsonFromText(std.testing.io, allocator, "", hostinger, &db, .{ .hostinger = "test-token" }, .{
+        .filter = .{ .provider = .hostinger },
+        .limit = 0,
+        .execute = false,
+        .include_blocked = true,
+        .configured_domains = configured_domains[0..],
+    });
+    defer allocator.free(mixed_plan);
+    try std.testing.expect(std.mem.indexOf(u8, mixed_plan, "\"candidate_routes\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mixed_plan, "\"ready_routes\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mixed_plan, "\"skipped_non_diagnostic\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mixed_plan, "\"planned\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mixed_plan, "\"operation_id\":\"domains_getDomainDetailsV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mixed_plan, "\"operation_id\":\"reach_listProfilesV1\"") != null);
+
+    const diagnostic_only = try actualReadyCaptureJsonFromText(std.testing.io, allocator, "", hostinger, &db, .{ .hostinger = "test-token" }, .{
+        .filter = .{ .provider = .hostinger },
+        .limit = 0,
+        .execute = false,
+        .include_blocked = true,
+        .diagnostic_only = true,
+        .configured_domains = configured_domains[0..],
+    });
+    defer allocator.free(diagnostic_only);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_only, "\"diagnostic_only\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_only, "\"candidate_routes\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_only, "\"ready_routes\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_only, "\"skipped_non_diagnostic\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_only, "\"planned\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_only, "\"operation_id\":\"reach_listProfilesV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_only, "\"operation_id\":\"domains_getDomainDetailsV1\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic_only, "test-token") == null);
 }
 
 test "plans Cloudflare account and zone captures from configured scope hints" {

@@ -179,6 +179,9 @@ fn parseCaptureReadyArgs(args: []const []const u8) !ParsedCaptureReadyArgs {
             parsed.options.execute = true;
         } else if (std.mem.eql(u8, arg, "--include-blocked") or std.mem.eql(u8, arg, "--diagnostic-blocked")) {
             parsed.options.include_blocked = true;
+        } else if (std.mem.eql(u8, arg, "--diagnostic-only") or std.mem.eql(u8, arg, "--only-diagnostic")) {
+            parsed.options.include_blocked = true;
+            parsed.options.diagnostic_only = true;
         } else if (std.mem.eql(u8, arg, "--dry-run") or std.mem.eql(u8, arg, "--plan-only")) {
             parsed.options.execute = false;
         } else if (try parseCaptureReadyValue(args, &index, .{"--limit"})) |value| {
@@ -258,7 +261,7 @@ fn usage() void {
         \\  cloudio route plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\  cloudio route read <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value]
         \\  cloudio route capture <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--kind <snapshot-kind>] [--target <snapshot-target>] [--paginate] [--max-pages <n>] [--diagnostic]
-        \\  cloudio route capture-ready <cloudflare|hostinger> [tag-query] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--include-blocked] [--execute]
+        \\  cloudio route capture-ready <cloudflare|hostinger> [tag-query] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--include-blocked|--diagnostic-only] [--execute]
         \\  cloudio route dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\
     , .{});
@@ -287,7 +290,7 @@ test "route capture-ready parser builds provider family execution options" {
         "3",
         "--operation",
         "VPS_getBackupsV1",
-        "--include-blocked",
+        "--diagnostic-only",
         "--execute",
     };
     const parsed = try parseCaptureReadyArgs(args[0..]);
@@ -297,6 +300,7 @@ test "route capture-ready parser builds provider family execution options" {
     try std.testing.expectEqual(@as(usize, 0), parsed.options.limit);
     try std.testing.expectEqual(@as(usize, 3), parsed.options.max_pages);
     try std.testing.expect(parsed.options.include_blocked);
+    try std.testing.expect(parsed.options.diagnostic_only);
     try std.testing.expect(parsed.options.execute);
 
     const tag_args = [_][]const u8{ "cloudflare", "Logs", "--support=partial", "--plan-only" };
