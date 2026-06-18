@@ -3896,6 +3896,7 @@ fn isCloudflareTypedInventoryTag(tag: []const u8) bool {
         "Rules List",
         "Access",
         "Zero Trust",
+        "DNS",
         "Log",
         "Zone Settings",
         "Zone Cache Settings",
