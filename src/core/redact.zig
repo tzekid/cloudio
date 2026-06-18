@@ -288,7 +288,26 @@ fn isLikelyHeaderName(value: []const u8) bool {
 }
 
 fn containsSecretWord(line: []const u8) bool {
-    const words = [_][]const u8{ "token", "secret", "password", "api_key", "apikey", "x-api-key", "authorization", "bearer", "private_key", "privatekey", "privkey", "client_secret", "refresh_token", "access_token" };
+    const words = [_][]const u8{
+        "token",
+        "secret",
+        "password",
+        "api_key",
+        "apikey",
+        "x-api-key",
+        "authorization",
+        "bearer",
+        "private_key",
+        "privatekey",
+        "privkey",
+        "client_secret",
+        "refresh_token",
+        "access_token",
+        "stream_key",
+        "streamkey",
+        "ingest_key",
+        "ingestkey",
+    };
     for (words) |word| {
         if (indexOfIgnoreCase(line, word) != null) return true;
     }
@@ -377,6 +396,20 @@ test "secret response redaction hides JSON secret text and value fields" {
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"text\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"value\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"name\":\"myBinding\"") != null);
+}
+
+test "provider response redaction hides realtime stream keys without hiding public keys" {
+    const allocator = std.testing.allocator;
+    const input =
+        \\{"data":{"stream_key":"rtmp-secret-key","ingestKey":"ingest-secret-key","playback_url":"https://example.com/live.m3u8","public_key":"public-material"},"success":true}
+    ;
+    const redacted = try providerResponse(allocator, input);
+    defer allocator.free(redacted);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "rtmp-secret-key") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "ingest-secret-key") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"stream_key\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"ingestKey\":\"[REDACTED]\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"public_key\":\"public-material\"") != null);
 }
 
 test "provider response redaction hides cursor continuations without hiding unrelated after fields" {
