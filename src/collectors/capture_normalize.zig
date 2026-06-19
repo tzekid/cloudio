@@ -197,6 +197,7 @@ fn cloudflareRouteScope(route: provider_routes.Route, request: provider_routes.R
     if (pathParamValue(request, "account_id")) |id| return .{ .name = "account", .id = id };
     if (pathParamValue(request, "accounts_id")) |id| return .{ .name = "account", .id = id };
     if (pathParamValue(request, "account_identifier")) |id| return .{ .name = "account", .id = id };
+    if (pathParamValue(request, "organization_id")) |id| return .{ .name = "organization", .id = id };
     if (pathParamValue(request, "zone_id")) |id| return .{ .name = "zone", .id = id };
     if (pathParamValue(request, "zones_id")) |id| return .{ .name = "zone", .id = id };
     if (pathParamValue(request, "zone_identifier")) |id| return .{ .name = "zone", .id = id };
@@ -252,4 +253,23 @@ fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
         if (std.ascii.eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return true;
     }
     return false;
+}
+
+test "detects Cloudflare organization scoped generic captures" {
+    const allocator = std.testing.allocator;
+    const route_json =
+        \\{"provider":"cloudflare","tag":"Audit Logs","method":"GET","path":"/organizations/{organization_id}/logs/audit","operation_id":"audit-logs-v2-get-organization-audit-logs","path_params":[{"name":"organization_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+    ;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, route_json, .{});
+    defer parsed.deinit();
+    const route = try provider_routes.Route.init(allocator, .cloudflare, parsed.value);
+    defer route.deinit(allocator);
+
+    const path_params = [_]provider_routes.PathParam{.{
+        .name = "organization_id",
+        .value = "org-1",
+    }};
+    const scope = cloudflareRouteScope(route, .{ .path_params = path_params[0..] });
+    try std.testing.expectEqualStrings("organization", scope.name orelse "");
+    try std.testing.expectEqualStrings("org-1", scope.id orelse "");
 }

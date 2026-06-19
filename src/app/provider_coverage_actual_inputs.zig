@@ -510,7 +510,7 @@ pub fn actualCapturePathParamHint(route: provider_routes.Route, name: []const u8
 
 fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []const u8, hints: Hints) ?[]const u8 {
     if (std.mem.eql(u8, name, "account_id") or std.mem.eql(u8, name, "account_identifier")) return actualCaptureCloudflareAccountIdHint(hints);
-    if (std.mem.eql(u8, name, "organization_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "Accounts_listAccountOrganizations", "account-organizations", "organizations" });
+    if (std.mem.eql(u8, name, "organization_id")) return actualCaptureCloudflareOrganizationIdHint(hints);
     if (std.mem.eql(u8, name, "zone_id") or std.mem.eql(u8, name, "zone_identifier")) return actualCaptureCloudflareZoneIdHint(hints);
     if (std.mem.eql(u8, name, "dns_record_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "route-cloudflare-dns", "route-cloudflare-dns-typed-smoke", "dns", "dns-records" });
     if (std.mem.eql(u8, name, "ruleset_id")) return actualCaptureCloudflareRulesetIdHint(route, hints);
@@ -564,6 +564,17 @@ fn actualCaptureCloudflareZoneIdHint(hints: Hints) ?[]const u8 {
     if (actualCaptureSelectedCloudflareZoneId(hints)) |zone_id| return zone_id;
     for (hints.cloudflare_zones) |row| {
         if (row.id.len != 0) return row.id;
+    }
+    return null;
+}
+
+fn actualCaptureCloudflareOrganizationIdHint(hints: Hints) ?[]const u8 {
+    const kinds = &.{ "Accounts_listAccountOrganizations", "account-organizations", "organizations" };
+    for (hints.cloudflare_resources) |row| {
+        if (row.resource_id.len != 0 and actualCaptureKindIn(row.kind, kinds)) return row.resource_id;
+    }
+    for (hints.cloudflare_inventory) |row| {
+        if (row.resource_id.len != 0 and actualCaptureKindIn(row.kind, kinds)) return row.resource_id;
     }
     return null;
 }
@@ -708,10 +719,31 @@ fn actualCaptureCloudflareGenericIdHint(route: provider_routes.Route, hints: Hin
         return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "aig-config-list-gateway-logs", "ai-gateway-logs" });
     }
     if (actualCaptureRoutePathContains(route, "/logs/audit/") and actualCaptureRoutePathContains(route, "/history")) {
+        if (actualCaptureCloudflareAuditEventHint(route, hints)) |row| return row.resource_id;
         if (actualCaptureRoutePathContains(route, "/organizations/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "audit-logs-v2-get-organization-audit-logs", "audit-logs-organization-v2" });
         return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "audit-logs-v2-get-account-audit-logs", "audit-logs-account-v2" });
     }
     return null;
+}
+
+fn actualCaptureCloudflareAuditEventHint(route: provider_routes.Route, hints: Hints) ?db_store.CloudflareInventoryHintRow {
+    for (hints.cloudflare_inventory) |row| {
+        if (row.resource_id.len == 0 or row.updated_at.len == 0) continue;
+        if (!actualCaptureCloudflareAuditListKindMatches(route, row.kind)) continue;
+        if (actualCaptureCloudflareInventoryMatchesRouteScope(route, hints, row)) return row;
+    }
+    return null;
+}
+
+fn actualCaptureCloudflareAuditListKindMatches(route: provider_routes.Route, kind: []const u8) bool {
+    const operation_id = route.operation_id orelse "";
+    const organization_history =
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-log-history") or
+        actualCaptureRoutePathContains(route, "/organizations/");
+    if (organization_history) {
+        return actualCaptureKindIn(kind, &.{ "audit-logs-v2-get-organization-audit-logs", "audit-logs-organization-v2" });
+    }
+    return actualCaptureKindIn(kind, &.{ "audit-logs-v2-get-account-audit-logs", "audit-logs-account-v2" });
 }
 
 fn actualCaptureCloudflareResourceIdHint(route: provider_routes.Route, hints: Hints, kinds: []const []const u8) ?[]const u8 {
@@ -745,7 +777,8 @@ fn actualCaptureCloudflareResourceTypeHint(route: provider_routes.Route, hints: 
 fn actualCaptureCloudflareResourceMatchesRouteScope(route: provider_routes.Route, hints: Hints, scope: []const u8, scope_id: []const u8) bool {
     const account_scoped = actualCaptureCloudflareRouteAccountScoped(route);
     const zone_scoped = actualCaptureCloudflareRouteZoneScoped(route);
-    if (!account_scoped and !zone_scoped) return true;
+    const organization_scoped = actualCaptureCloudflareRouteOrganizationScoped(route);
+    if (!account_scoped and !zone_scoped and !organization_scoped) return true;
 
     if (account_scoped) {
         if (actualCaptureCloudflareAccountIdHint(hints)) |account_id| {
@@ -764,13 +797,20 @@ fn actualCaptureCloudflareResourceMatchesRouteScope(route: provider_routes.Route
         }
     }
 
+    if (organization_scoped) {
+        if (actualCaptureCloudflareOrganizationIdHint(hints)) |organization_id| {
+            if (eqlIgnoreCase(scope, "organization") and actualCaptureScopeIdHasParent(scope_id, organization_id)) return true;
+        }
+    }
+
     return false;
 }
 
 fn actualCaptureCloudflareInventoryMatchesRouteScope(route: provider_routes.Route, hints: Hints, row: db_store.CloudflareInventoryHintRow) bool {
     const account_scoped = actualCaptureCloudflareRouteAccountScoped(route);
     const zone_scoped = actualCaptureCloudflareRouteZoneScoped(route);
-    if (!account_scoped and !zone_scoped) return true;
+    const organization_scoped = actualCaptureCloudflareRouteOrganizationScoped(route);
+    if (!account_scoped and !zone_scoped and !organization_scoped) return true;
 
     if (account_scoped) {
         if (actualCaptureCloudflareAccountIdHint(hints)) |account_id| {
@@ -792,6 +832,12 @@ fn actualCaptureCloudflareInventoryMatchesRouteScope(route: provider_routes.Rout
         }
     }
 
+    if (organization_scoped) {
+        if (actualCaptureCloudflareOrganizationIdHint(hints)) |organization_id| {
+            if (eqlIgnoreCase(row.scope, "organization") and actualCaptureScopeIdHasParent(row.scope_id, organization_id)) return true;
+        }
+    }
+
     return false;
 }
 
@@ -801,6 +847,10 @@ fn actualCaptureCloudflareRouteAccountScoped(route: provider_routes.Route) bool 
 
 fn actualCaptureCloudflareRouteZoneScoped(route: provider_routes.Route) bool {
     return actualCaptureRoutePathContains(route, "/zones/");
+}
+
+fn actualCaptureCloudflareRouteOrganizationScoped(route: provider_routes.Route) bool {
+    return actualCaptureRoutePathContains(route, "/organizations/");
 }
 
 fn actualCaptureRoutePathContains(route: provider_routes.Route, needle: []const u8) bool {
@@ -1065,18 +1115,22 @@ fn actualCaptureLooksLikeDomain(value: []const u8) bool {
 
 pub fn actualCaptureHasQueryParamHint(route: provider_routes.Route, name: []const u8, hints: Hints) bool {
     return switch (route.provider) {
-        .cloudflare => actualCaptureHasCloudflareQueryParamHint(route, name),
+        .cloudflare => actualCaptureHasCloudflareQueryParamHintWithHints(route, name, hints),
         .hostinger => actualCaptureHasHostingerQueryParamHint(route, name, hints),
     };
 }
 
-fn actualCaptureHasCloudflareQueryParamHint(route: provider_routes.Route, name: []const u8) bool {
+fn actualCaptureHasCloudflareQueryParamHintWithHints(route: provider_routes.Route, name: []const u8, hints: Hints) bool {
     const operation_id = route.operation_id orelse return false;
     const audit_v2_window =
         std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-logs") or
         std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-logs") or
         std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-log-history") or
         std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-log-history");
+    const audit_v2_history =
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-log-history") or
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-log-history");
+    if (audit_v2_history and std.mem.eql(u8, name, "action_time")) return actualCaptureCloudflareAuditEventHint(route, hints) != null;
     return audit_v2_window and
         (std.mem.eql(u8, name, "before") or std.mem.eql(u8, name, "since"));
 }
@@ -1095,7 +1149,7 @@ fn actualCaptureHasHostingerQueryParamHint(route: provider_routes.Route, name: [
 
 pub fn actualCaptureQueryParamHint(gpa: Allocator, route: provider_routes.Route, name: []const u8, hints: Hints) !?[]u8 {
     if (!actualCaptureHasQueryParamHint(route, name, hints)) return null;
-    if (route.provider == .cloudflare) return actualCaptureCloudflareQueryParamHint(gpa, route, name);
+    if (route.provider == .cloudflare) return actualCaptureCloudflareQueryParamHint(gpa, route, name, hints);
     if (std.mem.eql(u8, route.operation_id.?, "hosting_listAvailableDatacentersV1") and std.mem.eql(u8, name, "order_id")) {
         if (actualCaptureHostingerOrderIdHint(hints)) |order_id| return try gpa.dupe(u8, order_id);
         return null;
@@ -1108,8 +1162,11 @@ pub fn actualCaptureQueryParamHint(gpa: Allocator, route: provider_routes.Route,
     return try gpa.dupe(u8, formatted);
 }
 
-fn actualCaptureCloudflareQueryParamHint(gpa: Allocator, route: provider_routes.Route, name: []const u8) !?[]u8 {
-    _ = route;
+fn actualCaptureCloudflareQueryParamHint(gpa: Allocator, route: provider_routes.Route, name: []const u8, hints: Hints) !?[]u8 {
+    if (std.mem.eql(u8, name, "action_time")) {
+        if (actualCaptureCloudflareAuditEventHint(route, hints)) |row| return try gpa.dupe(u8, row.updated_at);
+        return null;
+    }
     const now = core_time.currentEpochSeconds() catch return null;
     const hour: u64 = 60 * 60;
     const timestamp = if (std.mem.eql(u8, name, "since") and now > hour) now - hour else now;
@@ -1612,4 +1669,92 @@ test "plans Hostinger VPS metrics inputs from VPS and synthetic date hints" {
     try std.testing.expectEqual(@as(usize, 17), date_to.len);
     try std.testing.expect(date_from[10] == 'T' and date_from[16] == 'Z');
     try std.testing.expect(date_to[10] == 'T' and date_to[16] == 'Z');
+}
+
+test "plans Cloudflare audit history inputs from matching event timestamps" {
+    const allocator = std.testing.allocator;
+    const account_route_json =
+        \\{"provider":"cloudflare","tag":"Audit Logs","method":"GET","path":"/accounts/{account_id}/logs/audit/{id}/history","operation_id":"audit-logs-v2-get-account-audit-log-history","path_params":[{"name":"account_id","required":true},{"name":"id","required":true}],"query_params":[{"name":"action_time","required":true},{"name":"before","required":true},{"name":"since","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+    ;
+    var account_parsed = try std.json.parseFromSlice(std.json.Value, allocator, account_route_json, .{});
+    defer account_parsed.deinit();
+    const account_route = try provider_routes.Route.init(allocator, .cloudflare, account_parsed.value);
+    defer account_route.deinit(allocator);
+
+    const organization_route_json =
+        \\{"provider":"cloudflare","tag":"Audit Logs","method":"GET","path":"/organizations/{organization_id}/logs/audit/{id}/history","operation_id":"audit-logs-v2-get-organization-audit-log-history","path_params":[{"name":"organization_id","required":true},{"name":"id","required":true}],"query_params":[{"name":"action_time","required":true},{"name":"before","required":true},{"name":"since","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+    ;
+    var organization_parsed = try std.json.parseFromSlice(std.json.Value, allocator, organization_route_json, .{});
+    defer organization_parsed.deinit();
+    const organization_route = try provider_routes.Route.init(allocator, .cloudflare, organization_parsed.value);
+    defer organization_route.deinit(allocator);
+
+    var account_rows = [_]db_store.CloudflareAccountRow{.{
+        .id = @constCast("acct-1"),
+        .name = @constCast("Main account"),
+        .account_type = @constCast("standard"),
+        .status = @constCast("active"),
+        .updated_at = @constCast("2026-06-18T00:00:00Z"),
+    }};
+    var organization_rows = [_]db_store.CloudflareResourceHintRow{.{
+        .kind = @constCast("Accounts_listAccountOrganizations"),
+        .resource_id = @constCast("org-1"),
+        .scope = @constCast("account"),
+        .scope_id = @constCast("acct-1"),
+        .name = @constCast("Org"),
+        .status = @constCast("active"),
+        .resource_type = @constCast("organization"),
+        .updated_at = @constCast("2026-06-18T00:00:00Z"),
+    }};
+    var audit_events = [_]db_store.CloudflareInventoryHintRow{
+        .{
+            .kind = @constCast("audit-logs-v2-get-account-audit-logs"),
+            .resource_id = @constCast("audit-account-1"),
+            .scope = @constCast("account"),
+            .scope_id = @constCast("acct-1"),
+            .display_name = @constCast(""),
+            .status = @constCast("success"),
+            .category = @constCast("update"),
+            .domain = @constCast(""),
+            .account_id = @constCast("acct-1"),
+            .zone_id = @constCast(""),
+            .related_id = @constCast(""),
+            .flag = @constCast(""),
+            .updated_at = @constCast("2026-06-18T12:34:56Z"),
+        },
+        .{
+            .kind = @constCast("audit-logs-v2-get-organization-audit-logs"),
+            .resource_id = @constCast("audit-org-1"),
+            .scope = @constCast("organization"),
+            .scope_id = @constCast("org-1"),
+            .display_name = @constCast(""),
+            .status = @constCast("success"),
+            .category = @constCast("view"),
+            .domain = @constCast(""),
+            .account_id = @constCast(""),
+            .zone_id = @constCast(""),
+            .related_id = @constCast(""),
+            .flag = @constCast(""),
+            .updated_at = @constCast("2026-06-18T13:45:07Z"),
+        },
+    };
+    const hints = Hints{
+        .cloudflare_accounts = account_rows[0..],
+        .cloudflare_resources = organization_rows[0..],
+        .cloudflare_inventory = audit_events[0..],
+    };
+
+    try std.testing.expect(actualCaptureReady(account_route, hints));
+    try std.testing.expectEqualStrings("acct-1", actualCapturePathParamHint(account_route, "account_id", hints) orelse "");
+    try std.testing.expectEqualStrings("audit-account-1", actualCapturePathParamHint(account_route, "id", hints) orelse "");
+    const account_action_time = (try actualCaptureQueryParamHint(allocator, account_route, "action_time", hints)) orelse return error.ExpectedAccountActionTimeHint;
+    defer allocator.free(account_action_time);
+    try std.testing.expectEqualStrings("2026-06-18T12:34:56Z", account_action_time);
+
+    try std.testing.expect(actualCaptureReady(organization_route, hints));
+    try std.testing.expectEqualStrings("org-1", actualCapturePathParamHint(organization_route, "organization_id", hints) orelse "");
+    try std.testing.expectEqualStrings("audit-org-1", actualCapturePathParamHint(organization_route, "id", hints) orelse "");
+    const organization_action_time = (try actualCaptureQueryParamHint(allocator, organization_route, "action_time", hints)) orelse return error.ExpectedOrganizationActionTimeHint;
+    defer allocator.free(organization_action_time);
+    try std.testing.expectEqualStrings("2026-06-18T13:45:07Z", organization_action_time);
 }

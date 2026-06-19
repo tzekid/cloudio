@@ -1568,7 +1568,7 @@ pub const Db = struct {
 
     pub fn cloudflareInventoryHints(self: *Db, gpa: Allocator, limit: i64) !CloudflareInventoryHintRows {
         const stmt = try self.prepare(
-            \\SELECT kind, resource_id, COALESCE(scope,''), COALESCE(scope_id,''), COALESCE(display_name,''), COALESCE(status,''), COALESCE(category,''), COALESCE(domain,''), COALESCE(account_id,''), COALESCE(zone_id,''), COALESCE(related_id,''), COALESCE(flag,''), updated_at
+            \\SELECT kind, resource_id, COALESCE(scope,''), COALESCE(scope_id,''), COALESCE(display_name,''), COALESCE(status,''), COALESCE(category,''), COALESCE(domain,''), COALESCE(account_id,''), COALESCE(zone_id,''), COALESCE(related_id,''), COALESCE(flag,''), COALESCE(updated_at_source, updated_at)
             \\FROM cloudflare_inventory_items
             \\WHERE resource_id != '' OR COALESCE(scope_id,'') != '' OR COALESCE(domain,'') != '' OR COALESCE(account_id,'') != '' OR COALESCE(zone_id,'') != '' OR COALESCE(related_id,'') != ''
             \\ORDER BY updated_at DESC, kind, resource_id DESC

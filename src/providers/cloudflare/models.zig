@@ -608,7 +608,7 @@ fn appendInventoryRow(gpa: Allocator, rows: *std.ArrayList(InventoryRow), kind: 
     errdefer if (flag) |value| gpa.free(value);
     const created_at = try dupeOptional(gpa, firstStringField(item, &.{ "created_at", "created_on", "created", "created_time", "created_date", "uploaded_on", "current_period_start" }));
     errdefer if (created_at) |value| gpa.free(value);
-    const updated_at = try dupeOptional(gpa, firstStringField(item, &.{ "updated_at", "updated_on", "modified_at", "modified_on", "modified", "last_updated", "last_seen", "last_active_at", "last_authenticated_at", "checked_time", "last_transferred_time", "timestamp" }));
+    const updated_at = try dupeOptional(gpa, firstStringField(item, &.{ "updated_at", "updated_on", "modified_at", "modified_on", "modified", "last_updated", "last_seen", "last_active_at", "last_authenticated_at", "checked_time", "last_transferred_time", "timestamp", "action_time" }));
     errdefer if (updated_at) |value| gpa.free(value);
     const expires_at = try dupeOptional(gpa, firstStringField(item, &.{ "expires_at", "expires_on", "expiration", "not_after", "expires", "current_period_end", "build_minutes_refresh_on" }));
     errdefer if (expires_at) |value| gpa.free(value);
@@ -2059,4 +2059,17 @@ test "parses typed Cloudflare security rows from broad security result shapes" {
     try std.testing.expectEqualStrings("enabled", rows.items[3].status orelse "");
     try std.testing.expectEqualStrings("enabled", rows.items[3].flag orelse "");
     try std.testing.expectEqualStrings("2026-12-17T00:00:00Z", rows.items[3].expires_at orelse "");
+}
+
+test "parses Cloudflare audit action time as inventory timestamp" {
+    const allocator = std.testing.allocator;
+    var rows = try parseInventoryRows(allocator, "audit-logs-v2-get-account-audit-logs", "account", "acct-1",
+        \\{"result":[{"id":"audit-1","action_time":"2026-06-18T12:34:56Z","action_type":"update","actor_email":"ops@example.test"}]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), rows.items.len);
+    try std.testing.expectEqualStrings("audit-1", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("acct-1", rows.items[0].account_id orelse "");
+    try std.testing.expectEqualStrings("2026-06-18T12:34:56Z", rows.items[0].updated_at orelse "");
 }
