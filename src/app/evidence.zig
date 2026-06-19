@@ -468,6 +468,10 @@ test "evidence read model summarizes and redacts event details" {
     try std.testing.expect(capture_summary_totals.official_read_routes > capture_summary_totals.captured_read_routes);
     try std.testing.expect(capture_summary_totals.captured_read_routes >= 2);
     try std.testing.expect(capture_summary_totals.missing_read_routes > 0);
+    try std.testing.expectEqual(
+        capture_summary_totals.official_read_routes,
+        capture_summary_totals.captured_read_routes + capture_summary_totals.evidence_covered_read_routes + capture_summary_totals.unresolved_read_routes,
+    );
     var capture_summary_json_out = std.Io.Writer.Allocating.init(allocator);
     defer capture_summary_json_out.deinit();
     try capture_summary.writeJson(&capture_summary_json_out.writer);
@@ -479,4 +483,6 @@ test "evidence read model summarizes and redacts event details" {
     try std.testing.expectEqualStrings("route_capture_summary", parsed_capture_summary.value.object.get("kind").?.string);
     try std.testing.expect(parsed_capture_summary.value.object.get("families").?.array.items.len > 0);
     try std.testing.expect(parsed_capture_summary.value.object.get("summary").?.object.get("missing_read_routes").?.integer > 0);
+    try std.testing.expect(parsed_capture_summary.value.object.get("summary").?.object.get("evidence_covered_read_routes").?.integer > 0);
+    try std.testing.expect(parsed_capture_summary.value.object.get("summary").?.object.get("unresolved_read_routes").?.integer >= 0);
 }

@@ -13,6 +13,7 @@ pub const RouteCoverageOptions = evidence_common.Options;
 pub const RouteCaptureSummaryOptions = evidence_common.Options;
 
 const route_capture_summary_load_limit: i64 = 100_000;
+const route_capture_summary_evidence_note = "missing_read_routes means no route.capture audit event; unresolved_read_routes excludes routes already covered by fixture/diagnostic L2 evidence";
 
 pub const RouteCaptureTotals = struct {
     operations: usize = 0,
@@ -254,9 +255,12 @@ pub const RouteCaptureSummaryTotals = struct {
     families: usize = 0,
     official_read_routes: usize = 0,
     captured_read_routes: usize = 0,
+    evidence_covered_read_routes: usize = 0,
+    diagnostic_read_routes: usize = 0,
     ok_read_routes: usize = 0,
     error_read_routes: usize = 0,
     missing_read_routes: usize = 0,
+    unresolved_read_routes: usize = 0,
     capture_events: i64 = 0,
     cloudflare_read_routes: usize = 0,
     hostinger_read_routes: usize = 0,
@@ -267,12 +271,16 @@ pub const RouteCaptureSummaryRow = struct {
     family: []const u8,
     official_read_routes: usize = 0,
     captured_read_routes: usize = 0,
+    evidence_covered_read_routes: usize = 0,
+    diagnostic_read_routes: usize = 0,
     ok_read_routes: usize = 0,
     error_read_routes: usize = 0,
     missing_read_routes: usize = 0,
+    unresolved_read_routes: usize = 0,
     capture_events: i64 = 0,
     latest_at: []const u8 = "",
     sample_missing_operation: []const u8 = "",
+    sample_unresolved_operation: []const u8 = "",
 
     pub fn capturedPercent(self: RouteCaptureSummaryRow) usize {
         if (self.official_read_routes == 0) return 0;
@@ -321,9 +329,12 @@ pub const RouteCaptureSummary = struct {
         for (self.rows) |row| {
             out.official_read_routes += row.official_read_routes;
             out.captured_read_routes += row.captured_read_routes;
+            out.evidence_covered_read_routes += row.evidence_covered_read_routes;
+            out.diagnostic_read_routes += row.diagnostic_read_routes;
             out.ok_read_routes += row.ok_read_routes;
             out.error_read_routes += row.error_read_routes;
             out.missing_read_routes += row.missing_read_routes;
+            out.unresolved_read_routes += row.unresolved_read_routes;
             out.capture_events += row.capture_events;
             if (std.mem.eql(u8, row.provider, "cloudflare")) out.cloudflare_read_routes += row.official_read_routes;
             if (std.mem.eql(u8, row.provider, "hostinger")) out.hostinger_read_routes += row.official_read_routes;
@@ -334,15 +345,19 @@ pub const RouteCaptureSummary = struct {
     pub fn writeText(self: RouteCaptureSummary, writer: anytype) !void {
         const counts = self.totals();
         try writer.writeAll("Cloudio actual route capture summary\n");
-        try writer.print("provider={s} limit={d} families={d} official_read_routes={d} captured_read_routes={d} ok_read_routes={d} error_read_routes={d} missing_read_routes={d} capture_events={d} cloudflare_read_routes={d} hostinger_read_routes={d}\n", .{
+        try writer.print("evidence: {s}\n", .{route_capture_summary_evidence_note});
+        try writer.print("provider={s} limit={d} families={d} official_read_routes={d} captured_read_routes={d} evidence_covered_read_routes={d} diagnostic_read_routes={d} ok_read_routes={d} error_read_routes={d} missing_read_routes={d} unresolved_read_routes={d} capture_events={d} cloudflare_read_routes={d} hostinger_read_routes={d}\n", .{
             self.options.provider.label(),
             self.options.limit,
             counts.families,
             counts.official_read_routes,
             counts.captured_read_routes,
+            counts.evidence_covered_read_routes,
+            counts.diagnostic_read_routes,
             counts.ok_read_routes,
             counts.error_read_routes,
             counts.missing_read_routes,
+            counts.unresolved_read_routes,
             counts.capture_events,
             counts.cloudflare_read_routes,
             counts.hostinger_read_routes,
@@ -360,19 +375,23 @@ pub const RouteCaptureSummary = struct {
                 continue;
             }
             visible += 1;
-            try writer.print("{s}\t{s}\tread={d}\tcaptured={d}\tok={d}\terrors={d}\tmissing={d}\tcaptured_percent={d}\tcapture_events={d}\tlatest={s}", .{
+            try writer.print("{s}\t{s}\tread={d}\tcaptured={d}\tevidence_covered={d}\tdiagnostic={d}\tok={d}\terrors={d}\tmissing_capture={d}\tunresolved={d}\tcaptured_percent={d}\tcapture_events={d}\tlatest={s}", .{
                 row.provider,
                 row.family,
                 row.official_read_routes,
                 row.captured_read_routes,
+                row.evidence_covered_read_routes,
+                row.diagnostic_read_routes,
                 row.ok_read_routes,
                 row.error_read_routes,
                 row.missing_read_routes,
+                row.unresolved_read_routes,
                 row.capturedPercent(),
                 row.capture_events,
                 if (row.latest_at.len == 0) "-" else row.latest_at,
             });
             if (row.sample_missing_operation.len != 0) try writer.print("\tsample_missing={s}", .{row.sample_missing_operation});
+            if (row.sample_unresolved_operation.len != 0) try writer.print("\tsample_unresolved={s}", .{row.sample_unresolved_operation});
             try writer.writeByte('\n');
         }
         if (omitted != 0) try writer.print("omitted={d}\n", .{omitted});
@@ -383,6 +402,7 @@ pub const RouteCaptureSummary = struct {
         try app_render.writeJsonStringField(writer, "provider", self.options.provider.label(), true);
         try app_render.writeJsonIntField(writer, "limit", self.options.limit, true);
         try app_render.writeJsonIntField(writer, "loaded_capture_operation_status_rows", self.captures.items.len, true);
+        try app_render.writeJsonStringField(writer, "evidence", route_capture_summary_evidence_note, true);
         try writer.writeAll("\"summary\":");
         try writeRouteCaptureSummaryTotalsJson(self.totals(), writer);
         try writer.writeAll(",\"families\":[");
@@ -475,9 +495,12 @@ fn writeRouteCaptureSummaryTotalsJson(summary: RouteCaptureSummaryTotals, writer
     try app_render.writeJsonIntField(writer, "families", summary.families, true);
     try app_render.writeJsonIntField(writer, "official_read_routes", summary.official_read_routes, true);
     try app_render.writeJsonIntField(writer, "captured_read_routes", summary.captured_read_routes, true);
+    try app_render.writeJsonIntField(writer, "evidence_covered_read_routes", summary.evidence_covered_read_routes, true);
+    try app_render.writeJsonIntField(writer, "diagnostic_read_routes", summary.diagnostic_read_routes, true);
     try app_render.writeJsonIntField(writer, "ok_read_routes", summary.ok_read_routes, true);
     try app_render.writeJsonIntField(writer, "error_read_routes", summary.error_read_routes, true);
     try app_render.writeJsonIntField(writer, "missing_read_routes", summary.missing_read_routes, true);
+    try app_render.writeJsonIntField(writer, "unresolved_read_routes", summary.unresolved_read_routes, true);
     try app_render.writeJsonIntField(writer, "capture_events", summary.capture_events, true);
     try app_render.writeJsonIntField(writer, "cloudflare_read_routes", summary.cloudflare_read_routes, true);
     try app_render.writeJsonIntField(writer, "hostinger_read_routes", summary.hostinger_read_routes, false);
@@ -536,13 +559,17 @@ fn writeRouteCaptureSummaryRowJson(row: RouteCaptureSummaryRow, writer: anytype)
     try app_render.writeJsonStringField(writer, "family", row.family, true);
     try app_render.writeJsonIntField(writer, "official_read_routes", row.official_read_routes, true);
     try app_render.writeJsonIntField(writer, "captured_read_routes", row.captured_read_routes, true);
+    try app_render.writeJsonIntField(writer, "evidence_covered_read_routes", row.evidence_covered_read_routes, true);
+    try app_render.writeJsonIntField(writer, "diagnostic_read_routes", row.diagnostic_read_routes, true);
     try app_render.writeJsonIntField(writer, "ok_read_routes", row.ok_read_routes, true);
     try app_render.writeJsonIntField(writer, "error_read_routes", row.error_read_routes, true);
     try app_render.writeJsonIntField(writer, "missing_read_routes", row.missing_read_routes, true);
+    try app_render.writeJsonIntField(writer, "unresolved_read_routes", row.unresolved_read_routes, true);
     try app_render.writeJsonIntField(writer, "captured_percent", row.capturedPercent(), true);
     try app_render.writeJsonIntField(writer, "capture_events", row.capture_events, true);
     try app_render.writeJsonStringField(writer, "latest_at", row.latest_at, true);
-    try app_render.writeJsonStringField(writer, "sample_missing_operation", row.sample_missing_operation, false);
+    try app_render.writeJsonStringField(writer, "sample_missing_operation", row.sample_missing_operation, true);
+    try app_render.writeJsonStringField(writer, "sample_unresolved_operation", row.sample_unresolved_operation, false);
     try writer.writeByte('}');
 }
 
@@ -566,6 +593,13 @@ fn buildRouteCaptureSummaryRows(gpa: Allocator, routes: []const provider_routes.
         } else {
             row.missing_read_routes += 1;
             if (row.sample_missing_operation.len == 0) row.sample_missing_operation = operation_id;
+            if (routeHasReadCoverageEvidence(route)) {
+                row.evidence_covered_read_routes += 1;
+                if (route.support == .blocked_permission) row.diagnostic_read_routes += 1;
+            } else {
+                row.unresolved_read_routes += 1;
+                if (row.sample_unresolved_operation.len == 0) row.sample_unresolved_operation = operation_id;
+            }
         }
     }
     std.mem.sort(RouteCaptureSummaryRow, rows.items, {}, routeCaptureSummaryLessThan);
@@ -574,6 +608,15 @@ fn buildRouteCaptureSummaryRows(gpa: Allocator, routes: []const provider_routes.
 
 fn routeCountsForCaptureSummary(route: provider_routes.Route) bool {
     return route.mode == .read and route.isRoutable() and route.operation_id != null;
+}
+
+fn routeHasReadCoverageEvidence(route: provider_routes.Route) bool {
+    if (!hasCoverageEvidence(route.tests)) return false;
+    return route.support == .partial or route.support == .blocked_permission;
+}
+
+fn hasCoverageEvidence(tests: []const u8) bool {
+    return tests.len != 0 and !std.mem.eql(u8, tests, "missing");
 }
 
 fn routeCaptureSummaryRow(gpa: Allocator, rows: *std.ArrayList(RouteCaptureSummaryRow), provider: []const u8, family: []const u8) !*RouteCaptureSummaryRow {
@@ -622,7 +665,9 @@ fn latestAtLessThan(current: []const u8, candidate: []const u8) bool {
 }
 
 fn routeCaptureSummaryLessThan(_: void, lhs: RouteCaptureSummaryRow, rhs: RouteCaptureSummaryRow) bool {
+    if (lhs.unresolved_read_routes != rhs.unresolved_read_routes) return lhs.unresolved_read_routes > rhs.unresolved_read_routes;
     if (lhs.missing_read_routes != rhs.missing_read_routes) return lhs.missing_read_routes > rhs.missing_read_routes;
+    if (lhs.evidence_covered_read_routes != rhs.evidence_covered_read_routes) return lhs.evidence_covered_read_routes > rhs.evidence_covered_read_routes;
     if (lhs.official_read_routes != rhs.official_read_routes) return lhs.official_read_routes > rhs.official_read_routes;
     const provider_order = std.mem.order(u8, lhs.provider, rhs.provider);
     if (provider_order != .eq) return provider_order == .lt;
@@ -679,6 +724,10 @@ test "route evidence read models match generated routes and redact endpoints" {
     try std.testing.expect(capture_summary_totals.official_read_routes > capture_summary_totals.captured_read_routes);
     try std.testing.expect(capture_summary_totals.captured_read_routes >= 2);
     try std.testing.expect(capture_summary_totals.missing_read_routes > 0);
+    try std.testing.expectEqual(
+        capture_summary_totals.official_read_routes,
+        capture_summary_totals.captured_read_routes + capture_summary_totals.evidence_covered_read_routes + capture_summary_totals.unresolved_read_routes,
+    );
     var capture_summary_json_out = std.Io.Writer.Allocating.init(allocator);
     defer capture_summary_json_out.deinit();
     try capture_summary.writeJson(&capture_summary_json_out.writer);
@@ -689,4 +738,6 @@ test "route evidence read models match generated routes and redact endpoints" {
     try std.testing.expectEqualStrings("route_capture_summary", parsed_capture_summary.value.object.get("kind").?.string);
     try std.testing.expect(parsed_capture_summary.value.object.get("families").?.array.items.len > 0);
     try std.testing.expect(parsed_capture_summary.value.object.get("summary").?.object.get("missing_read_routes").?.integer > 0);
+    try std.testing.expect(parsed_capture_summary.value.object.get("summary").?.object.get("evidence_covered_read_routes").?.integer > 0);
+    try std.testing.expect(parsed_capture_summary.value.object.get("summary").?.object.get("unresolved_read_routes").?.integer >= 0);
 }
