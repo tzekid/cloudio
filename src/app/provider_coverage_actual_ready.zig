@@ -6,6 +6,7 @@ const app_provider_coverage_render = @import("app_provider_coverage_render");
 const app_provider_coverage_routes = @import("app_provider_coverage_routes");
 const app_provider_route_capture = @import("app_provider_route_capture");
 const db_store = @import("db_store");
+const provider_auth = @import("provider_auth");
 const provider_capabilities = @import("provider_capabilities");
 const provider_dispatch = @import("provider_dispatch");
 const provider_routes = @import("provider_routes");
@@ -27,7 +28,7 @@ pub const RouteFilter = app_provider_coverage_routes.RouteFilter;
 pub const PathParam = provider_routes.PathParam;
 pub const QueryParam = provider_routes.QueryParam;
 pub const Request = provider_routes.Request;
-pub const Auth = provider_dispatch.Auth;
+pub const Auth = provider_auth.Auth;
 pub const CaptureOptions = app_provider_route_capture.CaptureOptions;
 
 const ActualCaptureState = app_provider_coverage_actual_inputs.CaptureState;

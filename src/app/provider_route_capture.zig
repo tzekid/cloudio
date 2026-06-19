@@ -5,13 +5,14 @@ const app_provider_route_plan = @import("app_provider_route_plan");
 const db_store = @import("db_store");
 const provider_capabilities = @import("provider_capabilities");
 const provider_dispatch = @import("provider_dispatch");
+const provider_route_result = @import("provider_route_result");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
 const Io = std.Io;
 
-pub const Auth = provider_dispatch.Auth;
+pub const Auth = app_provider_route_plan.Auth;
 pub const Paths = provider_routes.Paths;
 pub const Request = provider_routes.Request;
 pub const RoutePlanInput = app_provider_route_plan.RoutePlanInput;
@@ -34,7 +35,7 @@ pub fn readRouteMetadataJson(io: Io, gpa: Allocator, db: *Db, client: provider_d
     return try readResultJson(gpa, db, route, request, result, options);
 }
 
-pub fn readResultJson(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, result: provider_dispatch.ReadRouteResult, options: CaptureOptions) ![]u8 {
+pub fn readResultJson(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, result: provider_route_result.ReadRouteResult, options: CaptureOptions) ![]u8 {
     const captured = try collector_route_capture.captureReadResult(gpa, db, route, request, result, options, null);
     defer captured.deinit(gpa);
     return try app_provider_route_capture_result.captureMetadataJson(gpa, route, .{
@@ -56,7 +57,7 @@ pub fn paginatedReadMetadataJson(io: Io, gpa: Allocator, db: *Db, client: provid
     return try app_provider_route_capture_result.paginatedCaptureMetadataJson(gpa, route, views, pages.max_pages);
 }
 
-pub fn callReadRouteResultRequest(io: Io, gpa: Allocator, client: provider_dispatch.Client, route: provider_routes.Route, request: Request, options: CaptureOptions) !provider_dispatch.ReadRouteResult {
+pub fn callReadRouteResultRequest(io: Io, gpa: Allocator, client: provider_dispatch.Client, route: provider_routes.Route, request: Request, options: CaptureOptions) !provider_route_result.ReadRouteResult {
     return try collector_route_capture.callReadRouteResultRequest(io, gpa, client, route, request, options);
 }
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const provider_auth = @import("provider_auth");
 const provider_dispatch = @import("provider_dispatch");
 const provider_route_plan = @import("provider_route_plan");
 const provider_route_result = @import("provider_route_result");
@@ -9,7 +10,7 @@ const Io = std.Io;
 
 pub const Paths = provider_routes.Paths;
 pub const ProviderFilter = provider_routes.ProviderFilter;
-pub const Auth = provider_dispatch.Auth;
+pub const Auth = provider_auth.Auth;
 pub const PathParam = provider_routes.PathParam;
 pub const QueryParam = provider_routes.QueryParam;
 pub const HeaderParam = provider_routes.HeaderParam;

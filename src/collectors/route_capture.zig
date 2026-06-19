@@ -3,8 +3,10 @@ const collector_capture = @import("collector_capture");
 const collector_capture_normalize = @import("collector_capture_normalize");
 const db_store = @import("db_store");
 const net_pagination = @import("net_pagination");
+const provider_auth = @import("provider_auth");
 const provider_capabilities = @import("provider_capabilities");
 const provider_dispatch = @import("provider_dispatch");
+const provider_route_result = @import("provider_route_result");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -13,7 +15,7 @@ const Io = std.Io;
 
 const default_capture_max_pages = 25;
 
-pub const Auth = provider_dispatch.Auth;
+pub const Auth = provider_auth.Auth;
 pub const Request = provider_routes.Request;
 
 pub const CaptureOptions = struct {
@@ -98,7 +100,7 @@ pub fn captureReadResult(
     db: *Db,
     route: provider_routes.Route,
     request: Request,
-    result: provider_dispatch.ReadRouteResult,
+    result: provider_route_result.ReadRouteResult,
     options: CaptureOptions,
     page_ref: ?CapturePageRef,
 ) !CapturedRoutePage {
@@ -149,7 +151,7 @@ pub fn callReadRouteResultRequest(
     route: provider_routes.Route,
     request: Request,
     options: CaptureOptions,
-) !provider_dispatch.ReadRouteResult {
+) !provider_route_result.ReadRouteResult {
     if (options.diagnostic_read) return try client.callDiagnosticReadRouteResultRequest(io, gpa, route, request);
     return try client.callReadRouteResultRequest(io, gpa, route, request);
 }
@@ -402,7 +404,7 @@ test "captures paginated Hostinger route pages into snapshots and normalized row
     const first_body = try allocator.dupe(u8,
         \\{"data":[{"id":1,"password":"secret-one"}],"meta":{"current_page":1,"per_page":1,"total":2}}
     );
-    const first_result = provider_dispatch.matchReadRouteResponse(route, .{ .status = .ok, .body = first_body });
+    const first_result = provider_route_result.matchReadRouteResponse(route, .{ .status = .ok, .body = first_body });
     defer first_result.deinit(allocator);
     const first_page = try captureReadResult(
         allocator,
@@ -420,7 +422,7 @@ test "captures paginated Hostinger route pages into snapshots and normalized row
     const second_body = try allocator.dupe(u8,
         \\{"data":[{"id":2,"password":"secret-two"}],"meta":{"current_page":2,"per_page":1,"total":2}}
     );
-    const second_result = provider_dispatch.matchReadRouteResponse(route, .{ .status = .ok, .body = second_body });
+    const second_result = provider_route_result.matchReadRouteResponse(route, .{ .status = .ok, .body = second_body });
     defer second_result.deinit(allocator);
     const second_page = try captureReadResult(
         allocator,

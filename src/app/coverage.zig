@@ -13,7 +13,8 @@ const app_provider_route_capture = @import("app_provider_route_capture");
 const app_provider_route_plan = @import("app_provider_route_plan");
 const app_provider_sources = @import("app_provider_sources");
 const db_store = @import("db_store");
-const provider_dispatch = @import("provider_dispatch");
+const provider_auth = @import("provider_auth");
+const provider_route_result = @import("provider_route_result");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -31,7 +32,7 @@ pub const QueryParam = provider_routes.QueryParam;
 pub const HeaderParam = provider_routes.HeaderParam;
 pub const Request = provider_routes.Request;
 pub const BodyInput = provider_routes.BodyInput;
-pub const Auth = provider_dispatch.Auth;
+pub const Auth = provider_auth.Auth;
 pub const CaptureOptions = app_provider_route_capture.CaptureOptions;
 pub const DbHandle = Db;
 
@@ -463,7 +464,7 @@ fn routePlanModeFilter(mode: ModeFilter) app_provider_route_plan.ModeFilter {
     };
 }
 
-pub fn captureRouteReadResultJson(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, result: provider_dispatch.ReadRouteResult, options: CaptureOptions) ![]u8 {
+pub fn captureRouteReadResultJson(gpa: Allocator, db: *Db, route: provider_routes.Route, request: Request, result: provider_route_result.ReadRouteResult, options: CaptureOptions) ![]u8 {
     return try app_provider_route_capture.readResultJson(gpa, db, route, request, result, options);
 }
 
@@ -1345,7 +1346,7 @@ test "captures generic route read results into snapshots and provider raw" {
     defer routes.deinit(allocator);
     const route = try selectSingleRoute(routes.items);
     const body = try allocator.dupe(u8, "{\"password\":\"super-secret-password\",\"data\":[{\"id\":1307809,\"hostname\":\"srv1307809.hstgr.cloud\",\"state\":\"running\"}]}");
-    const result = provider_dispatch.matchReadRouteResponse(route.route, .{ .status = .ok, .body = body });
+    const result = provider_route_result.matchReadRouteResponse(route.route, .{ .status = .ok, .body = body });
     defer result.deinit(allocator);
 
     const json = try captureRouteReadResultJson(
@@ -1405,7 +1406,7 @@ test "captures Cloudflare DNS route into typed records table" {
     const body = try allocator.dupe(u8,
         \\{"result":[{"id":"dns-1","name":"plosca.ru","type":"A","content":"76.13.130.170","ttl":1,"proxied":false}],"success":true,"errors":[],"messages":[]}
     );
-    const result = provider_dispatch.matchReadRouteResponse(route.route, .{ .status = .ok, .body = body });
+    const result = provider_route_result.matchReadRouteResponse(route.route, .{ .status = .ok, .body = body });
     defer result.deinit(allocator);
 
     const json = try captureRouteReadResultJson(
@@ -1450,7 +1451,7 @@ test "captures Cloudflare security route into typed security table" {
     const body = try allocator.dupe(u8,
         \\{"result":[{"policy_id":"policy-1","name":"Trusted sender","is_enabled":true,"action":"allow","pattern":"*@example.com","domain":"example.com","created_at":"2026-06-17T00:00:00Z"}],"success":true,"errors":[],"messages":[]}
     );
-    const result = provider_dispatch.matchReadRouteResponse(route.route, .{ .status = .ok, .body = body });
+    const result = provider_route_result.matchReadRouteResponse(route.route, .{ .status = .ok, .body = body });
     defer result.deinit(allocator);
 
     const json = try captureRouteReadResultJson(
