@@ -76,6 +76,7 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
     const source_summary = try plan.sourceSummary(gpa);
     var order = try plan.candidateOrder(gpa);
     defer order.deinit(gpa);
+    const review_summary = try actualCaptureReviewSummary(gpa, plan, order.items);
     try writer.writeAll("Cloudio actual route capture plan\n");
     try writer.writeAll("rank: family static read gaps, ready capture inputs, then official GET/read routes missing an OK route.capture audit event\n");
     try writer.print("filter provider={s} focus={s}", .{ plan.options.filter.provider.name(), plan.options.focus.name() });
@@ -118,6 +119,27 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
         source_summary.body_error_object,
         source_summary.body_no_evidence,
         source_summary.body_other,
+    });
+    try writer.print("review_summary total={d} ready_to_capture={d} retry_capture={d} diagnostic_blocked={d} diagnostic_ready={d} blocked_by_policy={d} capture_error={d} blocked_empty_source={d} needs_source_normalization={d} inspect_source_body={d} diagnostic_source_blocked={d} source_capture_error={d} source_ready={d} source_has_hints={d} source_not_in_catalog={d} source_not_eligible={d} no_source_mapping={d} waiting_for_inputs={d} other={d}\n", .{
+        review_summary.total,
+        review_summary.ready_to_capture,
+        review_summary.retry_capture,
+        review_summary.diagnostic_blocked,
+        review_summary.diagnostic_ready,
+        review_summary.blocked_by_policy,
+        review_summary.capture_error,
+        review_summary.blocked_empty_source,
+        review_summary.needs_source_normalization,
+        review_summary.inspect_source_body,
+        review_summary.diagnostic_source_blocked,
+        review_summary.source_capture_error,
+        review_summary.source_ready,
+        review_summary.source_has_hints,
+        review_summary.source_not_in_catalog,
+        review_summary.source_not_eligible,
+        review_summary.no_source_mapping,
+        review_summary.waiting_for_inputs,
+        review_summary.other,
     });
 
     var visible: usize = 0;
@@ -199,6 +221,7 @@ fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: a
     const source_summary = try plan.sourceSummary(gpa);
     var order = try plan.candidateOrder(gpa);
     defer order.deinit(gpa);
+    const review_summary = try actualCaptureReviewSummary(gpa, plan, order.items);
     try writer.writeByte('{');
     try writeJsonField(writer, "kind", "coverage_actual_captures", true);
     try writer.writeAll("\"filter\":");
@@ -222,6 +245,8 @@ fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: a
     try writeActualCaptureTotalsJson(totals_value, writer);
     try writer.writeAll(",\"source_summary\":");
     try writeActualCaptureSourceSummaryJson(source_summary, writer);
+    try writer.writeAll(",\"review_summary\":");
+    try writeActualCaptureReviewSummaryJson(review_summary, writer);
     try writer.writeAll(",\"candidates\":[");
 
     var visible: usize = 0;
@@ -557,6 +582,80 @@ fn writeActualMissingInputSourceJson(
     try writer.writeByte('}');
 }
 
+const ActualCaptureReviewSummary = struct {
+    total: usize = 0,
+    ready_to_capture: usize = 0,
+    retry_capture: usize = 0,
+    diagnostic_blocked: usize = 0,
+    diagnostic_ready: usize = 0,
+    blocked_by_policy: usize = 0,
+    capture_error: usize = 0,
+    blocked_empty_source: usize = 0,
+    needs_source_normalization: usize = 0,
+    inspect_source_body: usize = 0,
+    diagnostic_source_blocked: usize = 0,
+    source_capture_error: usize = 0,
+    source_ready: usize = 0,
+    source_has_hints: usize = 0,
+    source_not_in_catalog: usize = 0,
+    source_not_eligible: usize = 0,
+    no_source_mapping: usize = 0,
+    waiting_for_inputs: usize = 0,
+    other: usize = 0,
+
+    fn add(self: *ActualCaptureReviewSummary, status: []const u8) void {
+        self.total += 1;
+        if (std.mem.eql(u8, status, "ready_to_capture")) {
+            self.ready_to_capture += 1;
+        } else if (std.mem.eql(u8, status, "retry_capture")) {
+            self.retry_capture += 1;
+        } else if (std.mem.eql(u8, status, "diagnostic_blocked")) {
+            self.diagnostic_blocked += 1;
+        } else if (std.mem.eql(u8, status, "diagnostic_ready")) {
+            self.diagnostic_ready += 1;
+        } else if (std.mem.eql(u8, status, "blocked_by_policy")) {
+            self.blocked_by_policy += 1;
+        } else if (std.mem.eql(u8, status, "capture_error")) {
+            self.capture_error += 1;
+        } else if (std.mem.eql(u8, status, "blocked_empty_source")) {
+            self.blocked_empty_source += 1;
+        } else if (std.mem.eql(u8, status, "needs_source_normalization")) {
+            self.needs_source_normalization += 1;
+        } else if (std.mem.eql(u8, status, "inspect_source_body")) {
+            self.inspect_source_body += 1;
+        } else if (std.mem.eql(u8, status, "diagnostic_source_blocked")) {
+            self.diagnostic_source_blocked += 1;
+        } else if (std.mem.eql(u8, status, "source_capture_error")) {
+            self.source_capture_error += 1;
+        } else if (std.mem.eql(u8, status, "source_ready")) {
+            self.source_ready += 1;
+        } else if (std.mem.eql(u8, status, "source_has_hints")) {
+            self.source_has_hints += 1;
+        } else if (std.mem.eql(u8, status, "source_not_in_catalog")) {
+            self.source_not_in_catalog += 1;
+        } else if (std.mem.eql(u8, status, "source_not_eligible")) {
+            self.source_not_eligible += 1;
+        } else if (std.mem.eql(u8, status, "no_source_mapping")) {
+            self.no_source_mapping += 1;
+        } else if (std.mem.eql(u8, status, "waiting_for_inputs")) {
+            self.waiting_for_inputs += 1;
+        } else {
+            self.other += 1;
+        }
+    }
+};
+
+fn actualCaptureReviewSummary(gpa: Allocator, plan: ActualCapturePlan, order: []const ActualCaptureCandidateRank) !ActualCaptureReviewSummary {
+    var out = ActualCaptureReviewSummary{};
+    const hints_value = plan.hints();
+    for (order) |rank| {
+        const row = plan.routes.items[rank.route_index];
+        const review = try actualCaptureCandidateReview(gpa, row.route, rank.state, plan.source_routes.items, plan.captures.items, plan.source_evidence.items, hints_value);
+        out.add(review.status);
+    }
+    return out;
+}
+
 fn writeActualCaptureTotalsJson(totals_value: ActualCaptureTotals, writer: anytype) !void {
     try writer.writeByte('{');
     try writeJsonCountField(writer, "official_read_routes", totals_value.official_read_routes, true);
@@ -567,6 +666,30 @@ fn writeActualCaptureTotalsJson(totals_value: ActualCaptureTotals, writer: anyty
     try writeJsonCountField(writer, "ready_candidates", totals_value.ready_candidates, true);
     try core_json.writeString(writer, "capture_events");
     try writer.print(":{d}", .{totals_value.capture_events});
+    try writer.writeByte('}');
+}
+
+fn writeActualCaptureReviewSummaryJson(summary: ActualCaptureReviewSummary, writer: anytype) !void {
+    try writer.writeByte('{');
+    try writeJsonCountField(writer, "total", summary.total, true);
+    try writeJsonCountField(writer, "ready_to_capture", summary.ready_to_capture, true);
+    try writeJsonCountField(writer, "retry_capture", summary.retry_capture, true);
+    try writeJsonCountField(writer, "diagnostic_blocked", summary.diagnostic_blocked, true);
+    try writeJsonCountField(writer, "diagnostic_ready", summary.diagnostic_ready, true);
+    try writeJsonCountField(writer, "blocked_by_policy", summary.blocked_by_policy, true);
+    try writeJsonCountField(writer, "capture_error", summary.capture_error, true);
+    try writeJsonCountField(writer, "blocked_empty_source", summary.blocked_empty_source, true);
+    try writeJsonCountField(writer, "needs_source_normalization", summary.needs_source_normalization, true);
+    try writeJsonCountField(writer, "inspect_source_body", summary.inspect_source_body, true);
+    try writeJsonCountField(writer, "diagnostic_source_blocked", summary.diagnostic_source_blocked, true);
+    try writeJsonCountField(writer, "source_capture_error", summary.source_capture_error, true);
+    try writeJsonCountField(writer, "source_ready", summary.source_ready, true);
+    try writeJsonCountField(writer, "source_has_hints", summary.source_has_hints, true);
+    try writeJsonCountField(writer, "source_not_in_catalog", summary.source_not_in_catalog, true);
+    try writeJsonCountField(writer, "source_not_eligible", summary.source_not_eligible, true);
+    try writeJsonCountField(writer, "no_source_mapping", summary.no_source_mapping, true);
+    try writeJsonCountField(writer, "waiting_for_inputs", summary.waiting_for_inputs, true);
+    try writeJsonCountField(writer, "other", summary.other, false);
     try writer.writeByte('}');
 }
 
@@ -878,6 +1001,7 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_read_routes\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":3") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_summary\":{\"total\":3,\"ready_to_capture\":2,\"retry_capture\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachinesV1\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachineDetailsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"actual_state\":\"non_ok\"") != null);
@@ -898,6 +1022,7 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     const text = try text_out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio actual route capture plan\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "review_summary total=3 ready_to_capture=2 retry_capture=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "state=missing review=ready_to_capture support=partial op=VPS_getVirtualMachineDetailsV1 events=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "state=non_ok review=retry_capture support=partial op=VPS_getBackupsV1 events=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "next: rerun the capture command and inspect the previous non-OK provider response") != null);
@@ -1069,6 +1194,8 @@ test "plans derived Hostinger VPS detail captures from captured resource hints" 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"official_read_routes\":5") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":5") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_summary\":{\"total\":5,\"ready_to_capture\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"source_not_in_catalog\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getActionDetailsV1 --path-param virtualMachineId='12345' --path-param actionId='99'") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getTemplateDetailsV1 --path-param templateId='1002'") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getFirewallDetailsV1 --path-param firewallId='55'") != null);
@@ -1669,6 +1796,8 @@ test "explains Hostinger missing input source routes for broad child groups" {
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source_summary\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_summary\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"blocked_empty_source\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"no_official_source\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"body_shapes\":{\"array\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_input_sources\"") != null);
@@ -1706,6 +1835,8 @@ test "explains Hostinger missing input source routes for broad child groups" {
     const text = try text_out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "source_summary total=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "review_summary total=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "blocked_empty_source=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "no_official_source=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:snapshotId <- DNS_getDNSSnapshotListV1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:websiteId <- no_official_source result=no_official_source") != null);
