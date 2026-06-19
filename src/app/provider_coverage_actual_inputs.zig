@@ -189,6 +189,84 @@ const cloudflare_account_organization_sources = [_]InputSource{.{
     .purpose = "discover organization ids linked to the selected account",
 }};
 
+const cloudflare_account_user_group_sources = [_]InputSource{.{
+    .operation_id = "account-user-group-list",
+    .hint_kind = "account-user-group-list",
+    .purpose = "discover account IAM user group ids",
+}};
+
+const cloudflare_account_user_group_member_sources = [_]InputSource{.{
+    .operation_id = "account-user-group-member-list",
+    .hint_kind = "account-user-group-member-list",
+    .purpose = "discover account IAM user group member ids",
+}};
+
+const cloudflare_user_invite_sources = [_]InputSource{.{
+    .operation_id = "user'-s-invites-list-invitations",
+    .hint_kind = "user'-s-invites-list-invitations",
+    .purpose = "discover Cloudflare user invitation ids",
+}};
+
+const cloudflare_membership_sources = [_]InputSource{.{
+    .operation_id = "user'-s-account-memberships-list-memberships",
+    .hint_kind = "user'-s-account-memberships-list-memberships",
+    .purpose = "discover Cloudflare account membership ids",
+}};
+
+const cloudflare_account_custom_csr_sources = [_]InputSource{.{
+    .operation_id = "custom-csrs-for-an-account-list-custom-csrs",
+    .hint_kind = "custom-csrs-for-an-account-list-custom-csrs",
+    .purpose = "discover account custom CSR ids",
+}};
+
+const cloudflare_zone_custom_csr_sources = [_]InputSource{.{
+    .operation_id = "custom-csrs-for-a-zone-list-custom-csrs",
+    .hint_kind = "custom-csrs-for-a-zone-list-custom-csrs",
+    .purpose = "discover zone custom CSR ids",
+}};
+
+const cloudflare_account_custom_asset_sources = [_]InputSource{.{
+    .operation_id = "custom-assets-for-an-account-list-custom-assets",
+    .hint_kind = "custom-assets-for-an-account-list-custom-assets",
+    .purpose = "discover account custom asset names",
+}};
+
+const cloudflare_zone_custom_asset_sources = [_]InputSource{.{
+    .operation_id = "custom-assets-for-a-zone-list-custom-assets",
+    .hint_kind = "custom-assets-for-a-zone-list-custom-assets",
+    .purpose = "discover zone custom asset names",
+}};
+
+const cloudflare_zone_custom_hostname_sources = [_]InputSource{.{
+    .operation_id = "custom-hostname-for-a-zone-list-custom-hostnames",
+    .hint_kind = "custom-hostname-for-a-zone-list-custom-hostnames",
+    .purpose = "discover zone custom hostname ids",
+}};
+
+const cloudflare_zone_ua_rule_sources = [_]InputSource{.{
+    .operation_id = "user-agent-blocking-rules-list-user-agent-blocking-rules",
+    .hint_kind = "user-agent-blocking-rules-list-user-agent-blocking-rules",
+    .purpose = "discover user-agent blocking rule ids",
+}};
+
+const cloudflare_zone_lockdown_sources = [_]InputSource{.{
+    .operation_id = "zone-lockdown-list-zone-lockdown-rules",
+    .hint_kind = "zone-lockdown-list-zone-lockdown-rules",
+    .purpose = "discover zone lockdown rule ids",
+}};
+
+const cloudflare_zone_setting_sources = [_]InputSource{.{
+    .operation_id = "zone-settings-get-all-zone-settings",
+    .hint_kind = "zone-settings-get-all-zone-settings",
+    .purpose = "discover zone setting ids",
+}};
+
+const cloudflare_zone_snippet_sources = [_]InputSource{.{
+    .operation_id = "listZoneSnippets",
+    .hint_kind = "listZoneSnippets",
+    .purpose = "discover zone snippet names",
+}};
+
 const cloudflare_client_certificate_sources = [_]InputSource{.{
     .operation_id = "client-certificate-for-a-zone-list-client-certificates",
     .hint_kind = "client-certificate-for-a-zone-list-client-certificates",
@@ -223,6 +301,114 @@ const cloudflare_access_account_saml_sources = [_]InputSource{.{
     .operation_id = "access-saml-certificates-list-certificate-sets",
     .hint_kind = "access-saml-certificates-list-certificate-sets",
     .purpose = "discover Access SAML certificate set ids",
+}};
+
+const cloudflare_access_account_application_sources = [_]InputSource{.{
+    .operation_id = "access-applications-list-access-applications",
+    .hint_kind = "access-applications-list-access-applications",
+    .purpose = "discover account Access application ids",
+}};
+
+const cloudflare_access_zone_application_sources = [_]InputSource{.{
+    .operation_id = "zone-level-access-applications-list-access-applications",
+    .hint_kind = "zone-level-access-applications-list-access-applications",
+    .purpose = "discover zone Access application ids",
+}};
+
+const cloudflare_access_account_identity_provider_sources = [_]InputSource{.{
+    .operation_id = "access-identity-providers-list-access-identity-providers",
+    .hint_kind = "access-identity-providers-list-access-identity-providers",
+    .purpose = "discover account Access identity provider ids",
+}};
+
+const cloudflare_access_zone_identity_provider_sources = [_]InputSource{.{
+    .operation_id = "zone-level-access-identity-providers-list-access-identity-providers",
+    .hint_kind = "zone-level-access-identity-providers-list-access-identity-providers",
+    .purpose = "discover zone Access identity provider ids",
+}};
+
+const cloudflare_access_account_custom_page_sources = [_]InputSource{.{
+    .operation_id = "access-custom-pages-list-custom-pages",
+    .hint_kind = "access-custom-pages-list-custom-pages",
+    .purpose = "discover account Access custom page ids",
+}};
+
+const cloudflare_access_account_group_sources = [_]InputSource{.{
+    .operation_id = "access-groups-list-access-groups",
+    .hint_kind = "access-groups-list-access-groups",
+    .purpose = "discover account Access group ids",
+}};
+
+const cloudflare_access_zone_group_sources = [_]InputSource{.{
+    .operation_id = "zone-level-access-groups-list-access-groups",
+    .hint_kind = "zone-level-access-groups-list-access-groups",
+    .purpose = "discover zone Access group ids",
+}};
+
+const cloudflare_access_account_application_policy_sources = [_]InputSource{.{
+    .operation_id = "access-policies-list-access-app-policies",
+    .hint_kind = "access-policies-list-access-app-policies",
+    .purpose = "discover account Access application policy ids",
+}};
+
+const cloudflare_access_zone_application_policy_sources = [_]InputSource{.{
+    .operation_id = "zone-level-access-policies-list-access-policies",
+    .hint_kind = "zone-level-access-policies-list-access-policies",
+    .purpose = "discover zone Access application policy ids",
+}};
+
+const cloudflare_access_account_reusable_policy_sources = [_]InputSource{.{
+    .operation_id = "access-policies-list-access-reusable-policies",
+    .hint_kind = "access-policies-list-access-reusable-policies",
+    .purpose = "discover account Access reusable policy ids",
+}};
+
+const cloudflare_access_account_tag_sources = [_]InputSource{.{
+    .operation_id = "access-tags-list-tags",
+    .hint_kind = "access-tags-list-tags",
+    .purpose = "discover account Access tag names",
+}};
+
+const cloudflare_access_account_infra_target_sources = [_]InputSource{.{
+    .operation_id = "infra-targets-list",
+    .hint_kind = "infra-targets-list",
+    .purpose = "discover account Access infrastructure target ids",
+}};
+
+const cloudflare_access_account_service_token_sources = [_]InputSource{.{
+    .operation_id = "access-service-tokens-list-service-tokens",
+    .hint_kind = "access-service-tokens-list-service-tokens",
+    .purpose = "discover account Access service token ids",
+}};
+
+const cloudflare_access_zone_service_token_sources = [_]InputSource{.{
+    .operation_id = "zone-level-access-service-tokens-list-service-tokens",
+    .hint_kind = "zone-level-access-service-tokens-list-service-tokens",
+    .purpose = "discover zone Access service token ids",
+}};
+
+const cloudflare_access_idp_federation_grant_sources = [_]InputSource{.{
+    .operation_id = "access-idp-federation-grants-list",
+    .hint_kind = "access-idp-federation-grants-list",
+    .purpose = "discover Access IdP federation grant ids",
+}};
+
+const cloudflare_scim_user_sources = [_]InputSource{.{
+    .operation_id = "scim-users-list",
+    .hint_kind = "scim-users-list",
+    .purpose = "discover SCIM user ids",
+}};
+
+const cloudflare_zero_trust_user_sources = [_]InputSource{.{
+    .operation_id = "zero-trust-users-get-users",
+    .hint_kind = "zero-trust-users-get-users",
+    .purpose = "discover Zero Trust user ids",
+}};
+
+const cloudflare_zero_trust_user_session_sources = [_]InputSource{.{
+    .operation_id = "zero-trust-users-get-active-sessions",
+    .hint_kind = "zero-trust-users-get-active-sessions",
+    .purpose = "discover Zero Trust user active session nonces",
 }};
 
 const cloudflare_access_account_mtls_sources = [_]InputSource{.{
@@ -328,6 +514,30 @@ const cloudflare_log_explorer_zone_dataset_sources = [_]InputSource{
         .purpose = "discover zone Log Explorer available dataset ids",
     },
 };
+
+const cloudflare_dns_view_sources = [_]InputSource{.{
+    .operation_id = "dns-views-for-an-account-list-internal-dns-views",
+    .hint_kind = "dns-views-for-an-account-list-internal-dns-views",
+    .purpose = "discover account DNS internal view ids",
+}};
+
+const cloudflare_secondary_dns_acl_sources = [_]InputSource{.{
+    .operation_id = "secondary-dns-(-acl)-list-ac-ls",
+    .hint_kind = "secondary-dns-(-acl)-list-ac-ls",
+    .purpose = "discover Secondary DNS ACL ids",
+}};
+
+const cloudflare_secondary_dns_peer_sources = [_]InputSource{.{
+    .operation_id = "secondary-dns-(-peer)-list-peers",
+    .hint_kind = "secondary-dns-(-peer)-list-peers",
+    .purpose = "discover Secondary DNS peer ids",
+}};
+
+const cloudflare_secondary_dns_tsig_sources = [_]InputSource{.{
+    .operation_id = "secondary-dns-(-tsig)-list-tsi-gs",
+    .hint_kind = "secondary-dns-(-tsig)-list-tsi-gs",
+    .purpose = "discover Secondary DNS TSIG ids",
+}};
 
 const cloudflare_logpush_account_job_sources = [_]InputSource{.{
     .operation_id = "get-accounts-account_id-logpush-jobs",
@@ -563,6 +773,54 @@ const cloudflare_zone_load_balancer_sources = [_]InputSource{.{
     .purpose = "discover zone load-balancer ids",
 }};
 
+const cloudflare_account_ruleset_entrypoint_version_sources = [_]InputSource{.{
+    .operation_id = "listAccountEntrypointRulesetVersions",
+    .hint_kind = "listAccountEntrypointRulesetVersions",
+    .purpose = "discover account entrypoint ruleset versions",
+}};
+
+const cloudflare_zone_ruleset_entrypoint_version_sources = [_]InputSource{.{
+    .operation_id = "listZoneEntrypointRulesetVersions",
+    .hint_kind = "listZoneEntrypointRulesetVersions",
+    .purpose = "discover zone entrypoint ruleset versions",
+}};
+
+const cloudflare_account_ruleset_version_sources = [_]InputSource{.{
+    .operation_id = "listAccountRulesetVersions",
+    .hint_kind = "listAccountRulesetVersions",
+    .purpose = "discover account ruleset versions",
+}};
+
+const cloudflare_zone_ruleset_version_sources = [_]InputSource{.{
+    .operation_id = "listZoneRulesetVersions",
+    .hint_kind = "listZoneRulesetVersions",
+    .purpose = "discover zone ruleset versions",
+}};
+
+const cloudflare_account_ruleset_version_rule_sources = [_]InputSource{.{
+    .operation_id = "getAccountRulesetVersion",
+    .hint_kind = "getAccountRulesetVersion",
+    .purpose = "discover account ruleset version rule tags",
+}};
+
+const cloudflare_zone_ruleset_version_rule_sources = [_]InputSource{.{
+    .operation_id = "getZoneRulesetVersion",
+    .hint_kind = "getZoneRulesetVersion",
+    .purpose = "discover zone ruleset version rule tags",
+}};
+
+const cloudflare_token_validation_config_sources = [_]InputSource{.{
+    .operation_id = "token-validation-config-list",
+    .hint_kind = "token-validation-config-list",
+    .purpose = "discover token validation config ids",
+}};
+
+const cloudflare_token_validation_rule_sources = [_]InputSource{.{
+    .operation_id = "token-validation-rules-list",
+    .hint_kind = "token-validation-rules-list",
+    .purpose = "discover token validation rule ids",
+}};
+
 const cloudflare_tunnel_sources = [_]InputSource{.{
     .operation_id = "cloudflare-tunnel-list-cloudflare-tunnels",
     .hint_kind = "cloudflare-tunnel-list-cloudflare-tunnels",
@@ -761,28 +1019,43 @@ fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []co
     if (std.mem.eql(u8, name, "dns_record_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "route-cloudflare-dns", "route-cloudflare-dns-typed-smoke", "dns", "dns-records" });
     if (std.mem.eql(u8, name, "ruleset_id")) return actualCaptureCloudflareRulesetIdHint(route, hints);
     if (std.mem.eql(u8, name, "ruleset_phase")) return actualCaptureCloudflareRulesetPhaseHint(route, hints);
+    if (std.mem.eql(u8, name, "ruleset_version")) return actualCaptureCloudflareRulesetVersionHint(route, hints);
+    if (std.mem.eql(u8, name, "rule_tag")) return actualCaptureCloudflareRuleTagHint(route, hints);
     if (std.mem.eql(u8, name, "identifier") and actualCaptureRoutePathContains(route, "/custom_pages/")) return actualCaptureCloudflareCustomPageIdHint(route, hints);
+    if (std.mem.eql(u8, name, "asset_name") and actualCaptureRoutePathContains(route, "/custom_pages/assets/")) return actualCaptureCloudflareCustomAssetIdHint(route, hints);
     if (std.mem.eql(u8, name, "custom_page_id")) return actualCaptureCloudflareAccessCustomPageIdHint(route, hints);
+    if (std.mem.eql(u8, name, "custom_csr_id")) return actualCaptureCloudflareCustomCsrIdHint(route, hints);
+    if (std.mem.eql(u8, name, "custom_hostname_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "custom-hostname-for-a-zone-list-custom-hostnames", "zone-custom-hostnames", "zone-custom-hostname" });
     if (std.mem.eql(u8, name, "certificate_pack_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "certificate-packs-list-certificate-packs", "tls-zone-certificate-packs", "tls-zone-certificate-pack" });
     if (std.mem.eql(u8, name, "identity_provider_id")) return actualCaptureCloudflareAccessIdentityProviderIdHint(route, hints);
     if (std.mem.eql(u8, name, "idp_id")) return actualCaptureCloudflareAccessIdentityProviderIdHint(route, hints);
+    if (std.mem.eql(u8, name, "grant_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-idp-federation-grants-list", "access-account-idp-federation-grants", "access-account-idp-federation-grant" });
+    if (std.mem.eql(u8, name, "user_group_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-user-group-list", "account-user-groups", "account-user-group" });
+    if (std.mem.eql(u8, name, "member_id") and actualCaptureRoutePathContains(route, "/iam/user_groups/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-user-group-member-list", "account-user-group-members", "account-user-group-member" });
     if (std.mem.eql(u8, name, "member_id") and containsIgnoreCase(route.tag, "Account Members")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"account-members"});
     if (std.mem.eql(u8, name, "role_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"account-roles"});
     if (std.mem.eql(u8, name, "token_id")) return actualCaptureCloudflareTokenIdHint(route, hints);
+    if (std.mem.eql(u8, name, "service_token_id")) return actualCaptureCloudflareAccessServiceTokenIdHint(route, hints);
     if (std.mem.eql(u8, name, "permission_group_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-permission-groups", "account-token-permission-groups", "user-token-permission-groups" });
     if (std.mem.eql(u8, name, "resource_group_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"account-resource-groups"});
     if (std.mem.eql(u8, name, "client_certificate_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "client-certificate-for-a-zone-list-client-certificates", "zone-api-shield-client-certificates", "zone-client-certificates", "api-shield-client-certificates", "api-shield-client-certificates-for-a-zone" });
     if (std.mem.eql(u8, name, "saml_cert_set_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-saml-certificates-list-certificate-sets", "access-account-saml-certificates" });
     if (std.mem.eql(u8, name, "certificate_id")) return actualCaptureCloudflareCertificateIdHint(route, hints);
+    if (std.mem.eql(u8, name, "app_id") and actualCaptureRoutePathContains(route, "/access/apps/")) return actualCaptureCloudflareAccessApplicationIdHint(route, hints);
     if (std.mem.eql(u8, name, "app_id")) return actualCaptureCloudflareAccessCaAppIdHint(route, hints);
     if (std.mem.eql(u8, name, "mtls_certificate_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "m-tls-certificate-management-list-m-tls-certificates", "access-account-mtls-certificates", "zero-trust-certificates-list-zero-trust-certificates" });
     if (std.mem.eql(u8, name, "custom_certificate_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "custom-ssl-for-a-zone-list-ssl-configurations", "tls-zone-custom-ssl", "tls-zone-custom-ssl-certificate" });
     if (std.mem.eql(u8, name, "keyless_certificate_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "keyless-ssl-for-a-zone-list-keyless-ssl-configurations", "tls-zone-keyless-ssl", "tls-zone-keyless-ssl-certificate" });
     if (std.mem.eql(u8, name, "setting_id") and actualCaptureRoutePathContains(route, "/hostnames/settings/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "per-hostname-tls-settings-list", "tls-zone-per-hostname-tls-settings", "tls-zone-per-hostname-tls-setting" });
+    if (std.mem.eql(u8, name, "setting_id") and actualCaptureRoutePathContains(route, "/settings/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-settings-get-all-zone-settings", "zone-settings" });
     if (std.mem.eql(u8, name, "hostname") and actualCaptureRoutePathContains(route, "/hostnames/settings/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "per-hostname-tls-settings-list", "tls-zone-per-hostname-tls-settings", "tls-zone-per-hostname-tls-setting" });
     if (std.mem.eql(u8, name, "ca_slug")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "radar-get-certificate-authorities", "radar-certificate-authorities" });
     if (std.mem.eql(u8, name, "log_slug")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "radar-get-certificate-logs", "radar-certificate-logs" });
     if (std.mem.eql(u8, name, "dimension") and containsIgnoreCase(route.tag, "Radar Certificate Transparency")) return "CA";
+    if (std.mem.eql(u8, name, "view_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "dns-views-for-an-account-list-internal-dns-views", "dns-internal-views", "dns-internal-view" });
+    if (std.mem.eql(u8, name, "acl_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "secondary-dns-(-acl)-list-ac-ls", "secondary-dns-acls", "secondary-dns-acl" });
+    if (std.mem.eql(u8, name, "peer_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "secondary-dns-(-peer)-list-peers", "secondary-dns-peers", "secondary-dns-peer" });
+    if (std.mem.eql(u8, name, "tsig_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "secondary-dns-(-tsig)-list-tsi-gs", "secondary-dns-tsigs", "secondary-dns-tsig" });
     if (std.mem.eql(u8, name, "gateway_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "aig-config-list-gateway", "ai-gateway-gateways" });
     if (std.mem.eql(u8, name, "dataset_id")) return actualCaptureCloudflareDatasetIdHint(route, hints);
     if (std.mem.eql(u8, name, "job_id")) return actualCaptureCloudflareLogpushJobIdHint(route, hints);
@@ -810,6 +1083,19 @@ fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []co
     if (std.mem.eql(u8, name, "bot_slug")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "radar-get-bots", "radar-bots", "radar-bot" });
     if (std.mem.eql(u8, name, "issue_id") and actualCaptureRoutePathContains(route, "/security-center/insights/")) return actualCaptureCloudflareSecurityCenterIssueIdHint(route, hints);
     if (std.mem.eql(u8, name, "tag_uuid") and actualCaptureRoutePathContains(route, "/cloudforce-one/events/tags/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"get_TagList"});
+    if (std.mem.eql(u8, name, "user_id")) return actualCaptureCloudflareUserIdHint(route, hints);
+    if (std.mem.eql(u8, name, "nonce") and actualCaptureRoutePathContains(route, "/active_sessions/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zero-trust-users-get-active-sessions", "zero-trust-user-active-sessions", "zero-trust-user-active-session" });
+    if (std.mem.eql(u8, name, "group_id") and actualCaptureRoutePathContains(route, "/access/groups/")) return actualCaptureCloudflareAccessGroupIdHint(route, hints);
+    if (std.mem.eql(u8, name, "policy_id") and actualCaptureRoutePathContains(route, "/access/")) return actualCaptureCloudflareAccessPolicyIdHint(route, hints);
+    if (std.mem.eql(u8, name, "tag_name") and actualCaptureRoutePathContains(route, "/access/tags/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-tags-list-tags", "access-account-tags", "access-account-tag" });
+    if (std.mem.eql(u8, name, "target_id") and actualCaptureRoutePathContains(route, "/infrastructure/targets/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "infra-targets-list", "access-infra-targets", "access-infra-target" });
+    if (std.mem.eql(u8, name, "ua_rule_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "user-agent-blocking-rules-list-user-agent-blocking-rules", "zone-user-agent-blocking-rules", "zone-user-agent-blocking-rule" });
+    if (std.mem.eql(u8, name, "invite_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "user'-s-invites-list-invitations", "user-invites", "user-invite" });
+    if (std.mem.eql(u8, name, "membership_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "user'-s-account-memberships-list-memberships", "memberships", "membership" });
+    if (std.mem.eql(u8, name, "lock_downs_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-lockdown-list-zone-lockdown-rules", "zone-lockdown-rules", "zone-lockdown-rule" });
+    if (std.mem.eql(u8, name, "snippet_name")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "listZoneSnippets", "zone-snippets", "zone-snippet" });
+    if (std.mem.eql(u8, name, "config_id") and actualCaptureRoutePathContains(route, "/token_validation/config/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "token-validation-config-list", "token-validation-configs", "token-validation-config" });
+    if (std.mem.eql(u8, name, "rule_id") and actualCaptureRoutePathContains(route, "/token_validation/rules/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "token-validation-rules-list", "token-validation-rules", "token-validation-rule" });
     if (std.mem.eql(u8, name, "bucket_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "list-catalogs", "get-catalog-details", "r2-catalog" });
     if (std.mem.eql(u8, name, "namespace") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"list-namespaces"});
     if (std.mem.eql(u8, name, "table_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"list-tables"});
@@ -907,6 +1193,22 @@ fn actualCaptureCloudflareRulesetPhaseHint(route: provider_routes.Route, hints: 
     return actualCaptureCloudflareResourceTypeHint(route, hints, &.{ "account-rulesets", "account-ruleset", "zone-rulesets", "zone-ruleset" });
 }
 
+fn actualCaptureCloudflareRulesetVersionHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureRoutePathContains(route, "/entrypoint/versions/")) {
+        if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "listAccountEntrypointRulesetVersions", "account-entrypoint-ruleset-versions", "account-entrypoint-ruleset-version" });
+        if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "listZoneEntrypointRulesetVersions", "zone-entrypoint-ruleset-versions", "zone-entrypoint-ruleset-version" });
+    }
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "listAccountRulesetVersions", "account-ruleset-versions", "account-ruleset-version" });
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "listZoneRulesetVersions", "zone-ruleset-versions", "zone-ruleset-version" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "listAccountEntrypointRulesetVersions", "listZoneEntrypointRulesetVersions", "listAccountRulesetVersions", "listZoneRulesetVersions" });
+}
+
+fn actualCaptureCloudflareRuleTagHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "getAccountRulesetVersion", "account-ruleset-version-rules", "account-ruleset-version-rule" });
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "getZoneRulesetVersion", "zone-ruleset-version-rules", "zone-ruleset-version-rule" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "getAccountRulesetVersion", "getZoneRulesetVersion", "ruleset-version-rules" });
+}
+
 fn actualCaptureCloudflareCustomPageIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
     if (actualCaptureCloudflareRouteAccountScoped(route)) {
         return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-custom-pages", "account-custom-page" });
@@ -917,26 +1219,81 @@ fn actualCaptureCloudflareCustomPageIdHint(route: provider_routes.Route, hints: 
     return null;
 }
 
+fn actualCaptureCloudflareCustomAssetIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "custom-assets-for-an-account-list-custom-assets", "account-custom-assets", "account-custom-asset" });
+    }
+    if (actualCaptureCloudflareRouteZoneScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "custom-assets-for-a-zone-list-custom-assets", "zone-custom-assets", "zone-custom-asset" });
+    }
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "custom-assets-for-an-account-list-custom-assets", "custom-assets-for-a-zone-list-custom-assets", "custom-assets" });
+}
+
 fn actualCaptureCloudflareAccessCustomPageIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
     if (!containsIgnoreCase(route.tag, "Access custom pages")) return null;
     if (actualCaptureCloudflareRouteAccountScoped(route)) {
-        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-account-custom-pages", "access-account-custom-page", "access-custom-pages", "access-custom-page" });
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-custom-pages-list-custom-pages", "access-account-custom-pages", "access-account-custom-page", "access-custom-pages", "access-custom-page" });
     }
     if (actualCaptureCloudflareRouteZoneScoped(route)) {
         return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-zone-custom-pages", "access-zone-custom-page", "access-custom-pages", "access-custom-page" });
     }
-    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-account-custom-pages", "access-zone-custom-pages", "access-custom-pages", "access-custom-page" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-custom-pages-list-custom-pages", "access-account-custom-pages", "access-zone-custom-pages", "access-custom-pages", "access-custom-page" });
+}
+
+fn actualCaptureCloudflareCustomCsrIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "custom-csrs-for-an-account-list-custom-csrs", "account-custom-csrs", "account-custom-csr" });
+    }
+    if (actualCaptureCloudflareRouteZoneScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "custom-csrs-for-a-zone-list-custom-csrs", "zone-custom-csrs", "zone-custom-csr" });
+    }
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "custom-csrs-for-an-account-list-custom-csrs", "custom-csrs-for-a-zone-list-custom-csrs", "custom-csrs" });
+}
+
+fn actualCaptureCloudflareAccessApplicationIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteZoneScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-level-access-applications-list-access-applications", "access-zone-applications", "access-zone-application", "access-applications" });
+    }
+    if (actualCaptureCloudflareRouteAccountScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-applications-list-access-applications", "access-account-applications", "access-account-application", "access-applications" });
+    }
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-applications-list-access-applications", "zone-level-access-applications-list-access-applications", "access-applications" });
+}
+
+fn actualCaptureCloudflareAccessGroupIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteZoneScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-level-access-groups-list-access-groups", "access-zone-groups", "access-zone-group", "access-groups" });
+    }
+    if (actualCaptureCloudflareRouteAccountScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-groups-list-access-groups", "access-account-groups", "access-account-group", "access-groups" });
+    }
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-groups-list-access-groups", "zone-level-access-groups-list-access-groups", "access-groups" });
+}
+
+fn actualCaptureCloudflareAccessPolicyIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureRoutePathContains(route, "/access/apps/")) {
+        if (actualCaptureCloudflareRouteZoneScoped(route)) {
+            return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-level-access-policies-list-access-policies", "access-zone-application-policies", "access-zone-application-policy", "access-policies" });
+        }
+        if (actualCaptureCloudflareRouteAccountScoped(route)) {
+            return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-policies-list-access-app-policies", "access-account-application-policies", "access-account-application-policy", "access-policies" });
+        }
+    }
+    if (actualCaptureRoutePathContains(route, "/access/policies/")) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-policies-list-access-reusable-policies", "access-account-reusable-policies", "access-account-reusable-policy", "access-reusable-policies" });
+    }
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-policies-list-access-app-policies", "zone-level-access-policies-list-access-policies", "access-policies-list-access-reusable-policies", "access-policies" });
 }
 
 fn actualCaptureCloudflareAccessIdentityProviderIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
     if (!containsIgnoreCase(route.tag, "Access identity providers") and !containsIgnoreCase(route.tag, "Access SCIM update")) return null;
     if (actualCaptureCloudflareRouteAccountScoped(route)) {
-        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-account-identity-providers", "access-account-identity-provider", "access-identity-providers", "access-identity-provider" });
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-identity-providers-list-access-identity-providers", "access-account-identity-providers", "access-account-identity-provider", "access-identity-providers", "access-identity-provider" });
     }
     if (actualCaptureCloudflareRouteZoneScoped(route)) {
-        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-zone-identity-providers", "access-zone-identity-provider", "access-identity-providers", "access-identity-provider" });
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-level-access-identity-providers-list-access-identity-providers", "access-zone-identity-providers", "access-zone-identity-provider", "access-identity-providers", "access-identity-provider" });
     }
-    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-account-identity-providers", "access-zone-identity-providers", "access-identity-providers", "access-identity-provider" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-identity-providers-list-access-identity-providers", "zone-level-access-identity-providers-list-access-identity-providers", "access-account-identity-providers", "access-zone-identity-providers", "access-identity-providers", "access-identity-provider" });
 }
 
 fn actualCaptureCloudflareTokenIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
@@ -947,6 +1304,26 @@ fn actualCaptureCloudflareTokenIdHint(route: provider_routes.Route, hints: Hints
         return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "user-tokens", "user-api-tokens" });
     }
     return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-tokens", "account-api-tokens", "account-owned-api-tokens", "user-tokens", "user-api-tokens" });
+}
+
+fn actualCaptureCloudflareAccessServiceTokenIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteZoneScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-level-access-service-tokens-list-service-tokens", "access-zone-service-tokens", "access-zone-service-token", "access-service-tokens" });
+    }
+    if (actualCaptureCloudflareRouteAccountScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-service-tokens-list-service-tokens", "access-account-service-tokens", "access-account-service-token", "access-service-tokens" });
+    }
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-service-tokens-list-service-tokens", "zone-level-access-service-tokens-list-service-tokens", "access-service-tokens" });
+}
+
+fn actualCaptureCloudflareUserIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureRoutePathContains(route, "/scim/v2/Users/")) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "scim-users-list", "scim-users", "scim-user" });
+    }
+    if (actualCaptureRoutePathContains(route, "/access/users/")) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zero-trust-users-get-users", "zero-trust-users", "zero-trust-user" });
+    }
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "scim-users-list", "zero-trust-users-get-users", "users" });
 }
 
 fn actualCaptureCloudflareCertificateIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
@@ -1452,6 +1829,9 @@ fn actualCaptureHasCloudflareQueryParamHintWithHints(route: provider_routes.Rout
     if (std.mem.eql(u8, operation_id, "get_EventGraph")) {
         if (std.mem.eql(u8, name, "nodeId") or std.mem.eql(u8, name, "nodeType")) return actualCaptureCloudflareCloudforceEventHint(route, hints) != null;
     }
+    if (std.mem.eql(u8, operation_id, "access-scim-update-logs-list-access-scim-update-logs") and std.mem.eql(u8, name, "idp_id")) {
+        return actualCaptureCloudflareAccessIdentityProviderIdHint(route, hints) != null;
+    }
     if (actualCaptureQueryParamEnumHint(route, name) != null) return true;
     const audit_v2_window =
         std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-logs") or
@@ -1507,6 +1887,10 @@ fn actualCaptureCloudflareQueryParamHint(gpa: Allocator, route: provider_routes.
             if (std.mem.eql(u8, name, "nodeId")) return try gpa.dupe(u8, row.resource_id);
             if (std.mem.eql(u8, name, "nodeType")) return try gpa.dupe(u8, row.category);
         }
+        return null;
+    }
+    if (std.mem.eql(u8, operation_id, "access-scim-update-logs-list-access-scim-update-logs") and std.mem.eql(u8, name, "idp_id")) {
+        if (actualCaptureCloudflareAccessIdentityProviderIdHint(route, hints)) |idp_id| return try gpa.dupe(u8, idp_id);
         return null;
     }
     if (std.mem.eql(u8, name, "action_time")) {
@@ -1670,6 +2054,14 @@ fn actualCaptureCloudflareNoOfficialSource(route: provider_routes.Route, input_s
     if (std.mem.eql(u8, input_source, "path") and
         std.mem.eql(u8, input_name, "ray_id") and
         std.mem.eql(u8, operation_id, "get-zones-zone_id-logs-rayids-ray_id")) return true;
+    if (std.mem.eql(u8, input_source, "path") and
+        std.mem.eql(u8, input_name, "preview_id") and
+        (std.mem.eql(u8, operation_id, "account-load-balancer-monitors-preview-result") or
+            std.mem.eql(u8, operation_id, "load-balancer-monitors-preview-result"))) return true;
+    if (std.mem.eql(u8, input_source, "path") and
+        std.mem.eql(u8, input_name, "policy_test_id") and
+        (std.mem.eql(u8, operation_id, "access-policy-tests-get-an-update") or
+            std.mem.eql(u8, operation_id, "access-policy-tests-get-a-user-page"))) return true;
     return std.mem.eql(u8, input_source, "query") and
         std.mem.eql(u8, input_name, "end") and
         std.mem.eql(u8, operation_id, "get-zones-zone_id-logs-received");
@@ -1678,6 +2070,8 @@ fn actualCaptureCloudflareNoOfficialSource(route: provider_routes.Route, input_s
 fn actualCaptureCloudflareNoOfficialSourcePurpose(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) []const u8 {
     _ = route;
     if (std.mem.eql(u8, input_source, "path") and std.mem.eql(u8, input_name, "ray_id")) return "Ray IDs come from traffic/log evidence, not a stable Cloudflare inventory list";
+    if (std.mem.eql(u8, input_source, "path") and std.mem.eql(u8, input_name, "preview_id")) return "load-balancer preview IDs are produced by preview requests, not stable read inventory";
+    if (std.mem.eql(u8, input_source, "path") and std.mem.eql(u8, input_name, "policy_test_id")) return "Access policy-test IDs are produced by starting a policy test, which remains dry-run only";
     if (std.mem.eql(u8, input_source, "query") and std.mem.eql(u8, input_name, "end")) return "Logs Received should be captured only with an explicit bounded window and safe optional filters";
     return "Cloudflare requires an explicit value for this read";
 }
@@ -1935,18 +2329,42 @@ pub fn actualCaptureMissingInputSources(route: provider_routes.Route, input_sour
 fn actualCaptureCloudflareMissingInputSources(route: provider_routes.Route, input_source: []const u8, input_name: []const u8, operation_id: []const u8) []const InputSource {
     if (std.mem.eql(u8, input_source, "path")) {
         if (std.mem.eql(u8, input_name, "organization_id")) return cloudflare_account_organization_sources[0..];
+        if (std.mem.eql(u8, input_name, "user_group_id")) return cloudflare_account_user_group_sources[0..];
+        if (std.mem.eql(u8, input_name, "member_id") and actualCaptureRoutePathContains(route, "/iam/user_groups/")) return cloudflare_account_user_group_member_sources[0..];
+        if (std.mem.eql(u8, input_name, "invite_id")) return cloudflare_user_invite_sources[0..];
+        if (std.mem.eql(u8, input_name, "membership_id")) return cloudflare_membership_sources[0..];
+        if (std.mem.eql(u8, input_name, "custom_csr_id")) return actualCaptureCloudflareCustomCsrSources(route);
+        if (std.mem.eql(u8, input_name, "asset_name") and actualCaptureRoutePathContains(route, "/custom_pages/assets/")) return actualCaptureCloudflareCustomAssetSources(route);
+        if (std.mem.eql(u8, input_name, "custom_hostname_id")) return cloudflare_zone_custom_hostname_sources[0..];
         if (std.mem.eql(u8, input_name, "client_certificate_id")) return cloudflare_client_certificate_sources[0..];
         if (std.mem.eql(u8, input_name, "certificate_pack_id")) return cloudflare_certificate_pack_sources[0..];
         if (std.mem.eql(u8, input_name, "custom_certificate_id")) return cloudflare_custom_ssl_sources[0..];
         if (std.mem.eql(u8, input_name, "keyless_certificate_id")) return cloudflare_keyless_ssl_sources[0..];
         if (std.mem.eql(u8, input_name, "setting_id") and actualCaptureRoutePathContains(route, "/hostnames/settings/")) return cloudflare_per_hostname_tls_sources[0..];
+        if (std.mem.eql(u8, input_name, "setting_id") and actualCaptureRoutePathContains(route, "/settings/")) return cloudflare_zone_setting_sources[0..];
         if (std.mem.eql(u8, input_name, "hostname") and actualCaptureRoutePathContains(route, "/hostnames/settings/")) return cloudflare_per_hostname_tls_sources[0..];
         if (std.mem.eql(u8, input_name, "saml_cert_set_id")) return cloudflare_access_account_saml_sources[0..];
+        if (std.mem.eql(u8, input_name, "app_id") and actualCaptureRoutePathContains(route, "/access/apps/")) return actualCaptureCloudflareAccessApplicationSources(route);
         if (std.mem.eql(u8, input_name, "certificate_id")) return actualCaptureCloudflareCertificateSources(route, operation_id);
         if (std.mem.eql(u8, input_name, "app_id")) return actualCaptureCloudflareAccessCaSources(route, operation_id);
         if (std.mem.eql(u8, input_name, "mtls_certificate_id")) return cloudflare_mtls_certificate_sources[0..];
+        if (std.mem.eql(u8, input_name, "identity_provider_id")) return actualCaptureCloudflareAccessIdentityProviderSources(route);
+        if (std.mem.eql(u8, input_name, "idp_id")) return actualCaptureCloudflareAccessIdentityProviderSources(route);
+        if (std.mem.eql(u8, input_name, "grant_id")) return cloudflare_access_idp_federation_grant_sources[0..];
+        if (std.mem.eql(u8, input_name, "custom_page_id")) return cloudflare_access_account_custom_page_sources[0..];
+        if (std.mem.eql(u8, input_name, "group_id") and actualCaptureRoutePathContains(route, "/access/groups/")) return actualCaptureCloudflareAccessGroupSources(route);
+        if (std.mem.eql(u8, input_name, "policy_id") and actualCaptureRoutePathContains(route, "/access/")) return actualCaptureCloudflareAccessPolicySources(route);
+        if (std.mem.eql(u8, input_name, "tag_name") and actualCaptureRoutePathContains(route, "/access/tags/")) return cloudflare_access_account_tag_sources[0..];
+        if (std.mem.eql(u8, input_name, "target_id") and actualCaptureRoutePathContains(route, "/infrastructure/targets/")) return cloudflare_access_account_infra_target_sources[0..];
+        if (std.mem.eql(u8, input_name, "service_token_id")) return actualCaptureCloudflareAccessServiceTokenSources(route);
+        if (std.mem.eql(u8, input_name, "user_id")) return actualCaptureCloudflareUserSources(route);
+        if (std.mem.eql(u8, input_name, "nonce") and actualCaptureRoutePathContains(route, "/active_sessions/")) return cloudflare_zero_trust_user_session_sources[0..];
         if (std.mem.eql(u8, input_name, "ca_slug")) return cloudflare_radar_authority_sources[0..];
         if (std.mem.eql(u8, input_name, "log_slug")) return cloudflare_radar_log_sources[0..];
+        if (std.mem.eql(u8, input_name, "view_id")) return cloudflare_dns_view_sources[0..];
+        if (std.mem.eql(u8, input_name, "acl_id")) return cloudflare_secondary_dns_acl_sources[0..];
+        if (std.mem.eql(u8, input_name, "peer_id")) return cloudflare_secondary_dns_peer_sources[0..];
+        if (std.mem.eql(u8, input_name, "tsig_id")) return cloudflare_secondary_dns_tsig_sources[0..];
         if (std.mem.eql(u8, input_name, "gateway_id")) return cloudflare_ai_gateway_sources[0..];
         if (std.mem.eql(u8, input_name, "dataset_id")) return actualCaptureCloudflareDatasetSources(route);
         if (std.mem.eql(u8, input_name, "job_id")) return actualCaptureCloudflareLogpushJobSources(route);
@@ -1973,6 +2391,13 @@ fn actualCaptureCloudflareMissingInputSources(route: provider_routes.Route, inpu
         if (std.mem.eql(u8, input_name, "script_id") and actualCaptureRoutePathContains(route, "/page_shield/scripts/")) return cloudflare_page_shield_script_sources[0..];
         if (std.mem.eql(u8, input_name, "bot_slug")) return cloudflare_radar_bot_sources[0..];
         if (std.mem.eql(u8, input_name, "issue_id") and actualCaptureRoutePathContains(route, "/security-center/insights/")) return actualCaptureCloudflareSecurityCenterIssueSources(route);
+        if (std.mem.eql(u8, input_name, "ua_rule_id")) return cloudflare_zone_ua_rule_sources[0..];
+        if (std.mem.eql(u8, input_name, "lock_downs_id")) return cloudflare_zone_lockdown_sources[0..];
+        if (std.mem.eql(u8, input_name, "snippet_name")) return cloudflare_zone_snippet_sources[0..];
+        if (std.mem.eql(u8, input_name, "config_id") and actualCaptureRoutePathContains(route, "/token_validation/config/")) return cloudflare_token_validation_config_sources[0..];
+        if (std.mem.eql(u8, input_name, "rule_id") and actualCaptureRoutePathContains(route, "/token_validation/rules/")) return cloudflare_token_validation_rule_sources[0..];
+        if (std.mem.eql(u8, input_name, "ruleset_version")) return actualCaptureCloudflareRulesetVersionSources(route);
+        if (std.mem.eql(u8, input_name, "rule_tag")) return actualCaptureCloudflareRulesetRuleTagSources(route);
         if (std.mem.eql(u8, input_name, "tag_uuid") and actualCaptureRoutePathContains(route, "/cloudforce-one/events/tags/")) return cloudflare_cloudforce_tag_sources[0..];
         if (std.mem.eql(u8, input_name, "bucket_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return cloudflare_r2_catalog_sources[0..];
         if (std.mem.eql(u8, input_name, "namespace") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return cloudflare_r2_namespace_sources[0..];
@@ -1990,9 +2415,77 @@ fn actualCaptureCloudflareMissingInputSources(route: provider_routes.Route, inpu
 
     if (std.mem.eql(u8, input_source, "query")) {
         if ((std.mem.eql(u8, input_name, "nodeId") or std.mem.eql(u8, input_name, "nodeType")) and std.mem.eql(u8, operation_id, "get_EventGraph")) return cloudflare_cloudforce_event_sources[0..];
+        if (std.mem.eql(u8, input_name, "idp_id") and std.mem.eql(u8, operation_id, "access-scim-update-logs-list-access-scim-update-logs")) return actualCaptureCloudflareAccessIdentityProviderSources(route);
         if (std.mem.eql(u8, input_name, "action_time")) return actualCaptureCloudflareAuditSources(route, operation_id);
     }
 
+    return &.{};
+}
+
+fn actualCaptureCloudflareCustomCsrSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_account_custom_csr_sources[0..];
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_zone_custom_csr_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareCustomAssetSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_account_custom_asset_sources[0..];
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_zone_custom_asset_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareAccessApplicationSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_access_zone_application_sources[0..];
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_access_account_application_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareAccessIdentityProviderSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_access_zone_identity_provider_sources[0..];
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_access_account_identity_provider_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareAccessGroupSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_access_zone_group_sources[0..];
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_access_account_group_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareAccessPolicySources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureRoutePathContains(route, "/access/apps/")) {
+        if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_access_zone_application_policy_sources[0..];
+        if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_access_account_application_policy_sources[0..];
+    }
+    if (actualCaptureRoutePathContains(route, "/access/policies/")) return cloudflare_access_account_reusable_policy_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareAccessServiceTokenSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_access_zone_service_token_sources[0..];
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_access_account_service_token_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareUserSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureRoutePathContains(route, "/scim/v2/Users/")) return cloudflare_scim_user_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/access/users/")) return cloudflare_zero_trust_user_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareRulesetVersionSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureRoutePathContains(route, "/entrypoint/versions/")) {
+        if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_account_ruleset_entrypoint_version_sources[0..];
+        if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_zone_ruleset_entrypoint_version_sources[0..];
+    }
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_account_ruleset_version_sources[0..];
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_zone_ruleset_version_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareRulesetRuleTagSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_account_ruleset_version_rule_sources[0..];
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_zone_ruleset_version_rule_sources[0..];
     return &.{};
 }
 
@@ -2511,6 +3004,202 @@ test "maps Cloudflare security child captures to list sources" {
         try std.testing.expectEqualStrings(case.expected_source, sources[0].operation_id);
         try std.testing.expect(actualCaptureReady(route, hints));
         try std.testing.expectEqualStrings(case.expected_value, actualCapturePathParamHint(route, case.input_name, hints) orelse "");
+    }
+}
+
+test "maps Cloudflare named control-plane child captures to list sources" {
+    const allocator = std.testing.allocator;
+    const Case = struct {
+        route_json: []const u8,
+        input_source: []const u8 = "path",
+        input_name: []const u8,
+        expected_source: []const u8,
+        expected_value: []const u8,
+    };
+    const cases = [_]Case{
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Account User Groups","method":"GET","path":"/accounts/{account_id}/iam/user_groups/{user_group_id}","operation_id":"account-user-group-details","path_params":[{"name":"account_id","required":true},{"name":"user_group_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "user_group_id",
+            .expected_source = "account-user-group-list",
+            .expected_value = "user-group-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Account User Group Members","method":"GET","path":"/accounts/{account_id}/iam/user_groups/{user_group_id}/members/{member_id}","operation_id":"account-user-group-member-get","path_params":[{"name":"account_id","required":true},{"name":"user_group_id","required":true},{"name":"member_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "member_id",
+            .expected_source = "account-user-group-member-list",
+            .expected_value = "member-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Custom CSRs for an Account","method":"GET","path":"/accounts/{account_id}/custom_csrs/{custom_csr_id}","operation_id":"custom-csrs-for-an-account-custom-csr-details","path_params":[{"name":"account_id","required":true},{"name":"custom_csr_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "custom_csr_id",
+            .expected_source = "custom-csrs-for-an-account-list-custom-csrs",
+            .expected_value = "csr-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Custom Hostname for a Zone","method":"GET","path":"/zones/{zone_id}/custom_hostnames/{custom_hostname_id}","operation_id":"custom-hostname-for-a-zone-custom-hostname-details","path_params":[{"name":"zone_id","required":true},{"name":"custom_hostname_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "custom_hostname_id",
+            .expected_source = "custom-hostname-for-a-zone-list-custom-hostnames",
+            .expected_value = "custom-hostname-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"SCIM Users","method":"GET","path":"/accounts/{account_id}/scim/v2/Users/{user_id}","operation_id":"scim-users-get","path_params":[{"name":"account_id","required":true},{"name":"user_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "user_id",
+            .expected_source = "scim-users-list",
+            .expected_value = "scim-user-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Zero Trust users","method":"GET","path":"/accounts/{account_id}/access/users/{user_id}/active_sessions/{nonce}","operation_id":"zero-trust-users-get-active-session","path_params":[{"name":"account_id","required":true},{"name":"user_id","required":true},{"name":"nonce","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "nonce",
+            .expected_source = "zero-trust-users-get-active-sessions",
+            .expected_value = "nonce-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Access SCIM update logs","method":"GET","path":"/accounts/{account_id}/access/logs/scim/updates","operation_id":"access-scim-update-logs-list-access-scim-update-logs","path_params":[{"name":"account_id","required":true}],"query_params":[{"name":"idp_id","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_source = "query",
+            .input_name = "idp_id",
+            .expected_source = "access-identity-providers-list-access-identity-providers",
+            .expected_value = "idp-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Access groups","method":"GET","path":"/accounts/{account_id}/access/groups/{group_id}","operation_id":"access-groups-get-an-access-group","path_params":[{"name":"account_id","required":true},{"name":"group_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "group_id",
+            .expected_source = "access-groups-list-access-groups",
+            .expected_value = "access-group-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Zone-Level Access policies","method":"GET","path":"/zones/{zone_id}/access/apps/{app_id}/policies/{policy_id}","operation_id":"zone-level-access-policies-get-an-access-policy","path_params":[{"name":"zone_id","required":true},{"name":"app_id","required":true},{"name":"policy_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "policy_id",
+            .expected_source = "zone-level-access-policies-list-access-policies",
+            .expected_value = "zone-policy-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"DNS Internal Views for an Account","method":"GET","path":"/accounts/{account_id}/dns_settings/views/{view_id}","operation_id":"dns-views-for-an-account-get-internal-dns-view","path_params":[{"name":"account_id","required":true},{"name":"view_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "view_id",
+            .expected_source = "dns-views-for-an-account-list-internal-dns-views",
+            .expected_value = "view-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Secondary DNS (ACL)","method":"GET","path":"/accounts/{account_id}/secondary_dns/acls/{acl_id}","operation_id":"secondary-dns-(-acl)-acl-details","path_params":[{"name":"account_id","required":true},{"name":"acl_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "acl_id",
+            .expected_source = "secondary-dns-(-acl)-list-ac-ls",
+            .expected_value = "acl-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Token Validation Token Configuration","method":"GET","path":"/zones/{zone_id}/token_validation/config/{config_id}","operation_id":"token-validation-config-get","path_params":[{"name":"zone_id","required":true},{"name":"config_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "config_id",
+            .expected_source = "token-validation-config-list",
+            .expected_value = "config-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Account Rulesets","method":"GET","path":"/accounts/{account_id}/rulesets/{ruleset_id}/versions/{ruleset_version}","operation_id":"getAccountRulesetVersion","path_params":[{"name":"account_id","required":true},{"name":"ruleset_id","required":true},{"name":"ruleset_version","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "ruleset_version",
+            .expected_source = "listAccountRulesetVersions",
+            .expected_value = "42",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Account Rulesets","method":"GET","path":"/accounts/{account_id}/rulesets/{ruleset_id}/versions/{ruleset_version}/by_tag/{rule_tag}","operation_id":"listAccountRulesetVersionRulesByTag","path_params":[{"name":"account_id","required":true},{"name":"ruleset_id","required":true},{"name":"ruleset_version","required":true},{"name":"rule_tag","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "rule_tag",
+            .expected_source = "getAccountRulesetVersion",
+            .expected_value = "managed",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"User's Account Memberships","method":"GET","path":"/memberships/{membership_id}","operation_id":"user'-s-account-memberships-membership-details","path_params":[{"name":"membership_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "membership_id",
+            .expected_source = "user'-s-account-memberships-list-memberships",
+            .expected_value = "membership-1",
+        },
+    };
+
+    var account_rows = [_]db_store.CloudflareAccountRow{.{
+        .id = @constCast("acct-1"),
+        .name = @constCast("Main account"),
+        .account_type = @constCast("standard"),
+        .status = @constCast("active"),
+        .updated_at = @constCast("2026-06-19T00:00:00Z"),
+    }};
+    var zone_rows = [_]db_store.CloudflareZoneRow{.{
+        .id = @constCast("zone-1"),
+        .name = @constCast("plosca.ru"),
+        .account_id = @constCast("acct-1"),
+        .status = @constCast("active"),
+        .paused = @constCast("false"),
+        .zone_type = @constCast("full"),
+        .name_servers = @constCast("ns1.example,ns2.example"),
+        .updated_at = @constCast("2026-06-19T00:00:00Z"),
+    }};
+    var resource_rows = [_]db_store.CloudflareResourceHintRow{
+        .{ .kind = @constCast("account-user-group-list"), .resource_id = @constCast("user-group-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Operators"), .status = @constCast("active"), .resource_type = @constCast("user_group"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("account-user-group-member-list"), .resource_id = @constCast("member-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1/user-group-1"), .name = @constCast("Member"), .status = @constCast("active"), .resource_type = @constCast("member"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("custom-csrs-for-an-account-list-custom-csrs"), .resource_id = @constCast("csr-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("CSR"), .status = @constCast("pending"), .resource_type = @constCast("csr"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("custom-hostname-for-a-zone-list-custom-hostnames"), .resource_id = @constCast("custom-hostname-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("app.example.com"), .status = @constCast("active"), .resource_type = @constCast("custom_hostname"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("scim-users-list"), .resource_id = @constCast("scim-user-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("SCIM user"), .status = @constCast("active"), .resource_type = @constCast("user"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("zero-trust-users-get-users"), .resource_id = @constCast("zero-user-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Zero Trust user"), .status = @constCast("active"), .resource_type = @constCast("user"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("zero-trust-users-get-active-sessions"), .resource_id = @constCast("nonce-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1/zero-user-1"), .name = @constCast("Session"), .status = @constCast("active"), .resource_type = @constCast("session"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("access-identity-providers-list-access-identity-providers"), .resource_id = @constCast("idp-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("IdP"), .status = @constCast("active"), .resource_type = @constCast("idp"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("access-groups-list-access-groups"), .resource_id = @constCast("access-group-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Access group"), .status = @constCast("active"), .resource_type = @constCast("group"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("zone-level-access-applications-list-access-applications"), .resource_id = @constCast("zone-app-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("Zone app"), .status = @constCast("active"), .resource_type = @constCast("app"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("zone-level-access-policies-list-access-policies"), .resource_id = @constCast("zone-policy-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("Zone policy"), .status = @constCast("active"), .resource_type = @constCast("policy"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("dns-views-for-an-account-list-internal-dns-views"), .resource_id = @constCast("view-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("View"), .status = @constCast("active"), .resource_type = @constCast("dns_view"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("secondary-dns-(-acl)-list-ac-ls"), .resource_id = @constCast("acl-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("ACL"), .status = @constCast("active"), .resource_type = @constCast("acl"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("token-validation-config-list"), .resource_id = @constCast("config-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("Config"), .status = @constCast("active"), .resource_type = @constCast("config"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("account-rulesets"), .resource_id = @constCast("ruleset-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Ruleset"), .status = @constCast("active"), .resource_type = @constCast("http_request_firewall_custom"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("listAccountRulesetVersions"), .resource_id = @constCast("42"), .scope = @constCast("account"), .scope_id = @constCast("acct-1/ruleset-1"), .name = @constCast("Version 42"), .status = @constCast("active"), .resource_type = @constCast("version"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("getAccountRulesetVersion"), .resource_id = @constCast("managed"), .scope = @constCast("account"), .scope_id = @constCast("acct-1/ruleset-1/42"), .name = @constCast("Managed tag"), .status = @constCast("active"), .resource_type = @constCast("rule_tag"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("user'-s-account-memberships-list-memberships"), .resource_id = @constCast("membership-1"), .scope = @constCast("user"), .scope_id = @constCast("user"), .name = @constCast("Membership"), .status = @constCast("active"), .resource_type = @constCast("membership"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+    };
+    const hints = Hints{
+        .cloudflare_accounts = account_rows[0..],
+        .cloudflare_zones = zone_rows[0..],
+        .cloudflare_resources = resource_rows[0..],
+    };
+
+    for (cases) |case| {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, case.route_json, .{});
+        defer parsed.deinit();
+        var route = try provider_routes.Route.init(allocator, .cloudflare, parsed.value);
+        defer route.deinit(allocator);
+
+        const sources = actualCaptureMissingInputSources(route, case.input_source, case.input_name);
+        try std.testing.expect(sources.len > 0);
+        try std.testing.expectEqualStrings(case.expected_source, sources[0].operation_id);
+        try std.testing.expect(actualCaptureReady(route, hints));
+        if (std.mem.eql(u8, case.input_source, "query")) {
+            const value = (try actualCaptureQueryParamHint(allocator, route, case.input_name, hints)) orelse return error.ExpectedQueryHint;
+            defer allocator.free(value);
+            try std.testing.expectEqualStrings(case.expected_value, value);
+        } else {
+            try std.testing.expectEqualStrings(case.expected_value, actualCapturePathParamHint(route, case.input_name, hints) orelse "");
+        }
     }
 }
 

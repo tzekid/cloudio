@@ -122,7 +122,7 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
         source_summary.body_no_evidence,
         source_summary.body_other,
     });
-    try writer.print("review_summary total={d} ready_to_capture={d} retry_capture={d} diagnostic_blocked={d} diagnostic_ready={d} blocked_by_policy={d} capture_error={d} blocked_empty_source={d} needs_source_normalization={d} inspect_source_body={d} diagnostic_source_blocked={d} source_capture_error={d} source_ready={d} source_has_hints={d} source_not_in_catalog={d} source_not_eligible={d} no_source_mapping={d} waiting_for_inputs={d} other={d}\n", .{
+    try writer.print("review_summary total={d} ready_to_capture={d} retry_capture={d} diagnostic_blocked={d} diagnostic_ready={d} blocked_by_policy={d} capture_error={d} blocked_empty_source={d} needs_source_normalization={d} inspect_source_body={d} diagnostic_source_blocked={d} source_capture_error={d} source_ready={d} source_has_hints={d} source_not_in_catalog={d} source_not_eligible={d} no_source_mapping={d} no_official_source={d} waiting_for_inputs={d} other={d}\n", .{
         review_summary.total,
         review_summary.ready_to_capture,
         review_summary.retry_capture,
@@ -140,12 +140,13 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
         review_summary.source_not_in_catalog,
         review_summary.source_not_eligible,
         review_summary.no_source_mapping,
+        review_summary.no_official_source,
         review_summary.waiting_for_inputs,
         review_summary.other,
     });
     try writer.writeAll("review_groups\n");
     for (review_groups.items) |group| {
-        try writer.print("  {s}/{s} total={d} ready_to_capture={d} retry_capture={d} diagnostic_blocked={d} blocked_empty_source={d} diagnostic_source_blocked={d} source_ready={d} no_source_mapping={d} waiting_for_inputs={d} other={d} next={s}\n", .{
+        try writer.print("  {s}/{s} total={d} ready_to_capture={d} retry_capture={d} diagnostic_blocked={d} blocked_empty_source={d} diagnostic_source_blocked={d} source_ready={d} no_source_mapping={d} no_official_source={d} waiting_for_inputs={d} other={d} next={s}\n", .{
             group.provider,
             group.family,
             group.summary.total,
@@ -156,6 +157,7 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
             group.summary.diagnostic_source_blocked,
             group.summary.source_ready,
             group.summary.no_source_mapping,
+            group.summary.no_official_source,
             group.summary.waiting_for_inputs,
             group.summary.other,
             actualCaptureReviewGroupNextAction(group.summary),
@@ -625,6 +627,7 @@ const ActualCaptureReviewSummary = struct {
     source_not_in_catalog: usize = 0,
     source_not_eligible: usize = 0,
     no_source_mapping: usize = 0,
+    no_official_source: usize = 0,
     waiting_for_inputs: usize = 0,
     other: usize = 0,
 
@@ -662,6 +665,8 @@ const ActualCaptureReviewSummary = struct {
             self.source_not_eligible += 1;
         } else if (std.mem.eql(u8, status, "no_source_mapping")) {
             self.no_source_mapping += 1;
+        } else if (std.mem.eql(u8, status, "no_official_source")) {
+            self.no_official_source += 1;
         } else if (std.mem.eql(u8, status, "waiting_for_inputs")) {
             self.waiting_for_inputs += 1;
         } else {
@@ -742,6 +747,7 @@ fn actualCaptureReviewGroupNextAction(summary: ActualCaptureReviewSummary) []con
     if (summary.source_not_in_catalog != 0) return "update_source_catalog_mappings";
     if (summary.source_not_eligible != 0) return "review_source_support_policy";
     if (summary.no_source_mapping != 0) return "add_source_mappings_or_manual_inputs";
+    if (summary.no_official_source != 0) return "provide_explicit_inputs";
     if (summary.waiting_for_inputs != 0 or summary.source_has_hints != 0) return "resolve_source_prerequisites";
     return "review_group_evidence";
 }
@@ -847,6 +853,7 @@ fn writeActualCaptureReviewSummaryJson(summary: ActualCaptureReviewSummary, writ
     try writeJsonCountField(writer, "source_not_in_catalog", summary.source_not_in_catalog, true);
     try writeJsonCountField(writer, "source_not_eligible", summary.source_not_eligible, true);
     try writeJsonCountField(writer, "no_source_mapping", summary.no_source_mapping, true);
+    try writeJsonCountField(writer, "no_official_source", summary.no_official_source, true);
     try writeJsonCountField(writer, "waiting_for_inputs", summary.waiting_for_inputs, true);
     try writeJsonCountField(writer, "other", summary.other, false);
     try writer.writeByte('}');
@@ -1044,22 +1051,28 @@ fn actualCaptureMissingInputCandidateReview(
         .next_action = "capture or normalize the listed source routes to discover required identifiers",
     };
     var saw_source = false;
+    var saw_no_official_source = false;
+    var saw_unmapped_input = false;
 
     for (route.path_params) |param| {
         if (!param.required) continue;
         if (actualCapturePathParamHint(route, param.name, hints) != null) continue;
-        if (try actualCaptureMissingInputSourceReview(gpa, route, routes, captures, source_evidence, hints, "path", param.name, &fallback, &saw_source)) |review| return review;
+        if (try actualCaptureMissingInputSourceReview(gpa, route, routes, captures, source_evidence, hints, "path", param.name, &fallback, &saw_source, &saw_no_official_source, &saw_unmapped_input)) |review| return review;
     }
     for (route.query_params) |param| {
         if (!param.required) continue;
         if (actualCaptureHasQueryParamHint(route, param.name, hints)) continue;
-        if (try actualCaptureMissingInputSourceReview(gpa, route, routes, captures, source_evidence, hints, "query", param.name, &fallback, &saw_source)) |review| return review;
+        if (try actualCaptureMissingInputSourceReview(gpa, route, routes, captures, source_evidence, hints, "query", param.name, &fallback, &saw_source, &saw_no_official_source, &saw_unmapped_input)) |review| return review;
     }
     for (route.header_params) |param| {
         if (!param.required) continue;
-        if (try actualCaptureMissingInputSourceReview(gpa, route, routes, captures, source_evidence, hints, "header", param.name, &fallback, &saw_source)) |review| return review;
+        if (try actualCaptureMissingInputSourceReview(gpa, route, routes, captures, source_evidence, hints, "header", param.name, &fallback, &saw_source, &saw_no_official_source, &saw_unmapped_input)) |review| return review;
     }
 
+    if (!saw_source and saw_no_official_source and !saw_unmapped_input) return .{
+        .status = "no_official_source",
+        .next_action = "provide the identifier or bounded read window explicitly",
+    };
     if (!saw_source) return .{
         .status = "no_source_mapping",
         .next_action = "add a source mapping for the required route parameter",
@@ -1078,9 +1091,18 @@ fn actualCaptureMissingInputSourceReview(
     input_name: []const u8,
     fallback: *ActualCaptureCandidateReview,
     saw_source: *bool,
+    saw_no_official_source: *bool,
+    saw_unmapped_input: *bool,
 ) !?ActualCaptureCandidateReview {
     const sources = actualCaptureMissingInputSources(route, input_source, input_name);
-    if (sources.len == 0) return null;
+    if (sources.len == 0) {
+        if (std.mem.eql(u8, actualCaptureUnmappedSourceResult(route, input_source, input_name), "no_official_source")) {
+            saw_no_official_source.* = true;
+        } else {
+            saw_unmapped_input.* = true;
+        }
+        return null;
+    }
     saw_source.* = true;
     for (sources) |source| {
         const source_route = actualCaptureFindRouteByOperationId(routes, route.provider, source.operation_id);
@@ -1107,6 +1129,7 @@ fn actualCaptureReviewFromSourceResult(result: []const u8, next_action: []const 
     if (std.mem.eql(u8, result, "captured_error")) return .{ .status = "source_capture_error", .next_action = next_action };
     if (std.mem.eql(u8, result, "not_in_catalog")) return .{ .status = "source_not_in_catalog", .next_action = next_action };
     if (std.mem.eql(u8, result, "not_eligible")) return .{ .status = "source_not_eligible", .next_action = next_action };
+    if (std.mem.eql(u8, result, "no_official_source")) return .{ .status = "no_official_source", .next_action = next_action };
     return .{ .status = "waiting_for_inputs", .next_action = next_action };
 }
 
@@ -1117,7 +1140,8 @@ fn actualCaptureSourceReviewIsImmediate(status: []const u8) bool {
         std.mem.eql(u8, status, "inspect_source_body") or
         std.mem.eql(u8, status, "diagnostic_source_blocked") or
         std.mem.eql(u8, status, "source_capture_error") or
-        std.mem.eql(u8, status, "source_not_in_catalog");
+        std.mem.eql(u8, status, "source_not_in_catalog") or
+        std.mem.eql(u8, status, "no_official_source");
 }
 
 fn routeReadPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
@@ -1214,7 +1238,7 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio actual route capture plan\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "review_summary total=3 ready_to_capture=2 retry_capture=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "review_groups\n  hostinger/hostinger-vps total=3 ready_to_capture=2 retry_capture=1 diagnostic_blocked=0 blocked_empty_source=0 diagnostic_source_blocked=0 source_ready=0 no_source_mapping=0 waiting_for_inputs=0 other=0 next=plan_ready_captures") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "review_groups\n  hostinger/hostinger-vps total=3 ready_to_capture=2 retry_capture=1 diagnostic_blocked=0 blocked_empty_source=0 diagnostic_source_blocked=0 source_ready=0 no_source_mapping=0 no_official_source=0 waiting_for_inputs=0 other=0 next=plan_ready_captures") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "command actual_captures: cloudio coverage actual-captures hostinger --family hostinger-vps --limit 2") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "command capture_ready: cloudio route capture-ready hostinger --family hostinger-vps --limit 2") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "state=missing review=ready_to_capture support=partial op=VPS_getVirtualMachineDetailsV1 events=0") != null);
@@ -1729,6 +1753,8 @@ test "explains Cloudflare SSL and log missing inputs with official source routes
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"action_time\",\"source_operation_id\":\"audit-logs-v2-get-account-audit-logs\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"ray_id\",\"source_operation_id\":null,\"hint_kind\":null,\"hint_count\":0,\"result\":\"no_official_source\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"end\",\"source_operation_id\":null,\"hint_kind\":null,\"hint_count\":0,\"result\":\"no_official_source\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_status\":\"no_official_source\",\"next_action\":\"provide the identifier or bounded read window explicitly\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"no_source_mapping\":0,\"no_official_source\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation audit-logs-v2-get-account-audit-logs --path-param account_id='acct-1' --query-param before='") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "--query-param since='") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_before") == null);
@@ -2008,6 +2034,7 @@ test "explains Hostinger missing input source routes for broad child groups" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"captured_empty\",\"next_action\":\"source collection is empty; no child identifiers are available\",\"source_status\":\"ok\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"body_shape\":\"array\",\"body_item_count\":0,\"body_bytes\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"websiteId\",\"source_operation_id\":null,\"hint_kind\":null,\"hint_count\":0,\"result\":\"no_official_source\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_status\":\"no_official_source\",\"next_action\":\"provide the identifier or bounded read window explicitly\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "horizons_getWebsitesV1") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"username\",\"source_operation_id\":\"hosting_listWebsitesV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"name\",\"source_operation_id\":\"hosting_listAccountDatabasesV1\"") != null);
