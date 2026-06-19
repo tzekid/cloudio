@@ -969,6 +969,10 @@ test "parses Hostinger Docker and Reach child identifier spellings" {
 
     var inventory = try parseInventoryRows(allocator, "hostinger-child-inventory", "1307809",
         \\{"data":[
+        \\  {"projectName":"cloudio-stack","status":"running","compose":"services:\\n  web:\\n    image: caddy:latest"},
+        \\  {"project_name":"worker-stack","state":"stopped","containers":[{"id":"ctr-1","name":"worker","image":"worker:latest","status":"running"}]},
+        \\  {"logs":"pulled image\\nstarted worker\\n","lines":2},
+        \\  {"line":"worker log line"},
         \\  {"profileUuid":"profile-1","name":"Main profile","status":"active"},
         \\  {"segmentUuid":"segment-1","name":"Customers","status":"enabled"},
         \\  {"profile_uuid":"profile-2","segment_uuid":"segment-2","name":"Dormant contacts"}
@@ -976,13 +980,22 @@ test "parses Hostinger Docker and Reach child identifier spellings" {
     );
     defer inventory.deinit(allocator);
 
-    try std.testing.expectEqual(@as(usize, 3), inventory.items.len);
-    try std.testing.expectEqualStrings("profile-1", inventory.items[0].resource_id);
-    try std.testing.expectEqualStrings("profile-1", inventory.items[0].related_id orelse "");
-    try std.testing.expectEqualStrings("segment-1", inventory.items[1].resource_id);
-    try std.testing.expectEqualStrings("segment-1", inventory.items[1].related_id orelse "");
-    try std.testing.expectEqualStrings("profile-2", inventory.items[2].resource_id);
-    try std.testing.expectEqualStrings("profile-2", inventory.items[2].related_id orelse "");
+    try std.testing.expectEqual(@as(usize, 8), inventory.items.len);
+    try std.testing.expectEqualStrings("cloudio-stack", inventory.items[0].resource_id);
+    try std.testing.expectEqualStrings("running", inventory.items[0].status orelse "");
+    try std.testing.expectEqualStrings("worker-stack", inventory.items[1].resource_id);
+    try std.testing.expectEqualStrings("stopped", inventory.items[1].status orelse "");
+    try std.testing.expectEqualStrings("ctr-1", inventory.items[2].resource_id);
+    try std.testing.expectEqualStrings("worker", inventory.items[2].name orelse "");
+    try std.testing.expectEqualStrings("running", inventory.items[2].status orelse "");
+    try std.testing.expectEqualStrings("1307809", inventory.items[3].resource_id);
+    try std.testing.expectEqualStrings("worker log line", inventory.items[4].resource_id);
+    try std.testing.expectEqualStrings("profile-1", inventory.items[5].resource_id);
+    try std.testing.expectEqualStrings("profile-1", inventory.items[5].related_id orelse "");
+    try std.testing.expectEqualStrings("segment-1", inventory.items[6].resource_id);
+    try std.testing.expectEqualStrings("segment-1", inventory.items[6].related_id orelse "");
+    try std.testing.expectEqualStrings("profile-2", inventory.items[7].resource_id);
+    try std.testing.expectEqualStrings("profile-2", inventory.items[7].related_id orelse "");
 }
 
 fn isVirtualMachineResource(value: std.json.Value) bool {

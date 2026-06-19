@@ -423,14 +423,14 @@ fn updateReadLevelEvidence(evidence: *LevelProviderEvidence, row: CoverageRoute)
             evidence.l2_partial_reads += 1;
             if (has_evidence) {
                 evidence.l2_read_evidence += 1;
-                evidence.l3_generic_inventory_candidates += 1;
-                if (isTypedTableCoverageCandidate(row.route.provider.name(), row.route.tag)) evidence.l3_typed_table_evidence += 1;
+                countReadL3Evidence(evidence, row, true);
             }
         },
         .blocked_permission => {
             if (has_evidence) {
                 evidence.l2_read_evidence += 1;
                 evidence.l2_diagnostic_reads += 1;
+                countReadL3Evidence(evidence, row, false);
             }
         },
         .planned => evidence.pending_reads += 1,
@@ -458,6 +458,26 @@ fn updateDryRunLevelEvidence(evidence: *LevelProviderEvidence, row: CoverageRout
 
 fn hasCoverageEvidence(tests: []const u8) bool {
     return tests.len != 0 and !std.mem.eql(u8, tests, "missing");
+}
+
+fn countReadL3Evidence(evidence: *LevelProviderEvidence, row: CoverageRoute, generic_by_default: bool) void {
+    const typed_candidate = isTypedTableCoverageCandidate(row.route.provider.name(), row.route.tag);
+    const explicit_typed = typed_candidate and hasExplicitTypedInventoryEvidence(row.tests);
+    if (generic_by_default or explicit_typed) evidence.l3_generic_inventory_candidates += 1;
+    if (typed_candidate and (generic_by_default or explicit_typed)) evidence.l3_typed_table_evidence += 1;
+}
+
+fn hasExplicitTypedInventoryEvidence(tests: []const u8) bool {
+    return testsContainToken(tests, "typed_inventory") or testsContainToken(tests, "typed_table");
+}
+
+fn testsContainToken(tests: []const u8, token: []const u8) bool {
+    var parts = std.mem.splitScalar(u8, tests, ',');
+    while (parts.next()) |part| {
+        const trimmed = std.mem.trim(u8, part, " \t\r\n");
+        if (std.mem.eql(u8, trimmed, token)) return true;
+    }
+    return false;
 }
 
 fn isTypedTableCoverageCandidate(provider: []const u8, tag: []const u8) bool {
@@ -489,6 +509,9 @@ fn isHostingerTypedInventoryTag(tag: []const u8) bool {
         "Hosting:",
         "Ecommerce:",
         "Horizons:",
+        "Reach:",
+        "Domain Access Verifier:",
+        "Verification",
         "VPS:",
         "Docker",
         "Monarx",
@@ -581,7 +604,7 @@ test "summarizes provider coverage levels from route manifests" {
         \\
     ;
     const hostinger =
-        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker","operation_id":"VPS_getProjectListV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,live_smoke_blocked","deprecated":false,"notes":"unsupported OS diagnostic"}
+        \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"GET","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker","operation_id":"VPS_getProjectListV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"blocked_permission","mode":"read","tests":"fixture,typed_inventory,live_smoke_blocked","deprecated":false,"notes":"unsupported OS diagnostic with typed fixture coverage"}
         \\{"provider":"hostinger","tag":"VPS: Docker Manager","method":"POST","path":"/api/vps/v1/virtual-machines/{virtualMachineId}/docker","operation_id":"VPS_createNewProjectV1","path_params":[{"name":"virtualMachineId","required":true}],"query_params":[],"header_params":[],"request_body":{"required":true,"content_types":["application/json"],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"dry_run","tests":"fixture","deprecated":false,"notes":"dry-run reviewed"}
         \\
     ;
@@ -596,6 +619,8 @@ test "summarizes provider coverage levels from route manifests" {
     try std.testing.expectEqual(@as(usize, 0), levels.cloudflare.pending_mutation_dry_runs);
     try std.testing.expectEqual(@as(usize, 1), levels.cloudflare.l3_typed_table_evidence);
     try std.testing.expectEqual(@as(usize, 1), levels.hostinger.l2_diagnostic_reads);
+    try std.testing.expectEqual(@as(usize, 1), levels.hostinger.l3_generic_inventory_candidates);
+    try std.testing.expectEqual(@as(usize, 1), levels.hostinger.l3_typed_table_evidence);
     try std.testing.expectEqual(@as(usize, 1), levels.hostinger.dry_run_evidence);
 
     var out = std.Io.Writer.Allocating.init(allocator);
@@ -608,6 +633,7 @@ test "summarizes provider coverage levels from route manifests" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"pending_reads\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"name\":\"hostinger\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"l2_diagnostic_reads\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"l3_typed_table_evidence\":1") != null);
 }
 
 test "ranks provider coverage level tag rows" {

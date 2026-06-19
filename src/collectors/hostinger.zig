@@ -900,6 +900,46 @@ test "persists normalized Hostinger resource rows" {
     try std.testing.expectEqualStrings("1.2.3.4", columnText(inventory_stmt, 4) orelse "");
 }
 
+test "persists typed Hostinger Docker project inventory rows" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/hostinger-docker-inventory.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    try persistResourceRows(allocator, &db, "docker", "1307809",
+        \\{"data":[
+        \\  {"projectName":"cloudio-stack","status":"running"},
+        \\  {"project_name":"worker-stack","state":"stopped","containers":[{"id":"ctr-1","name":"worker","status":"running"}]},
+        \\  {"logs":"pulled image\\nstarted worker\\n","lines":2},
+        \\  {"line":"worker log line"}
+        \\]}
+    );
+
+    try std.testing.expectEqual(@as(i64, 3), try db.countTable("hostinger_resources"));
+    try std.testing.expectEqual(@as(i64, 5), try db.countTable("hostinger_inventory_items"));
+    const project_stmt = try db.prepare("SELECT resource_id, status FROM hostinger_inventory_items WHERE kind = 'docker' AND resource_id = 'cloudio-stack'");
+    defer _ = sqlite.sqlite3_finalize(project_stmt);
+    try std.testing.expectEqual(@as(c_int, sqlite.SQLITE_ROW), sqlite.sqlite3_step(project_stmt));
+    try std.testing.expectEqualStrings("cloudio-stack", columnText(project_stmt, 0) orelse "");
+    try std.testing.expectEqualStrings("running", columnText(project_stmt, 1) orelse "");
+
+    const container_stmt = try db.prepare("SELECT resource_id, display_name, status FROM hostinger_inventory_items WHERE kind = 'docker' AND resource_id = 'ctr-1'");
+    defer _ = sqlite.sqlite3_finalize(container_stmt);
+    try std.testing.expectEqual(@as(c_int, sqlite.SQLITE_ROW), sqlite.sqlite3_step(container_stmt));
+    try std.testing.expectEqualStrings("ctr-1", columnText(container_stmt, 0) orelse "");
+    try std.testing.expectEqualStrings("worker", columnText(container_stmt, 1) orelse "");
+    try std.testing.expectEqualStrings("running", columnText(container_stmt, 2) orelse "");
+
+    const log_stmt = try db.prepare("SELECT resource_id FROM hostinger_inventory_items WHERE kind = 'docker' AND resource_id = 'worker log line'");
+    defer _ = sqlite.sqlite3_finalize(log_stmt);
+    try std.testing.expectEqual(@as(c_int, sqlite.SQLITE_ROW), sqlite.sqlite3_step(log_stmt));
+    try std.testing.expectEqualStrings("worker log line", columnText(log_stmt, 0) orelse "");
+}
+
 test "missing Hostinger token records inventory snapshot without live API call" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});

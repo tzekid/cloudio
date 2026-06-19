@@ -617,7 +617,7 @@ pub const usage_text =
     \\  cloudio coverage actual-captures hostinger --family hostinger-vps --limit 20 --json
     \\  cloudio coverage families control-plane --limit 0 --bundle --plans --json
     \\
-    \\Families include accounts, zones, dns, ssl-tls, access, tunnels, rulesets, logs, cache, security, tokens, memberships, billing, domains, hosting, docker, hostinger-vps, public-keys, custom-pages, healthchecks, and load-balancing.
+    \\Families include accounts, zones, dns, ssl-tls, access, tunnels, rulesets, logs, cache, security, tokens, memberships, billing, domains, hosting, docker, reach, ecommerce, horizons, verification, hostinger-vps, public-keys, custom-pages, healthchecks, and load-balancing.
     \\
 ;
 

@@ -95,6 +95,10 @@ pub const WorkplanFamily = enum {
     domains,
     hosting,
     docker,
+    reach,
+    ecommerce,
+    horizons,
+    verification,
     hostinger_vps,
     public_keys,
     custom_pages,
@@ -120,6 +124,10 @@ pub const WorkplanFamily = enum {
         if (std.mem.eql(u8, value, "domains") or std.mem.eql(u8, value, "domain")) return .domains;
         if (std.mem.eql(u8, value, "hosting")) return .hosting;
         if (std.mem.eql(u8, value, "docker")) return .docker;
+        if (std.mem.eql(u8, value, "reach")) return .reach;
+        if (std.mem.eql(u8, value, "ecommerce") or std.mem.eql(u8, value, "e-commerce")) return .ecommerce;
+        if (std.mem.eql(u8, value, "horizons") or std.mem.eql(u8, value, "horizon")) return .horizons;
+        if (std.mem.eql(u8, value, "verification") or std.mem.eql(u8, value, "verifications") or std.mem.eql(u8, value, "verifier")) return .verification;
         if (std.mem.eql(u8, value, "hostinger-vps") or std.mem.eql(u8, value, "hostinger_vps") or std.mem.eql(u8, value, "vps")) return .hostinger_vps;
         if (std.mem.eql(u8, value, "public-keys") or std.mem.eql(u8, value, "public_keys") or std.mem.eql(u8, value, "keys")) return .public_keys;
         if (std.mem.eql(u8, value, "custom-pages") or std.mem.eql(u8, value, "custom_pages")) return .custom_pages;
@@ -148,6 +156,10 @@ pub const WorkplanFamily = enum {
             .domains => "domains",
             .hosting => "hosting",
             .docker => "docker",
+            .reach => "reach",
+            .ecommerce => "ecommerce",
+            .horizons => "horizons",
+            .verification => "verification",
             .hostinger_vps => "hostinger-vps",
             .public_keys => "public-keys",
             .custom_pages => "custom-pages",
@@ -320,6 +332,10 @@ pub fn tagIsControlPlane(provider: []const u8, tag: []const u8) bool {
 pub fn tagFamily(provider: []const u8, tag: []const u8) ?WorkplanFamily {
     if (std.mem.eql(u8, provider, "hostinger")) {
         if (tagContainsAny(tag, &.{ "Docker", "Container" })) return .docker;
+        if (tagContainsAny(tag, &.{"Reach"})) return .reach;
+        if (tagContainsAny(tag, &.{"Ecommerce"})) return .ecommerce;
+        if (tagContainsAny(tag, &.{"Horizons"})) return .horizons;
+        if (tagContainsAny(tag, &.{ "Domain Access Verifier", "Verification", "Verifier" })) return .verification;
         if (tagContainsAny(tag, &.{ "Malware", "Monarx", "Firewall", "Security" })) return .security;
         if (tagContainsAny(tag, &.{ "Public key", "SSH key" })) return .public_keys;
         if (tagContainsAny(tag, &.{ "VPS", "Virtual machine", "VirtualMachine", "Post-install" })) return .hostinger_vps;
@@ -677,4 +693,9 @@ test "classifies broad provider route families" {
     try std.testing.expectEqual(@as(?WorkplanFamily, .access), tagFamily("cloudflare", "Infrastructure Access Targets"));
     try std.testing.expectEqual(@as(?WorkplanFamily, .hostinger_vps), tagFamily("hostinger", "VPS: Virtual machine"));
     try std.testing.expectEqual(@as(?WorkplanFamily, .security), tagFamily("hostinger", "Monarx Malware Scanner"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .docker), tagFamily("hostinger", "VPS: Docker Manager"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .reach), tagFamily("hostinger", "Reach: Segments"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .ecommerce), tagFamily("hostinger", "Ecommerce: Stores"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .horizons), tagFamily("hostinger", "Horizons: Websites"));
+    try std.testing.expectEqual(@as(?WorkplanFamily, .verification), tagFamily("hostinger", "Domain Access Verifier: Verifications"));
 }
