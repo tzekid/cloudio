@@ -16,8 +16,10 @@ pub const ProviderFilter = provider_routes.ProviderFilter;
 pub const RouteFilter = app_provider_coverage_routes.RouteFilter;
 pub const CoverageRoute = app_provider_coverage_routes.CoverageRoute;
 pub const CoverageRoutes = app_provider_coverage_routes.CoverageRoutes;
+pub const WorkplanFamily = app_provider_coverage_routes.WorkplanFamily;
 pub const ActualCaptureHints = app_provider_coverage_actual_inputs.Hints;
 pub const ActualCaptureSourceSummary = app_provider_coverage_actual_inputs.SourceSummary;
+pub const ActualCaptureState = app_provider_coverage_actual_inputs.CaptureState;
 
 pub const ActualCaptureFocus = enum {
     all,
@@ -54,6 +56,31 @@ pub const ActualCaptureTotals = struct {
     candidate_routes: usize = 0,
     ready_candidates: usize = 0,
     capture_events: i64 = 0,
+};
+
+pub const ActualCaptureCandidateRank = struct {
+    route_index: usize,
+    state: ActualCaptureState,
+    focus_family: ?WorkplanFamily = null,
+    family_candidate_routes: usize = 0,
+    family_ready_candidates: usize = 0,
+    family_pending_read_gaps: usize = 0,
+    family_missing_tests: usize = 0,
+    route_ready: bool = false,
+    route_missing_inputs: usize = 0,
+    route_capture_events: i64 = 0,
+
+    pub fn familyPriority(self: ActualCaptureCandidateRank) usize {
+        return self.family_pending_read_gaps;
+    }
+};
+
+pub const ActualCaptureCandidateOrder = struct {
+    items: []ActualCaptureCandidateRank,
+
+    pub fn deinit(self: *ActualCaptureCandidateOrder, gpa: Allocator) void {
+        gpa.free(self.items);
+    }
 };
 
 pub const ActualCapturePlan = struct {
@@ -167,6 +194,29 @@ pub const ActualCapturePlan = struct {
         }
         return out;
     }
+
+    pub fn candidateOrder(self: ActualCapturePlan, gpa: Allocator) !ActualCaptureCandidateOrder {
+        var items = std.ArrayList(ActualCaptureCandidateRank).empty;
+        errdefer items.deinit(gpa);
+        const hints_value = self.hints();
+        for (self.routes.items, 0..) |row, route_index| {
+            if (!actualCaptureRouteInFocus(self.options, row)) continue;
+            const state = app_provider_coverage_actual_inputs.actualCaptureState(row.route, self.captures.items) orelse continue;
+            if (state == .ok) continue;
+            const route_status = app_provider_coverage_actual_inputs.actualRouteCaptureStatus(row.route.provider.name(), row.route.operation_id.?, self.captures.items);
+            try items.append(gpa, .{
+                .route_index = route_index,
+                .state = state,
+                .focus_family = app_provider_coverage_routes.tagFamily(row.route.provider.name(), row.route.tag),
+                .route_ready = app_provider_coverage_actual_inputs.actualCaptureReady(row.route, hints_value),
+                .route_missing_inputs = app_provider_coverage_actual_inputs.actualCaptureMissingInputCount(row.route, hints_value),
+                .route_capture_events = route_status.events,
+            });
+        }
+        addFamilyCandidateStats(self.routes.items, items.items);
+        sortCandidateOrder(self.routes.items, items.items);
+        return .{ .items = try items.toOwnedSlice(gpa) };
+    }
 };
 
 pub fn loadActualCapturePlanFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, options: ActualCaptureOptions) !ActualCapturePlan {
@@ -228,4 +278,109 @@ pub fn actualCaptureRouteInFocus(options: ActualCaptureOptions, row: CoverageRou
         .all => true,
         .control_plane => app_provider_coverage_routes.tagIsControlPlane(row.route.provider.name(), row.route.tag),
     };
+}
+
+fn addFamilyCandidateStats(routes: []const CoverageRoute, items: []ActualCaptureCandidateRank) void {
+    for (items) |*item| {
+        const item_route = routes[item.route_index];
+        for (items) |other| {
+            const other_route = routes[other.route_index];
+            if (!candidateFamilyMatches(item_route, item.*, other_route, other)) continue;
+            item.family_candidate_routes += 1;
+            if (other.route_ready) item.family_ready_candidates += 1;
+            if (staticReadGap(other_route)) {
+                item.family_pending_read_gaps += 1;
+                if (!hasCoverageEvidence(other_route.tests)) item.family_missing_tests += 1;
+            }
+        }
+    }
+}
+
+fn sortCandidateOrder(routes: []const CoverageRoute, items: []ActualCaptureCandidateRank) void {
+    var index: usize = 1;
+    while (index < items.len) : (index += 1) {
+        var cursor = index;
+        while (cursor > 0 and candidateRankLessThan(routes, items[cursor], items[cursor - 1])) : (cursor -= 1) {
+            const tmp = items[cursor - 1];
+            items[cursor - 1] = items[cursor];
+            items[cursor] = tmp;
+        }
+    }
+}
+
+fn candidateRankLessThan(routes: []const CoverageRoute, lhs: ActualCaptureCandidateRank, rhs: ActualCaptureCandidateRank) bool {
+    if (lhs.familyPriority() != rhs.familyPriority()) return lhs.familyPriority() > rhs.familyPriority();
+    if (lhs.family_ready_candidates != rhs.family_ready_candidates) return lhs.family_ready_candidates > rhs.family_ready_candidates;
+    if (lhs.family_candidate_routes != rhs.family_candidate_routes) return lhs.family_candidate_routes > rhs.family_candidate_routes;
+    if (actualCaptureStatePriority(lhs.state) != actualCaptureStatePriority(rhs.state)) return actualCaptureStatePriority(lhs.state) > actualCaptureStatePriority(rhs.state);
+    if (lhs.route_ready != rhs.route_ready) return lhs.route_ready;
+    if (lhs.route_missing_inputs != rhs.route_missing_inputs) return lhs.route_missing_inputs < rhs.route_missing_inputs;
+    const lhs_route = routes[lhs.route_index].route;
+    const rhs_route = routes[rhs.route_index].route;
+    const family_order = actualCaptureFamilyOrder(lhs.focus_family, rhs.focus_family);
+    if (family_order != .eq) return family_order == .lt;
+    const provider_order = std.mem.order(u8, lhs_route.provider.name(), rhs_route.provider.name());
+    if (provider_order != .eq) return provider_order == .lt;
+    const tag_order = std.mem.order(u8, lhs_route.tag, rhs_route.tag);
+    if (tag_order != .eq) return tag_order == .lt;
+    return lhs.route_index < rhs.route_index;
+}
+
+fn actualCaptureStatePriority(state: ActualCaptureState) usize {
+    return switch (state) {
+        .non_ok => 2,
+        .missing => 1,
+        .ok => 0,
+    };
+}
+
+fn actualCaptureFamilyOrder(lhs: ?WorkplanFamily, rhs: ?WorkplanFamily) std.math.Order {
+    return std.math.order(actualCaptureFamilyRank(lhs), actualCaptureFamilyRank(rhs));
+}
+
+fn actualCaptureFamilyRank(family: ?WorkplanFamily) usize {
+    return switch (family orelse .all) {
+        .hostinger_vps => 0,
+        .dns => 1,
+        .zones => 2,
+        .ssl_tls => 3,
+        .logs => 4,
+        .access => 5,
+        .tunnels => 6,
+        .rulesets => 7,
+        .cache => 8,
+        .security => 9,
+        .tokens => 10,
+        .memberships => 11,
+        .accounts => 12,
+        .billing => 13,
+        .domains => 14,
+        .hosting => 15,
+        .docker => 16,
+        .public_keys => 17,
+        .iam => 18,
+        .custom_pages => 19,
+        .healthchecks => 20,
+        .load_balancing => 21,
+        .all => 1000,
+    };
+}
+
+fn candidateFamilyMatches(item_route: CoverageRoute, item: ActualCaptureCandidateRank, other_route: CoverageRoute, other: ActualCaptureCandidateRank) bool {
+    if (!std.mem.eql(u8, item_route.route.provider.name(), other_route.route.provider.name())) return false;
+    if (item.focus_family == null or other.focus_family == null) return item.focus_family == null and other.focus_family == null;
+    return item.focus_family.? == other.focus_family.?;
+}
+
+fn staticReadGap(row: CoverageRoute) bool {
+    if (row.route.mode != .read) return false;
+    return switch (row.route.support) {
+        .planned => true,
+        .blocked_permission => !hasCoverageEvidence(row.tests),
+        .implemented, .partial, .unsafe_mutation, .deprecated, .not_applicable => false,
+    };
+}
+
+fn hasCoverageEvidence(tests: []const u8) bool {
+    return tests.len != 0 and !std.mem.eql(u8, tests, "missing");
 }

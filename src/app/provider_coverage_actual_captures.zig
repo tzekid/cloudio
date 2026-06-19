@@ -43,9 +43,9 @@ pub const ActualCaptureOptions = app_provider_coverage_actual_plan.ActualCapture
 pub const ActualCaptureFocus = app_provider_coverage_actual_plan.ActualCaptureFocus;
 const ActualCapturePlan = app_provider_coverage_actual_plan.ActualCapturePlan;
 const ActualCaptureTotals = app_provider_coverage_actual_plan.ActualCaptureTotals;
+const ActualCaptureCandidateRank = app_provider_coverage_actual_plan.ActualCaptureCandidateRank;
 const loadActualCapturePlanFromFiles = app_provider_coverage_actual_plan.loadActualCapturePlanFromFiles;
 const loadActualCapturePlanFromText = app_provider_coverage_actual_plan.loadActualCapturePlanFromText;
-const actualCaptureRouteInFocus = app_provider_coverage_actual_plan.actualCaptureRouteInFocus;
 
 const actualCaptureRouteFilter = app_provider_coverage_actual_inputs.actualCaptureRouteFilter;
 const actualCaptureState = app_provider_coverage_actual_inputs.actualCaptureState;
@@ -74,8 +74,10 @@ pub const ActualReadyCaptureOptions = app_provider_coverage_actual_ready.ActualR
 fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
     const totals_value = plan.totals();
     const source_summary = try plan.sourceSummary(gpa);
+    var order = try plan.candidateOrder(gpa);
+    defer order.deinit(gpa);
     try writer.writeAll("Cloudio actual route capture plan\n");
-    try writer.writeAll("rank: official GET/read routes missing an OK route.capture audit event\n");
+    try writer.writeAll("rank: family static read gaps, ready capture inputs, then official GET/read routes missing an OK route.capture audit event\n");
     try writer.print("filter provider={s} focus={s}", .{ plan.options.filter.provider.name(), plan.options.focus.name() });
     if (plan.options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
     if (plan.options.filter.family != .all) try writer.print(" family={s}", .{plan.options.filter.family.name()});
@@ -123,10 +125,9 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
     var current_provider: ?[]const u8 = null;
     var current_tag: ?[]const u8 = null;
     const hints_value = plan.hints();
-    for (plan.routes.items) |row| {
-        if (!actualCaptureRouteInFocus(plan.options, row)) continue;
-        const state = actualCaptureState(row.route, plan.captures.items) orelse continue;
-        if (state == .ok) continue;
+    for (order.items) |rank| {
+        const row = plan.routes.items[rank.route_index];
+        const state = rank.state;
         if (plan.options.limit != 0 and visible >= plan.options.limit) {
             omitted += 1;
             continue;
@@ -143,13 +144,17 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
             try writer.print("  {s}\n", .{row.route.tag});
         }
         const route_status = actualRouteCaptureStatus(provider_name, row.route.operation_id.?, plan.captures.items);
-        try writer.print("    {s} {s} | state={s} support={s} op={s} events={d}", .{
+        try writer.print("    {s} {s} | state={s} support={s} op={s} events={d} family_priority={d} family_pending_read_gaps={d} family_ready={d}/{d}", .{
             row.route.method.name(),
             row.route.path_template,
             state.name(),
             @tagName(row.route.support),
             row.route.operation_id.?,
             route_status.events,
+            rank.familyPriority(),
+            rank.family_pending_read_gaps,
+            rank.family_ready_candidates,
+            rank.family_candidate_routes,
         });
         if (route_status.latest_at.len != 0) try writer.print(" latest={s}", .{route_status.latest_at});
         try writer.writeByte('\n');
@@ -189,6 +194,8 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
 fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: anytype) !void {
     const totals_value = plan.totals();
     const source_summary = try plan.sourceSummary(gpa);
+    var order = try plan.candidateOrder(gpa);
+    defer order.deinit(gpa);
     try writer.writeByte('{');
     try writeJsonField(writer, "kind", "coverage_actual_captures", true);
     try writer.writeAll("\"filter\":");
@@ -197,7 +204,7 @@ fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: a
     try writeJsonField(writer, "focus", plan.options.focus.name(), true);
     try writeJsonCountField(writer, "limit", plan.options.limit, true);
     try writeJsonBoolField(writer, "include_plans", plan.options.include_plans, true);
-    try writeJsonField(writer, "rank", "official GET/read routes missing an OK route.capture audit event", true);
+    try writeJsonField(writer, "rank", "family static read gaps, ready capture inputs, then official GET/read routes missing an OK route.capture audit event", true);
     try writeJsonCountField(writer, "loaded_capture_operation_status_rows", plan.captures.items.len, true);
     try writeJsonCountField(writer, "loaded_source_evidence_rows", plan.source_evidence.items.len, true);
     try writeJsonCountField(writer, "configured_domain_hints", plan.options.configured_domains.len, true);
@@ -218,17 +225,16 @@ fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: a
     var omitted: usize = 0;
     var first = true;
     const hints_value = plan.hints();
-    for (plan.routes.items) |row| {
-        if (!actualCaptureRouteInFocus(plan.options, row)) continue;
-        const state = actualCaptureState(row.route, plan.captures.items) orelse continue;
-        if (state == .ok) continue;
+    for (order.items) |rank| {
+        const row = plan.routes.items[rank.route_index];
+        const state = rank.state;
         if (plan.options.limit != 0 and visible >= plan.options.limit) {
             omitted += 1;
             continue;
         }
         visible += 1;
         try writeMaybeJsonComma(writer, &first);
-        try writeActualCaptureCandidateJson(gpa, row, state, plan.routes.items, plan.captures.items, plan.source_evidence.items, hints_value, plan.options, writer);
+        try writeActualCaptureCandidateJson(gpa, row, state, rank, plan.routes.items, plan.captures.items, plan.source_evidence.items, hints_value, plan.options, writer);
     }
 
     try writer.writeAll("],");
@@ -589,6 +595,7 @@ fn writeActualCaptureCandidateJson(
     gpa: Allocator,
     row: CoverageRoute,
     state: ActualCaptureState,
+    rank: ActualCaptureCandidateRank,
     routes: []const CoverageRoute,
     captures: []const db_store.RouteCaptureEvidenceRow,
     source_evidence: []const db_store.RouteSourceEvidenceRow,
@@ -604,6 +611,11 @@ fn writeActualCaptureCandidateJson(
     try writeJsonField(writer, "provider", route.provider.name(), true);
     try writeJsonField(writer, "tag", route.tag, true);
     try writeJsonNullableStringField(writer, "focus_family", if (app_provider_coverage_routes.tagFamily(route.provider.name(), route.tag)) |family| family.name() else null, true);
+    try writeJsonCountField(writer, "family_priority", rank.familyPriority(), true);
+    try writeJsonCountField(writer, "family_candidate_routes", rank.family_candidate_routes, true);
+    try writeJsonCountField(writer, "family_ready_candidates", rank.family_ready_candidates, true);
+    try writeJsonCountField(writer, "family_pending_read_gaps", rank.family_pending_read_gaps, true);
+    try writeJsonCountField(writer, "family_missing_tests", rank.family_missing_tests, true);
     try writeJsonField(writer, "method", route.method.name(), true);
     try writeJsonField(writer, "path_template", route.path_template, true);
     try writeJsonField(writer, "operation_id", route.operation_id.?, true);
@@ -779,6 +791,45 @@ test "filters actual capture plans to control-plane families" {
     try std.testing.expect(std.mem.indexOf(u8, all_json, "\"focus\":\"all\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, all_json, "\"official_read_routes\":3") != null);
     try std.testing.expect(std.mem.indexOf(u8, all_json, "catalog-list") != null);
+}
+
+test "ranks actual captures by family coverage gaps before manifest order" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-capture-rank.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertCloudflareAccount("acct-1", "Main account", "standard", "active", "{\"id\":\"acct-1\"}");
+    try db.upsertCloudflareZone("zone-1", "plosca.ru", "acct-1", "active", false, "full", "ns1.example,ns2.example", "{\"id\":\"zone-1\"}");
+
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"low static priority but first in manifest"}
+        \\{"provider":"cloudflare","tag":"SSL Universal","method":"GET","path":"/zones/{zone_id}/ssl/universal/settings","operation_id":"universal-ssl-settings-for-a-zone-get-universal-ssl-settings","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"high static read gap should rank first"}
+        \\{"provider":"cloudflare","tag":"Access applications","method":"GET","path":"/accounts/{account_id}/access/apps","operation_id":"access-applications-list-access-applications","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ready capture but no static family gap"}
+        \\
+    ;
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, cloudflare, "", &db, .{
+        .focus = .control_plane,
+        .limit = 0,
+        .configured_domains = &.{"plosca.ru"},
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+
+    const ssl_index = std.mem.indexOf(u8, json, "\"operation_id\":\"universal-ssl-settings-for-a-zone-get-universal-ssl-settings\"") orelse return error.ExpectedSslCandidate;
+    const accounts_index = std.mem.indexOf(u8, json, "\"operation_id\":\"accounts-list\"") orelse return error.ExpectedAccountsCandidate;
+    const access_index = std.mem.indexOf(u8, json, "\"operation_id\":\"access-applications-list-access-applications\"") orelse return error.ExpectedAccessCandidate;
+    try std.testing.expect(ssl_index < accounts_index);
+    try std.testing.expect(ssl_index < access_index);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"family_priority\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"family_pending_read_gaps\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"family_missing_tests\":1") != null);
 }
 
 test "plans derived Hostinger VPS detail captures from captured resource hints" {
