@@ -23,6 +23,7 @@ pub const db = struct {
 pub const app = struct {
     pub const caddy = @import("app_caddy");
     pub const cloudflare = @import("app_cloudflare");
+    pub const cloudflare_overview = @import("app_cloudflare_overview");
     pub const coverage = @import("app_coverage");
     pub const database = @import("app_database");
     pub const doctor = @import("app_doctor");
@@ -80,6 +81,7 @@ test "facade exposes stable integration modules" {
     _ = app.cloudflare.Context;
     _ = app.cloudflare.AccountEndpoint;
     _ = app.cloudflare.DnsRecordMutationArgs;
+    _ = app.cloudflare_overview.Overview;
     _ = app.coverage.Summary;
     _ = app.coverage.CaptureOptions;
     _ = app.coverage.ActualCaptureFocus;

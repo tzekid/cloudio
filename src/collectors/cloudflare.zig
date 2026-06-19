@@ -151,6 +151,7 @@ pub const ZoneMutationArgs = provider_cloudflare.ZoneMutationArgs;
 pub const ZoneMutationEndpoint = provider_cloudflare.ZoneMutationEndpoint;
 
 const max_command_bytes = 4 * 1024 * 1024;
+const diagnostic_resolver_timeout_seconds = "5";
 const runCommand = core_process.run;
 
 pub const Output = core_output.Output;
@@ -4159,9 +4160,10 @@ pub fn diagnoseDomain(io: Io, gpa: Allocator, db: *Db, domain: []const u8, captu
     defer gpa.free(tcp_443);
     const https_url = try std.fmt.allocPrint(gpa, "https://{s}/", .{domain});
     defer gpa.free(https_url);
+    const resolver_argv = diagnosticResolverArgv(domain);
     const checks = [_]struct { kind: []const u8, argv: []const []const u8 }{
         .{ .kind = "egress-ip", .argv = &.{ "curl", "-sS", "--max-time", "8", "https://ipinfo.io/ip" } },
-        .{ .kind = "resolver", .argv = &.{ "getent", "ahosts", domain } },
+        .{ .kind = "resolver", .argv = &resolver_argv },
         .{ .kind = "doh-cloudflare", .argv = &.{ "curl", "-sS", "--max-time", "8", "-H", "Accept: application/dns-json", doh_url } },
         .{ .kind = "tcp-22", .argv = &.{ "timeout", "5", "bash", "-lc", tcp_22 } },
         .{ .kind = "tcp-80", .argv = &.{ "timeout", "5", "bash", "-lc", tcp_80 } },
@@ -4196,6 +4198,10 @@ pub fn diagnoseDomain(io: Io, gpa: Allocator, db: *Db, domain: []const u8, captu
         return .{};
     }
     return .{ .text = try out.toOwnedSlice() };
+}
+
+fn diagnosticResolverArgv(domain: []const u8) [7][]const u8 {
+    return .{ "timeout", diagnostic_resolver_timeout_seconds, "sh", "-c", "getent ahosts \"$1\"", "cloudio-resolver", domain };
 }
 
 pub fn persistAccountRows(gpa: Allocator, db: *Db, body: []const u8) !void {
@@ -4663,6 +4669,17 @@ fn resourceTaggingZoneTarget(gpa: Allocator, zone_id: []const u8, args: Resource
         return try std.fmt.allocPrint(gpa, "{s}/{s}", .{ zone_id, resource_type });
     }
     return try gpa.dupe(u8, zone_id);
+}
+
+test "Cloudflare resolver diagnostic command is bounded" {
+    const argv = diagnosticResolverArgv("plosca.ru");
+    try std.testing.expectEqualStrings("timeout", argv[0]);
+    try std.testing.expectEqualStrings(diagnostic_resolver_timeout_seconds, argv[1]);
+    try std.testing.expectEqualStrings("sh", argv[2]);
+    try std.testing.expectEqualStrings("-c", argv[3]);
+    try std.testing.expectEqualStrings("getent ahosts \"$1\"", argv[4]);
+    try std.testing.expectEqualStrings("cloudio-resolver", argv[5]);
+    try std.testing.expectEqualStrings("plosca.ru", argv[6]);
 }
 
 test "persists Cloudflare account, zone, and DNS rows" {
