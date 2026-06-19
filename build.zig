@@ -303,9 +303,9 @@ pub fn build(b: *std.Build) void {
             .{ .name = "net_pagination", .module = net_pagination_mod },
             .{ .name = "provider_auth", .module = provider_auth_mod },
             .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
             .{ .name = "provider_route_result", .module = provider_route_result_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
+            .{ .name = "provider_transport", .module = provider_transport_mod },
         },
     });
     linkSqlite(collector_route_capture_mod);
@@ -445,7 +445,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "collector_route_capture", .module = collector_route_capture_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
             .{ .name = "provider_route_result", .module = provider_route_result_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
@@ -551,7 +550,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_auth", .module = provider_auth_mod },
             .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });

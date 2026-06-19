@@ -8,7 +8,6 @@ const app_provider_route_capture = @import("app_provider_route_capture");
 const db_store = @import("db_store");
 const provider_auth = @import("provider_auth");
 const provider_capabilities = @import("provider_capabilities");
-const provider_dispatch = @import("provider_dispatch");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -247,13 +246,12 @@ fn actualReadyCaptureRouteJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, rout
     if (!actualCaptureReadyWithPolicy(route, hints, options.include_blocked)) return error.ActualCaptureRouteNotReady;
     const owned_request = try actualReadyCaptureRequest(gpa, route, hints);
     defer owned_request.deinit(gpa);
-    const client = provider_dispatch.Client.init(auth);
     const capture_options = CaptureOptions{
         .paginate = routePaginationKind(route) != null,
         .max_pages = options.max_pages,
         .diagnostic_read = actualCaptureUsesDiagnosticRead(route, options.include_blocked),
     };
-    return try app_provider_route_capture.readRouteMetadataJson(io, gpa, db, client, route, owned_request.request, capture_options);
+    return try app_provider_route_capture.readRouteMetadataJson(io, gpa, db, auth, route, owned_request.request, capture_options);
 }
 
 fn actualReadyCaptureRequest(gpa: Allocator, route: provider_routes.Route, hints: ActualCaptureHints) !ActualReadyRequest {

@@ -4,7 +4,6 @@ const app_provider_route_capture_result = @import("app_provider_route_capture_re
 const app_provider_route_plan = @import("app_provider_route_plan");
 const db_store = @import("db_store");
 const provider_capabilities = @import("provider_capabilities");
-const provider_dispatch = @import("provider_dispatch");
 const provider_route_result = @import("provider_route_result");
 const provider_routes = @import("provider_routes");
 
@@ -24,13 +23,12 @@ const CapturedRoutePage = collector_route_capture.CapturedRoutePage;
 pub fn readMetadataJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, auth: Auth, db: *Db, options: CaptureOptions) ![]u8 {
     const route = try app_provider_route_plan.loadRoute(io, gpa, paths, input);
     defer route.deinit(gpa);
-    const client = provider_dispatch.Client.init(auth);
-    return try readRouteMetadataJson(io, gpa, db, client, route, input.request, options);
+    return try readRouteMetadataJson(io, gpa, db, auth, route, input.request, options);
 }
 
-pub fn readRouteMetadataJson(io: Io, gpa: Allocator, db: *Db, client: provider_dispatch.Client, route: provider_routes.Route, request: Request, options: CaptureOptions) ![]u8 {
-    if (options.paginate) return try paginatedReadMetadataJson(io, gpa, db, client, route, request, options);
-    const result = try collector_route_capture.callReadRouteResultRequest(io, gpa, client, route, request, options);
+pub fn readRouteMetadataJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, route: provider_routes.Route, request: Request, options: CaptureOptions) ![]u8 {
+    if (options.paginate) return try paginatedReadMetadataJson(io, gpa, db, auth, route, request, options);
+    const result = try collector_route_capture.callReadRouteResultRequest(io, gpa, auth, route, request, options);
     defer result.deinit(gpa);
     return try readResultJson(gpa, db, route, request, result, options);
 }
@@ -49,16 +47,16 @@ pub fn readResultJson(gpa: Allocator, db: *Db, route: provider_routes.Route, req
     });
 }
 
-pub fn paginatedReadMetadataJson(io: Io, gpa: Allocator, db: *Db, client: provider_dispatch.Client, route: provider_routes.Route, request: Request, options: CaptureOptions) ![]u8 {
-    var pages = try collector_route_capture.readPaginatedRoute(io, gpa, db, client, route, request, options);
+pub fn paginatedReadMetadataJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, route: provider_routes.Route, request: Request, options: CaptureOptions) ![]u8 {
+    var pages = try collector_route_capture.readPaginatedRoute(io, gpa, db, auth, route, request, options);
     defer pages.deinit(gpa);
     const views = try capturedPageViews(gpa, pages.items);
     defer gpa.free(views);
     return try app_provider_route_capture_result.paginatedCaptureMetadataJson(gpa, route, views, pages.max_pages);
 }
 
-pub fn callReadRouteResultRequest(io: Io, gpa: Allocator, client: provider_dispatch.Client, route: provider_routes.Route, request: Request, options: CaptureOptions) !provider_route_result.ReadRouteResult {
-    return try collector_route_capture.callReadRouteResultRequest(io, gpa, client, route, request, options);
+pub fn callReadRouteResultRequest(io: Io, gpa: Allocator, auth: Auth, route: provider_routes.Route, request: Request, options: CaptureOptions) !provider_route_result.ReadRouteResult {
+    return try collector_route_capture.callReadRouteResultRequest(io, gpa, auth, route, request, options);
 }
 
 pub fn routeSupportsPageQuery(route: provider_routes.Route) bool {

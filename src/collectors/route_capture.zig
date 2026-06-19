@@ -5,9 +5,9 @@ const db_store = @import("db_store");
 const net_pagination = @import("net_pagination");
 const provider_auth = @import("provider_auth");
 const provider_capabilities = @import("provider_capabilities");
-const provider_dispatch = @import("provider_dispatch");
 const provider_route_result = @import("provider_route_result");
 const provider_routes = @import("provider_routes");
+const provider_transport = @import("provider_transport");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
@@ -70,12 +70,12 @@ pub fn readRoute(
     io: Io,
     gpa: Allocator,
     db: *Db,
-    client: provider_dispatch.Client,
+    auth: Auth,
     route: provider_routes.Route,
     request: Request,
     options: CaptureOptions,
 ) !CapturedRoutePage {
-    const result = try callReadRouteResultRequest(io, gpa, client, route, request, options);
+    const result = try callReadRouteResultRequest(io, gpa, auth, route, request, options);
     defer result.deinit(gpa);
     return try captureReadResult(gpa, db, route, request, result, options, null);
 }
@@ -84,14 +84,14 @@ pub fn readPaginatedRoute(
     io: Io,
     gpa: Allocator,
     db: *Db,
-    client: provider_dispatch.Client,
+    auth: Auth,
     route: provider_routes.Route,
     request: Request,
     options: CaptureOptions,
 ) !CapturedRoutePages {
     return switch (provider_capabilities.routePaginationKind(route) orelse return error.RoutePaginationUnsupported) {
-        .page => try capturePagePaginatedRouteRead(io, gpa, db, client, route, request, options),
-        .cursor => try captureCursorPaginatedRouteRead(io, gpa, db, client, route, request, options),
+        .page => try capturePagePaginatedRouteRead(io, gpa, db, auth, route, request, options),
+        .cursor => try captureCursorPaginatedRouteRead(io, gpa, db, auth, route, request, options),
     };
 }
 
@@ -147,13 +147,17 @@ pub fn captureReadResult(
 pub fn callReadRouteResultRequest(
     io: Io,
     gpa: Allocator,
-    client: provider_dispatch.Client,
+    auth: Auth,
     route: provider_routes.Route,
     request: Request,
     options: CaptureOptions,
 ) !provider_route_result.ReadRouteResult {
-    if (options.diagnostic_read) return try client.callDiagnosticReadRouteResultRequest(io, gpa, route, request);
-    return try client.callReadRouteResultRequest(io, gpa, route, request);
+    const transport = provider_transport.ReadTransport.init(auth);
+    const response = if (options.diagnostic_read)
+        try transport.callDiagnosticReadRouteRequest(io, gpa, route, request)
+    else
+        try transport.callReadRouteRequest(io, gpa, route, request);
+    return provider_route_result.matchReadRouteResponse(route, response);
 }
 
 pub fn routeSupportsPageQuery(route: provider_routes.Route) bool {
@@ -168,7 +172,7 @@ fn capturePagePaginatedRouteRead(
     io: Io,
     gpa: Allocator,
     db: *Db,
-    client: provider_dispatch.Client,
+    auth: Auth,
     route: provider_routes.Route,
     request: Request,
     options: CaptureOptions,
@@ -181,7 +185,7 @@ fn capturePagePaginatedRouteRead(
     while (page <= max_pages) : (page += 1) {
         const page_request = try requestWithPage(gpa, request, page);
         defer page_request.deinit(gpa);
-        const result = try callReadRouteResultRequest(io, gpa, client, route, page_request.request, options);
+        const result = try callReadRouteResultRequest(io, gpa, auth, route, page_request.request, options);
         defer result.deinit(gpa);
         const captured = try captureReadResult(gpa, db, route, page_request.request, result, options, .{ .page = page });
         pages.append(gpa, captured) catch |err| {
@@ -202,7 +206,7 @@ fn captureCursorPaginatedRouteRead(
     io: Io,
     gpa: Allocator,
     db: *Db,
-    client: provider_dispatch.Client,
+    auth: Auth,
     route: provider_routes.Route,
     request: Request,
     options: CaptureOptions,
@@ -223,7 +227,7 @@ fn captureCursorPaginatedRouteRead(
             break :blk owned_request.?.request;
         } else request;
 
-        const result = try callReadRouteResultRequest(io, gpa, client, route, effective_request, options);
+        const result = try callReadRouteResultRequest(io, gpa, auth, route, effective_request, options);
         defer result.deinit(gpa);
         const captured = try captureReadResult(gpa, db, route, effective_request, result, options, .{ .cursor = page_index });
         pages.append(gpa, captured) catch |err| {
