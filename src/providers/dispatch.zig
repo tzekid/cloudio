@@ -1,5 +1,6 @@
 const std = @import("std");
 const net_http = @import("net_http");
+const provider_auth = @import("provider_auth");
 const provider_capabilities = @import("provider_capabilities");
 const provider_cloudflare = @import("provider_cloudflare");
 const provider_hostinger = @import("provider_hostinger");
@@ -10,17 +11,8 @@ const provider_routes = @import("provider_routes");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-pub const Auth = union(enum) {
-    cloudflare: provider_cloudflare.Auth,
-    hostinger: []const u8,
-
-    pub fn provider(self: Auth) provider_routes.Provider {
-        return switch (self) {
-            .cloudflare => .cloudflare,
-            .hostinger => .hostinger,
-        };
-    }
-};
+pub const Auth = provider_auth.Auth;
+pub const ReadRouteResult = provider_route_result.ReadRouteResult;
 
 pub const Client = struct {
     auth: Auth,
@@ -58,7 +50,7 @@ pub const Client = struct {
         if (!provider_capabilities.routeLiveReadSupported(route) and !(include_blocked_diagnostic and provider_capabilities.routeDiagnosticReadSupported(route))) return error.UnsupportedProviderRoute;
         if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
         try route.validateRequestHeaders(request);
-        try validateRouteAuth(route, self.auth);
+        try provider_auth.validateRouteAuth(route, self.auth);
 
         const url = try route.renderRequestUrl(gpa, self.baseUrl(route.provider), request);
         defer gpa.free(url);
@@ -92,12 +84,12 @@ pub const Client = struct {
 
     pub fn callReadRouteResultRequest(self: Client, io: Io, gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) !ReadRouteResult {
         const response = try self.callReadRouteRequest(io, gpa, route, request);
-        return matchReadRouteResponse(route, response);
+        return provider_route_result.matchReadRouteResponse(route, response);
     }
 
     pub fn callDiagnosticReadRouteResultRequest(self: Client, io: Io, gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) !ReadRouteResult {
         const response = try self.callDiagnosticReadRouteRequest(io, gpa, route, request);
-        return matchReadRouteResponse(route, response);
+        return provider_route_result.matchReadRouteResponse(route, response);
     }
 
     pub fn dryRunRoute(self: Client, gpa: Allocator, route: provider_routes.Route, params: []const provider_routes.PathParam) ![]u8 {
@@ -121,40 +113,12 @@ pub const Client = struct {
     }
 };
 
-pub const ReadRouteResult = struct {
-    response: net_http.Response,
-    matched_response: ?*const provider_routes.Response,
-
-    pub fn deinit(self: ReadRouteResult, gpa: Allocator) void {
-        self.response.deinit(gpa);
-    }
-
-    pub fn statusCode(self: ReadRouteResult) u16 {
-        return @intFromEnum(self.response.status);
-    }
-
-    pub fn statusText(self: ReadRouteResult) []const u8 {
-        return net_http.statusText(self.response.status);
-    }
-
-    pub fn view(self: ReadRouteResult) provider_route_result.ReadRouteResultView {
-        return .{
-            .status = self.response.status,
-            .body_bytes = self.response.body.len,
-            .matched_response = self.matched_response,
-        };
-    }
-};
-
 pub fn matchReadRouteResponse(route: provider_routes.Route, response: net_http.Response) ReadRouteResult {
-    return .{
-        .response = response,
-        .matched_response = route.findResponseForStatus(response.status),
-    };
+    return provider_route_result.matchReadRouteResponse(route, response);
 }
 
 pub fn readRouteResultMetadataJson(gpa: Allocator, route: provider_routes.Route, result: ReadRouteResult) ![]u8 {
-    return try provider_route_result.readRouteResultMetadataJson(gpa, route, result.view());
+    return try provider_route_result.readRouteResultMetadataJsonFromResult(gpa, route, result);
 }
 
 pub fn dryRunPlanJson(gpa: Allocator, route: provider_routes.Route, params: []const provider_routes.PathParam) ![]u8 {
@@ -181,27 +145,6 @@ fn requestHeaders(gpa: Allocator, params: []const provider_routes.HeaderParam) !
     return headers;
 }
 
-fn validateRouteAuth(route: provider_routes.Route, auth: Auth) !void {
-    if (!route.security.required) return;
-    return switch (auth) {
-        .cloudflare => |cloudflare_auth| validateCloudflareRouteAuth(route.security, cloudflare_auth),
-        .hostinger => |token| validateHostingerRouteAuth(route.security, token),
-    };
-}
-
-fn validateCloudflareRouteAuth(security: provider_routes.Security, auth: provider_cloudflare.Auth) !void {
-    if (auth.hasApiToken() and provider_capabilities.cloudflareSecurityAcceptsApiToken(security)) return;
-    if (hasCloudflareLegacyAuth(auth) and provider_capabilities.cloudflareSecurityAcceptsLegacyAuth(security)) return;
-    if (!auth.hasApiToken() and !hasCloudflareLegacyAuth(auth)) return error.MissingCloudflareAuth;
-    return error.UnsupportedRouteAuthScheme;
-}
-
-fn validateHostingerRouteAuth(security: provider_routes.Security, token: []const u8) !void {
-    if (token.len == 0) return error.MissingHostingerToken;
-    if (security.acceptsSchemeSet(&.{"apiToken"})) return;
-    return error.UnsupportedRouteAuthScheme;
-}
-
 pub fn cloudioSupportsRouteAuth(route: provider_routes.Route) bool {
     return provider_capabilities.cloudioSupportsRouteAuth(route);
 }
@@ -216,12 +159,6 @@ pub fn routeDiagnosticReadSupported(route: provider_routes.Route) bool {
 
 pub fn routeDryRunSupported(route: provider_routes.Route) bool {
     return provider_capabilities.routeDryRunSupported(route);
-}
-
-fn hasCloudflareLegacyAuth(auth: provider_cloudflare.Auth) bool {
-    const email = auth.email orelse return false;
-    const key = auth.key orelse return false;
-    return email.len != 0 and key.len != 0;
 }
 
 test "generic dispatch renders dry-run plans without executing mutations" {
@@ -334,26 +271,6 @@ test "generic dispatch route planner reports anonymous security metadata" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"will_execute\":false") != null);
 }
 
-test "generic dispatch recognizes Cloudflare token or legacy auth bundles" {
-    const allocator = std.testing.allocator;
-    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "access-applications-list-access-applications")) orelse return error.TestExpectedRoute;
-    defer route.deinit(allocator);
-
-    try validateCloudflareRouteAuth(route.security, .{ .token = "test-token" });
-    try validateCloudflareRouteAuth(route.security, .{ .email = "ops@example.test", .key = "global-key" });
-    try std.testing.expectError(error.MissingCloudflareAuth, validateCloudflareRouteAuth(route.security, .{}));
-
-    const plan = try planRouteJsonRequest(
-        allocator,
-        route,
-        .{ .path_params = &.{.{ .name = "account_id", .value = "acct" }} },
-    );
-    defer allocator.free(plan);
-
-    try std.testing.expect(std.mem.indexOf(u8, plan, "\"operation_id\":\"access-applications-list-access-applications\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"api_email\",\"api_key\",\"api_token\"]]}") != null);
-}
-
 test "generic dispatch route planner uses OpenAPI query array serialization" {
     const allocator = std.testing.allocator;
     const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "d1-get-database")) orelse return error.TestExpectedRoute;
@@ -449,52 +366,6 @@ test "generic dispatch route planner validates and hides header values" {
             },
         ),
     );
-}
-
-test "generic dispatch matches read response metadata without owning route metadata" {
-    const allocator = std.testing.allocator;
-    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "accounts-list-accounts")) orelse return error.TestExpectedRoute;
-    defer route.deinit(allocator);
-
-    const ok_body = try allocator.dupe(u8, "{\"ok\":true}");
-    const ok_result = matchReadRouteResponse(route, .{ .status = .ok, .body = ok_body });
-    defer ok_result.deinit(allocator);
-    try std.testing.expectEqual(@as(u16, 200), ok_result.statusCode());
-    try std.testing.expectEqualStrings("ok", ok_result.statusText());
-    const ok_match = ok_result.matched_response orelse return error.TestExpectedResponse;
-    try std.testing.expectEqualStrings("200", ok_match.status);
-
-    const ok_json = try readRouteResultMetadataJson(allocator, route, ok_result);
-    defer allocator.free(ok_json);
-    try std.testing.expect(std.mem.indexOf(u8, ok_json, "\"operation_id\":\"accounts-list-accounts\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ok_json, "\"http_status\":200") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ok_json, "\"matched_response\":{\"status\":\"200\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ok_json, "\"body_bytes\":11") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ok_json, "\"body_included\":false") != null);
-
-    const forbidden_body = try allocator.dupe(u8, "{\"error\":true}");
-    const forbidden_result = matchReadRouteResponse(route, .{ .status = .forbidden, .body = forbidden_body });
-    defer forbidden_result.deinit(allocator);
-    const forbidden_match = forbidden_result.matched_response orelse return error.TestExpectedResponse;
-    try std.testing.expectEqualStrings("4XX", forbidden_match.status);
-}
-
-test "generic dispatch reports unmatched read response metadata" {
-    const allocator = std.testing.allocator;
-    const route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .hostinger, "VPS_getVirtualMachinesV1")) orelse return error.TestExpectedRoute;
-    defer route.deinit(allocator);
-
-    const body = try allocator.dupe(u8, "{}");
-    const result = matchReadRouteResponse(route, .{ .status = .not_found, .body = body });
-    defer result.deinit(allocator);
-    try std.testing.expect(result.matched_response == null);
-
-    const json = try readRouteResultMetadataJson(allocator, route, result);
-    defer allocator.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"http_status\":404") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"status_text\":\"not_found\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"matched_response\":null") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"body_bytes\":2") != null);
 }
 
 test "generic dispatch accepts route request objects" {
@@ -623,8 +494,8 @@ test "generic dispatch validates Cloudflare auth scheme compatibility before HTT
 
     const bearer_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "get_publicListSuppressionRouting")) orelse return error.TestExpectedRoute;
     defer bearer_route.deinit(allocator);
-    try validateCloudflareRouteAuth(bearer_route.security, .{ .token = "test-token" });
-    try std.testing.expectError(error.UnsupportedRouteAuthScheme, validateCloudflareRouteAuth(bearer_route.security, .{ .email = "ops@example.test", .key = "global-key" }));
+    try provider_auth.validateCloudflareRouteAuth(bearer_route.security, .{ .token = "test-token" });
+    try std.testing.expectError(error.UnsupportedRouteAuthScheme, provider_auth.validateCloudflareRouteAuth(bearer_route.security, .{ .email = "ops@example.test", .key = "global-key" }));
 
     const bearer_plan = try planRouteJsonRequest(
         allocator,
@@ -637,7 +508,7 @@ test "generic dispatch validates Cloudflare auth scheme compatibility before HTT
 
     const assets_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
     defer assets_route.deinit(allocator);
-    try std.testing.expectError(error.UnsupportedRouteAuthScheme, validateCloudflareRouteAuth(assets_route.security, .{ .token = "test-token" }));
+    try std.testing.expectError(error.UnsupportedRouteAuthScheme, provider_auth.validateCloudflareRouteAuth(assets_route.security, .{ .token = "test-token" }));
 }
 
 test "generic dispatch validates required read query parameters before HTTP" {

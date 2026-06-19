@@ -49,7 +49,7 @@ The POC already has:
 - A redaction audit command, `cloudio security redaction`, that checks configured API token/key bytes against Cloudio output/storage surfaces without printing those bytes.
 - A public `cloudio.zig` facade that keeps collectors out of future embedding code.
 
-The current simplification slices added `src/app/render.zig`, migrated overview, inventory, Cloudflare, Hostinger, doctor, and run-log app read models away from repeated local JSON/text helpers, split Cloudflare account/zone/DNS overview read models into `src/app/cloudflare_overview.zig`, split Hostinger account/VPS overview read models into `src/app/hostinger_overview.zig`, moved broad Cloudflare CLI overview/filter option grammar into `src/cli/cloudflare_options.zig`, and moved Cloudflare dry-run mutation command grammar into `src/cli/cloudflare_dry_run.zig` so provider app modules and CLI adapters stay workflow facades.
+The current simplification slices added `src/app/render.zig`, migrated overview, inventory, Cloudflare, Hostinger, doctor, and run-log app read models away from repeated local JSON/text helpers, split Cloudflare account/zone/DNS overview read models into `src/app/cloudflare_overview.zig`, split Hostinger account/VPS overview read models into `src/app/hostinger_overview.zig`, moved broad Cloudflare CLI overview/filter option grammar into `src/cli/cloudflare_options.zig`, moved Cloudflare dry-run mutation command grammar into `src/cli/cloudflare_dry_run.zig`, and split provider L1 auth/result ownership into `src/providers/auth.zig` and `src/providers/route_result.zig` so provider dispatch stays a smaller call facade for future app/UI integration.
 
 ## Execution Phases
 
