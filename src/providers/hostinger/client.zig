@@ -1,5 +1,6 @@
 const std = @import("std");
 const net_http = @import("net_http");
+const hostinger_transport = @import("provider_hostinger_transport");
 const routes = @import("routes.zig");
 
 const Allocator = std.mem.Allocator;
@@ -244,27 +245,10 @@ pub const Client = struct {
     }
 
     pub fn get(self: Client, io: Io, gpa: Allocator, url: []const u8) !net_http.Response {
-        return try self.getWithHeaders(io, gpa, url, &.{});
+        return try hostinger_transport.get(io, gpa, self.token, url);
     }
 
     pub fn getWithHeaders(self: Client, io: Io, gpa: Allocator, url: []const u8, route_headers: []const std.http.Header) !net_http.Response {
-        if (self.token.len == 0) return error.MissingHostingerToken;
-        const auth = try std.fmt.allocPrint(gpa, "Bearer {s}", .{self.token});
-        defer gpa.free(auth);
-        const base_headers = [_]std.http.Header{
-            .{ .name = "Accept", .value = "application/json" },
-            .{ .name = "Content-Type", .value = "application/json" },
-            .{ .name = "Authorization", .value = auth },
-        };
-        const headers = try mergeHeaders(gpa, &base_headers, route_headers);
-        defer gpa.free(headers);
-        return try net_http.get(gpa, io, url, headers, &.{});
+        return try hostinger_transport.getWithHeaders(io, gpa, self.token, url, route_headers);
     }
 };
-
-fn mergeHeaders(gpa: Allocator, base: []const std.http.Header, extra: []const std.http.Header) ![]std.http.Header {
-    const merged = try gpa.alloc(std.http.Header, base.len + extra.len);
-    @memcpy(merged[0..base.len], base);
-    @memcpy(merged[base.len..], extra);
-    return merged;
-}

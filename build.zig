@@ -154,12 +154,21 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(collector_capture_mod);
+    const provider_cloudflare_transport_mod = b.createModule(.{
+        .root_source_file = b.path("src/providers/cloudflare/transport.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "net_http", .module = net_http_mod },
+        },
+    });
     const provider_cloudflare_mod = b.createModule(.{
         .root_source_file = b.path("src/providers/cloudflare/client.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "net_http", .module = net_http_mod },
+            .{ .name = "provider_cloudflare_transport", .module = provider_cloudflare_transport_mod },
         },
     });
     const provider_auth_mod = b.createModule(.{
@@ -215,6 +224,14 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(collector_projects_mod);
+    const provider_hostinger_transport_mod = b.createModule(.{
+        .root_source_file = b.path("src/providers/hostinger/transport.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "net_http", .module = net_http_mod },
+        },
+    });
     const provider_hostinger_mod = b.createModule(.{
         .root_source_file = b.path("src/providers/hostinger/client.zig"),
         .target = target,
@@ -222,6 +239,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "net_http", .module = net_http_mod },
+            .{ .name = "provider_hostinger_transport", .module = provider_hostinger_transport_mod },
         },
     });
     const provider_hostinger_models_mod = b.createModule(.{
@@ -1304,8 +1322,10 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, provider_transport_mod);
     addModuleTest(b, test_step, provider_dispatch_mod);
     addModuleTest(b, test_step, provider_routes_mod);
+    addModuleTest(b, test_step, provider_cloudflare_transport_mod);
     addModuleTest(b, test_step, provider_cloudflare_mod);
     addModuleTest(b, test_step, provider_cloudflare_models_mod);
+    addModuleTest(b, test_step, provider_hostinger_transport_mod);
     addModuleTest(b, test_step, provider_hostinger_mod);
     addModuleTest(b, test_step, provider_hostinger_models_mod);
     addModuleTest(b, test_step, db_schema_mod);

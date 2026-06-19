@@ -35,7 +35,7 @@ Generated coverage defaults classify non-deprecated `GET` operations with `reque
 
 ## Cloudflare Current Coverage
 
-Official schema size checked today: 3183 operations. Read-only account/zone/DNS URL/auth handling lives in `src/providers/cloudflare/client.zig`; account, zone, DNS record, and zone-id response normalization lives in `src/providers/cloudflare/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Cloudflare collection, diagnostics, and SQLite normalization live in `src/collectors/cloudflare.zig`.
+Official schema size checked today: 3183 operations. Read-only account/zone/DNS endpoint/path handling lives in `src/providers/cloudflare/client.zig`; Cloudflare API-token, legacy email/key, public-read header assembly, and HTTP GET handoff live in `src/providers/cloudflare/transport.zig`; account, zone, DNS record, and zone-id response normalization lives in `src/providers/cloudflare/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Cloudflare collection, diagnostics, and SQLite normalization live in `src/collectors/cloudflare.zig`.
 
 Current POC status is intentionally narrow and read-only:
 
@@ -130,7 +130,7 @@ Cloudflare implementation must prefer API tokens. Legacy email/global-key auth r
 
 ## Hostinger Current Coverage
 
-Official schema size checked today: 133 operations; Hostinger OpenAPI version `0.19.1`. Read-only VPS endpoint URL/auth handling lives in `src/providers/hostinger/client.zig`; VPS inventory response normalization and broad resource-row extraction live in `src/providers/hostinger/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Hostinger collection and SQLite normalization live in `src/collectors/hostinger.zig`.
+Official schema size checked today: 133 operations; Hostinger OpenAPI version `0.19.1`. Read-only VPS/control-plane endpoint and path handling lives in `src/providers/hostinger/client.zig` and `src/providers/hostinger/routes.zig`; Hostinger `apiToken` header assembly and HTTP GET handoff live in `src/providers/hostinger/transport.zig`; VPS inventory response normalization and broad resource-row extraction live in `src/providers/hostinger/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Hostinger collection and SQLite normalization live in `src/collectors/hostinger.zig`.
 
 Current POC status:
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 const net_http = @import("net_http");
+const cf_transport = @import("provider_cloudflare_transport");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -27,26 +28,7 @@ pub const user_token_permission_groups_path = "/user/tokens/permission_groups";
 pub const cloudforce_one_rules_base_path = "/cloudforce-one/rules";
 pub const firewall_access_rules_path = "/firewall/access_rules/rules";
 
-pub const Auth = struct {
-    token: ?[]const u8 = null,
-    email: ?[]const u8 = null,
-    key: ?[]const u8 = null,
-
-    pub fn isConfigured(self: Auth) bool {
-        return self.token != null or (self.email != null and self.key != null);
-    }
-
-    pub fn hasApiToken(self: Auth) bool {
-        const token = self.token orelse return false;
-        return token.len != 0;
-    }
-
-    pub fn hasLegacy(self: Auth) bool {
-        const email = self.email orelse return false;
-        const key = self.key orelse return false;
-        return email.len != 0 and key.len != 0;
-    }
-};
+pub const Auth = cf_transport.Auth;
 
 pub const Client = struct {
     auth: Auth,
@@ -437,68 +419,31 @@ pub const Client = struct {
     }
 
     pub fn get(self: Client, io: Io, gpa: Allocator, url: []const u8) !net_http.Response {
-        return try self.getWithHeaders(io, gpa, url, &.{});
+        return try cf_transport.get(io, gpa, self.auth, url);
     }
 
     pub fn getLegacy(self: Client, io: Io, gpa: Allocator, url: []const u8) !net_http.Response {
-        return try self.getWithLegacyHeaders(io, gpa, url, &.{});
+        return try cf_transport.getLegacy(io, gpa, self.auth, url);
     }
 
     pub fn getWithHeaders(self: Client, io: Io, gpa: Allocator, url: []const u8, route_headers: []const std.http.Header) !net_http.Response {
-        const common = jsonHeaders();
-        if (self.auth.token) |token| {
-            if (token.len == 0) return error.MissingCloudflareAuth;
-            const auth_header = try std.fmt.allocPrint(gpa, "Bearer {s}", .{token});
-            defer gpa.free(auth_header);
-            const privileged = [_]std.http.Header{.{ .name = "Authorization", .value = auth_header }};
-            const headers = try mergeHeaders(gpa, &common, route_headers);
-            defer gpa.free(headers);
-            return try net_http.get(gpa, io, url, headers, &privileged);
-        }
-        return try self.getWithLegacyHeaders(io, gpa, url, route_headers);
+        return try cf_transport.getWithHeaders(io, gpa, self.auth, url, route_headers);
     }
 
     pub fn getWithLegacyHeaders(self: Client, io: Io, gpa: Allocator, url: []const u8, route_headers: []const std.http.Header) !net_http.Response {
-        const email = self.auth.email orelse return error.MissingCloudflareAuth;
-        const key = self.auth.key orelse return error.MissingCloudflareAuth;
-        if (email.len == 0 or key.len == 0) return error.MissingCloudflareAuth;
-        const legacy = [_]std.http.Header{
-            .{ .name = "Accept", .value = "application/json" },
-            .{ .name = "Content-Type", .value = "application/json" },
-            .{ .name = "X-Auth-Email", .value = email },
-            .{ .name = "X-Auth-Key", .value = key },
-        };
-        const headers = try mergeHeaders(gpa, &legacy, route_headers);
-        defer gpa.free(headers);
-        return try net_http.get(gpa, io, url, headers, &.{});
+        return try cf_transport.getWithLegacyHeaders(io, gpa, self.auth, url, route_headers);
     }
 
     pub fn getPublic(self: Client, io: Io, gpa: Allocator, url: []const u8) !net_http.Response {
-        return try self.getPublicWithHeaders(io, gpa, url, &.{});
+        _ = self;
+        return try cf_transport.getPublic(io, gpa, url);
     }
 
     pub fn getPublicWithHeaders(self: Client, io: Io, gpa: Allocator, url: []const u8, route_headers: []const std.http.Header) !net_http.Response {
         _ = self;
-        const common = jsonHeaders();
-        const headers = try mergeHeaders(gpa, &common, route_headers);
-        defer gpa.free(headers);
-        return try net_http.get(gpa, io, url, headers, &.{});
+        return try cf_transport.getPublicWithHeaders(io, gpa, url, route_headers);
     }
 };
-
-fn jsonHeaders() [2]std.http.Header {
-    return .{
-        .{ .name = "Accept", .value = "application/json" },
-        .{ .name = "Content-Type", .value = "application/json" },
-    };
-}
-
-fn mergeHeaders(gpa: Allocator, base: []const std.http.Header, extra: []const std.http.Header) ![]std.http.Header {
-    const merged = try gpa.alloc(std.http.Header, base.len + extra.len);
-    @memcpy(merged[0..base.len], base);
-    @memcpy(merged[base.len..], extra);
-    return merged;
-}
 
 pub const AccountEndpoint = enum {
     details,
