@@ -154,6 +154,11 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(collector_capture_mod);
+    const provider_cloudflare_routes_mod = b.createModule(.{
+        .root_source_file = b.path("src/providers/cloudflare/routes.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const provider_cloudflare_transport_mod = b.createModule(.{
         .root_source_file = b.path("src/providers/cloudflare/transport.zig"),
         .target = target,
@@ -168,6 +173,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "net_http", .module = net_http_mod },
+            .{ .name = "provider_cloudflare_routes", .module = provider_cloudflare_routes_mod },
             .{ .name = "provider_cloudflare_transport", .module = provider_cloudflare_transport_mod },
         },
     });
@@ -224,6 +230,14 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(collector_projects_mod);
+    const provider_hostinger_routes_mod = b.createModule(.{
+        .root_source_file = b.path("src/providers/hostinger/routes.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_time", .module = core_time_mod },
+        },
+    });
     const provider_hostinger_transport_mod = b.createModule(.{
         .root_source_file = b.path("src/providers/hostinger/transport.zig"),
         .target = target,
@@ -239,6 +253,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "net_http", .module = net_http_mod },
+            .{ .name = "provider_hostinger_routes", .module = provider_hostinger_routes_mod },
             .{ .name = "provider_hostinger_transport", .module = provider_hostinger_transport_mod },
         },
     });
@@ -990,8 +1005,10 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_routes", .module = provider_routes_mod },
             .{ .name = "provider_transport", .module = provider_transport_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
+            .{ .name = "provider_cloudflare_routes", .module = provider_cloudflare_routes_mod },
             .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
             .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
+            .{ .name = "provider_hostinger_routes", .module = provider_hostinger_routes_mod },
             .{ .name = "provider_hostinger_models", .module = provider_hostinger_models_mod },
         },
     });
@@ -1322,9 +1339,11 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, provider_transport_mod);
     addModuleTest(b, test_step, provider_dispatch_mod);
     addModuleTest(b, test_step, provider_routes_mod);
+    addModuleTest(b, test_step, provider_cloudflare_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_transport_mod);
     addModuleTest(b, test_step, provider_cloudflare_mod);
     addModuleTest(b, test_step, provider_cloudflare_models_mod);
+    addModuleTest(b, test_step, provider_hostinger_routes_mod);
     addModuleTest(b, test_step, provider_hostinger_transport_mod);
     addModuleTest(b, test_step, provider_hostinger_mod);
     addModuleTest(b, test_step, provider_hostinger_models_mod);

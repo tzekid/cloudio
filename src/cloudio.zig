@@ -69,11 +69,13 @@ pub const providers = struct {
 
     pub const cloudflare = struct {
         pub const client = @import("provider_cloudflare");
+        pub const routes = @import("provider_cloudflare_routes");
         pub const models = @import("provider_cloudflare_models");
     };
 
     pub const hostinger = struct {
         pub const client = @import("provider_hostinger");
+        pub const routes = @import("provider_hostinger_routes");
         pub const models = @import("provider_hostinger_models");
     };
 };
@@ -143,7 +145,9 @@ test "facade exposes stable integration modules" {
     _ = providers.routes.Route;
     _ = providers.transport.ReadTransport;
     _ = providers.cloudflare.client.Client;
+    _ = providers.cloudflare.routes.AccountEndpoint;
     _ = providers.cloudflare.models.AccountRow;
     _ = providers.hostinger.client.Client;
+    _ = providers.hostinger.routes.VmEndpoint;
     _ = providers.hostinger.models.VpsRow;
 }

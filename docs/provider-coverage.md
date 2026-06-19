@@ -35,7 +35,7 @@ Generated coverage defaults classify non-deprecated `GET` operations with `reque
 
 ## Cloudflare Current Coverage
 
-Official schema size checked today: 3183 operations. Read-only account/zone/DNS endpoint/path handling lives in `src/providers/cloudflare/client.zig`; Cloudflare API-token, legacy email/key, public-read header assembly, and HTTP GET handoff live in `src/providers/cloudflare/transport.zig`; account, zone, DNS record, and zone-id response normalization lives in `src/providers/cloudflare/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Cloudflare collection, diagnostics, and SQLite normalization live in `src/collectors/cloudflare.zig`.
+Official schema size checked today: 3183 operations. Read-only account/zone/DNS endpoint, path, query, and dry-run plan helpers live in `src/providers/cloudflare/routes.zig`; Cloudflare live-read client methods live in `src/providers/cloudflare/client.zig`; Cloudflare API-token, legacy email/key, public-read header assembly, and HTTP GET handoff live in `src/providers/cloudflare/transport.zig`; account, zone, DNS record, and zone-id response normalization lives in `src/providers/cloudflare/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Cloudflare collection, diagnostics, and SQLite normalization live in `src/collectors/cloudflare.zig`.
 
 Current POC status is intentionally narrow and read-only:
 

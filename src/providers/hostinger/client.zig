@@ -1,7 +1,7 @@
 const std = @import("std");
 const net_http = @import("net_http");
 const hostinger_transport = @import("provider_hostinger_transport");
-const routes = @import("routes.zig");
+const routes = @import("provider_hostinger_routes");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
