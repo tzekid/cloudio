@@ -371,6 +371,132 @@ const cloudflare_magic_connector_sources = [_]InputSource{.{
     .purpose = "discover Magic Connector ids",
 }};
 
+const cloudflare_botnet_asn_sources = [_]InputSource{.{
+    .operation_id = "botnet-threat-feed-list-asn",
+    .hint_kind = "botnet-threat-feed-list-asn",
+    .purpose = "discover Botnet Threat Feed ASNs",
+}};
+
+const cloudflare_dns_firewall_sources = [_]InputSource{.{
+    .operation_id = "dns-firewall-list-dns-firewall-clusters",
+    .hint_kind = "dns-firewall-list-dns-firewall-clusters",
+    .purpose = "discover DNS Firewall cluster ids",
+}};
+
+const cloudflare_email_security_message_sources = [_]InputSource{.{
+    .operation_id = "email_security_investigate",
+    .hint_kind = "email_security_investigate",
+    .purpose = "discover Email Security investigate message ids",
+}};
+
+const cloudflare_email_security_allow_policy_sources = [_]InputSource{.{
+    .operation_id = "email_security_list_allow_policies",
+    .hint_kind = "email_security_list_allow_policies",
+    .purpose = "discover Email Security allow policy ids",
+}};
+
+const cloudflare_email_security_blocked_sender_sources = [_]InputSource{.{
+    .operation_id = "email_security_list_blocked_senders",
+    .hint_kind = "email_security_list_blocked_senders",
+    .purpose = "discover Email Security blocked sender pattern ids",
+}};
+
+const cloudflare_email_security_domain_sources = [_]InputSource{.{
+    .operation_id = "email_security_list_domains",
+    .hint_kind = "email_security_list_domains",
+    .purpose = "discover Email Security domain ids",
+}};
+
+const cloudflare_email_security_impersonation_sources = [_]InputSource{.{
+    .operation_id = "email_security_list_impersonation_registry",
+    .hint_kind = "email_security_list_impersonation_registry",
+    .purpose = "discover Email Security impersonation registry ids",
+}};
+
+const cloudflare_email_security_sending_domain_sources = [_]InputSource{.{
+    .operation_id = "email_security_list_sending_domain_restrictions",
+    .hint_kind = "email_security_list_sending_domain_restrictions",
+    .purpose = "discover Email Security sending-domain restriction ids",
+}};
+
+const cloudflare_email_security_trusted_domain_sources = [_]InputSource{.{
+    .operation_id = "email_security_list_trusted_domains",
+    .hint_kind = "email_security_list_trusted_domains",
+    .purpose = "discover Email Security trusted domain ids",
+}};
+
+const cloudflare_email_security_url_ignore_sources = [_]InputSource{.{
+    .operation_id = "email_security_list_url_ignore_patterns",
+    .hint_kind = "email_security_list_url_ignore_patterns",
+    .purpose = "discover Email Security URL ignore pattern ids",
+}};
+
+const cloudflare_user_ip_access_rule_sources = [_]InputSource{.{
+    .operation_id = "ip-access-rules-for-a-user-list-ip-access-rules",
+    .hint_kind = "ip-access-rules-for-a-user-list-ip-access-rules",
+    .purpose = "discover user IP Access rule ids",
+}};
+
+const cloudflare_account_ip_access_rule_sources = [_]InputSource{.{
+    .operation_id = "ip-access-rules-for-an-account-list-ip-access-rules",
+    .hint_kind = "ip-access-rules-for-an-account-list-ip-access-rules",
+    .purpose = "discover account IP Access rule ids",
+}};
+
+const cloudflare_zone_ip_access_rule_sources = [_]InputSource{.{
+    .operation_id = "ip-access-rules-for-a-zone-list-ip-access-rules",
+    .hint_kind = "ip-access-rules-for-a-zone-list-ip-access-rules",
+    .purpose = "discover zone IP Access rule ids",
+}};
+
+const cloudflare_leaked_credential_detection_sources = [_]InputSource{.{
+    .operation_id = "waf-product-api-leaked-credentials-list-detections",
+    .hint_kind = "waf-product-api-leaked-credentials-list-detections",
+    .purpose = "discover Leaked Credential Checks detection ids",
+}};
+
+const cloudflare_page_shield_connection_sources = [_]InputSource{.{
+    .operation_id = "page-shield-list-connections",
+    .hint_kind = "page-shield-list-connections",
+    .purpose = "discover Page Shield connection ids",
+}};
+
+const cloudflare_page_shield_cookie_sources = [_]InputSource{.{
+    .operation_id = "page-shield-list-cookies",
+    .hint_kind = "page-shield-list-cookies",
+    .purpose = "discover Page Shield cookie ids",
+}};
+
+const cloudflare_page_shield_policy_sources = [_]InputSource{.{
+    .operation_id = "page-shield-list-policies",
+    .hint_kind = "page-shield-list-policies",
+    .purpose = "discover Page Shield policy ids",
+}};
+
+const cloudflare_page_shield_script_sources = [_]InputSource{.{
+    .operation_id = "page-shield-list-scripts",
+    .hint_kind = "page-shield-list-scripts",
+    .purpose = "discover Page Shield script ids",
+}};
+
+const cloudflare_radar_bot_sources = [_]InputSource{.{
+    .operation_id = "radar-get-bots",
+    .hint_kind = "radar-get-bots",
+    .purpose = "discover Radar bot slugs",
+}};
+
+const cloudflare_security_center_account_issue_sources = [_]InputSource{.{
+    .operation_id = "get-security-center-insights",
+    .hint_kind = "get-security-center-insights",
+    .purpose = "discover account Security Center issue ids",
+}};
+
+const cloudflare_security_center_zone_issue_sources = [_]InputSource{.{
+    .operation_id = "get-zone-security-center-insights",
+    .hint_kind = "get-zone-security-center-insights",
+    .purpose = "discover zone Security Center issue ids",
+}};
+
 const cloudflare_r2_catalog_sources = [_]InputSource{.{
     .operation_id = "list-catalogs",
     .hint_kind = "list-catalogs",
@@ -665,6 +791,24 @@ fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []co
     if (std.mem.eql(u8, name, "profile_id") and actualCaptureRoutePathContains(route, "/magic/bgp/filter_profiles/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"magic-bgp-list-filter-profiles"});
     if (std.mem.eql(u8, name, "connector_id") and (actualCaptureRoutePathContains(route, "/cfd_tunnel/") or actualCaptureRoutePathContains(route, "/warp_connector/"))) return actualCaptureCloudflareTunnelConnectorIdHint(route, hints);
     if (std.mem.eql(u8, name, "connector_id") and actualCaptureRoutePathContains(route, "/magic/connectors/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "mconn-connector-list", "magic-connectors" });
+    if (std.mem.eql(u8, name, "asn_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "botnet-threat-feed-list-asn", "botnet-threat-feed-asn" });
+    if (std.mem.eql(u8, name, "dns_firewall_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "dns-firewall-list-dns-firewall-clusters", "dns-firewall-clusters", "dns-firewall-cluster" });
+    if (std.mem.eql(u8, name, "investigate_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "email_security_investigate", "email-security-messages", "email-security-message" });
+    if (std.mem.eql(u8, name, "policy_id") and actualCaptureRoutePathContains(route, "/email-security/settings/allow_policies/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "email_security_list_allow_policies", "email-security-allow-policies", "email-security-allow-policy" });
+    if (std.mem.eql(u8, name, "pattern_id") and actualCaptureRoutePathContains(route, "/email-security/settings/block_senders/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "email_security_list_blocked_senders", "email-security-blocked-senders", "email-security-blocked-sender" });
+    if (std.mem.eql(u8, name, "domain_id") and actualCaptureRoutePathContains(route, "/email-security/settings/domains/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "email_security_list_domains", "email-security-domains", "email-security-domain" });
+    if (std.mem.eql(u8, name, "impersonation_registry_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "email_security_list_impersonation_registry", "email-security-impersonation-registry" });
+    if (std.mem.eql(u8, name, "sending_domain_restriction_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "email_security_list_sending_domain_restrictions", "email-security-sending-domain-restrictions" });
+    if (std.mem.eql(u8, name, "trusted_domain_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "email_security_list_trusted_domains", "email-security-trusted-domains" });
+    if (std.mem.eql(u8, name, "pattern_id") and actualCaptureRoutePathContains(route, "/email-security/settings/url_ignore_patterns/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "email_security_list_url_ignore_patterns", "email-security-url-ignore-patterns" });
+    if (std.mem.eql(u8, name, "rule_id") and actualCaptureRoutePathContains(route, "/firewall/access_rules/rules/")) return actualCaptureCloudflareIpAccessRuleIdHint(route, hints);
+    if (std.mem.eql(u8, name, "detection_id") and actualCaptureRoutePathContains(route, "/leaked-credential-checks/detections/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "waf-product-api-leaked-credentials-list-detections", "leaked-credential-detections", "leaked-credential-detection" });
+    if (std.mem.eql(u8, name, "connection_id") and actualCaptureRoutePathContains(route, "/page_shield/connections/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "page-shield-list-connections", "page-shield-connections", "page-shield-connection" });
+    if (std.mem.eql(u8, name, "cookie_id") and actualCaptureRoutePathContains(route, "/page_shield/cookies/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "page-shield-list-cookies", "page-shield-cookies", "page-shield-cookie" });
+    if (std.mem.eql(u8, name, "policy_id") and actualCaptureRoutePathContains(route, "/page_shield/policies/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "page-shield-list-policies", "page-shield-policies", "page-shield-policy" });
+    if (std.mem.eql(u8, name, "script_id") and actualCaptureRoutePathContains(route, "/page_shield/scripts/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "page-shield-list-scripts", "page-shield-scripts", "page-shield-script" });
+    if (std.mem.eql(u8, name, "bot_slug")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "radar-get-bots", "radar-bots", "radar-bot" });
+    if (std.mem.eql(u8, name, "issue_id") and actualCaptureRoutePathContains(route, "/security-center/insights/")) return actualCaptureCloudflareSecurityCenterIssueIdHint(route, hints);
     if (std.mem.eql(u8, name, "tag_uuid") and actualCaptureRoutePathContains(route, "/cloudforce-one/events/tags/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"get_TagList"});
     if (std.mem.eql(u8, name, "bucket_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "list-catalogs", "get-catalog-details", "r2-catalog" });
     if (std.mem.eql(u8, name, "namespace") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"list-namespaces"});
@@ -872,6 +1016,19 @@ fn actualCaptureCloudflareTunnelConnectorIdHint(route: provider_routes.Route, hi
     if (actualCaptureRoutePathContains(route, "/warp_connector/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "cloudflare-tunnel-list-warp-connector-tunnel-connections", "tunnel-warp-connections", "warp-connector-connections", "warp-connector-connection" });
     if (actualCaptureRoutePathContains(route, "/cfd_tunnel/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "cloudflare-tunnel-list-cloudflare-tunnel-connections", "tunnel-cfd-connections", "cloudflare-tunnel-connections", "cloudflare-tunnel-connection" });
     return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "cloudflare-tunnel-list-cloudflare-tunnel-connections", "cloudflare-tunnel-list-warp-connector-tunnel-connections", "tunnel-cfd-connections", "tunnel-warp-connections" });
+}
+
+fn actualCaptureCloudflareIpAccessRuleIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureRoutePathContains(route, "/user/firewall/access_rules/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "ip-access-rules-for-a-user-list-ip-access-rules", "user-ip-access-rules", "ip-access-rules" });
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "ip-access-rules-for-an-account-list-ip-access-rules", "account-ip-access-rules", "ip-access-rules" });
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "ip-access-rules-for-a-zone-list-ip-access-rules", "zone-ip-access-rules", "ip-access-rules" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "ip-access-rules-for-a-user-list-ip-access-rules", "ip-access-rules-for-an-account-list-ip-access-rules", "ip-access-rules-for-a-zone-list-ip-access-rules", "ip-access-rules" });
+}
+
+fn actualCaptureCloudflareSecurityCenterIssueIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-zone-security-center-insights", "zone-security-center-insights", "security-center-insights" });
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-security-center-insights", "account-security-center-insights", "security-center-insights" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-security-center-insights", "get-zone-security-center-insights", "security-center-insights" });
 }
 
 fn actualCaptureCloudflareCloudforceEventHint(route: provider_routes.Route, hints: Hints) ?db_store.CloudflareInventoryHintRow {
@@ -1798,6 +1955,24 @@ fn actualCaptureCloudflareMissingInputSources(route: provider_routes.Route, inpu
         if (std.mem.eql(u8, input_name, "profile_id") and actualCaptureRoutePathContains(route, "/magic/bgp/filter_profiles/")) return cloudflare_magic_bgp_filter_profile_sources[0..];
         if (std.mem.eql(u8, input_name, "connector_id") and (actualCaptureRoutePathContains(route, "/cfd_tunnel/") or actualCaptureRoutePathContains(route, "/warp_connector/"))) return actualCaptureCloudflareTunnelConnectorSources(route);
         if (std.mem.eql(u8, input_name, "connector_id") and actualCaptureRoutePathContains(route, "/magic/connectors/")) return cloudflare_magic_connector_sources[0..];
+        if (std.mem.eql(u8, input_name, "asn_id")) return cloudflare_botnet_asn_sources[0..];
+        if (std.mem.eql(u8, input_name, "dns_firewall_id")) return cloudflare_dns_firewall_sources[0..];
+        if (std.mem.eql(u8, input_name, "investigate_id")) return cloudflare_email_security_message_sources[0..];
+        if (std.mem.eql(u8, input_name, "policy_id") and actualCaptureRoutePathContains(route, "/email-security/settings/allow_policies/")) return cloudflare_email_security_allow_policy_sources[0..];
+        if (std.mem.eql(u8, input_name, "pattern_id") and actualCaptureRoutePathContains(route, "/email-security/settings/block_senders/")) return cloudflare_email_security_blocked_sender_sources[0..];
+        if (std.mem.eql(u8, input_name, "domain_id") and actualCaptureRoutePathContains(route, "/email-security/settings/domains/")) return cloudflare_email_security_domain_sources[0..];
+        if (std.mem.eql(u8, input_name, "impersonation_registry_id")) return cloudflare_email_security_impersonation_sources[0..];
+        if (std.mem.eql(u8, input_name, "sending_domain_restriction_id")) return cloudflare_email_security_sending_domain_sources[0..];
+        if (std.mem.eql(u8, input_name, "trusted_domain_id")) return cloudflare_email_security_trusted_domain_sources[0..];
+        if (std.mem.eql(u8, input_name, "pattern_id") and actualCaptureRoutePathContains(route, "/email-security/settings/url_ignore_patterns/")) return cloudflare_email_security_url_ignore_sources[0..];
+        if (std.mem.eql(u8, input_name, "rule_id") and actualCaptureRoutePathContains(route, "/firewall/access_rules/rules/")) return actualCaptureCloudflareIpAccessRuleSources(route);
+        if (std.mem.eql(u8, input_name, "detection_id") and actualCaptureRoutePathContains(route, "/leaked-credential-checks/detections/")) return cloudflare_leaked_credential_detection_sources[0..];
+        if (std.mem.eql(u8, input_name, "connection_id") and actualCaptureRoutePathContains(route, "/page_shield/connections/")) return cloudflare_page_shield_connection_sources[0..];
+        if (std.mem.eql(u8, input_name, "cookie_id") and actualCaptureRoutePathContains(route, "/page_shield/cookies/")) return cloudflare_page_shield_cookie_sources[0..];
+        if (std.mem.eql(u8, input_name, "policy_id") and actualCaptureRoutePathContains(route, "/page_shield/policies/")) return cloudflare_page_shield_policy_sources[0..];
+        if (std.mem.eql(u8, input_name, "script_id") and actualCaptureRoutePathContains(route, "/page_shield/scripts/")) return cloudflare_page_shield_script_sources[0..];
+        if (std.mem.eql(u8, input_name, "bot_slug")) return cloudflare_radar_bot_sources[0..];
+        if (std.mem.eql(u8, input_name, "issue_id") and actualCaptureRoutePathContains(route, "/security-center/insights/")) return actualCaptureCloudflareSecurityCenterIssueSources(route);
         if (std.mem.eql(u8, input_name, "tag_uuid") and actualCaptureRoutePathContains(route, "/cloudforce-one/events/tags/")) return cloudflare_cloudforce_tag_sources[0..];
         if (std.mem.eql(u8, input_name, "bucket_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return cloudflare_r2_catalog_sources[0..];
         if (std.mem.eql(u8, input_name, "namespace") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return cloudflare_r2_namespace_sources[0..];
@@ -1842,6 +2017,19 @@ fn actualCaptureCloudflareTunnelSources(route: provider_routes.Route) []const In
 fn actualCaptureCloudflareTunnelConnectorSources(route: provider_routes.Route) []const InputSource {
     if (actualCaptureRoutePathContains(route, "/warp_connector/")) return cloudflare_warp_connector_connection_sources[0..];
     if (actualCaptureRoutePathContains(route, "/cfd_tunnel/")) return cloudflare_tunnel_connector_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareIpAccessRuleSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureRoutePathContains(route, "/user/firewall/access_rules/")) return cloudflare_user_ip_access_rule_sources[0..];
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_account_ip_access_rule_sources[0..];
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_zone_ip_access_rule_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareSecurityCenterIssueSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_security_center_zone_issue_sources[0..];
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_security_center_account_issue_sources[0..];
     return &.{};
 }
 
@@ -2094,6 +2282,236 @@ test "maps Cloudflare load-balancer and tunnel child captures to list sources" {
     try std.testing.expectEqualStrings("route-1", actualCapturePathParamHint(routes[17], "route_id", resource_hints) orelse "");
     try std.testing.expectEqualStrings("cfd-connector-1", actualCapturePathParamHint(routes[19], "connector_id", resource_hints) orelse "");
     try std.testing.expectEqualStrings("warp-connector-1", actualCapturePathParamHint(routes[21], "connector_id", resource_hints) orelse "");
+}
+
+test "maps Cloudflare security child captures to list sources" {
+    const allocator = std.testing.allocator;
+    const Case = struct {
+        route_json: []const u8,
+        input_name: []const u8,
+        expected_source: []const u8,
+        expected_value: []const u8,
+    };
+    const cases = [_]Case{
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Botnet Threat Feed","method":"GET","path":"/accounts/{account_id}/botnet_feed/asn/{asn_id}/day_report","operation_id":"botnet-threat-feed-get-day-report","path_params":[{"name":"account_id","required":true},{"name":"asn_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "asn_id",
+            .expected_source = "botnet-threat-feed-list-asn",
+            .expected_value = "64512",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"DNS Firewall","method":"GET","path":"/accounts/{account_id}/dns_firewall/{dns_firewall_id}","operation_id":"dns-firewall-dns-firewall-cluster-details","path_params":[{"name":"account_id","required":true},{"name":"dns_firewall_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "dns_firewall_id",
+            .expected_source = "dns-firewall-list-dns-firewall-clusters",
+            .expected_value = "dnsfw-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Email Security","method":"GET","path":"/accounts/{account_id}/email-security/investigate/{investigate_id}","operation_id":"email_security_get_message","path_params":[{"name":"account_id","required":true},{"name":"investigate_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "investigate_id",
+            .expected_source = "email_security_investigate",
+            .expected_value = "msg-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Email Security Settings","method":"GET","path":"/accounts/{account_id}/email-security/settings/allow_policies/{policy_id}","operation_id":"email_security_get_allow_policy","path_params":[{"name":"account_id","required":true},{"name":"policy_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "policy_id",
+            .expected_source = "email_security_list_allow_policies",
+            .expected_value = "allow-policy-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Email Security Settings","method":"GET","path":"/accounts/{account_id}/email-security/settings/block_senders/{pattern_id}","operation_id":"email_security_get_blocked_sender","path_params":[{"name":"account_id","required":true},{"name":"pattern_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "pattern_id",
+            .expected_source = "email_security_list_blocked_senders",
+            .expected_value = "blocked-pattern-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Email Security Settings","method":"GET","path":"/accounts/{account_id}/email-security/settings/domains/{domain_id}","operation_id":"email_security_get_domain","path_params":[{"name":"account_id","required":true},{"name":"domain_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "domain_id",
+            .expected_source = "email_security_list_domains",
+            .expected_value = "domain-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Email Security Settings","method":"GET","path":"/accounts/{account_id}/email-security/settings/impersonation_registry/{impersonation_registry_id}","operation_id":"email_security_get_impersonation_registry","path_params":[{"name":"account_id","required":true},{"name":"impersonation_registry_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "impersonation_registry_id",
+            .expected_source = "email_security_list_impersonation_registry",
+            .expected_value = "impersonation-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Email Security Settings","method":"GET","path":"/accounts/{account_id}/email-security/settings/sending_domain_restrictions/{sending_domain_restriction_id}","operation_id":"email_security_get_sending_domain_restriction","path_params":[{"name":"account_id","required":true},{"name":"sending_domain_restriction_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "sending_domain_restriction_id",
+            .expected_source = "email_security_list_sending_domain_restrictions",
+            .expected_value = "sending-domain-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Email Security Settings","method":"GET","path":"/accounts/{account_id}/email-security/settings/trusted_domains/{trusted_domain_id}","operation_id":"email_security_get_trusted_domain","path_params":[{"name":"account_id","required":true},{"name":"trusted_domain_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "trusted_domain_id",
+            .expected_source = "email_security_list_trusted_domains",
+            .expected_value = "trusted-domain-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Email Security Settings","method":"GET","path":"/accounts/{account_id}/email-security/settings/url_ignore_patterns/{pattern_id}","operation_id":"email_security_get_url_ignore_pattern","path_params":[{"name":"account_id","required":true},{"name":"pattern_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "pattern_id",
+            .expected_source = "email_security_list_url_ignore_patterns",
+            .expected_value = "url-pattern-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"IP Access rules for a user","method":"GET","path":"/user/firewall/access_rules/rules/{rule_id}","operation_id":"ip-access-rules-for-a-user-get-an-ip-access-rule","path_params":[{"name":"rule_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "rule_id",
+            .expected_source = "ip-access-rules-for-a-user-list-ip-access-rules",
+            .expected_value = "user-rule-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"IP Access rules for an account","method":"GET","path":"/accounts/{account_id}/firewall/access_rules/rules/{rule_id}","operation_id":"ip-access-rules-for-an-account-get-an-ip-access-rule","path_params":[{"name":"account_id","required":true},{"name":"rule_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "rule_id",
+            .expected_source = "ip-access-rules-for-an-account-list-ip-access-rules",
+            .expected_value = "account-rule-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Leaked Credential Checks","method":"GET","path":"/zones/{zone_id}/leaked-credential-checks/detections/{detection_id}","operation_id":"waf-product-api-leaked-credentials-get-detection","path_params":[{"name":"zone_id","required":true},{"name":"detection_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "detection_id",
+            .expected_source = "waf-product-api-leaked-credentials-list-detections",
+            .expected_value = "detection-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Page Shield","method":"GET","path":"/zones/{zone_id}/page_shield/connections/{connection_id}","operation_id":"page-shield-get-connection","path_params":[{"name":"zone_id","required":true},{"name":"connection_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "connection_id",
+            .expected_source = "page-shield-list-connections",
+            .expected_value = "connection-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Page Shield","method":"GET","path":"/zones/{zone_id}/page_shield/cookies/{cookie_id}","operation_id":"page-shield-get-cookie","path_params":[{"name":"zone_id","required":true},{"name":"cookie_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "cookie_id",
+            .expected_source = "page-shield-list-cookies",
+            .expected_value = "cookie-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Page Shield","method":"GET","path":"/zones/{zone_id}/page_shield/policies/{policy_id}","operation_id":"page-shield-get-policy","path_params":[{"name":"zone_id","required":true},{"name":"policy_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "policy_id",
+            .expected_source = "page-shield-list-policies",
+            .expected_value = "page-policy-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Page Shield","method":"GET","path":"/zones/{zone_id}/page_shield/scripts/{script_id}","operation_id":"page-shield-get-script","path_params":[{"name":"zone_id","required":true},{"name":"script_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "script_id",
+            .expected_source = "page-shield-list-scripts",
+            .expected_value = "script-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Radar Bots","method":"GET","path":"/radar/bots/{bot_slug}","operation_id":"radar-get-bot-details","path_params":[{"name":"bot_slug","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "bot_slug",
+            .expected_source = "radar-get-bots",
+            .expected_value = "googlebot",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Security Center Audit Log","method":"GET","path":"/accounts/{account_id}/security-center/insights/{issue_id}/audit-log","operation_id":"get-security-center-issue-audit-log","path_params":[{"name":"account_id","required":true},{"name":"issue_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "issue_id",
+            .expected_source = "get-security-center-insights",
+            .expected_value = "account-issue-1",
+        },
+        .{
+            .route_json =
+            \\{"provider":"cloudflare","tag":"Security Center Audit Log","method":"GET","path":"/zones/{zone_id}/security-center/insights/{issue_id}/audit-log","operation_id":"get-zone-security-center-issue-audit-log","path_params":[{"name":"zone_id","required":true},{"name":"issue_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+            ,
+            .input_name = "issue_id",
+            .expected_source = "get-zone-security-center-insights",
+            .expected_value = "zone-issue-1",
+        },
+    };
+
+    var account_rows = [_]db_store.CloudflareAccountRow{.{
+        .id = @constCast("acct-1"),
+        .name = @constCast("Main account"),
+        .account_type = @constCast("standard"),
+        .status = @constCast("active"),
+        .updated_at = @constCast("2026-06-19T00:00:00Z"),
+    }};
+    var zone_rows = [_]db_store.CloudflareZoneRow{.{
+        .id = @constCast("zone-1"),
+        .name = @constCast("plosca.ru"),
+        .account_id = @constCast("acct-1"),
+        .status = @constCast("active"),
+        .paused = @constCast("false"),
+        .zone_type = @constCast("full"),
+        .name_servers = @constCast("ns1.example,ns2.example"),
+        .updated_at = @constCast("2026-06-19T00:00:00Z"),
+    }};
+    var resource_rows = [_]db_store.CloudflareResourceHintRow{
+        .{ .kind = @constCast("botnet-threat-feed-list-asn"), .resource_id = @constCast("64512"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("AS64512"), .status = @constCast("active"), .resource_type = @constCast("asn"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("dns-firewall-list-dns-firewall-clusters"), .resource_id = @constCast("dnsfw-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("DNS Firewall"), .status = @constCast("active"), .resource_type = @constCast("dns_firewall"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("email_security_investigate"), .resource_id = @constCast("msg-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Message"), .status = @constCast("active"), .resource_type = @constCast("email_message"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("email_security_list_allow_policies"), .resource_id = @constCast("allow-policy-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Allow policy"), .status = @constCast("enabled"), .resource_type = @constCast("allow_policy"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("email_security_list_blocked_senders"), .resource_id = @constCast("blocked-pattern-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Blocked sender"), .status = @constCast("enabled"), .resource_type = @constCast("blocked_sender"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("email_security_list_domains"), .resource_id = @constCast("domain-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Domain"), .status = @constCast("enabled"), .resource_type = @constCast("domain"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("email_security_list_impersonation_registry"), .resource_id = @constCast("impersonation-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Impersonation"), .status = @constCast("enabled"), .resource_type = @constCast("impersonation"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("email_security_list_sending_domain_restrictions"), .resource_id = @constCast("sending-domain-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Sending domain"), .status = @constCast("enabled"), .resource_type = @constCast("sending_domain"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("email_security_list_trusted_domains"), .resource_id = @constCast("trusted-domain-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Trusted domain"), .status = @constCast("enabled"), .resource_type = @constCast("trusted_domain"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("email_security_list_url_ignore_patterns"), .resource_id = @constCast("url-pattern-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("URL ignore"), .status = @constCast("enabled"), .resource_type = @constCast("url_pattern"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("ip-access-rules-for-a-user-list-ip-access-rules"), .resource_id = @constCast("user-rule-1"), .scope = @constCast("user"), .scope_id = @constCast("user"), .name = @constCast("User rule"), .status = @constCast("active"), .resource_type = @constCast("ip_access_rule"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("ip-access-rules-for-an-account-list-ip-access-rules"), .resource_id = @constCast("account-rule-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Account rule"), .status = @constCast("active"), .resource_type = @constCast("ip_access_rule"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("waf-product-api-leaked-credentials-list-detections"), .resource_id = @constCast("detection-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("Detection"), .status = @constCast("active"), .resource_type = @constCast("detection"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("page-shield-list-connections"), .resource_id = @constCast("connection-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("Connection"), .status = @constCast("active"), .resource_type = @constCast("connection"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("page-shield-list-cookies"), .resource_id = @constCast("cookie-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("Cookie"), .status = @constCast("active"), .resource_type = @constCast("cookie"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("page-shield-list-policies"), .resource_id = @constCast("page-policy-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("Page policy"), .status = @constCast("active"), .resource_type = @constCast("policy"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("page-shield-list-scripts"), .resource_id = @constCast("script-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("Script"), .status = @constCast("active"), .resource_type = @constCast("script"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("radar-get-bots"), .resource_id = @constCast("googlebot"), .scope = @constCast("global"), .scope_id = @constCast("global"), .name = @constCast("Googlebot"), .status = @constCast("active"), .resource_type = @constCast("bot"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("get-security-center-insights"), .resource_id = @constCast("account-issue-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Account issue"), .status = @constCast("open"), .resource_type = @constCast("issue"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("get-zone-security-center-insights"), .resource_id = @constCast("zone-issue-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("Zone issue"), .status = @constCast("open"), .resource_type = @constCast("issue"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+    };
+    const hints = Hints{
+        .cloudflare_accounts = account_rows[0..],
+        .cloudflare_zones = zone_rows[0..],
+        .cloudflare_resources = resource_rows[0..],
+    };
+
+    for (cases) |case| {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, case.route_json, .{});
+        defer parsed.deinit();
+        var route = try provider_routes.Route.init(allocator, .cloudflare, parsed.value);
+        defer route.deinit(allocator);
+
+        const sources = actualCaptureMissingInputSources(route, "path", case.input_name);
+        try std.testing.expect(sources.len > 0);
+        try std.testing.expectEqualStrings(case.expected_source, sources[0].operation_id);
+        try std.testing.expect(actualCaptureReady(route, hints));
+        try std.testing.expectEqualStrings(case.expected_value, actualCapturePathParamHint(route, case.input_name, hints) orelse "");
+    }
 }
 
 test "plans Cloudflare audit history inputs from matching event timestamps" {

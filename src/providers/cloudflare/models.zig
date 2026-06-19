@@ -406,7 +406,6 @@ fn appendResourceRowsFromValue(gpa: Allocator, rows: *std.ArrayList(ResourceRow)
 }
 
 fn appendResourceRow(gpa: Allocator, rows: *std.ArrayList(ResourceRow), kind: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, item: std.json.Value) !void {
-    if (item != .object) return;
     const resource_id = try resourceIdValue(gpa, item) orelse return;
     errdefer gpa.free(resource_id);
     const key = try resourceKey(gpa, kind, scope, scope_id, resource_id);
@@ -1176,6 +1175,13 @@ fn isDomainLike(value: []const u8) bool {
 }
 
 fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
+    switch (item) {
+        .string => |value| return try gpa.dupe(u8, value),
+        .integer => |value| return try std.fmt.allocPrint(gpa, "{}", .{value}),
+        .float => |value| return try std.fmt.allocPrint(gpa, "{d}", .{value}),
+        .number_string => |value| return try gpa.dupe(u8, value),
+        else => {},
+    }
     if (core_json.fieldString(item, "target")) |target| {
         if (std.mem.eql(u8, target, "ip") or std.mem.eql(u8, target, "ip_range")) {
             if (core_json.fieldAnyString(gpa, item, "value")) |value| return value;
@@ -1187,14 +1193,20 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
     const fields = [_][]const u8{
         "id",
         "uid",
+        "asn_id",
+        "asn",
         "zone_id",
         "policy_id",
         "rule_id",
         "ruleset_id",
         "client_id",
         "connector_id",
+        "connection_id",
+        "cookie_id",
+        "script_id",
         "profile_id",
         "tag_uuid",
+        "bot_slug",
         "bucket_name",
         "namespace",
         "table_name",
@@ -1209,6 +1221,7 @@ fn resourceIdValue(gpa: Allocator, item: std.json.Value) !?[]u8 {
         "key_tag",
         "pattern_id",
         "domain_id",
+        "investigate_id",
         "trusted_domain_id",
         "impersonation_registry_id",
         "sending_domain_restriction_id",
@@ -1505,26 +1518,48 @@ test "parses generic Cloudflare result ids" {
 test "parses generic Cloudflare resource ids from common id fields" {
     const allocator = std.testing.allocator;
     var rows = try parseResourceIdRows(allocator,
-        \\{"result":[{"id":"page-id"},{"id":42},{"uid":"access-uid"},{"issue_id":"insight-issue"},{"operation_id":"api-op"},{"discovery_id":"discovery-op"},{"client_certificate_id":"client-cert"},{"detection_id":"leaked-detection"},{"expression_id":"scan-expression"},{"uuid":"audit-uuid"},{"dataset_id":"dataset-id"},{"dataset":"dataset-name"},{"hostname":"www.example.test"},{"name":"asset-name"},{"tag":"email-sending-tag"},{"description":"missing"}]}
+        \\{"result":["scalar-id",64512,{"id":"page-id"},{"id":42},{"uid":"access-uid"},{"asn":"13335"},{"asn_id":"15169"},{"investigate_id":"msg-1"},{"connection_id":"conn-1"},{"cookie_id":"cookie-1"},{"script_id":"script-1"},{"bot_slug":"googlebot"},{"issue_id":"insight-issue"},{"operation_id":"api-op"},{"discovery_id":"discovery-op"},{"client_certificate_id":"client-cert"},{"detection_id":"leaked-detection"},{"expression_id":"scan-expression"},{"uuid":"audit-uuid"},{"dataset_id":"dataset-id"},{"dataset":"dataset-name"},{"hostname":"www.example.test"},{"name":"asset-name"},{"tag":"email-sending-tag"},{"description":"missing"}]}
     );
     defer rows.deinit(allocator);
 
-    try std.testing.expectEqual(@as(usize, 15), rows.items.len);
-    try std.testing.expectEqualStrings("page-id", rows.items[0].id);
-    try std.testing.expectEqualStrings("42", rows.items[1].id);
-    try std.testing.expectEqualStrings("access-uid", rows.items[2].id);
-    try std.testing.expectEqualStrings("insight-issue", rows.items[3].id);
-    try std.testing.expectEqualStrings("api-op", rows.items[4].id);
-    try std.testing.expectEqualStrings("discovery-op", rows.items[5].id);
-    try std.testing.expectEqualStrings("client-cert", rows.items[6].id);
-    try std.testing.expectEqualStrings("leaked-detection", rows.items[7].id);
-    try std.testing.expectEqualStrings("scan-expression", rows.items[8].id);
-    try std.testing.expectEqualStrings("audit-uuid", rows.items[9].id);
-    try std.testing.expectEqualStrings("dataset-id", rows.items[10].id);
-    try std.testing.expectEqualStrings("dataset-name", rows.items[11].id);
-    try std.testing.expectEqualStrings("www.example.test", rows.items[12].id);
-    try std.testing.expectEqualStrings("asset-name", rows.items[13].id);
-    try std.testing.expectEqualStrings("email-sending-tag", rows.items[14].id);
+    try std.testing.expectEqual(@as(usize, 24), rows.items.len);
+    try std.testing.expectEqualStrings("scalar-id", rows.items[0].id);
+    try std.testing.expectEqualStrings("64512", rows.items[1].id);
+    try std.testing.expectEqualStrings("page-id", rows.items[2].id);
+    try std.testing.expectEqualStrings("42", rows.items[3].id);
+    try std.testing.expectEqualStrings("access-uid", rows.items[4].id);
+    try std.testing.expectEqualStrings("13335", rows.items[5].id);
+    try std.testing.expectEqualStrings("15169", rows.items[6].id);
+    try std.testing.expectEqualStrings("msg-1", rows.items[7].id);
+    try std.testing.expectEqualStrings("conn-1", rows.items[8].id);
+    try std.testing.expectEqualStrings("cookie-1", rows.items[9].id);
+    try std.testing.expectEqualStrings("script-1", rows.items[10].id);
+    try std.testing.expectEqualStrings("googlebot", rows.items[11].id);
+    try std.testing.expectEqualStrings("insight-issue", rows.items[12].id);
+    try std.testing.expectEqualStrings("api-op", rows.items[13].id);
+    try std.testing.expectEqualStrings("discovery-op", rows.items[14].id);
+    try std.testing.expectEqualStrings("client-cert", rows.items[15].id);
+    try std.testing.expectEqualStrings("leaked-detection", rows.items[16].id);
+    try std.testing.expectEqualStrings("scan-expression", rows.items[17].id);
+    try std.testing.expectEqualStrings("audit-uuid", rows.items[18].id);
+    try std.testing.expectEqualStrings("dataset-id", rows.items[19].id);
+    try std.testing.expectEqualStrings("dataset-name", rows.items[20].id);
+    try std.testing.expectEqualStrings("www.example.test", rows.items[21].id);
+    try std.testing.expectEqualStrings("asset-name", rows.items[22].id);
+    try std.testing.expectEqualStrings("email-sending-tag", rows.items[23].id);
+}
+
+test "parses Cloudflare scalar resource rows for source-list captures" {
+    const allocator = std.testing.allocator;
+    var rows = try parseResourceRows(allocator, "botnet-threat-feed-list-asn", "account", "acct-1",
+        \\{"result":["64512",13335]}
+    );
+    defer rows.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), rows.items.len);
+    try std.testing.expectEqualStrings("botnet-threat-feed-list-asn", rows.items[0].kind);
+    try std.testing.expectEqualStrings("64512", rows.items[0].resource_id);
+    try std.testing.expectEqualStrings("13335", rows.items[1].resource_id);
 }
 
 test "parses generic Cloudflare resource ids matching a string field" {
