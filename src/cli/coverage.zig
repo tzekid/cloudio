@@ -2,6 +2,7 @@ const std = @import("std");
 const app_coverage = @import("app_coverage");
 const cli_coverage_parse = @import("cli_coverage_parse");
 const cli_render = @import("cli_render");
+const cli_route_request = @import("cli_route_request");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -116,7 +117,7 @@ fn commandDryRunCandidates(ctx: Context, command: DryRunCandidateCommand) !void 
 }
 
 fn commandPlan(ctx: Context, args: []const []const u8) !void {
-    const input = cli_coverage_parse.parsePlan(ctx.gpa, args) catch |err| {
+    const input = cli_route_request.parsePlan(ctx.gpa, args) catch |err| {
         std.debug.print("invalid coverage plan arguments: {s}\n", .{@errorName(err)});
         return;
     };
