@@ -409,10 +409,15 @@ test "topology read model connects DNS Caddy project and system state" {
     try db.initSchema();
 
     try db.upsertCloudflareZone("zone-1", "plosca.ru", "account-1", "active", false, "full", "[]", "{}");
+    try db.upsertDnsRecord("record-0", "zone-1", "api.plosca.ru", "AAAA", "2001:db8::1", 1, false, "{}");
     try db.upsertDnsRecord("record-1", "zone-1", "api.plosca.ru", "A", "76.13.130.170", 1, false, "{}");
     try db.upsertDnsRecord("record-2", "zone-1", "dns-only.plosca.ru", "A", "76.13.130.170", 1, false, "{}");
+    try db.upsertDnsRecord("record-3", "zone-1", "api.plosca.ru", "MX", "mail.example.com", 1, false, "{}");
+    try db.upsertDnsRecord("record-4", "zone-1", "dns-only.plosca.ru", "TXT", "\"v=spf1 include:example.com ~all\"", 1, false, "{}");
     try db.upsertCaddySite("api.plosca.ru", "/etc/caddy/conf.d/sites.caddy", "api.plosca.ru { reverse_proxy 127.0.0.1:9000 }");
     try db.insertCaddyUpstream("api.plosca.ru", "", "127.0.0.1:9000");
+    try db.insertCaddyUpstream("api.plosca.ru", "", "127.0.0.1:9000");
+    try db.insertCaddyUpstream("local-only.plosca.ru", "", "127.0.0.1:9100");
     try db.insertCaddyUpstream("local-only.plosca.ru", "", "127.0.0.1:9100");
     try db.upsertProject("api", "compose", "/home/kid/Projects/api/compose.yaml", "api.plosca.ru", "127.0.0.1:9000", "api.service", "api-1", null);
     try db.upsertProject("compose-only", "compose", "/home/kid/Projects/compose-only/compose.yaml", null, null, null, null, null);
@@ -456,6 +461,9 @@ test "topology read model connects DNS Caddy project and system state" {
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio topology\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "healthy=1 degraded=2 dns_only=1 local_only=0 project_only=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "api.plosca.ru\tstatus=healthy\texposure=public\tdns_match=direct\tdns=api.plosca.ru\tdns_type=A\tdns_content=76.13.130.170") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "dns_type=AAAA") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "dns_type=MX") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "dns_type=TXT") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "socket=LISTEN") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "dns-only.plosca.ru\tstatus=dns_only\texposure=public\tdns_match=direct\tdns=dns-only.plosca.ru") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "local-only.plosca.ru\tstatus=degraded\texposure=local\tdns_match=none") != null);

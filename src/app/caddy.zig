@@ -77,8 +77,10 @@ test "caddy site and upstream rendering stays stable" {
     defer db.close();
     try db.initSchema();
     try db.insertCaddyUpstream("api.example.com", "", "127.0.0.1:9000");
+    try db.insertCaddyUpstream("api.example.com", "", "127.0.0.1:9000");
     var upstreams = try db.caddyUpstreams(allocator);
     defer upstreams.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), upstreams.items.len);
 
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();

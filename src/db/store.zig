@@ -1259,11 +1259,11 @@ pub const Db = struct {
     pub fn projectCorrelations(self: *Db, gpa: Allocator, limit: i64) !ProjectCorrelations {
         const stmt = try self.prepare(
             \\WITH rows AS (
-            \\  SELECT p.name AS project,
+            \\  SELECT DISTINCT p.name AS project,
             \\         p.source AS source,
             \\         COALESCE(p.path, '') AS path,
             \\         COALESCE(NULLIF(p.host, ''), cu.host, '') AS host,
-            \\         COALESCE(NULLIF(p.upstream, ''), cu.upstream, '') AS upstream,
+            \\         COALESCE(NULLIF(cu.upstream, ''), p.upstream, '') AS upstream,
             \\         COALESCE(p.service, '') AS service,
             \\         COALESCE(p.container, '') AS container
             \\  FROM projects p
@@ -1271,7 +1271,7 @@ pub const Db = struct {
             \\    ON (p.host IS NOT NULL AND p.host != '' AND cu.host = p.host)
             \\    OR (p.upstream IS NOT NULL AND p.upstream != '' AND cu.upstream = p.upstream)
             \\  UNION ALL
-            \\  SELECT '' AS project,
+            \\  SELECT DISTINCT '' AS project,
             \\         'caddy' AS source,
             \\         '' AS path,
             \\         cu.host AS host,
@@ -1328,11 +1328,11 @@ pub const Db = struct {
     pub fn topologyRows(self: *Db, gpa: Allocator, limit: i64) !TopologyRows {
         const stmt = try self.prepare(
             \\WITH rows AS (
-            \\  SELECT p.name AS project,
+            \\  SELECT DISTINCT p.name AS project,
             \\         p.source AS source,
             \\         COALESCE(p.path, '') AS path,
             \\         COALESCE(NULLIF(p.host, ''), cu.host, '') AS host,
-            \\         COALESCE(NULLIF(p.upstream, ''), cu.upstream, '') AS upstream,
+            \\         COALESCE(NULLIF(cu.upstream, ''), p.upstream, '') AS upstream,
             \\         COALESCE(p.service, '') AS service,
             \\         COALESCE(p.container, '') AS container
             \\  FROM projects p
@@ -1340,7 +1340,7 @@ pub const Db = struct {
             \\    ON (p.host IS NOT NULL AND p.host != '' AND cu.host = p.host)
             \\    OR (p.upstream IS NOT NULL AND p.upstream != '' AND cu.upstream = p.upstream)
             \\  UNION ALL
-            \\  SELECT '' AS project,
+            \\  SELECT DISTINCT '' AS project,
             \\         'caddy' AS source,
             \\         '' AS path,
             \\         cu.host AS host,
@@ -1379,12 +1379,41 @@ pub const Db = struct {
             \\    ON rows.container != ''
             \\   AND ct.name = rows.container
             \\),
+            \\dns_local_target AS (
+            \\  SELECT dns.id,
+            \\         dns.name,
+            \\         dns.type,
+            \\         dns.content,
+            \\         dns.proxied
+            \\  FROM cloudflare_dns_records dns
+            \\  WHERE dns.name IS NOT NULL
+            \\    AND dns.name != ''
+            \\    AND upper(COALESCE(dns.type, '')) IN ('A', 'AAAA')
+            \\    AND NOT EXISTS (
+            \\      SELECT 1 FROM cloudflare_dns_records better
+            \\      WHERE better.name = dns.name
+            \\        AND upper(COALESCE(better.type, '')) IN ('A', 'AAAA')
+            \\        AND (
+            \\          CASE upper(COALESCE(better.type, '')) WHEN 'A' THEN 0 ELSE 1 END <
+            \\          CASE upper(COALESCE(dns.type, '')) WHEN 'A' THEN 0 ELSE 1 END
+            \\          OR (
+            \\            CASE upper(COALESCE(better.type, '')) WHEN 'A' THEN 0 ELSE 1 END =
+            \\            CASE upper(COALESCE(dns.type, '')) WHEN 'A' THEN 0 ELSE 1 END
+            \\            AND better.id < dns.id
+            \\          )
+            \\        )
+            \\    )
+            \\),
             \\combined AS (
-            \\  SELECT COALESCE(NULLIF(local_rows.host, ''), dns.name, '') AS host,
-            \\         COALESCE(dns.name, '') AS dns_name,
-            \\         COALESCE(dns.type, '') AS dns_type,
-            \\         COALESCE(dns.content, '') AS dns_content,
-            \\         CASE WHEN dns.proxied IS NULL THEN '' WHEN dns.proxied != 0 THEN 'true' ELSE 'false' END AS dns_proxied,
+            \\  SELECT COALESCE(NULLIF(local_rows.host, ''), direct_dns.name, wildcard_dns.name, '') AS host,
+            \\         COALESCE(direct_dns.name, wildcard_dns.name, '') AS dns_name,
+            \\         COALESCE(direct_dns.type, wildcard_dns.type, '') AS dns_type,
+            \\         COALESCE(direct_dns.content, wildcard_dns.content, '') AS dns_content,
+            \\         CASE
+            \\           WHEN COALESCE(direct_dns.proxied, wildcard_dns.proxied) IS NULL THEN ''
+            \\           WHEN COALESCE(direct_dns.proxied, wildcard_dns.proxied) != 0 THEN 'true'
+            \\           ELSE 'false'
+            \\         END AS dns_proxied,
             \\         local_rows.project,
             \\         local_rows.source,
             \\         local_rows.path,
@@ -1397,9 +1426,12 @@ pub const Db = struct {
             \\         local_rows.container,
             \\         local_rows.container_status
             \\  FROM local_rows
-            \\  LEFT JOIN cloudflare_dns_records dns
-            \\    ON dns.name = local_rows.host
-            \\    OR (dns.name LIKE '*.%' AND local_rows.host LIKE '%' || substr(dns.name, 2))
+            \\  LEFT JOIN dns_local_target direct_dns
+            \\    ON direct_dns.name = local_rows.host
+            \\  LEFT JOIN dns_local_target wildcard_dns
+            \\    ON direct_dns.name IS NULL
+            \\   AND wildcard_dns.name LIKE '*.%'
+            \\   AND local_rows.host LIKE '%' || substr(wildcard_dns.name, 2)
             \\  UNION ALL
             \\  SELECT dns.name AS host,
             \\         dns.name AS dns_name,
@@ -1417,7 +1449,7 @@ pub const Db = struct {
             \\         '' AS service_state,
             \\         '' AS container,
             \\         '' AS container_status
-            \\  FROM cloudflare_dns_records dns
+            \\  FROM dns_local_target dns
             \\  WHERE dns.name IS NOT NULL
             \\    AND dns.name != ''
             \\    AND NOT EXISTS (
@@ -1974,7 +2006,7 @@ pub const Db = struct {
     }
 
     pub fn caddyUpstreams(self: *Db, gpa: Allocator) !NameValueRows {
-        return try self.nameValueRows(gpa, "SELECT host, upstream FROM caddy_upstreams ORDER BY host, upstream");
+        return try self.nameValueRows(gpa, "SELECT DISTINCT host, upstream FROM caddy_upstreams ORDER BY host, upstream");
     }
 
     pub fn recentMetrics(self: *Db, gpa: Allocator, limit: i64) !MetricRows {
