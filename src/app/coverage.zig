@@ -91,6 +91,8 @@ pub const CaptureCandidateOptions = app_provider_coverage_candidates.CaptureCand
 
 pub const ActualCaptureOptions = app_provider_coverage_actual_captures.ActualCaptureOptions;
 
+pub const ActualCaptureFocus = app_provider_coverage_actual_captures.ActualCaptureFocus;
+
 pub const ActualReadyCaptureOptions = app_provider_coverage_actual_ready.ActualReadyCaptureOptions;
 
 pub const DryRunCandidateOptions = app_provider_coverage_candidates.DryRunCandidateOptions;

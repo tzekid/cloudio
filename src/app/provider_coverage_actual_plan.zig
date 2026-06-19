@@ -19,8 +19,28 @@ pub const CoverageRoutes = app_provider_coverage_routes.CoverageRoutes;
 pub const ActualCaptureHints = app_provider_coverage_actual_inputs.Hints;
 pub const ActualCaptureSourceSummary = app_provider_coverage_actual_inputs.SourceSummary;
 
+pub const ActualCaptureFocus = enum {
+    all,
+    control_plane,
+
+    pub fn parse(value: []const u8) ?ActualCaptureFocus {
+        if (std.mem.eql(u8, value, "all")) return .all;
+        if (std.mem.eql(u8, value, "control-plane") or std.mem.eql(u8, value, "control_plane")) return .control_plane;
+        if (std.mem.eql(u8, value, "cloudio") or std.mem.eql(u8, value, "cloudio-relevant")) return .control_plane;
+        return null;
+    }
+
+    pub fn name(self: ActualCaptureFocus) []const u8 {
+        return switch (self) {
+            .all => "all",
+            .control_plane => "control-plane",
+        };
+    }
+};
+
 pub const ActualCaptureOptions = struct {
     filter: RouteFilter = .{},
+    focus: ActualCaptureFocus = .all,
     limit: usize = 25,
     include_plans: bool = false,
     configured_domains: []const []const u8 = &.{},
@@ -114,6 +134,7 @@ pub const ActualCapturePlan = struct {
         var out = ActualCaptureTotals{};
         const hints_value = self.hints();
         for (self.routes.items) |row| {
+            if (!actualCaptureRouteInFocus(self.options, row)) continue;
             const status = app_provider_coverage_actual_inputs.actualCaptureState(row.route, self.captures.items) orelse continue;
             out.official_read_routes += 1;
             const route_status = app_provider_coverage_actual_inputs.actualRouteCaptureStatus(row.route.provider.name(), row.route.operation_id.?, self.captures.items);
@@ -139,6 +160,7 @@ pub const ActualCapturePlan = struct {
         var out = ActualCaptureSourceSummary{};
         const hints_value = self.hints();
         for (self.routes.items) |row| {
+            if (!actualCaptureRouteInFocus(self.options, row)) continue;
             const state = app_provider_coverage_actual_inputs.actualCaptureState(row.route, self.captures.items) orelse continue;
             if (state == .ok) continue;
             try app_provider_coverage_actual_inputs.actualCaptureSummarizeMissingInputSources(gpa, &out, row.route, self.routes.items, self.captures.items, self.source_evidence.items, hints_value);
@@ -198,5 +220,12 @@ fn loadActualCapturePlanWithRoutes(gpa: Allocator, db: *Db, options: ActualCaptu
         .hostinger_vps = hostinger_vps,
         .hostinger_resources = hostinger_resources,
         .hostinger_inventory = hostinger_inventory,
+    };
+}
+
+pub fn actualCaptureRouteInFocus(options: ActualCaptureOptions, row: CoverageRoute) bool {
+    return switch (options.focus) {
+        .all => true,
+        .control_plane => app_provider_coverage_routes.tagIsControlPlane(row.route.provider.name(), row.route.tag),
     };
 }

@@ -40,10 +40,12 @@ const ActualCaptureHints = app_provider_coverage_actual_inputs.Hints;
 const ActualCaptureInputSource = app_provider_coverage_actual_inputs.InputSource;
 const ActualCaptureSourceBodyEvidence = app_provider_coverage_actual_inputs.SourceBodyEvidence;
 pub const ActualCaptureOptions = app_provider_coverage_actual_plan.ActualCaptureOptions;
+pub const ActualCaptureFocus = app_provider_coverage_actual_plan.ActualCaptureFocus;
 const ActualCapturePlan = app_provider_coverage_actual_plan.ActualCapturePlan;
 const ActualCaptureTotals = app_provider_coverage_actual_plan.ActualCaptureTotals;
 const loadActualCapturePlanFromFiles = app_provider_coverage_actual_plan.loadActualCapturePlanFromFiles;
 const loadActualCapturePlanFromText = app_provider_coverage_actual_plan.loadActualCapturePlanFromText;
+const actualCaptureRouteInFocus = app_provider_coverage_actual_plan.actualCaptureRouteInFocus;
 
 const actualCaptureRouteFilter = app_provider_coverage_actual_inputs.actualCaptureRouteFilter;
 const actualCaptureState = app_provider_coverage_actual_inputs.actualCaptureState;
@@ -74,7 +76,7 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
     const source_summary = try plan.sourceSummary(gpa);
     try writer.writeAll("Cloudio actual route capture plan\n");
     try writer.writeAll("rank: official GET/read routes missing an OK route.capture audit event\n");
-    try writer.print("filter provider={s}", .{plan.options.filter.provider.name()});
+    try writer.print("filter provider={s} focus={s}", .{ plan.options.filter.provider.name(), plan.options.focus.name() });
     if (plan.options.filter.tag_query) |query| try writer.print(" tag_query={s}", .{query});
     if (plan.options.filter.family != .all) try writer.print(" family={s}", .{plan.options.filter.family.name()});
     if (plan.options.filter.support) |support| try writer.print(" support={s}", .{support.name()});
@@ -122,6 +124,7 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
     var current_tag: ?[]const u8 = null;
     const hints_value = plan.hints();
     for (plan.routes.items) |row| {
+        if (!actualCaptureRouteInFocus(plan.options, row)) continue;
         const state = actualCaptureState(row.route, plan.captures.items) orelse continue;
         if (state == .ok) continue;
         if (plan.options.limit != 0 and visible >= plan.options.limit) {
@@ -191,6 +194,7 @@ fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: a
     try writer.writeAll("\"filter\":");
     try writeRouteFilterJson(actualCaptureRouteFilter(plan.options.filter), writer);
     try writer.writeByte(',');
+    try writeJsonField(writer, "focus", plan.options.focus.name(), true);
     try writeJsonCountField(writer, "limit", plan.options.limit, true);
     try writeJsonBoolField(writer, "include_plans", plan.options.include_plans, true);
     try writeJsonField(writer, "rank", "official GET/read routes missing an OK route.capture audit event", true);
@@ -215,6 +219,7 @@ fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: a
     var first = true;
     const hints_value = plan.hints();
     for (plan.routes.items) |row| {
+        if (!actualCaptureRouteInFocus(plan.options, row)) continue;
         const state = actualCaptureState(row.route, plan.captures.items) orelse continue;
         if (state == .ok) continue;
         if (plan.options.limit != 0 and visible >= plan.options.limit) {
@@ -598,6 +603,7 @@ fn writeActualCaptureCandidateJson(
     try writer.writeByte('{');
     try writeJsonField(writer, "provider", route.provider.name(), true);
     try writeJsonField(writer, "tag", route.tag, true);
+    try writeJsonNullableStringField(writer, "focus_family", if (app_provider_coverage_routes.tagFamily(route.provider.name(), route.tag)) |family| family.name() else null, true);
     try writeJsonField(writer, "method", route.method.name(), true);
     try writeJsonField(writer, "path_template", route.path_template, true);
     try writeJsonField(writer, "operation_id", route.operation_id.?, true);
@@ -726,6 +732,53 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     try std.testing.expect(std.mem.indexOf(u8, text, "state=non_ok support=partial op=VPS_getBackupsV1 events=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "ready=true live_read_supported=true missing_inputs=-") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
+}
+
+test "filters actual capture plans to control-plane families" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-capture-focus.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Catalog Sync","method":"GET","path":"/accounts/{account_id}/catalog","operation_id":"catalog-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"non-control-plane provider metadata"}
+        \\{"provider":"cloudflare","tag":"SSL Universal","method":"GET","path":"/zones/{zone_id}/ssl/universal/settings","operation_id":"universal-ssl-settings-for-a-zone-get-universal-ssl-settings","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"control-plane ssl"}
+        \\
+    ;
+    const hostinger =
+        \\{"provider":"hostinger","tag":"VPS: Virtual machine","method":"GET","path":"/api/vps/v1/virtual-machines","operation_id":"VPS_getVirtualMachinesV1","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["apiToken"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"control-plane vps"}
+        \\
+    ;
+
+    var control_out = std.Io.Writer.Allocating.init(allocator);
+    defer control_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, cloudflare, hostinger, &db, .{
+        .focus = .control_plane,
+        .limit = 0,
+    }, &control_out.writer);
+    const control_json = try control_out.toOwnedSlice();
+    defer allocator.free(control_json);
+    try std.testing.expect(std.mem.indexOf(u8, control_json, "\"focus\":\"control-plane\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, control_json, "\"official_read_routes\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, control_json, "\"focus_family\":\"ssl-tls\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, control_json, "\"focus_family\":\"hostinger-vps\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, control_json, "catalog-list") == null);
+
+    var all_out = std.Io.Writer.Allocating.init(allocator);
+    defer all_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, cloudflare, hostinger, &db, .{
+        .focus = .all,
+        .limit = 0,
+    }, &all_out.writer);
+    const all_json = try all_out.toOwnedSlice();
+    defer allocator.free(all_json);
+    try std.testing.expect(std.mem.indexOf(u8, all_json, "\"focus\":\"all\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, all_json, "\"official_read_routes\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, all_json, "catalog-list") != null);
 }
 
 test "plans derived Hostinger VPS detail captures from captured resource hints" {

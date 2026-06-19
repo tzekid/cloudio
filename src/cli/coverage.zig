@@ -231,6 +231,17 @@ fn parseCoverageFocusArg(args: []const []const u8, index: *usize, focus: *app_co
     };
 }
 
+fn parseActualCaptureFocusArg(args: []const []const u8, index: *usize, focus: *app_coverage.ActualCaptureFocus) CoverageArg {
+    return switch (parseCoverageValueArg(args, index, .{"--focus"})) {
+        .no_match => .no_match,
+        .matched => |value| blk: {
+            focus.* = app_coverage.ActualCaptureFocus.parse(value) orelse return .{ .unknown = value };
+            break :blk .matched;
+        },
+        .unknown => |value| .{ .unknown = value },
+    };
+}
+
 fn parseCoverageFamilyArg(args: []const []const u8, index: *usize, family: *app_coverage.WorkplanFamily) CoverageArg {
     return switch (parseCoverageValueArg(args, index, .{ "--family", "--control-plane-family", "--focus-family" })) {
         .no_match => .no_match,
@@ -593,7 +604,7 @@ pub const usage_text =
     \\  cloudio coverage typed-models [all|cloudflare|hostinger] [--family <family>] [--limit <n>] [--include-complete] [--json|--format json]
     \\  cloudio coverage workplan [all|cloudflare|hostinger] [all|control-plane|<family>] [--focus all|control-plane] [--family <family>] [--limit <n>] [--plans] [--bundle] [--candidate-limit <n>] [--json|--format json]
     \\  cloudio coverage capture-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--plans] [--json|--format json]
-    \\  cloudio coverage actual-captures [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--operation <id>] [--limit <n>] [--plans] [--json|--format json]
+    \\  cloudio coverage actual-captures [all|cloudflare|hostinger] [all|control-plane] [tag-query] [--focus all|control-plane] [--family <family>] [--support <status>] [--operation <id>] [--limit <n>] [--plans] [--json|--format json]
     \\  cloudio coverage dry-run-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--plans] [--json|--format json]
     \\  cloudio coverage routes [all|cloudflare|hostinger] [tag-query] [--family <family>] [--operation <id>] [--method <method>] [--path <template>] [--support <status>] [--mode <mode>] [--detail] [--json|--format json]
     \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]
@@ -756,6 +767,11 @@ fn parseActualCaptures(args: []const []const u8) Command {
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
+        switch (parseActualCaptureFocusArg(args, &index, &command.options.focus)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
         switch (parseCoverageOperationArg(args, &index, &command.options.filter.operation_id)) {
             .matched => continue,
             .unknown => |value| return .{ .unknown = value },
@@ -769,6 +785,10 @@ fn parseActualCaptures(args: []const []const u8) Command {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
             command.options.include_plans = true;
+        } else if (std.mem.eql(u8, arg, "--control-plane") or std.mem.eql(u8, arg, "--cloudio-relevant")) {
+            command.options.focus = .control_plane;
+        } else if (app_coverage.ActualCaptureFocus.parse(arg)) |focus| {
+            command.options.focus = focus;
         } else if (!provider_set) {
             if (app_coverage.ProviderFilter.parse(arg)) |provider| {
                 command.options.filter.provider = provider;
@@ -1354,9 +1374,33 @@ test "coverage command parser defaults to summary" {
         .actual_captures => |command| {
             try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, command.options.filter.provider);
             try std.testing.expectEqual(app_coverage.WorkplanFamily.hostinger_vps, command.options.filter.family);
+            try std.testing.expectEqual(app_coverage.ActualCaptureFocus.all, command.options.focus);
             try std.testing.expectEqualStrings("VPS_getVirtualMachineDetailsV1", command.options.filter.operation_id orelse "");
             try std.testing.expectEqual(@as(usize, 10), command.options.limit);
             try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageActualCaptures,
+    }
+
+    const focused_actual_captures_args = [_][]const u8{ "actual-captures", "control-plane", "--limit=0", "--plans", "--json" };
+    switch (parseCommand(focused_actual_captures_args[0..])) {
+        .actual_captures => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.all, command.options.filter.provider);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.all, command.options.filter.family);
+            try std.testing.expectEqual(app_coverage.ActualCaptureFocus.control_plane, command.options.focus);
+            try std.testing.expectEqual(@as(usize, 0), command.options.limit);
+            try std.testing.expect(command.options.include_plans);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageActualCaptures,
+    }
+
+    const focused_actual_captures_flag_args = [_][]const u8{ "missing-captures", "--focus=control-plane", "cloudflare", "--family=ssl-tls" };
+    switch (parseCommand(focused_actual_captures_flag_args[0..])) {
+        .actual_captures => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.filter.provider);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.ssl_tls, command.options.filter.family);
+            try std.testing.expectEqual(app_coverage.ActualCaptureFocus.control_plane, command.options.focus);
         },
         else => return error.ExpectedCoverageActualCaptures,
     }
