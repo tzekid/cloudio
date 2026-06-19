@@ -595,7 +595,7 @@ fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []co
     if (std.mem.eql(u8, name, "rule_identifier")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-email-routing-rules", "email-routing-rules" });
     if (std.mem.eql(u8, name, "destination_address_identifier")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-email-routing-destination-addresses", "email-routing-destination-addresses" });
     if (std.mem.eql(u8, name, "name") and containsIgnoreCase(route.tag, "API Shield Labels")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"zone-api-shield-labels"});
-    return null;
+    return actualCapturePathParamEnumHint(route, name);
 }
 
 fn actualCaptureCloudflareAccountIdHint(hints: Hints) ?[]const u8 {
@@ -947,7 +947,7 @@ fn actualCaptureHostingerPathParamHint(route: provider_routes.Route, name: []con
     if (std.mem.eql(u8, name, "projectName")) return actualCaptureHostingerResourceHintForAny(route, hints, &.{ "VPS_getProjectContentsV1", "VPS_getProjectContainersV1", "VPS_getProjectLogsV1" }, "VPS_getProjectListV1");
     if (std.mem.eql(u8, name, "profileUuid")) return actualCaptureHostingerResourceHint(route, hints, "reach_listProfileSegmentContactsV1", "reach_listProfilesV1");
     if (std.mem.eql(u8, name, "segmentUuid")) return actualCaptureHostingerResourceHintForAny(route, hints, &.{ "reach_getSegmentDetailsV1", "reach_listSegmentContactsV1", "reach_listProfileSegmentContactsV1" }, "reach_listSegmentsV1");
-    return null;
+    return actualCapturePathParamEnumHint(route, name);
 }
 
 fn actualCaptureHostingerResourceHint(route: provider_routes.Route, hints: Hints, detail_operation_id: []const u8, list_kind: []const u8) ?[]const u8 {
@@ -1184,6 +1184,7 @@ fn actualCaptureHasCloudflareQueryParamHintWithHints(route: provider_routes.Rout
     if (std.mem.eql(u8, operation_id, "get_EventGraph")) {
         if (std.mem.eql(u8, name, "nodeId") or std.mem.eql(u8, name, "nodeType")) return actualCaptureCloudflareCloudforceEventHint(route, hints) != null;
     }
+    if (actualCaptureQueryParamEnumHint(route, name) != null) return true;
     const audit_v2_window =
         std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-logs") or
         std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-logs") or
@@ -1204,6 +1205,7 @@ fn actualCaptureHasHostingerQueryParamHint(route: provider_routes.Route, name: [
     {
         return true;
     }
+    if (actualCaptureQueryParamEnumHint(route, name) != null) return true;
     return std.mem.eql(u8, operation_id, "hosting_listAvailableDatacentersV1") and
         std.mem.eql(u8, name, "order_id") and
         actualCaptureHostingerOrderIdHint(hints) != null;
@@ -1216,6 +1218,12 @@ pub fn actualCaptureQueryParamHint(gpa: Allocator, route: provider_routes.Route,
         if (actualCaptureHostingerOrderIdHint(hints)) |order_id| return try gpa.dupe(u8, order_id);
         return null;
     }
+    if (actualCaptureQueryParamEnumHint(route, name)) |value| return try gpa.dupe(u8, value);
+    if (!std.mem.eql(u8, route.operation_id.?, "VPS_getMetricsV1") or
+        (!std.mem.eql(u8, name, "date_from") and !std.mem.eql(u8, name, "date_to")))
+    {
+        return null;
+    }
     const now = core_time.currentEpochSeconds() catch return null;
     const day: u64 = 24 * 60 * 60;
     const timestamp = if (std.mem.eql(u8, name, "date_from") and now > day) now - day else now;
@@ -1225,7 +1233,8 @@ pub fn actualCaptureQueryParamHint(gpa: Allocator, route: provider_routes.Route,
 }
 
 fn actualCaptureCloudflareQueryParamHint(gpa: Allocator, route: provider_routes.Route, name: []const u8, hints: Hints) !?[]u8 {
-    if (std.mem.eql(u8, route.operation_id orelse "", "get_EventGraph")) {
+    const operation_id = route.operation_id orelse "";
+    if (std.mem.eql(u8, operation_id, "get_EventGraph")) {
         if (actualCaptureCloudflareCloudforceEventHint(route, hints)) |row| {
             if (std.mem.eql(u8, name, "nodeId")) return try gpa.dupe(u8, row.resource_id);
             if (std.mem.eql(u8, name, "nodeType")) return try gpa.dupe(u8, row.category);
@@ -1236,12 +1245,36 @@ fn actualCaptureCloudflareQueryParamHint(gpa: Allocator, route: provider_routes.
         if (actualCaptureCloudflareAuditEventHint(route, hints)) |row| return try gpa.dupe(u8, row.updated_at);
         return null;
     }
+    if (actualCaptureQueryParamEnumHint(route, name)) |value| return try gpa.dupe(u8, value);
+    const audit_v2_window =
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-logs") or
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-logs") or
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-log-history") or
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-log-history");
+    if (!audit_v2_window or (!std.mem.eql(u8, name, "before") and !std.mem.eql(u8, name, "since"))) return null;
     const now = core_time.currentEpochSeconds() catch return null;
     const hour: u64 = 60 * 60;
     const timestamp = if (std.mem.eql(u8, name, "since") and now > hour) now - hour else now;
     var buf: [20]u8 = undefined;
     const formatted = try core_time.formatUtcSecond(&buf, timestamp);
     return try gpa.dupe(u8, formatted);
+}
+
+fn actualCapturePathParamEnumHint(route: provider_routes.Route, name: []const u8) ?[]const u8 {
+    return actualCaptureParamEnumHint(route.path_params, name);
+}
+
+fn actualCaptureQueryParamEnumHint(route: provider_routes.Route, name: []const u8) ?[]const u8 {
+    return actualCaptureParamEnumHint(route.query_params, name);
+}
+
+fn actualCaptureParamEnumHint(params: []const provider_routes.RouteParam, name: []const u8) ?[]const u8 {
+    for (params) |param| {
+        if (!param.required) continue;
+        if (!std.mem.eql(u8, param.name, name)) continue;
+        if (param.schema.enum_values.len != 0) return param.schema.enum_values[0];
+    }
+    return null;
 }
 
 pub fn actualCaptureSummarizeMissingInputSources(
@@ -1754,6 +1787,32 @@ test "plans Hostinger VPS metrics inputs from VPS and synthetic date hints" {
     try std.testing.expectEqual(@as(usize, 17), date_to.len);
     try std.testing.expect(date_from[10] == 'T' and date_from[16] == 'Z');
     try std.testing.expect(date_to[10] == 'T' and date_to[16] == 'Z');
+}
+
+test "plans actual captures from generated enum parameter metadata" {
+    const allocator = std.testing.allocator;
+    const enum_path_json =
+        \\{"provider":"cloudflare","tag":"Radar Bots","method":"GET","path":"/radar/bots/{dimension}/summary","operation_id":"radar-enum-path","path_params":[{"name":"dimension","required":true,"schema":{"schema_refs":[],"types":["string"],"formats":[],"enum_values":["CONTENT_TYPE","USER_AGENT"]}}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+    ;
+    var enum_path_parsed = try std.json.parseFromSlice(std.json.Value, allocator, enum_path_json, .{});
+    defer enum_path_parsed.deinit();
+    const enum_path_route = try provider_routes.Route.init(allocator, .cloudflare, enum_path_parsed.value);
+    defer enum_path_route.deinit(allocator);
+    try std.testing.expect(actualCaptureReady(enum_path_route, .{}));
+    try std.testing.expectEqualStrings("CONTENT_TYPE", actualCapturePathParamHint(enum_path_route, "dimension", .{}) orelse "");
+
+    const enum_query_json =
+        \\{"provider":"cloudflare","tag":"Radar Bots","method":"GET","path":"/radar/bots/summary","operation_id":"radar-enum-query","path_params":[],"query_params":[{"name":"format","required":true,"schema":{"schema_refs":[],"types":["string"],"formats":[],"enum_values":["JSON","CSV"]}}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+    ;
+    var enum_query_parsed = try std.json.parseFromSlice(std.json.Value, allocator, enum_query_json, .{});
+    defer enum_query_parsed.deinit();
+    const enum_query_route = try provider_routes.Route.init(allocator, .cloudflare, enum_query_parsed.value);
+    defer enum_query_route.deinit(allocator);
+    try std.testing.expect(actualCaptureReady(enum_query_route, .{}));
+    try std.testing.expect(actualCaptureHasQueryParamHint(enum_query_route, "format", .{}));
+    const format = (try actualCaptureQueryParamHint(allocator, enum_query_route, "format", .{})) orelse return error.ExpectedFormatHint;
+    defer allocator.free(format);
+    try std.testing.expectEqualStrings("JSON", format);
 }
 
 test "plans Cloudflare audit history inputs from matching event timestamps" {
