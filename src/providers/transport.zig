@@ -1,9 +1,9 @@
 const std = @import("std");
 const net_http = @import("net_http");
 const provider_auth = @import("provider_auth");
-const provider_capabilities = @import("provider_capabilities");
 const provider_cloudflare = @import("provider_cloudflare");
 const provider_hostinger = @import("provider_hostinger");
+const provider_request_plan = @import("provider_request_plan");
 const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
@@ -39,15 +39,10 @@ pub const ReadTransport = struct {
 
     fn callReadRouteRequestWithPolicy(self: ReadTransport, io: Io, gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request, include_blocked_diagnostic: bool) !net_http.Response {
         if (route.provider != self.provider()) return error.ProviderRouteAuthMismatch;
-        if (!route.isRoutable()) return error.UnsupportedProviderRoute;
-        if (route.method != .GET or route.mode != .read) return error.ProviderRouteRequiresDryRun;
-        if (!provider_capabilities.routeLiveReadSupported(route) and !(include_blocked_diagnostic and provider_capabilities.routeDiagnosticReadSupported(route))) return error.UnsupportedProviderRoute;
-        if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
-        try route.validateRequestHeaders(request);
+        var plan = try provider_request_plan.planLiveReadRequest(gpa, route, request, include_blocked_diagnostic, self.baseUrl(route.provider));
+        defer plan.deinit(gpa);
         try provider_auth.validateRouteAuth(route, self.auth);
 
-        const url = try route.renderRequestUrl(gpa, self.baseUrl(route.provider), request);
-        defer gpa.free(url);
         const headers = try requestHeaders(gpa, request.header_params);
         defer gpa.free(headers);
         return switch (self.auth) {
@@ -57,14 +52,14 @@ pub const ReadTransport = struct {
                     .base_url_override = self.cloudflare_base_url_override,
                 };
                 if (!route.security.required) {
-                    return try cloudflare.getPublicWithHeaders(io, gpa, url, headers);
+                    return try cloudflare.getPublicWithHeaders(io, gpa, plan.url, headers);
                 }
-                return try cloudflare.getWithHeaders(io, gpa, url, headers);
+                return try cloudflare.getWithHeaders(io, gpa, plan.url, headers);
             },
             .hostinger => |token| try (provider_hostinger.Client{
                 .token = token,
                 .base_url_override = self.hostinger_base_url_override,
-            }).getWithHeaders(io, gpa, url, headers),
+            }).getWithHeaders(io, gpa, plan.url, headers),
         };
     }
 };

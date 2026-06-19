@@ -59,6 +59,7 @@ pub const providers = struct {
     pub const auth = @import("provider_auth");
     pub const capabilities = @import("provider_capabilities");
     pub const dispatch = @import("provider_dispatch");
+    pub const request_plan = @import("provider_request_plan");
     pub const route_plan = @import("provider_route_plan");
     pub const route_result = @import("provider_route_result");
     pub const route_safety = @import("provider_route_safety");
@@ -132,6 +133,8 @@ test "facade exposes stable integration modules" {
     _ = providers.capabilities.RouteCapabilities;
     _ = providers.dispatch.Client;
     _ = providers.dispatch.ReadRouteResult;
+    _ = providers.request_plan.RequestPlan;
+    _ = providers.request_plan.LiveReadPlan;
     _ = providers.route_plan.planRouteJsonRequest;
     _ = providers.route_result.ReadRouteResultView;
     _ = providers.route_safety.RouteSafetyPolicy;

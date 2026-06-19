@@ -1,6 +1,7 @@
 const std = @import("std");
 const core_json = @import("core_json");
 const provider_capabilities = @import("provider_capabilities");
+const provider_request_plan = @import("provider_request_plan");
 const provider_route_safety = @import("provider_route_safety");
 const provider_routes = @import("provider_routes");
 
@@ -15,53 +16,9 @@ pub fn dryRunPlanJsonWithQuery(gpa: Allocator, route: provider_routes.Route, pat
 }
 
 pub fn planRouteJsonRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
-    if (!route.isRoutable()) return error.UnsupportedProviderRoute;
-    if (route.isDryRunMutation()) return try dryRunPlanJsonRequest(gpa, route, request);
-    if (route.mode != .read or route.method != .GET) return error.UnsupportedProviderRoutePlan;
-    if (request.body.present or request.body.content_type != null) return error.ProviderReadRouteIsBodyless;
-    try route.validateRequestHeaders(request);
-
-    const path = try route.renderRequestPath(gpa, request);
-    defer gpa.free(path);
-    const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ route.provider.baseUrl(), path });
-    defer gpa.free(url);
-
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    try writer.writeAll("{");
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "group", route.tag, true);
-    try writeJsonField(writer, "operation", route.operation_id orelse route.path_template, true);
-    if (route.operation_id) |id| {
-        try writeJsonField(writer, "operation_id", id, true);
-    } else {
-        try writer.writeAll("\"operation_id\":null,");
-    }
-    try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "path", path, true);
-    try writeJsonField(writer, "url", url, true);
-    try writeJsonField(writer, "support", @tagName(route.support), true);
-    try writeSecurityField(writer, "security", route, true);
-    try writeDispatchField(writer, "dispatch", route, true);
-    try writeRouteParamShapeField(writer, "path_param_shapes", route.path_params, true);
-    try writeRouteParamShapeField(writer, "query_param_shapes", route.query_params, true);
-    try writeRouteParamShapeField(writer, "header_param_shapes", route.header_params, true);
-    try writeRouteParamField(writer, "header_params", route.header_params, true);
-    try writeHeaderInputField(writer, "header_params_input", request.header_params, true);
-    try writeRequestBodyField(writer, "request_body", route.request_body, true);
-    try writeRequestBodyInputField(writer, "request_body_input", route.request_body, request.body, true);
-    try writeResponsesField(writer, "responses", route.responses, true);
-    try writer.writeAll("\"mode\":\"read\",");
-    try writer.writeAll("\"will_execute\":false,");
-    try provider_route_safety.writeRouteSafetyPolicyJson(writer, "safety_policy", route, .read_plan, true);
-    const safety = if (provider_capabilities.routeLiveReadSupported(route))
-        "No provider API request is sent. This is a generic request plan for a live read route."
-    else
-        "No provider API request is sent. This read route is planned for metadata review, but Cloudio will not execute it live with the current support policy.";
-    try writeJsonField(writer, "safety", safety, false);
-    try writer.writeAll("}");
-    return try out.toOwnedSlice();
+    var plan = try provider_request_plan.planRouteRequest(gpa, route, request);
+    defer plan.deinit(gpa);
+    return try requestPlanJson(gpa, plan);
 }
 
 pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) ![]u8 {
@@ -69,16 +26,14 @@ pub fn dryRunPlanJsonRequest(gpa: Allocator, route: provider_routes.Route, reque
 }
 
 pub fn dryRunPlanJsonRequestWithBase(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request, base_url_override: ?[]const u8) ![]u8 {
-    if (!route.isRoutable()) return error.UnsupportedProviderRoute;
-    if (route.mode != .dry_run or route.method == .GET or route.method == .HEAD) return error.ProviderRouteIsNotMutation;
-    try route.validateRequestHeaders(request);
-    try route.validateProvidedBodyInput(request);
+    var plan = try provider_request_plan.planDryRunMutationRequestWithBase(gpa, route, request, base_url_override);
+    defer plan.deinit(gpa);
+    return try requestPlanJson(gpa, plan);
+}
 
-    const path = try route.renderRequestPath(gpa, request);
-    defer gpa.free(path);
-    const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ base_url_override orelse route.provider.baseUrl(), path });
-    defer gpa.free(url);
-
+pub fn requestPlanJson(gpa: Allocator, plan: provider_request_plan.RequestPlan) ![]u8 {
+    const route = plan.route;
+    const request = plan.request;
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
     const writer = &out.writer;
@@ -92,8 +47,8 @@ pub fn dryRunPlanJsonRequestWithBase(gpa: Allocator, route: provider_routes.Rout
         try writer.writeAll("\"operation_id\":null,");
     }
     try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "path", path, true);
-    try writeJsonField(writer, "url", url, true);
+    try writeJsonField(writer, "path", plan.path, true);
+    try writeJsonField(writer, "url", plan.url, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
     try writeSecurityField(writer, "security", route, true);
     try writeDispatchField(writer, "dispatch", route, true);
@@ -105,10 +60,11 @@ pub fn dryRunPlanJsonRequestWithBase(gpa: Allocator, route: provider_routes.Rout
     try writeRequestBodyField(writer, "request_body", route.request_body, true);
     try writeRequestBodyInputField(writer, "request_body_input", route.request_body, request.body, true);
     try writeResponsesField(writer, "responses", route.responses, true);
-    try writer.writeAll("\"mode\":\"dry_run\",");
-    try writer.writeAll("\"will_execute\":false,");
-    try provider_route_safety.writeRouteSafetyPolicyJson(writer, "safety_policy", route, .dry_run_mutation, true);
-    try writeJsonField(writer, "safety", "No provider API request is sent. This is a generic dry-run plan for a live mutation route.", false);
+    try writeJsonField(writer, "mode", plan.mode.name(), true);
+    try writer.writeAll("\"will_execute\":");
+    try writer.writeAll(if (plan.will_execute) "true," else "false,");
+    try provider_route_safety.writeRouteSafetyPolicyJson(writer, "safety_policy", route, plan.safety_kind, true);
+    try writeJsonField(writer, "safety", plan.safety, false);
     try writer.writeAll("}");
     return try out.toOwnedSlice();
 }
