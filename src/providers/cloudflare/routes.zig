@@ -1,16 +1,12 @@
 const std = @import("std");
+const typed_routes = @import("provider_typed_routes");
 
 const Allocator = std.mem.Allocator;
 
-const DryRunPlan = struct {
-    group: []const u8,
-    operation: []const u8,
-    operation_id: []const u8,
-    summary: []const u8,
-    method: []const u8,
-    path: []const u8,
-    request_body_schema: ?[]const u8,
-};
+const DryRunPlan = typed_routes.DryRunPlan;
+const QueryParam = typed_routes.QueryParam;
+const appendQuery = typed_routes.appendQuery;
+pub const pathEscape = typed_routes.pathEscape;
 
 pub const base_url = "https://api.cloudflare.com/client/v4";
 pub const accounts_path = "/accounts";
@@ -10445,72 +10441,7 @@ pub fn zoneSettingPath(gpa: Allocator, zone_id: []const u8, setting_id: []const 
 }
 
 fn dryRunPlanJson(gpa: Allocator, plan: DryRunPlan) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    try writer.writeAll("{");
-    try writeJsonField(writer, "provider", "cloudflare", true);
-    try writeJsonField(writer, "group", plan.group, true);
-    try writeJsonField(writer, "operation", plan.operation, true);
-    try writeJsonField(writer, "operation_id", plan.operation_id, true);
-    try writeJsonField(writer, "summary", plan.summary, true);
-    try writeJsonField(writer, "method", plan.method, true);
-    try writeJsonField(writer, "path", plan.path, true);
-    if (plan.request_body_schema) |schema| {
-        try writeJsonField(writer, "request_body_schema", schema, true);
-    } else {
-        try writer.writeAll("\"request_body_schema\":null,");
-    }
-    try writer.writeAll("\"mode\":\"dry_run\",");
-    try writer.writeAll("\"will_execute\":false,");
-    try writeJsonField(writer, "safety", "No Cloudflare API request is sent. This is a typed dry-run plan for a live mutation route.", false);
-    try writer.writeAll("}");
-    return try out.toOwnedSlice();
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try writeJsonString(writer, name);
-    try writer.writeByte(':');
-    try writeJsonString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonString(writer: anytype, value: []const u8) !void {
-    try writer.writeByte('"');
-    for (value) |ch| {
-        switch (ch) {
-            '\\' => try writer.writeAll("\\\\"),
-            '"' => try writer.writeAll("\\\""),
-            '\n' => try writer.writeAll("\\n"),
-            '\r' => try writer.writeAll("\\r"),
-            '\t' => try writer.writeAll("\\t"),
-            else => try writer.writeByte(ch),
-        }
-    }
-    try writer.writeByte('"');
-}
-
-const QueryParam = struct {
-    name: []const u8,
-    value: ?[]const u8,
-};
-
-fn appendQuery(gpa: Allocator, base_path: []const u8, params: []const QueryParam) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    try out.writer.writeAll(base_path);
-    var first = true;
-    for (params) |param| {
-        const value = param.value orelse continue;
-        try out.writer.writeByte(if (first) '?' else '&');
-        first = false;
-        try out.writer.writeAll(param.name);
-        try out.writer.writeByte('=');
-        const escaped = try pathEscape(gpa, value);
-        defer gpa.free(escaped);
-        try out.writer.writeAll(escaped);
-    }
-    return try out.toOwnedSlice();
+    return try typed_routes.dryRunPlanJson(gpa, "cloudflare", "No Cloudflare API request is sent. This is a typed dry-run plan for a live mutation route.", plan);
 }
 
 fn appendCloudforceOneRuleFilters(gpa: Allocator, base_path: []const u8, args: CloudforceOneRuleReadArgs, include_search_query: bool) ![]u8 {
@@ -10676,13 +10607,6 @@ fn appendEmailSecuritySettingsFilters(gpa: Allocator, base_path: []const u8, end
         }),
         else => try gpa.dupe(u8, base_path),
     };
-}
-
-pub fn pathEscape(gpa: Allocator, value: []const u8) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    try (std.Uri.Component{ .raw = value }).formatEscaped(&out.writer);
-    return try out.toOwnedSlice();
 }
 
 test "builds Cloudflare IP range URLs" {

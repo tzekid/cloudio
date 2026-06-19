@@ -1,17 +1,12 @@
 const std = @import("std");
 const core_time = @import("core_time");
+const typed_routes = @import("provider_typed_routes");
 
 const Allocator = std.mem.Allocator;
 
-const DryRunPlan = struct {
-    group: []const u8,
-    operation: []const u8,
-    operation_id: []const u8,
-    summary: []const u8,
-    method: []const u8,
-    path: []const u8,
-    request_body_schema: ?[]const u8,
-};
+const DryRunPlan = typed_routes.DryRunPlan;
+pub const pathEscape = typed_routes.pathEscape;
+pub const appendQueryParam = typed_routes.appendQueryParam;
 
 pub const base_url = "https://developers.hostinger.com";
 pub const virtual_machines_path = "/api/vps/v1/virtual-machines";
@@ -2187,64 +2182,8 @@ pub fn pageUrl(gpa: Allocator, base: []const u8, page: usize) ![]u8 {
     return try std.fmt.allocPrint(gpa, "{s}{s}page={d}", .{ base, sep, page });
 }
 
-pub fn pathEscape(gpa: Allocator, value: []const u8) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    try (std.Uri.Component{ .raw = value }).formatEscaped(&out.writer);
-    return try out.toOwnedSlice();
-}
-
-pub fn appendQueryParam(gpa: Allocator, base: []const u8, key: []const u8, value: []const u8) ![]u8 {
-    const escaped = try pathEscape(gpa, value);
-    defer gpa.free(escaped);
-    const sep: []const u8 = if (std.mem.indexOfScalar(u8, base, '?') == null) "?" else "&";
-    return try std.fmt.allocPrint(gpa, "{s}{s}{s}={s}", .{ base, sep, key, escaped });
-}
-
 fn dryRunPlanJson(gpa: Allocator, plan: DryRunPlan) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    try writer.writeAll("{");
-    try writeJsonField(writer, "provider", "hostinger", true);
-    try writeJsonField(writer, "group", plan.group, true);
-    try writeJsonField(writer, "operation", plan.operation, true);
-    try writeJsonField(writer, "operation_id", plan.operation_id, true);
-    try writeJsonField(writer, "summary", plan.summary, true);
-    try writeJsonField(writer, "method", plan.method, true);
-    try writeJsonField(writer, "path", plan.path, true);
-    if (plan.request_body_schema) |schema| {
-        try writeJsonField(writer, "request_body_schema", schema, true);
-    } else {
-        try writer.writeAll("\"request_body_schema\":null,");
-    }
-    try writer.writeAll("\"mode\":\"dry_run\",");
-    try writer.writeAll("\"will_execute\":false,");
-    try writeJsonField(writer, "safety", "No Hostinger API request is sent. This is a typed dry-run plan for a live mutation route.", false);
-    try writer.writeAll("}");
-    return try out.toOwnedSlice();
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try writeJsonString(writer, name);
-    try writer.writeByte(':');
-    try writeJsonString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeJsonString(writer: anytype, value: []const u8) !void {
-    try writer.writeByte('"');
-    for (value) |ch| {
-        switch (ch) {
-            '\\' => try writer.writeAll("\\\\"),
-            '"' => try writer.writeAll("\\\""),
-            '\n' => try writer.writeAll("\\n"),
-            '\r' => try writer.writeAll("\\r"),
-            '\t' => try writer.writeAll("\\t"),
-            else => try writer.writeByte(ch),
-        }
-    }
-    try writer.writeByte('"');
+    return try typed_routes.dryRunPlanJson(gpa, "hostinger", "No Hostinger API request is sent. This is a typed dry-run plan for a live mutation route.", plan);
 }
 
 pub fn metricsUrl(gpa: Allocator, host: []const u8, vm_id: []const u8) ![]u8 {

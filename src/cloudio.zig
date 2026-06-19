@@ -65,6 +65,7 @@ pub const providers = struct {
     pub const route_result = @import("provider_route_result");
     pub const route_safety = @import("provider_route_safety");
     pub const routes = @import("provider_routes");
+    pub const typed_routes = @import("provider_typed_routes");
     pub const transport = @import("provider_transport");
 
     pub const cloudflare = struct {
@@ -143,6 +144,7 @@ test "facade exposes stable integration modules" {
     _ = providers.route_result.ReadRouteResultView;
     _ = providers.route_safety.RouteSafetyPolicy;
     _ = providers.routes.Route;
+    _ = providers.typed_routes.DryRunPlan;
     _ = providers.transport.ReadTransport;
     _ = providers.cloudflare.client.Client;
     _ = providers.cloudflare.routes.AccountEndpoint;
