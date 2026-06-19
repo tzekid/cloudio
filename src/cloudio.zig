@@ -41,6 +41,7 @@ pub const app = struct {
     pub const provider_route_capture_result = @import("app_provider_route_capture_result");
     pub const refresh = @import("app_refresh");
     pub const route_catalog = @import("app_route_catalog");
+    pub const security = @import("app_security");
     pub const system = @import("app_system");
     pub const topology = @import("app_topology");
 };
@@ -108,6 +109,7 @@ test "facade exposes stable integration modules" {
     _ = app.refresh.Selection;
     _ = app.route_catalog.Catalog;
     _ = app.route_catalog.GroupReport;
+    _ = app.security.Report;
     _ = app.system.Context;
     _ = app.topology.Topology;
     _ = db.schema.Migration;

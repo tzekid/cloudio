@@ -672,6 +672,18 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_log_mod);
 
+    const app_security_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/security.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_security_mod);
+
     const app_caddy_mod = b.createModule(.{
         .root_source_file = b.path("src/app/caddy.zig"),
         .target = target,
@@ -835,6 +847,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_provider_route_capture_result", .module = app_provider_route_capture_result_mod },
             .{ .name = "app_refresh", .module = app_refresh_mod },
             .{ .name = "app_route_catalog", .module = app_route_catalog_mod },
+            .{ .name = "app_security", .module = app_security_mod },
             .{ .name = "app_system", .module = app_system_mod },
             .{ .name = "app_topology", .module = app_topology_mod },
             .{ .name = "core_config", .module = core_config_mod },
@@ -1002,6 +1015,19 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(cli_topology_mod);
+    const cli_security_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/security.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_database", .module = app_database_mod },
+            .{ .name = "app_security", .module = app_security_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+        },
+    });
+    linkSqlite(cli_security_mod);
     const cli_root_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/root.zig"),
         .target = target,
@@ -1028,6 +1054,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "cli_route", .module = cli_route_mod },
             .{ .name = "cli_routes", .module = cli_routes_mod },
+            .{ .name = "cli_security", .module = cli_security_mod },
             .{ .name = "cli_system", .module = cli_system_mod },
             .{ .name = "cli_topology", .module = cli_topology_mod },
             .{ .name = "core_config", .module = core_config_mod },
@@ -1069,6 +1096,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cli_inventory_mod);
     addModuleTest(b, test_step, cli_projects_mod);
     addModuleTest(b, test_step, cli_routes_mod);
+    addModuleTest(b, test_step, cli_security_mod);
     addModuleTest(b, test_step, cli_system_mod);
     addModuleTest(b, test_step, cli_topology_mod);
     addModuleTest(b, test_step, cloudio_mod);
@@ -1080,6 +1108,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_evidence_mod);
     addModuleTest(b, test_step, app_init_mod);
     addModuleTest(b, test_step, app_log_mod);
+    addModuleTest(b, test_step, app_security_mod);
     addModuleTest(b, test_step, app_caddy_mod);
     addModuleTest(b, test_step, app_projects_mod);
     addModuleTest(b, test_step, app_system_mod);

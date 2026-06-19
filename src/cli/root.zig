@@ -22,6 +22,7 @@ const cli_projects = @import("cli_projects");
 const cli_render = @import("cli_render");
 const cli_route = @import("cli_route");
 const cli_routes = @import("cli_routes");
+const cli_security = @import("cli_security");
 const cli_system = @import("cli_system");
 const cli_topology = @import("cli_topology");
 const Io = std.Io;
@@ -99,6 +100,13 @@ pub fn run(init: std.process.Init) !void {
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "log")) {
         try commandLog(init.io, init.gpa, cfg, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "security")) {
+        try cli_security.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
+            .config = cfg,
+            .db = &db,
+        }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "cloudflare")) {
         try cli_cloudflare.run(.{
             .io = init.io,
@@ -173,6 +181,7 @@ fn usage() void {
         \\  cloudio route plan|read|capture|dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--paginate] [--max-pages <n>] [--body-present|--body-content-type <type>]
         \\  cloudio route capture-ready <cloudflare|hostinger> [all|control-plane] [tag-query] [--focus all|control-plane] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--execute]
         \\  cloudio log [--json|--format json]
+        \\  cloudio security [redaction|secrets|audit] [--json|--format json]
         \\  cloudio cloudflare account [list]|account show <account-id>|account profile <account-id>|account organizations <account-id>
         \\  cloudio cloudflare account dns-record-usage <account-id>
         \\  cloudio cloudflare account members|roles <account-id>|account member|role <account-id> <resource-id>

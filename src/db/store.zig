@@ -252,6 +252,86 @@ pub const TopologyRows = struct {
     }
 };
 
+pub const SecretScanSurface = enum {
+    settings_value,
+    snapshots_target,
+    snapshots_summary,
+    snapshots_raw_json,
+    snapshots_raw_text,
+    provider_raw_endpoint,
+    provider_raw_body_json,
+    cloudflare_accounts_raw_json,
+    cloudflare_zones_raw_json,
+    cloudflare_dns_records_raw_json,
+    cloudflare_resources_raw_json,
+    cloudflare_inventory_items_raw_json,
+    cloudflare_security_items_raw_json,
+    hostinger_vps_raw_json,
+    hostinger_metrics_raw_json,
+    hostinger_resources_raw_json,
+    hostinger_inventory_items_raw_json,
+    caddy_sites_raw_block,
+    projects_raw_text,
+    services_raw_text,
+    sockets_raw_text,
+    containers_raw_text,
+    audit_events_detail,
+
+    pub fn label(self: SecretScanSurface) []const u8 {
+        return switch (self) {
+            .settings_value => "settings.value",
+            .snapshots_target => "snapshots.target",
+            .snapshots_summary => "snapshots.summary",
+            .snapshots_raw_json => "snapshots.raw_json",
+            .snapshots_raw_text => "snapshots.raw_text",
+            .provider_raw_endpoint => "provider_raw.endpoint",
+            .provider_raw_body_json => "provider_raw.body_json",
+            .cloudflare_accounts_raw_json => "cloudflare_accounts.raw_json",
+            .cloudflare_zones_raw_json => "cloudflare_zones.raw_json",
+            .cloudflare_dns_records_raw_json => "cloudflare_dns_records.raw_json",
+            .cloudflare_resources_raw_json => "cloudflare_resources.raw_json",
+            .cloudflare_inventory_items_raw_json => "cloudflare_inventory_items.raw_json",
+            .cloudflare_security_items_raw_json => "cloudflare_security_items.raw_json",
+            .hostinger_vps_raw_json => "hostinger_vps.raw_json",
+            .hostinger_metrics_raw_json => "hostinger_metrics.raw_json",
+            .hostinger_resources_raw_json => "hostinger_resources.raw_json",
+            .hostinger_inventory_items_raw_json => "hostinger_inventory_items.raw_json",
+            .caddy_sites_raw_block => "caddy_sites.raw_block",
+            .projects_raw_text => "projects.raw_text",
+            .services_raw_text => "services.raw_text",
+            .sockets_raw_text => "sockets.raw_text",
+            .containers_raw_text => "containers.raw_text",
+            .audit_events_detail => "audit_events.detail",
+        };
+    }
+};
+
+pub const secret_scan_surfaces = [_]SecretScanSurface{
+    .settings_value,
+    .snapshots_target,
+    .snapshots_summary,
+    .snapshots_raw_json,
+    .snapshots_raw_text,
+    .provider_raw_endpoint,
+    .provider_raw_body_json,
+    .cloudflare_accounts_raw_json,
+    .cloudflare_zones_raw_json,
+    .cloudflare_dns_records_raw_json,
+    .cloudflare_resources_raw_json,
+    .cloudflare_inventory_items_raw_json,
+    .cloudflare_security_items_raw_json,
+    .hostinger_vps_raw_json,
+    .hostinger_metrics_raw_json,
+    .hostinger_resources_raw_json,
+    .hostinger_inventory_items_raw_json,
+    .caddy_sites_raw_block,
+    .projects_raw_text,
+    .services_raw_text,
+    .sockets_raw_text,
+    .containers_raw_text,
+    .audit_events_detail,
+};
+
 pub const MetricRow = struct {
     metric: []u8,
     value: []u8,
@@ -851,6 +931,15 @@ pub const Db = struct {
         const sql = try std.fmt.bufPrint(&buf, "SELECT COUNT(*) FROM {s}", .{table});
         const stmt = try self.prepare(sql);
         defer _ = sqlite.sqlite3_finalize(stmt);
+        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return DbError.SqliteStep;
+        return sqlite.sqlite3_column_int64(stmt, 0);
+    }
+
+    pub fn countSecretNeedle(self: *Db, surface: SecretScanSurface, needle: []const u8) !i64 {
+        if (needle.len == 0) return 0;
+        const stmt = try self.prepare(secretScanSql(surface));
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, needle);
         if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return DbError.SqliteStep;
         return sqlite.sqlite3_column_int64(stmt, 0);
     }
@@ -3131,6 +3220,34 @@ fn isKnownTable(table: []const u8) bool {
     return false;
 }
 
+fn secretScanSql(surface: SecretScanSurface) []const u8 {
+    return switch (surface) {
+        .settings_value => "SELECT COUNT(*) FROM settings WHERE instr(COALESCE(value, ''), ?) > 0",
+        .snapshots_target => "SELECT COUNT(*) FROM snapshots WHERE instr(COALESCE(target, ''), ?) > 0",
+        .snapshots_summary => "SELECT COUNT(*) FROM snapshots WHERE instr(COALESCE(summary, ''), ?) > 0",
+        .snapshots_raw_json => "SELECT COUNT(*) FROM snapshots WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .snapshots_raw_text => "SELECT COUNT(*) FROM snapshots WHERE instr(COALESCE(raw_text, ''), ?) > 0",
+        .provider_raw_endpoint => "SELECT COUNT(*) FROM provider_raw WHERE instr(COALESCE(endpoint, ''), ?) > 0",
+        .provider_raw_body_json => "SELECT COUNT(*) FROM provider_raw WHERE instr(COALESCE(body_json, ''), ?) > 0",
+        .cloudflare_accounts_raw_json => "SELECT COUNT(*) FROM cloudflare_accounts WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .cloudflare_zones_raw_json => "SELECT COUNT(*) FROM cloudflare_zones WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .cloudflare_dns_records_raw_json => "SELECT COUNT(*) FROM cloudflare_dns_records WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .cloudflare_resources_raw_json => "SELECT COUNT(*) FROM cloudflare_resources WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .cloudflare_inventory_items_raw_json => "SELECT COUNT(*) FROM cloudflare_inventory_items WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .cloudflare_security_items_raw_json => "SELECT COUNT(*) FROM cloudflare_security_items WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .hostinger_vps_raw_json => "SELECT COUNT(*) FROM hostinger_vps WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .hostinger_metrics_raw_json => "SELECT COUNT(*) FROM hostinger_metrics WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .hostinger_resources_raw_json => "SELECT COUNT(*) FROM hostinger_resources WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .hostinger_inventory_items_raw_json => "SELECT COUNT(*) FROM hostinger_inventory_items WHERE instr(COALESCE(raw_json, ''), ?) > 0",
+        .caddy_sites_raw_block => "SELECT COUNT(*) FROM caddy_sites WHERE instr(COALESCE(raw_block, ''), ?) > 0",
+        .projects_raw_text => "SELECT COUNT(*) FROM projects WHERE instr(COALESCE(raw_text, ''), ?) > 0",
+        .services_raw_text => "SELECT COUNT(*) FROM services WHERE instr(COALESCE(raw_text, ''), ?) > 0",
+        .sockets_raw_text => "SELECT COUNT(*) FROM sockets WHERE instr(COALESCE(raw_text, ''), ?) > 0",
+        .containers_raw_text => "SELECT COUNT(*) FROM containers WHERE instr(COALESCE(raw_text, ''), ?) > 0",
+        .audit_events_detail => "SELECT COUNT(*) FROM audit_events WHERE instr(COALESCE(detail, ''), ?) > 0",
+    };
+}
+
 test "sqlite schema initializes" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -3142,6 +3259,27 @@ test "sqlite schema initializes" {
     try db.initSchema();
     try std.testing.expectEqual(db_schema.latest_version, try db.schemaVersion());
     try std.testing.expectEqual(@as(i64, 0), try db.countTable("snapshots"));
+}
+
+test "secret scan counts exact configured bytes across output storage" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudio-secret-scan.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    const secret = "super-secret-token";
+    _ = try db.insertSnapshot("cloudflare", "raw", "/accounts", "ok", "summary", "{\"token\":\"super-secret-token\"}", null);
+    try db.insertProviderRaw("cloudflare", "/accounts", 200, "{\"ok\":true}");
+    try db.insertAudit("route.capture", "ok", "captured super-secret-token");
+
+    try std.testing.expectEqual(@as(i64, 1), try db.countSecretNeedle(.snapshots_raw_json, secret));
+    try std.testing.expectEqual(@as(i64, 1), try db.countSecretNeedle(.audit_events_detail, secret));
+    try std.testing.expectEqual(@as(i64, 0), try db.countSecretNeedle(.provider_raw_body_json, secret));
+    try std.testing.expectEqualStrings("snapshots.raw_json", SecretScanSurface.snapshots_raw_json.label());
 }
 
 test "audit events can be inserted and queried as a read model" {

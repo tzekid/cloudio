@@ -46,6 +46,7 @@ The POC already has:
 - Provider evidence read model over raw-capture metadata, snapshots, and audit events.
 - Broad Cloudflare and Hostinger inventory projections.
 - Caddy, system, project, project-correlation, overview, export, log, and doctor workflows.
+- A redaction audit command, `cloudio security redaction`, that checks configured API token/key bytes against Cloudio output/storage surfaces without printing those bytes.
 - A public `cloudio.zig` facade that keeps collectors out of future embedding code.
 
 The current simplification slices added `src/app/render.zig` and migrated overview, inventory, Cloudflare, Hostinger, doctor, and run-log app read models away from repeated local JSON/text helpers.
