@@ -183,6 +183,182 @@ const hostinger_reach_segment_sources = [_]InputSource{.{
     .purpose = "discover Reach segment UUIDs",
 }};
 
+const cloudflare_account_organization_sources = [_]InputSource{.{
+    .operation_id = "Accounts_listAccountOrganizations",
+    .hint_kind = "Accounts_listAccountOrganizations",
+    .purpose = "discover organization ids linked to the selected account",
+}};
+
+const cloudflare_client_certificate_sources = [_]InputSource{.{
+    .operation_id = "client-certificate-for-a-zone-list-client-certificates",
+    .hint_kind = "client-certificate-for-a-zone-list-client-certificates",
+    .purpose = "discover zone client certificate ids",
+}};
+
+const cloudflare_certificate_pack_sources = [_]InputSource{.{
+    .operation_id = "certificate-packs-list-certificate-packs",
+    .hint_kind = "certificate-packs-list-certificate-packs",
+    .purpose = "discover zone certificate pack ids",
+}};
+
+const cloudflare_custom_ssl_sources = [_]InputSource{.{
+    .operation_id = "custom-ssl-for-a-zone-list-ssl-configurations",
+    .hint_kind = "custom-ssl-for-a-zone-list-ssl-configurations",
+    .purpose = "discover zone custom SSL certificate ids",
+}};
+
+const cloudflare_keyless_ssl_sources = [_]InputSource{.{
+    .operation_id = "keyless-ssl-for-a-zone-list-keyless-ssl-configurations",
+    .hint_kind = "keyless-ssl-for-a-zone-list-keyless-ssl-configurations",
+    .purpose = "discover zone Keyless SSL certificate ids",
+}};
+
+const cloudflare_per_hostname_tls_sources = [_]InputSource{.{
+    .operation_id = "per-hostname-tls-settings-list",
+    .hint_kind = "per-hostname-tls-settings-list",
+    .purpose = "discover per-hostname TLS setting ids and hostnames",
+}};
+
+const cloudflare_access_account_saml_sources = [_]InputSource{.{
+    .operation_id = "access-saml-certificates-list-certificate-sets",
+    .hint_kind = "access-saml-certificates-list-certificate-sets",
+    .purpose = "discover Access SAML certificate set ids",
+}};
+
+const cloudflare_access_account_mtls_sources = [_]InputSource{.{
+    .operation_id = "access-mtls-authentication-list-mtls-certificates",
+    .hint_kind = "access-mtls-authentication-list-mtls-certificates",
+    .purpose = "discover account Access mTLS certificate ids",
+}};
+
+const cloudflare_access_zone_mtls_sources = [_]InputSource{.{
+    .operation_id = "zone-level-access-mtls-authentication-list-mtls-certificates",
+    .hint_kind = "zone-level-access-mtls-authentication-list-mtls-certificates",
+    .purpose = "discover zone Access mTLS certificate ids",
+}};
+
+const cloudflare_access_account_ca_sources = [_]InputSource{.{
+    .operation_id = "access-short-lived-certificate-c-as-list-short-lived-certificate-c-as",
+    .hint_kind = "access-short-lived-certificate-c-as-list-short-lived-certificate-c-as",
+    .purpose = "discover account Access short-lived CA app ids",
+}};
+
+const cloudflare_access_zone_ca_sources = [_]InputSource{.{
+    .operation_id = "zone-level-access-short-lived-certificate-c-as-list-short-lived-certificate-c-as",
+    .hint_kind = "zone-level-access-short-lived-certificate-c-as-list-short-lived-certificate-c-as",
+    .purpose = "discover zone Access short-lived CA app ids",
+}};
+
+const cloudflare_zero_trust_certificate_sources = [_]InputSource{.{
+    .operation_id = "zero-trust-certificates-list-zero-trust-certificates",
+    .hint_kind = "zero-trust-certificates-list-zero-trust-certificates",
+    .purpose = "discover Zero Trust certificate ids",
+}};
+
+const cloudflare_mtls_certificate_sources = [_]InputSource{.{
+    .operation_id = "m-tls-certificate-management-list-m-tls-certificates",
+    .hint_kind = "m-tls-certificate-management-list-m-tls-certificates",
+    .purpose = "discover account mTLS certificate ids",
+}};
+
+const cloudflare_origin_ca_certificate_sources = [_]InputSource{.{
+    .operation_id = "origin-ca-list-certificates",
+    .hint_kind = "origin-ca-list-certificates",
+    .purpose = "discover Origin CA certificate ids",
+}};
+
+const cloudflare_hostname_aop_certificate_sources = [_]InputSource{.{
+    .operation_id = "per-hostname-authenticated-origin-pull-list-certificates",
+    .hint_kind = "per-hostname-authenticated-origin-pull-list-certificates",
+    .purpose = "discover per-hostname authenticated origin pull certificate ids",
+}};
+
+const cloudflare_zone_aop_certificate_sources = [_]InputSource{.{
+    .operation_id = "zone-level-authenticated-origin-pulls-list-certificates",
+    .hint_kind = "zone-level-authenticated-origin-pulls-list-certificates",
+    .purpose = "discover zone authenticated origin pull certificate ids",
+}};
+
+const cloudflare_radar_authority_sources = [_]InputSource{.{
+    .operation_id = "radar-get-certificate-authorities",
+    .hint_kind = "radar-get-certificate-authorities",
+    .purpose = "discover Radar certificate authority slugs",
+}};
+
+const cloudflare_radar_log_sources = [_]InputSource{.{
+    .operation_id = "radar-get-certificate-logs",
+    .hint_kind = "radar-get-certificate-logs",
+    .purpose = "discover Radar certificate log slugs",
+}};
+
+const cloudflare_ai_gateway_sources = [_]InputSource{.{
+    .operation_id = "aig-config-list-gateway",
+    .hint_kind = "aig-config-list-gateway",
+    .purpose = "discover AI Gateway ids",
+}};
+
+const cloudflare_ai_gateway_log_sources = [_]InputSource{.{
+    .operation_id = "aig-config-list-gateway-logs",
+    .hint_kind = "aig-config-list-gateway-logs",
+    .purpose = "discover AI Gateway log ids",
+}};
+
+const cloudflare_log_explorer_account_dataset_sources = [_]InputSource{
+    .{
+        .operation_id = "accounts-logs-explorer-datasets-list",
+        .hint_kind = "accounts-logs-explorer-datasets-list",
+        .purpose = "discover account Log Explorer dataset ids",
+    },
+    .{
+        .operation_id = "accounts-logs-explorer-datasets-available-list",
+        .hint_kind = "accounts-logs-explorer-datasets-available-list",
+        .purpose = "discover account Log Explorer available dataset ids",
+    },
+};
+
+const cloudflare_log_explorer_zone_dataset_sources = [_]InputSource{
+    .{
+        .operation_id = "zones-logs-explorer-datasets-list",
+        .hint_kind = "zones-logs-explorer-datasets-list",
+        .purpose = "discover zone Log Explorer dataset ids",
+    },
+    .{
+        .operation_id = "zones-logs-explorer-datasets-available-list",
+        .hint_kind = "zones-logs-explorer-datasets-available-list",
+        .purpose = "discover zone Log Explorer available dataset ids",
+    },
+};
+
+const cloudflare_logpush_account_job_sources = [_]InputSource{.{
+    .operation_id = "get-accounts-account_id-logpush-jobs",
+    .hint_kind = "get-accounts-account_id-logpush-jobs",
+    .purpose = "discover account Logpush job ids",
+}};
+
+const cloudflare_logpush_zone_job_sources = [_]InputSource{.{
+    .operation_id = "get-zones-zone_id-logpush-jobs",
+    .hint_kind = "get-zones-zone_id-logpush-jobs",
+    .purpose = "discover zone Logpush job ids",
+}};
+
+const cloudflare_worker_script_sources = [_]InputSource{.{
+    .operation_id = "worker-script-list-workers",
+    .hint_kind = "worker-script-list-workers",
+    .purpose = "discover Worker script names",
+}};
+
+const cloudflare_audit_account_log_sources = [_]InputSource{.{
+    .operation_id = "audit-logs-v2-get-account-audit-logs",
+    .hint_kind = "audit-logs-v2-get-account-audit-logs",
+    .purpose = "discover account audit log event ids and action timestamps",
+}};
+
+const cloudflare_audit_organization_log_sources = [_]InputSource{.{
+    .operation_id = "audit-logs-v2-get-organization-audit-logs",
+    .hint_kind = "audit-logs-v2-get-organization-audit-logs",
+    .purpose = "discover organization audit log event ids and action timestamps",
+}};
+
 pub fn loadActualCaptureCloudflareAccountHints(gpa: Allocator, db: *Db, provider: ProviderFilter) !?db_store.CloudflareAccountRows {
     if (!provider.includes("cloudflare")) return null;
     return try db.cloudflareAccountRows(gpa, actual_capture_cloudflare_scope_hint_limit);
@@ -334,13 +510,14 @@ pub fn actualCapturePathParamHint(route: provider_routes.Route, name: []const u8
 
 fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []const u8, hints: Hints) ?[]const u8 {
     if (std.mem.eql(u8, name, "account_id") or std.mem.eql(u8, name, "account_identifier")) return actualCaptureCloudflareAccountIdHint(hints);
+    if (std.mem.eql(u8, name, "organization_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "Accounts_listAccountOrganizations", "account-organizations", "organizations" });
     if (std.mem.eql(u8, name, "zone_id") or std.mem.eql(u8, name, "zone_identifier")) return actualCaptureCloudflareZoneIdHint(hints);
     if (std.mem.eql(u8, name, "dns_record_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "route-cloudflare-dns", "route-cloudflare-dns-typed-smoke", "dns", "dns-records" });
     if (std.mem.eql(u8, name, "ruleset_id")) return actualCaptureCloudflareRulesetIdHint(route, hints);
     if (std.mem.eql(u8, name, "ruleset_phase")) return actualCaptureCloudflareRulesetPhaseHint(route, hints);
     if (std.mem.eql(u8, name, "identifier") and actualCaptureRoutePathContains(route, "/custom_pages/")) return actualCaptureCloudflareCustomPageIdHint(route, hints);
     if (std.mem.eql(u8, name, "custom_page_id")) return actualCaptureCloudflareAccessCustomPageIdHint(route, hints);
-    if (std.mem.eql(u8, name, "certificate_pack_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "tls-zone-certificate-packs", "tls-zone-certificate-pack" });
+    if (std.mem.eql(u8, name, "certificate_pack_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "certificate-packs-list-certificate-packs", "tls-zone-certificate-packs", "tls-zone-certificate-pack" });
     if (std.mem.eql(u8, name, "identity_provider_id")) return actualCaptureCloudflareAccessIdentityProviderIdHint(route, hints);
     if (std.mem.eql(u8, name, "idp_id")) return actualCaptureCloudflareAccessIdentityProviderIdHint(route, hints);
     if (std.mem.eql(u8, name, "member_id") and containsIgnoreCase(route.tag, "Account Members")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"account-members"});
@@ -348,8 +525,23 @@ fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []co
     if (std.mem.eql(u8, name, "token_id")) return actualCaptureCloudflareTokenIdHint(route, hints);
     if (std.mem.eql(u8, name, "permission_group_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-permission-groups", "account-token-permission-groups", "user-token-permission-groups" });
     if (std.mem.eql(u8, name, "resource_group_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"account-resource-groups"});
-    if (std.mem.eql(u8, name, "client_certificate_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-client-certificates", "api-shield-client-certificates", "api-shield-client-certificates-for-a-zone" });
-    if (std.mem.eql(u8, name, "certificate_id") and actualCaptureRoutePathContains(route, "/origin_ca/certificates/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "tls-origin-ca-certificates", "tls-origin-ca-certificate" });
+    if (std.mem.eql(u8, name, "client_certificate_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "client-certificate-for-a-zone-list-client-certificates", "zone-api-shield-client-certificates", "zone-client-certificates", "api-shield-client-certificates", "api-shield-client-certificates-for-a-zone" });
+    if (std.mem.eql(u8, name, "saml_cert_set_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-saml-certificates-list-certificate-sets", "access-account-saml-certificates" });
+    if (std.mem.eql(u8, name, "certificate_id")) return actualCaptureCloudflareCertificateIdHint(route, hints);
+    if (std.mem.eql(u8, name, "app_id")) return actualCaptureCloudflareAccessCaAppIdHint(route, hints);
+    if (std.mem.eql(u8, name, "mtls_certificate_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "m-tls-certificate-management-list-m-tls-certificates", "access-account-mtls-certificates", "zero-trust-certificates-list-zero-trust-certificates" });
+    if (std.mem.eql(u8, name, "custom_certificate_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "custom-ssl-for-a-zone-list-ssl-configurations", "tls-zone-custom-ssl", "tls-zone-custom-ssl-certificate" });
+    if (std.mem.eql(u8, name, "keyless_certificate_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "keyless-ssl-for-a-zone-list-keyless-ssl-configurations", "tls-zone-keyless-ssl", "tls-zone-keyless-ssl-certificate" });
+    if (std.mem.eql(u8, name, "setting_id") and actualCaptureRoutePathContains(route, "/hostnames/settings/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "per-hostname-tls-settings-list", "tls-zone-per-hostname-tls-settings", "tls-zone-per-hostname-tls-setting" });
+    if (std.mem.eql(u8, name, "hostname") and actualCaptureRoutePathContains(route, "/hostnames/settings/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "per-hostname-tls-settings-list", "tls-zone-per-hostname-tls-settings", "tls-zone-per-hostname-tls-setting" });
+    if (std.mem.eql(u8, name, "ca_slug")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "radar-get-certificate-authorities", "radar-certificate-authorities" });
+    if (std.mem.eql(u8, name, "log_slug")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "radar-get-certificate-logs", "radar-certificate-logs" });
+    if (std.mem.eql(u8, name, "dimension") and containsIgnoreCase(route.tag, "Radar Certificate Transparency")) return "CA";
+    if (std.mem.eql(u8, name, "gateway_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "aig-config-list-gateway", "ai-gateway-gateways" });
+    if (std.mem.eql(u8, name, "dataset_id")) return actualCaptureCloudflareDatasetIdHint(route, hints);
+    if (std.mem.eql(u8, name, "job_id")) return actualCaptureCloudflareLogpushJobIdHint(route, hints);
+    if (std.mem.eql(u8, name, "script_name")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "worker-script-list-workers", "workers-scripts", "worker-scripts" });
+    if (std.mem.eql(u8, name, "id")) return actualCaptureCloudflareGenericIdHint(route, hints);
     if (std.mem.eql(u8, name, "plan_identifier")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-available-plans", "zone-available-rate-plans" });
     if (std.mem.eql(u8, name, "rule_identifier")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-email-routing-rules", "email-routing-rules" });
     if (std.mem.eql(u8, name, "destination_address_identifier")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-email-routing-destination-addresses", "email-routing-destination-addresses" });
@@ -464,6 +656,62 @@ fn actualCaptureCloudflareTokenIdHint(route: provider_routes.Route, hints: Hints
         return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "user-tokens", "user-api-tokens" });
     }
     return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-tokens", "account-api-tokens", "account-owned-api-tokens", "user-tokens", "user-api-tokens" });
+}
+
+fn actualCaptureCloudflareCertificateIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureRoutePathContains(route, "/origin_ca/certificates/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "origin-ca-list-certificates", "tls-origin-ca-certificates", "tls-origin-ca-certificate" });
+    if (actualCaptureRoutePathContains(route, "/access/certificates/")) {
+        if (actualCaptureCloudflareRouteAccountScoped(route)) {
+            return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-mtls-authentication-list-mtls-certificates", "access-account-mtls-certificates", "access-account-mtls-certificate" });
+        }
+        if (actualCaptureCloudflareRouteZoneScoped(route)) {
+            return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-level-access-mtls-authentication-list-mtls-certificates", "access-zone-mtls-certificates", "access-zone-mtls-certificate" });
+        }
+    }
+    if (actualCaptureRoutePathContains(route, "/gateway/certificates/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zero-trust-certificates-list-zero-trust-certificates", "zero-trust-gateway-certificates", "zero-trust-gateway-certificate" });
+    if (actualCaptureRoutePathContains(route, "/origin_tls_client_auth/hostnames/certificates/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "per-hostname-authenticated-origin-pull-list-certificates", "tls-zone-hostname-aop-certificates", "tls-zone-hostname-aop-certificate" });
+    if (actualCaptureRoutePathContains(route, "/origin_tls_client_auth/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-level-authenticated-origin-pulls-list-certificates", "tls-zone-aop-certificates", "tls-zone-aop-certificate" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{
+        "access-mtls-authentication-list-mtls-certificates",
+        "zone-level-access-mtls-authentication-list-mtls-certificates",
+        "zero-trust-certificates-list-zero-trust-certificates",
+        "origin-ca-list-certificates",
+        "per-hostname-authenticated-origin-pull-list-certificates",
+        "zone-level-authenticated-origin-pulls-list-certificates",
+    });
+}
+
+fn actualCaptureCloudflareAccessCaAppIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-short-lived-certificate-c-as-list-short-lived-certificate-c-as", "access-account-cas", "access-account-ca" });
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-level-access-short-lived-certificate-c-as-list-short-lived-certificate-c-as", "access-zone-cas", "access-zone-ca" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "access-short-lived-certificate-c-as-list-short-lived-certificate-c-as", "zone-level-access-short-lived-certificate-c-as-list-short-lived-certificate-c-as", "access-account-cas", "access-zone-cas" });
+}
+
+fn actualCaptureCloudflareDatasetIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "accounts-logs-explorer-datasets-list", "accounts-logs-explorer-datasets-available-list", "log-explorer-account-datasets", "log-explorer-account-available-datasets" });
+    }
+    if (actualCaptureCloudflareRouteZoneScoped(route)) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zones-logs-explorer-datasets-list", "zones-logs-explorer-datasets-available-list", "log-explorer-zone-datasets", "log-explorer-zone-available-datasets" });
+    }
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "accounts-logs-explorer-datasets-list", "zones-logs-explorer-datasets-list", "log-explorer-account-datasets", "log-explorer-zone-datasets" });
+}
+
+fn actualCaptureCloudflareLogpushJobIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-accounts-account_id-logpush-jobs", "logpush-account-jobs", "logpush-jobs" });
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-zones-zone_id-logpush-jobs", "logpush-zone-jobs", "logpush-jobs" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-accounts-account_id-logpush-jobs", "get-zones-zone_id-logpush-jobs", "logpush-account-jobs", "logpush-zone-jobs", "logpush-jobs" });
+}
+
+fn actualCaptureCloudflareGenericIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureRoutePathContains(route, "/ai-gateway/gateways/") and actualCaptureRoutePathContains(route, "/logs/")) {
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "aig-config-list-gateway-logs", "ai-gateway-logs" });
+    }
+    if (actualCaptureRoutePathContains(route, "/logs/audit/") and actualCaptureRoutePathContains(route, "/history")) {
+        if (actualCaptureRoutePathContains(route, "/organizations/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "audit-logs-v2-get-organization-audit-logs", "audit-logs-organization-v2" });
+        return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "audit-logs-v2-get-account-audit-logs", "audit-logs-account-v2" });
+    }
+    return null;
 }
 
 fn actualCaptureCloudflareResourceIdHint(route: provider_routes.Route, hints: Hints, kinds: []const []const u8) ?[]const u8 {
@@ -816,19 +1064,38 @@ fn actualCaptureLooksLikeDomain(value: []const u8) bool {
 }
 
 pub fn actualCaptureHasQueryParamHint(route: provider_routes.Route, name: []const u8, hints: Hints) bool {
-    if (route.provider != .hostinger or route.operation_id == null) return false;
-    if (std.mem.eql(u8, route.operation_id.?, "VPS_getMetricsV1") and
+    return switch (route.provider) {
+        .cloudflare => actualCaptureHasCloudflareQueryParamHint(route, name),
+        .hostinger => actualCaptureHasHostingerQueryParamHint(route, name, hints),
+    };
+}
+
+fn actualCaptureHasCloudflareQueryParamHint(route: provider_routes.Route, name: []const u8) bool {
+    const operation_id = route.operation_id orelse return false;
+    const audit_v2_window =
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-logs") or
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-logs") or
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-log-history") or
+        std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-log-history");
+    return audit_v2_window and
+        (std.mem.eql(u8, name, "before") or std.mem.eql(u8, name, "since"));
+}
+
+fn actualCaptureHasHostingerQueryParamHint(route: provider_routes.Route, name: []const u8, hints: Hints) bool {
+    const operation_id = route.operation_id orelse return false;
+    if (std.mem.eql(u8, operation_id, "VPS_getMetricsV1") and
         (std.mem.eql(u8, name, "date_from") or std.mem.eql(u8, name, "date_to")))
     {
         return true;
     }
-    return std.mem.eql(u8, route.operation_id.?, "hosting_listAvailableDatacentersV1") and
+    return std.mem.eql(u8, operation_id, "hosting_listAvailableDatacentersV1") and
         std.mem.eql(u8, name, "order_id") and
         actualCaptureHostingerOrderIdHint(hints) != null;
 }
 
 pub fn actualCaptureQueryParamHint(gpa: Allocator, route: provider_routes.Route, name: []const u8, hints: Hints) !?[]u8 {
     if (!actualCaptureHasQueryParamHint(route, name, hints)) return null;
+    if (route.provider == .cloudflare) return actualCaptureCloudflareQueryParamHint(gpa, route, name);
     if (std.mem.eql(u8, route.operation_id.?, "hosting_listAvailableDatacentersV1") and std.mem.eql(u8, name, "order_id")) {
         if (actualCaptureHostingerOrderIdHint(hints)) |order_id| return try gpa.dupe(u8, order_id);
         return null;
@@ -838,6 +1105,16 @@ pub fn actualCaptureQueryParamHint(gpa: Allocator, route: provider_routes.Route,
     const timestamp = if (std.mem.eql(u8, name, "date_from") and now > day) now - day else now;
     var buf: [17]u8 = undefined;
     const formatted = try core_time.formatUtcMinute(&buf, timestamp);
+    return try gpa.dupe(u8, formatted);
+}
+
+fn actualCaptureCloudflareQueryParamHint(gpa: Allocator, route: provider_routes.Route, name: []const u8) !?[]u8 {
+    _ = route;
+    const now = core_time.currentEpochSeconds() catch return null;
+    const hour: u64 = 60 * 60;
+    const timestamp = if (std.mem.eql(u8, name, "since") and now > hour) now - hour else now;
+    var buf: [20]u8 = undefined;
+    const formatted = try core_time.formatUtcSecond(&buf, timestamp);
     return try gpa.dupe(u8, formatted);
 }
 
@@ -943,18 +1220,39 @@ pub fn actualCaptureFindRouteByOperationId(routes: []const CoverageRoute, provid
 }
 
 pub fn actualCaptureUnmappedSourceResult(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) []const u8 {
+    if (actualCaptureCloudflareNoOfficialSource(route, input_source, input_name)) return "no_official_source";
     if (actualCaptureHostingerNoOfficialSource(route, input_source, input_name)) return "no_official_source";
     return "unmapped";
 }
 
 pub fn actualCaptureUnmappedSourceNextAction(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) []const u8 {
+    if (actualCaptureCloudflareNoOfficialSource(route, input_source, input_name)) return "provide the identifier or bounded read window explicitly";
     if (actualCaptureHostingerNoOfficialSource(route, input_source, input_name)) return "provide the identifier through config or another collected official surface";
     return "add a source mapping before this input can be planned";
 }
 
 pub fn actualCaptureUnmappedSourcePurpose(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) []const u8 {
+    if (actualCaptureCloudflareNoOfficialSource(route, input_source, input_name)) return actualCaptureCloudflareNoOfficialSourcePurpose(route, input_source, input_name);
     if (actualCaptureHostingerNoOfficialSource(route, input_source, input_name)) return "current Hostinger OpenAPI exposes only the Horizons website detail route, not a list route";
     return "no source mapping";
+}
+
+fn actualCaptureCloudflareNoOfficialSource(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) bool {
+    if (route.provider != .cloudflare) return false;
+    const operation_id = route.operation_id orelse return false;
+    if (std.mem.eql(u8, input_source, "path") and
+        std.mem.eql(u8, input_name, "ray_id") and
+        std.mem.eql(u8, operation_id, "get-zones-zone_id-logs-rayids-ray_id")) return true;
+    return std.mem.eql(u8, input_source, "query") and
+        std.mem.eql(u8, input_name, "end") and
+        std.mem.eql(u8, operation_id, "get-zones-zone_id-logs-received");
+}
+
+fn actualCaptureCloudflareNoOfficialSourcePurpose(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) []const u8 {
+    _ = route;
+    if (std.mem.eql(u8, input_source, "path") and std.mem.eql(u8, input_name, "ray_id")) return "Ray IDs come from traffic/log evidence, not a stable Cloudflare inventory list";
+    if (std.mem.eql(u8, input_source, "query") and std.mem.eql(u8, input_name, "end")) return "Logs Received should be captured only with an explicit bounded window and safe optional filters";
+    return "Cloudflare requires an explicit value for this read";
 }
 
 fn actualCaptureHostingerNoOfficialSource(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) bool {
@@ -1062,6 +1360,7 @@ pub fn actualCaptureSourceHintCount(
     input_name: []const u8,
     source: InputSource,
 ) usize {
+    if (route.provider == .cloudflare) return actualCaptureCloudflareSourceHintCount(route, hints, input_source, input_name, source);
     if (route.provider != .hostinger) return 0;
     if (std.mem.eql(u8, input_source, "path")) {
         if (std.mem.eql(u8, input_name, "domain")) {
@@ -1105,6 +1404,59 @@ pub fn actualCaptureSourceHintCount(
     return actualCaptureHostingerKindHintCount(hints, source.hint_kind);
 }
 
+fn actualCaptureCloudflareSourceHintCount(route: provider_routes.Route, hints: Hints, input_source: []const u8, input_name: []const u8, source: InputSource) usize {
+    _ = input_source;
+    if (std.mem.eql(u8, input_name, "account_id") or std.mem.eql(u8, input_name, "account_identifier")) return hints.cloudflare_accounts.len;
+    if (std.mem.eql(u8, input_name, "zone_id") or std.mem.eql(u8, input_name, "zone_identifier")) return hints.cloudflare_zones.len;
+    if (std.mem.eql(u8, input_name, "organization_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "account-organizations", "organizations" });
+    if (std.mem.eql(u8, input_name, "client_certificate_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "zone-api-shield-client-certificates", "zone-client-certificates", "api-shield-client-certificates", "api-shield-client-certificates-for-a-zone" });
+    if (std.mem.eql(u8, input_name, "certificate_pack_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "tls-zone-certificate-packs", "tls-zone-certificate-pack" });
+    if (std.mem.eql(u8, input_name, "custom_certificate_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "tls-zone-custom-ssl", "tls-zone-custom-ssl-certificate" });
+    if (std.mem.eql(u8, input_name, "keyless_certificate_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "tls-zone-keyless-ssl", "tls-zone-keyless-ssl-certificate" });
+    if (std.mem.eql(u8, input_name, "saml_cert_set_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "access-account-saml-certificates" });
+    if (std.mem.eql(u8, input_name, "certificate_id")) return actualCaptureCloudflareCertificateSourceHintCount(route, hints, source.hint_kind);
+    if (std.mem.eql(u8, input_name, "app_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "access-account-cas", "access-zone-cas", "access-account-ca", "access-zone-ca" });
+    if (std.mem.eql(u8, input_name, "mtls_certificate_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "access-account-mtls-certificates", "zero-trust-certificates-list-zero-trust-certificates" });
+    if (std.mem.eql(u8, input_name, "setting_id") or std.mem.eql(u8, input_name, "hostname")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "tls-zone-per-hostname-tls-settings", "tls-zone-per-hostname-tls-setting" });
+    if (std.mem.eql(u8, input_name, "ca_slug")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "radar-certificate-authorities" });
+    if (std.mem.eql(u8, input_name, "log_slug")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "radar-certificate-logs" });
+    if (std.mem.eql(u8, input_name, "gateway_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "ai-gateway-gateways" });
+    if (std.mem.eql(u8, input_name, "dataset_id")) return actualCaptureCloudflareDatasetSourceHintCount(route, hints, source.hint_kind);
+    if (std.mem.eql(u8, input_name, "job_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "logpush-account-jobs", "logpush-zone-jobs", "logpush-jobs" });
+    if (std.mem.eql(u8, input_name, "script_name")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "workers-scripts", "worker-scripts" });
+    if (std.mem.eql(u8, input_name, "id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "ai-gateway-logs", "audit-logs-account-v2", "audit-logs-organization-v2" });
+    return actualCaptureCloudflareKindHintCount(hints, &.{source.hint_kind});
+}
+
+fn actualCaptureCloudflareCertificateSourceHintCount(route: provider_routes.Route, hints: Hints, source_hint_kind: []const u8) usize {
+    if (actualCaptureRoutePathContains(route, "/access/certificates/")) {
+        if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareKindHintCount(hints, &.{ source_hint_kind, "access-account-mtls-certificates", "access-account-mtls-certificate" });
+        if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareKindHintCount(hints, &.{ source_hint_kind, "access-zone-mtls-certificates", "access-zone-mtls-certificate" });
+    }
+    if (actualCaptureRoutePathContains(route, "/gateway/certificates/")) return actualCaptureCloudflareKindHintCount(hints, &.{ source_hint_kind, "zero-trust-gateway-certificates", "zero-trust-gateway-certificate" });
+    if (actualCaptureRoutePathContains(route, "/origin_ca/certificates/")) return actualCaptureCloudflareKindHintCount(hints, &.{ source_hint_kind, "tls-origin-ca-certificates", "tls-origin-ca-certificate" });
+    if (actualCaptureRoutePathContains(route, "/origin_tls_client_auth/hostnames/certificates/")) return actualCaptureCloudflareKindHintCount(hints, &.{ source_hint_kind, "tls-zone-hostname-aop-certificates", "tls-zone-hostname-aop-certificate" });
+    if (actualCaptureRoutePathContains(route, "/origin_tls_client_auth/")) return actualCaptureCloudflareKindHintCount(hints, &.{ source_hint_kind, "tls-zone-aop-certificates", "tls-zone-aop-certificate" });
+    return actualCaptureCloudflareKindHintCount(hints, &.{source_hint_kind});
+}
+
+fn actualCaptureCloudflareDatasetSourceHintCount(route: provider_routes.Route, hints: Hints, source_hint_kind: []const u8) usize {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareKindHintCount(hints, &.{ source_hint_kind, "log-explorer-account-datasets", "log-explorer-account-available-datasets" });
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareKindHintCount(hints, &.{ source_hint_kind, "log-explorer-zone-datasets", "log-explorer-zone-available-datasets" });
+    return actualCaptureCloudflareKindHintCount(hints, &.{ source_hint_kind, "log-explorer-account-datasets", "log-explorer-zone-datasets" });
+}
+
+fn actualCaptureCloudflareKindHintCount(hints: Hints, kinds: []const []const u8) usize {
+    var count: usize = 0;
+    for (hints.cloudflare_resources) |row| {
+        if (row.resource_id.len != 0 and actualCaptureKindIn(row.kind, kinds)) count += 1;
+    }
+    for (hints.cloudflare_inventory) |row| {
+        if (row.resource_id.len != 0 and actualCaptureKindIn(row.kind, kinds)) count += 1;
+    }
+    return count;
+}
+
 fn actualCaptureHostingerKindHintCount(hints: Hints, kind: []const u8) usize {
     var count: usize = 0;
     for (hints.hostinger_resources) |row| {
@@ -1117,8 +1469,9 @@ fn actualCaptureHostingerKindHintCount(hints: Hints, kind: []const u8) usize {
 }
 
 pub fn actualCaptureMissingInputSources(route: provider_routes.Route, input_source: []const u8, input_name: []const u8) []const InputSource {
-    if (route.provider != .hostinger) return &.{};
     const operation_id = route.operation_id orelse return &.{};
+    if (route.provider == .cloudflare) return actualCaptureCloudflareMissingInputSources(route, input_source, input_name, operation_id);
+    if (route.provider != .hostinger) return &.{};
 
     if (std.mem.eql(u8, input_source, "path")) {
         if (std.mem.eql(u8, input_name, "domain")) return hostinger_domain_sources[0..];
@@ -1141,6 +1494,88 @@ pub fn actualCaptureMissingInputSources(route: provider_routes.Route, input_sour
         if (std.mem.eql(u8, input_name, "order_id") and std.mem.eql(u8, operation_id, "hosting_listAvailableDatacentersV1")) return hostinger_order_sources[0..];
     }
 
+    return &.{};
+}
+
+fn actualCaptureCloudflareMissingInputSources(route: provider_routes.Route, input_source: []const u8, input_name: []const u8, operation_id: []const u8) []const InputSource {
+    if (std.mem.eql(u8, input_source, "path")) {
+        if (std.mem.eql(u8, input_name, "organization_id")) return cloudflare_account_organization_sources[0..];
+        if (std.mem.eql(u8, input_name, "client_certificate_id")) return cloudflare_client_certificate_sources[0..];
+        if (std.mem.eql(u8, input_name, "certificate_pack_id")) return cloudflare_certificate_pack_sources[0..];
+        if (std.mem.eql(u8, input_name, "custom_certificate_id")) return cloudflare_custom_ssl_sources[0..];
+        if (std.mem.eql(u8, input_name, "keyless_certificate_id")) return cloudflare_keyless_ssl_sources[0..];
+        if (std.mem.eql(u8, input_name, "setting_id") and actualCaptureRoutePathContains(route, "/hostnames/settings/")) return cloudflare_per_hostname_tls_sources[0..];
+        if (std.mem.eql(u8, input_name, "hostname") and actualCaptureRoutePathContains(route, "/hostnames/settings/")) return cloudflare_per_hostname_tls_sources[0..];
+        if (std.mem.eql(u8, input_name, "saml_cert_set_id")) return cloudflare_access_account_saml_sources[0..];
+        if (std.mem.eql(u8, input_name, "certificate_id")) return actualCaptureCloudflareCertificateSources(route, operation_id);
+        if (std.mem.eql(u8, input_name, "app_id")) return actualCaptureCloudflareAccessCaSources(route, operation_id);
+        if (std.mem.eql(u8, input_name, "mtls_certificate_id")) return cloudflare_mtls_certificate_sources[0..];
+        if (std.mem.eql(u8, input_name, "ca_slug")) return cloudflare_radar_authority_sources[0..];
+        if (std.mem.eql(u8, input_name, "log_slug")) return cloudflare_radar_log_sources[0..];
+        if (std.mem.eql(u8, input_name, "gateway_id")) return cloudflare_ai_gateway_sources[0..];
+        if (std.mem.eql(u8, input_name, "dataset_id")) return actualCaptureCloudflareDatasetSources(route);
+        if (std.mem.eql(u8, input_name, "job_id")) return actualCaptureCloudflareLogpushJobSources(route);
+        if (std.mem.eql(u8, input_name, "script_name")) return cloudflare_worker_script_sources[0..];
+        if (std.mem.eql(u8, input_name, "id")) return actualCaptureCloudflareIdSources(route, operation_id);
+    }
+
+    if (std.mem.eql(u8, input_source, "query")) {
+        if (std.mem.eql(u8, input_name, "action_time")) return actualCaptureCloudflareAuditSources(route, operation_id);
+    }
+
+    return &.{};
+}
+
+fn actualCaptureCloudflareCertificateSources(route: provider_routes.Route, operation_id: []const u8) []const InputSource {
+    if (std.mem.eql(u8, operation_id, "access-mtls-authentication-get-an-mtls-certificate")) return cloudflare_access_account_mtls_sources[0..];
+    if (std.mem.eql(u8, operation_id, "zone-level-access-mtls-authentication-get-an-mtls-certificate")) return cloudflare_access_zone_mtls_sources[0..];
+    if (std.mem.eql(u8, operation_id, "zero-trust-certificates-zero-trust-certificate-details")) return cloudflare_zero_trust_certificate_sources[0..];
+    if (std.mem.eql(u8, operation_id, "origin-ca-get-certificate")) return cloudflare_origin_ca_certificate_sources[0..];
+    if (std.mem.eql(u8, operation_id, "per-hostname-authenticated-origin-pull-get-the-hostname-client-certificate")) return cloudflare_hostname_aop_certificate_sources[0..];
+    if (std.mem.eql(u8, operation_id, "zone-level-authenticated-origin-pulls-get-certificate-details")) return cloudflare_zone_aop_certificate_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/access/certificates/")) {
+        if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_access_account_mtls_sources[0..];
+        if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_access_zone_mtls_sources[0..];
+    }
+    if (actualCaptureRoutePathContains(route, "/gateway/certificates/")) return cloudflare_zero_trust_certificate_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/origin_ca/certificates/")) return cloudflare_origin_ca_certificate_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/origin_tls_client_auth/hostnames/certificates/")) return cloudflare_hostname_aop_certificate_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/origin_tls_client_auth/")) return cloudflare_zone_aop_certificate_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareAccessCaSources(route: provider_routes.Route, operation_id: []const u8) []const InputSource {
+    if (std.mem.eql(u8, operation_id, "access-short-lived-certificate-c-as-get-a-short-lived-certificate-ca")) return cloudflare_access_account_ca_sources[0..];
+    if (std.mem.eql(u8, operation_id, "zone-level-access-short-lived-certificate-c-as-get-a-short-lived-certificate-ca")) return cloudflare_access_zone_ca_sources[0..];
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_access_account_ca_sources[0..];
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_access_zone_ca_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareDatasetSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_log_explorer_account_dataset_sources[0..];
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_log_explorer_zone_dataset_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareLogpushJobSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_logpush_account_job_sources[0..];
+    if (actualCaptureCloudflareRouteZoneScoped(route)) return cloudflare_logpush_zone_job_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareIdSources(route: provider_routes.Route, operation_id: []const u8) []const InputSource {
+    if (std.mem.eql(u8, operation_id, "aig-config-get-gateway-log-detail") or
+        std.mem.eql(u8, operation_id, "aig-config-get-gateway-log-request") or
+        std.mem.eql(u8, operation_id, "aig-config-get-gateway-log-response")) return cloudflare_ai_gateway_log_sources[0..];
+    return actualCaptureCloudflareAuditSources(route, operation_id);
+}
+
+fn actualCaptureCloudflareAuditSources(route: provider_routes.Route, operation_id: []const u8) []const InputSource {
+    if (std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-log-history")) return cloudflare_audit_account_log_sources[0..];
+    if (std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-log-history")) return cloudflare_audit_organization_log_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/organizations/")) return cloudflare_audit_organization_log_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/accounts/")) return cloudflare_audit_account_log_sources[0..];
     return &.{};
 }
 

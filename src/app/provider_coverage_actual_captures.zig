@@ -172,7 +172,7 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
         try writeActualMissingInputsText(writer, row.route, hints_value);
         try writer.writeByte('\n');
         if (actualCaptureMissingInputCount(row.route, hints_value) != 0) {
-            try writeActualMissingInputSourcesText(gpa, writer, row.route, plan.routes.items, plan.captures.items, plan.source_evidence.items, hints_value);
+            try writeActualMissingInputSourcesText(gpa, writer, row.route, plan.source_routes.items, plan.captures.items, plan.source_evidence.items, hints_value);
         }
         const command = try actualCaptureCommand(gpa, row.route, hints_value);
         defer gpa.free(command);
@@ -234,7 +234,7 @@ fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: a
         }
         visible += 1;
         try writeMaybeJsonComma(writer, &first);
-        try writeActualCaptureCandidateJson(gpa, row, state, rank, plan.routes.items, plan.captures.items, plan.source_evidence.items, hints_value, plan.options, writer);
+        try writeActualCaptureCandidateJson(gpa, row, state, rank, plan.source_routes.items, plan.captures.items, plan.source_evidence.items, hints_value, plan.options, writer);
     }
 
     try writer.writeAll("],");
@@ -1188,6 +1188,116 @@ test "plans Cloudflare child resource captures from resource and inventory hints
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"planned\":13") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "\"operation_id\":\"account-resource-group-details\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, planned, "test-token") == null);
+}
+
+test "explains Cloudflare SSL and log missing inputs with official source routes" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-capture-cloudflare-source-map.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertCloudflareAccount("acct-1", "Main account", "standard", "active", "{\"id\":\"acct-1\"}");
+    try db.upsertCloudflareZone("zone-plosca", "plosca.ru", "acct-1", "active", false, "full", "ns1.example,ns2.example", "{\"id\":\"zone-plosca\"}");
+
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Certificate Packs","method":"GET","path":"/zones/{zone_id}/ssl/certificate_packs","operation_id":"certificate-packs-list-certificate-packs","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"certificate pack list"}
+        \\{"provider":"cloudflare","tag":"Certificate Packs","method":"GET","path":"/zones/{zone_id}/ssl/certificate_packs/{certificate_pack_id}","operation_id":"certificate-packs-get-certificate-pack","path_params":[{"name":"zone_id","required":true},{"name":"certificate_pack_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"certificate pack detail"}
+        \\{"provider":"cloudflare","tag":"Access mTLS authentication","method":"GET","path":"/accounts/{account_id}/access/certificates","operation_id":"access-mtls-authentication-list-mtls-certificates","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"account mtls list"}
+        \\{"provider":"cloudflare","tag":"Access mTLS authentication","method":"GET","path":"/accounts/{account_id}/access/certificates/{certificate_id}","operation_id":"access-mtls-authentication-get-an-mtls-certificate","path_params":[{"name":"account_id","required":true},{"name":"certificate_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"account mtls detail"}
+        \\{"provider":"cloudflare","tag":"Log Explorer Datasets","method":"GET","path":"/zones/{zone_id}/logs/explorer/datasets","operation_id":"zones-logs-explorer-datasets-list","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"zone datasets"}
+        \\{"provider":"cloudflare","tag":"Log Explorer Datasets","method":"GET","path":"/zones/{zone_id}/logs/explorer/datasets/{dataset_id}","operation_id":"zones-logs-explorer-datasets-get","path_params":[{"name":"zone_id","required":true},{"name":"dataset_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"zone dataset detail"}
+        \\{"provider":"cloudflare","tag":"Logpush jobs for a zone","method":"GET","path":"/zones/{zone_id}/logpush/jobs","operation_id":"get-zones-zone_id-logpush-jobs","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"zone logpush jobs"}
+        \\{"provider":"cloudflare","tag":"Logpush jobs for a zone","method":"GET","path":"/zones/{zone_id}/logpush/jobs/{job_id}","operation_id":"get-zones-zone_id-logpush-jobs-job_id","path_params":[{"name":"zone_id","required":true},{"name":"job_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"zone logpush detail"}
+        \\{"provider":"cloudflare","tag":"AI Gateway Logs","method":"GET","path":"/accounts/{account_id}/ai-gateway/gateways","operation_id":"aig-config-list-gateway","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ai gateways"}
+        \\{"provider":"cloudflare","tag":"AI Gateway Logs","method":"GET","path":"/accounts/{account_id}/ai-gateway/gateways/{gateway_id}/logs","operation_id":"aig-config-list-gateway-logs","path_params":[{"name":"account_id","required":true},{"name":"gateway_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ai gateway logs"}
+        \\{"provider":"cloudflare","tag":"AI Gateway Logs","method":"GET","path":"/accounts/{account_id}/ai-gateway/gateways/{gateway_id}/logs/{id}","operation_id":"aig-config-get-gateway-log-detail","path_params":[{"name":"account_id","required":true},{"name":"gateway_id","required":true},{"name":"id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ai gateway log detail"}
+        \\{"provider":"cloudflare","tag":"Audit Logs","method":"GET","path":"/accounts/{account_id}/logs/audit","operation_id":"audit-logs-v2-get-account-audit-logs","path_params":[{"name":"account_id","required":true}],"query_params":[{"name":"before","required":true},{"name":"since","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"audit v2 list"}
+        \\{"provider":"cloudflare","tag":"Audit Logs","method":"GET","path":"/accounts/{account_id}/logs/audit/{id}/history","operation_id":"audit-logs-v2-get-account-audit-log-history","path_params":[{"name":"account_id","required":true},{"name":"id","required":true}],"query_params":[{"name":"action_time","required":true},{"name":"before","required":true},{"name":"since","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"audit v2 history"}
+        \\{"provider":"cloudflare","tag":"Logs Received","method":"GET","path":"/zones/{zone_id}/logs/rayids/{ray_id}","operation_id":"get-zones-zone_id-logs-rayids-ray_id","path_params":[{"name":"zone_id","required":true},{"name":"ray_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ray detail"}
+        \\{"provider":"cloudflare","tag":"Logs Received","method":"GET","path":"/zones/{zone_id}/logs/received","operation_id":"get-zones-zone_id-logs-received","path_params":[{"name":"zone_id","required":true}],"query_params":[{"name":"end","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"logs received"}
+        \\
+    ;
+    const configured_domains = [_][]const u8{"plosca.ru"};
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, cloudflare, "", &db, .{
+        .filter = .{ .provider = .cloudflare },
+        .limit = 0,
+        .configured_domains = configured_domains[0..],
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"unmapped\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"certificate_pack_id\",\"source_operation_id\":\"certificate-packs-list-certificate-packs\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"certificate_id\",\"source_operation_id\":\"access-mtls-authentication-list-mtls-certificates\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"dataset_id\",\"source_operation_id\":\"zones-logs-explorer-datasets-list\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"job_id\",\"source_operation_id\":\"get-zones-zone_id-logpush-jobs\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"gateway_id\",\"source_operation_id\":\"aig-config-list-gateway\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"id\",\"source_operation_id\":\"aig-config-list-gateway-logs\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"action_time\",\"source_operation_id\":\"audit-logs-v2-get-account-audit-logs\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"ray_id\",\"source_operation_id\":null,\"hint_kind\":null,\"hint_count\":0,\"result\":\"no_official_source\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"end\",\"source_operation_id\":null,\"hint_kind\":null,\"hint_count\":0,\"result\":\"no_official_source\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation audit-logs-v2-get-account-audit-logs --path-param account_id='acct-1' --query-param before='") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "--query-param since='") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_before") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_since") == null);
+}
+
+test "plans Cloudflare SSL and log child captures from broad source hints" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-capture-cloudflare-source-hints.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertCloudflareAccount("acct-1", "Main account", "standard", "active", "{\"id\":\"acct-1\"}");
+    try db.upsertCloudflareZone("zone-plosca", "plosca.ru", "acct-1", "active", false, "full", "ns1.example,ns2.example", "{\"id\":\"zone-plosca\"}");
+    try db.upsertCloudflareResource("certificate-packs-list-certificate-packs|zone|pack", "certificate-packs-list-certificate-packs", "pack-1", "zone", "zone-plosca", "Universal SSL", "active", "universal", "{\"id\":\"pack-1\"}");
+    try db.upsertCloudflareResource("access-mtls-authentication-list-mtls-certificates|acct|cert", "access-mtls-authentication-list-mtls-certificates", "cert-1", "account", "acct-1", "Client cert", "active", "mtls", "{\"id\":\"cert-1\"}");
+    try db.upsertCloudflareResource("zones-logs-explorer-datasets-list|zone|dataset", "zones-logs-explorer-datasets-list", "http_requests", "zone", "zone-plosca", "HTTP requests", "active", "dataset", "{\"dataset_id\":\"http_requests\"}");
+    try db.upsertCloudflareResource("get-zones-zone_id-logpush-jobs|zone|job", "get-zones-zone_id-logpush-jobs", "77", "zone", "zone-plosca", "HTTP logs", "enabled", "logpush", "{\"id\":77}");
+    try db.upsertCloudflareResource("aig-config-list-gateway|acct|gateway", "aig-config-list-gateway", "gateway-1", "account", "acct-1", "AI Gateway", "active", "gateway", "{\"id\":\"gateway-1\"}");
+    try db.upsertCloudflareResource("worker-script-list-workers|acct|worker", "worker-script-list-workers", "edge-worker", "account", "acct-1", "edge-worker", "active", "worker", "{\"id\":\"edge-worker\"}");
+
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Certificate Packs","method":"GET","path":"/zones/{zone_id}/ssl/certificate_packs/{certificate_pack_id}","operation_id":"certificate-packs-get-certificate-pack","path_params":[{"name":"zone_id","required":true},{"name":"certificate_pack_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"certificate pack detail"}
+        \\{"provider":"cloudflare","tag":"Access mTLS authentication","method":"GET","path":"/accounts/{account_id}/access/certificates/{certificate_id}","operation_id":"access-mtls-authentication-get-an-mtls-certificate","path_params":[{"name":"account_id","required":true},{"name":"certificate_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"mtls detail"}
+        \\{"provider":"cloudflare","tag":"Log Explorer Datasets","method":"GET","path":"/zones/{zone_id}/logs/explorer/datasets/{dataset_id}","operation_id":"zones-logs-explorer-datasets-get","path_params":[{"name":"zone_id","required":true},{"name":"dataset_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"dataset detail"}
+        \\{"provider":"cloudflare","tag":"Logpush jobs for a zone","method":"GET","path":"/zones/{zone_id}/logpush/jobs/{job_id}","operation_id":"get-zones-zone_id-logpush-jobs-job_id","path_params":[{"name":"zone_id","required":true},{"name":"job_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"logpush detail"}
+        \\{"provider":"cloudflare","tag":"AI Gateway Logs","method":"GET","path":"/accounts/{account_id}/ai-gateway/gateways/{gateway_id}/logs","operation_id":"aig-config-list-gateway-logs","path_params":[{"name":"account_id","required":true},{"name":"gateway_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"gateway logs"}
+        \\{"provider":"cloudflare","tag":"Worker Tail Logs","method":"GET","path":"/accounts/{account_id}/workers/scripts/{script_name}/tails","operation_id":"worker-tail-logs-list-tails","path_params":[{"name":"account_id","required":true},{"name":"script_name","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"worker tails"}
+        \\{"provider":"cloudflare","tag":"Radar Certificate Transparency","method":"GET","path":"/radar/ct/summary/{dimension}","operation_id":"radar-get-ct-summary","path_params":[{"name":"dimension","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"radar summary"}
+        \\
+    ;
+    const configured_domains = [_][]const u8{"plosca.ru"};
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeActualCapturesJsonFromText(allocator, cloudflare, "", &db, .{
+        .filter = .{ .provider = .cloudflare },
+        .limit = 0,
+        .configured_domains = configured_domains[0..],
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"official_read_routes\":7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation certificate-packs-get-certificate-pack --path-param zone_id='zone-plosca' --path-param certificate_pack_id='pack-1'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation access-mtls-authentication-get-an-mtls-certificate --path-param account_id='acct-1' --path-param certificate_id='cert-1'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation zones-logs-explorer-datasets-get --path-param zone_id='zone-plosca' --path-param dataset_id='http_requests'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation get-zones-zone_id-logpush-jobs-job_id --path-param zone_id='zone-plosca' --path-param job_id='77'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation aig-config-list-gateway-logs --path-param account_id='acct-1' --path-param gateway_id='gateway-1'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation worker-tail-logs-list-tails --path-param account_id='acct-1' --path-param script_name='edge-worker'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture cloudflare --operation radar-get-ct-summary --path-param dimension='CA'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_") == null);
 }
 
 test "plans Hostinger DNS domain hosting and Horizons captures from domain and inventory hints" {

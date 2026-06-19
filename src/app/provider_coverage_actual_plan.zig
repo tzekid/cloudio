@@ -86,6 +86,7 @@ pub const ActualCaptureCandidateOrder = struct {
 pub const ActualCapturePlan = struct {
     options: ActualCaptureOptions,
     routes: CoverageRoutes,
+    source_routes: CoverageRoutes,
     captures: db_store.RouteCaptureEvidenceRows,
     source_evidence: db_store.RouteSourceEvidenceRows,
     cloudflare_accounts: ?db_store.CloudflareAccountRows,
@@ -106,6 +107,7 @@ pub const ActualCapturePlan = struct {
         if (self.cloudflare_accounts) |*rows| rows.deinit(gpa);
         self.source_evidence.deinit(gpa);
         self.captures.deinit(gpa);
+        self.source_routes.deinit(gpa);
         self.routes.deinit(gpa);
     }
 
@@ -190,7 +192,7 @@ pub const ActualCapturePlan = struct {
             if (!actualCaptureRouteInFocus(self.options, row)) continue;
             const state = app_provider_coverage_actual_inputs.actualCaptureState(row.route, self.captures.items) orelse continue;
             if (state == .ok) continue;
-            try app_provider_coverage_actual_inputs.actualCaptureSummarizeMissingInputSources(gpa, &out, row.route, self.routes.items, self.captures.items, self.source_evidence.items, hints_value);
+            try app_provider_coverage_actual_inputs.actualCaptureSummarizeMissingInputSources(gpa, &out, row.route, self.source_routes.items, self.captures.items, self.source_evidence.items, hints_value);
         }
         return out;
     }
@@ -222,18 +224,24 @@ pub const ActualCapturePlan = struct {
 pub fn loadActualCapturePlanFromFiles(io: Io, gpa: Allocator, paths: Paths, db: *Db, options: ActualCaptureOptions) !ActualCapturePlan {
     var routes = try app_provider_coverage_routes.loadRoutes(io, gpa, paths, app_provider_coverage_actual_inputs.actualCaptureRouteFilter(options.filter));
     errdefer routes.deinit(gpa);
-    return try loadActualCapturePlanWithRoutes(gpa, db, options, routes);
+    var source_routes = try app_provider_coverage_routes.loadRoutes(io, gpa, paths, actualCaptureSourceRouteFilter(options.filter));
+    errdefer source_routes.deinit(gpa);
+    return try loadActualCapturePlanWithRoutes(gpa, db, options, routes, source_routes);
 }
 
 pub fn loadActualCapturePlanFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, db: *Db, options: ActualCaptureOptions) !ActualCapturePlan {
     var routes = try app_provider_coverage_routes.loadRoutesFromText(gpa, cloudflare_text, hostinger_text, app_provider_coverage_actual_inputs.actualCaptureRouteFilter(options.filter));
     errdefer routes.deinit(gpa);
-    return try loadActualCapturePlanWithRoutes(gpa, db, options, routes);
+    var source_routes = try app_provider_coverage_routes.loadRoutesFromText(gpa, cloudflare_text, hostinger_text, actualCaptureSourceRouteFilter(options.filter));
+    errdefer source_routes.deinit(gpa);
+    return try loadActualCapturePlanWithRoutes(gpa, db, options, routes, source_routes);
 }
 
-fn loadActualCapturePlanWithRoutes(gpa: Allocator, db: *Db, options: ActualCaptureOptions, routes: CoverageRoutes) !ActualCapturePlan {
+fn loadActualCapturePlanWithRoutes(gpa: Allocator, db: *Db, options: ActualCaptureOptions, routes: CoverageRoutes, source_routes: CoverageRoutes) !ActualCapturePlan {
     var owned_routes = routes;
     errdefer owned_routes.deinit(gpa);
+    var owned_source_routes = source_routes;
+    errdefer owned_source_routes.deinit(gpa);
     var captures = try db.routeCaptureEvidence(gpa, .{
         .provider = app_provider_coverage_actual_inputs.actualCaptureProviderDbValue(options.filter.provider),
         .limit = actual_capture_load_limit,
@@ -261,6 +269,7 @@ fn loadActualCapturePlanWithRoutes(gpa: Allocator, db: *Db, options: ActualCaptu
     return .{
         .options = options,
         .routes = owned_routes,
+        .source_routes = owned_source_routes,
         .captures = captures,
         .source_evidence = source_evidence,
         .cloudflare_accounts = cloudflare_accounts,
@@ -270,6 +279,14 @@ fn loadActualCapturePlanWithRoutes(gpa: Allocator, db: *Db, options: ActualCaptu
         .hostinger_vps = hostinger_vps,
         .hostinger_resources = hostinger_resources,
         .hostinger_inventory = hostinger_inventory,
+    };
+}
+
+fn actualCaptureSourceRouteFilter(filter: RouteFilter) RouteFilter {
+    return .{
+        .provider = filter.provider,
+        .method = .GET,
+        .mode = .read,
     };
 }
 
