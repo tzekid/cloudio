@@ -347,6 +347,48 @@ const cloudflare_worker_script_sources = [_]InputSource{.{
     .purpose = "discover Worker script names",
 }};
 
+const cloudflare_cloudforce_event_sources = [_]InputSource{.{
+    .operation_id = "get_EventListGet",
+    .hint_kind = "get_EventListGet",
+    .purpose = "discover Cloudforce One event node ids and node types",
+}};
+
+const cloudflare_cloudforce_tag_sources = [_]InputSource{.{
+    .operation_id = "get_TagList",
+    .hint_kind = "get_TagList",
+    .purpose = "discover Cloudforce One tag UUIDs",
+}};
+
+const cloudflare_magic_bgp_filter_profile_sources = [_]InputSource{.{
+    .operation_id = "magic-bgp-list-filter-profiles",
+    .hint_kind = "magic-bgp-list-filter-profiles",
+    .purpose = "discover Magic BGP filter profile ids",
+}};
+
+const cloudflare_magic_connector_sources = [_]InputSource{.{
+    .operation_id = "mconn-connector-list",
+    .hint_kind = "mconn-connector-list",
+    .purpose = "discover Magic Connector ids",
+}};
+
+const cloudflare_r2_catalog_sources = [_]InputSource{.{
+    .operation_id = "list-catalogs",
+    .hint_kind = "list-catalogs",
+    .purpose = "discover R2 catalog bucket names",
+}};
+
+const cloudflare_r2_namespace_sources = [_]InputSource{.{
+    .operation_id = "list-namespaces",
+    .hint_kind = "list-namespaces",
+    .purpose = "discover R2 catalog namespaces for a bucket",
+}};
+
+const cloudflare_r2_table_sources = [_]InputSource{.{
+    .operation_id = "list-tables",
+    .hint_kind = "list-tables",
+    .purpose = "discover R2 catalog table names for a namespace",
+}};
+
 const cloudflare_audit_account_log_sources = [_]InputSource{.{
     .operation_id = "audit-logs-v2-get-account-audit-logs",
     .hint_kind = "audit-logs-v2-get-account-audit-logs",
@@ -541,6 +583,13 @@ fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []co
     if (std.mem.eql(u8, name, "dataset_id")) return actualCaptureCloudflareDatasetIdHint(route, hints);
     if (std.mem.eql(u8, name, "job_id")) return actualCaptureCloudflareLogpushJobIdHint(route, hints);
     if (std.mem.eql(u8, name, "script_name")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "worker-script-list-workers", "workers-scripts", "worker-scripts" });
+    if (std.mem.eql(u8, name, "script_tag")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "worker-script-list-workers", "workers-scripts", "worker-scripts" });
+    if (std.mem.eql(u8, name, "profile_id") and actualCaptureRoutePathContains(route, "/magic/bgp/filter_profiles/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"magic-bgp-list-filter-profiles"});
+    if (std.mem.eql(u8, name, "connector_id") and actualCaptureRoutePathContains(route, "/magic/connectors/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "mconn-connector-list", "magic-connectors" });
+    if (std.mem.eql(u8, name, "tag_uuid") and actualCaptureRoutePathContains(route, "/cloudforce-one/events/tags/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"get_TagList"});
+    if (std.mem.eql(u8, name, "bucket_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "list-catalogs", "get-catalog-details", "r2-catalog" });
+    if (std.mem.eql(u8, name, "namespace") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"list-namespaces"});
+    if (std.mem.eql(u8, name, "table_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"list-tables"});
     if (std.mem.eql(u8, name, "id")) return actualCaptureCloudflareGenericIdHint(route, hints);
     if (std.mem.eql(u8, name, "plan_identifier")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-available-plans", "zone-available-rate-plans" });
     if (std.mem.eql(u8, name, "rule_identifier")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-email-routing-rules", "email-routing-rules" });
@@ -712,6 +761,16 @@ fn actualCaptureCloudflareLogpushJobIdHint(route: provider_routes.Route, hints: 
     if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-accounts-account_id-logpush-jobs", "logpush-account-jobs", "logpush-jobs" });
     if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-zones-zone_id-logpush-jobs", "logpush-zone-jobs", "logpush-jobs" });
     return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-accounts-account_id-logpush-jobs", "get-zones-zone_id-logpush-jobs", "logpush-account-jobs", "logpush-zone-jobs", "logpush-jobs" });
+}
+
+fn actualCaptureCloudflareCloudforceEventHint(route: provider_routes.Route, hints: Hints) ?db_store.CloudflareInventoryHintRow {
+    if (!std.mem.eql(u8, route.operation_id orelse "", "get_EventGraph")) return null;
+    for (hints.cloudflare_inventory) |row| {
+        if (row.resource_id.len == 0 or row.category.len == 0) continue;
+        if (!actualCaptureKindIn(row.kind, &.{"get_EventListGet"})) continue;
+        if (actualCaptureCloudflareInventoryMatchesRouteScope(route, hints, row)) return row;
+    }
+    return null;
 }
 
 fn actualCaptureCloudflareGenericIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
@@ -1122,6 +1181,9 @@ pub fn actualCaptureHasQueryParamHint(route: provider_routes.Route, name: []cons
 
 fn actualCaptureHasCloudflareQueryParamHintWithHints(route: provider_routes.Route, name: []const u8, hints: Hints) bool {
     const operation_id = route.operation_id orelse return false;
+    if (std.mem.eql(u8, operation_id, "get_EventGraph")) {
+        if (std.mem.eql(u8, name, "nodeId") or std.mem.eql(u8, name, "nodeType")) return actualCaptureCloudflareCloudforceEventHint(route, hints) != null;
+    }
     const audit_v2_window =
         std.mem.eql(u8, operation_id, "audit-logs-v2-get-account-audit-logs") or
         std.mem.eql(u8, operation_id, "audit-logs-v2-get-organization-audit-logs") or
@@ -1163,6 +1225,13 @@ pub fn actualCaptureQueryParamHint(gpa: Allocator, route: provider_routes.Route,
 }
 
 fn actualCaptureCloudflareQueryParamHint(gpa: Allocator, route: provider_routes.Route, name: []const u8, hints: Hints) !?[]u8 {
+    if (std.mem.eql(u8, route.operation_id orelse "", "get_EventGraph")) {
+        if (actualCaptureCloudflareCloudforceEventHint(route, hints)) |row| {
+            if (std.mem.eql(u8, name, "nodeId")) return try gpa.dupe(u8, row.resource_id);
+            if (std.mem.eql(u8, name, "nodeType")) return try gpa.dupe(u8, row.category);
+        }
+        return null;
+    }
     if (std.mem.eql(u8, name, "action_time")) {
         if (actualCaptureCloudflareAuditEventHint(route, hints)) |row| return try gpa.dupe(u8, row.updated_at);
         return null;
@@ -1481,6 +1550,14 @@ fn actualCaptureCloudflareSourceHintCount(route: provider_routes.Route, hints: H
     if (std.mem.eql(u8, input_name, "dataset_id")) return actualCaptureCloudflareDatasetSourceHintCount(route, hints, source.hint_kind);
     if (std.mem.eql(u8, input_name, "job_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "logpush-account-jobs", "logpush-zone-jobs", "logpush-jobs" });
     if (std.mem.eql(u8, input_name, "script_name")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "workers-scripts", "worker-scripts" });
+    if (std.mem.eql(u8, input_name, "script_tag")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "workers-scripts", "worker-scripts" });
+    if (std.mem.eql(u8, input_name, "profile_id")) return actualCaptureCloudflareKindHintCount(hints, &.{source.hint_kind});
+    if (std.mem.eql(u8, input_name, "connector_id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "magic-connectors" });
+    if (std.mem.eql(u8, input_name, "tag_uuid")) return actualCaptureCloudflareKindHintCount(hints, &.{source.hint_kind});
+    if (std.mem.eql(u8, input_name, "bucket_name")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "r2-catalog" });
+    if (std.mem.eql(u8, input_name, "namespace")) return actualCaptureCloudflareKindHintCount(hints, &.{source.hint_kind});
+    if (std.mem.eql(u8, input_name, "table_name")) return actualCaptureCloudflareKindHintCount(hints, &.{source.hint_kind});
+    if (std.mem.eql(u8, input_name, "nodeId") or std.mem.eql(u8, input_name, "nodeType")) return actualCaptureCloudflareKindHintCount(hints, &.{source.hint_kind});
     if (std.mem.eql(u8, input_name, "id")) return actualCaptureCloudflareKindHintCount(hints, &.{ source.hint_kind, "ai-gateway-logs", "audit-logs-account-v2", "audit-logs-organization-v2" });
     return actualCaptureCloudflareKindHintCount(hints, &.{source.hint_kind});
 }
@@ -1573,10 +1650,18 @@ fn actualCaptureCloudflareMissingInputSources(route: provider_routes.Route, inpu
         if (std.mem.eql(u8, input_name, "dataset_id")) return actualCaptureCloudflareDatasetSources(route);
         if (std.mem.eql(u8, input_name, "job_id")) return actualCaptureCloudflareLogpushJobSources(route);
         if (std.mem.eql(u8, input_name, "script_name")) return cloudflare_worker_script_sources[0..];
+        if (std.mem.eql(u8, input_name, "script_tag")) return cloudflare_worker_script_sources[0..];
+        if (std.mem.eql(u8, input_name, "profile_id") and actualCaptureRoutePathContains(route, "/magic/bgp/filter_profiles/")) return cloudflare_magic_bgp_filter_profile_sources[0..];
+        if (std.mem.eql(u8, input_name, "connector_id") and actualCaptureRoutePathContains(route, "/magic/connectors/")) return cloudflare_magic_connector_sources[0..];
+        if (std.mem.eql(u8, input_name, "tag_uuid") and actualCaptureRoutePathContains(route, "/cloudforce-one/events/tags/")) return cloudflare_cloudforce_tag_sources[0..];
+        if (std.mem.eql(u8, input_name, "bucket_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return cloudflare_r2_catalog_sources[0..];
+        if (std.mem.eql(u8, input_name, "namespace") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return cloudflare_r2_namespace_sources[0..];
+        if (std.mem.eql(u8, input_name, "table_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return cloudflare_r2_table_sources[0..];
         if (std.mem.eql(u8, input_name, "id")) return actualCaptureCloudflareIdSources(route, operation_id);
     }
 
     if (std.mem.eql(u8, input_source, "query")) {
+        if ((std.mem.eql(u8, input_name, "nodeId") or std.mem.eql(u8, input_name, "nodeType")) and std.mem.eql(u8, operation_id, "get_EventGraph")) return cloudflare_cloudforce_event_sources[0..];
         if (std.mem.eql(u8, input_name, "action_time")) return actualCaptureCloudflareAuditSources(route, operation_id);
     }
 
@@ -1757,4 +1842,98 @@ test "plans Cloudflare audit history inputs from matching event timestamps" {
     const organization_action_time = (try actualCaptureQueryParamHint(allocator, organization_route, "action_time", hints)) orelse return error.ExpectedOrganizationActionTimeHint;
     defer allocator.free(organization_action_time);
     try std.testing.expectEqualStrings("2026-06-18T13:45:07Z", organization_action_time);
+}
+
+test "plans remaining Cloudflare global read inputs from collected parent inventory" {
+    const allocator = std.testing.allocator;
+    const route_jsons = [_][]const u8{
+        \\{"provider":"cloudflare","tag":"Email Routing routing rules","method":"GET","path":"/accounts/{account_id}/email/routing/rules","operation_id":"email-routing-routing-rules-list-account-routing-rules","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"account read"}
+        ,
+        \\{"provider":"cloudflare","tag":"Magic BGP Filter Profiles","method":"GET","path":"/accounts/{account_id}/magic/bgp/filter_profiles","operation_id":"magic-bgp-list-filter-profiles","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"profile list"}
+        ,
+        \\{"provider":"cloudflare","tag":"Magic BGP Settings","method":"GET","path":"/accounts/{account_id}/magic/bgp/settings","operation_id":"magic-bgp-get-settings","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"settings"}
+        ,
+        \\{"provider":"cloudflare","tag":"Magic BGP Filter Profiles","method":"GET","path":"/accounts/{account_id}/magic/bgp/filter_profiles/{profile_id}","operation_id":"magic-bgp-get-filter-profile","path_params":[{"name":"account_id","required":true},{"name":"profile_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"profile detail"}
+        ,
+        \\{"provider":"cloudflare","tag":"Magic Connectors","method":"GET","path":"/accounts/{account_id}/magic/connectors/{connector_id}/interrupts","operation_id":"mconn-connector-interrupt-list","path_params":[{"name":"account_id","required":true},{"name":"connector_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"connector interrupts"}
+        ,
+        \\{"provider":"cloudflare","tag":"Tag","method":"GET","path":"/accounts/{account_id}/cloudforce-one/events/tags/{tag_uuid}/indicators","operation_id":"get_TagIndicatorsList","path_params":[{"name":"account_id","required":true},{"name":"tag_uuid","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"tag indicators"}
+        ,
+        \\{"provider":"cloudflare","tag":"Workers","method":"GET","path":"/accounts/{account_id}/builds/workers/{script_tag}","operation_id":"getWorkerBuild","path_params":[{"name":"account_id","required":true},{"name":"script_tag","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"worker build"}
+        ,
+        \\{"provider":"cloudflare","tag":"Events","method":"GET","path":"/accounts/{account_id}/cloudforce-one/events/graph","operation_id":"get_EventGraph","path_params":[{"name":"account_id","required":true}],"query_params":[{"name":"nodeId","required":true},{"name":"nodeType","required":true}],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"event graph"}
+        ,
+        \\{"provider":"cloudflare","tag":"Table Management","method":"GET","path":"/accounts/{account_id}/r2-catalog/{bucket_name}/namespaces/{namespace}/tables/{table_name}","operation_id":"get-table","path_params":[{"name":"account_id","required":true},{"name":"bucket_name","required":true},{"name":"namespace","required":true},{"name":"table_name","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture,generic_route_plan","deprecated":false,"notes":"table detail"}
+        ,
+    };
+
+    var routes: [route_jsons.len]provider_routes.Route = undefined;
+    for (route_jsons, 0..) |route_json, idx| {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, route_json, .{});
+        defer parsed.deinit();
+        routes[idx] = try provider_routes.Route.init(allocator, .cloudflare, parsed.value);
+    }
+    defer for (routes) |route| route.deinit(allocator);
+
+    var account_rows = [_]db_store.CloudflareAccountRow{.{
+        .id = @constCast("acct-1"),
+        .name = @constCast("Main account"),
+        .account_type = @constCast("standard"),
+        .status = @constCast("active"),
+        .updated_at = @constCast("2026-06-19T00:00:00Z"),
+    }};
+    var resource_rows = [_]db_store.CloudflareResourceHintRow{
+        .{ .kind = @constCast("magic-bgp-list-filter-profiles"), .resource_id = @constCast("profile-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("BGP profile"), .status = @constCast("active"), .resource_type = @constCast("profile"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("mconn-connector-list"), .resource_id = @constCast("connector-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Connector"), .status = @constCast("active"), .resource_type = @constCast("connector"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("get_TagList"), .resource_id = @constCast("tag-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Tag"), .status = @constCast("active"), .resource_type = @constCast("tag"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("worker-script-list-workers"), .resource_id = @constCast("script-tag-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("worker"), .status = @constCast("active"), .resource_type = @constCast("worker"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("list-catalogs"), .resource_id = @constCast("bucket-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("bucket-1"), .status = @constCast("active"), .resource_type = @constCast("r2-catalog"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("list-namespaces"), .resource_id = @constCast("namespace-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1/bucket-1"), .name = @constCast("namespace-1"), .status = @constCast("active"), .resource_type = @constCast("namespace"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("list-tables"), .resource_id = @constCast("table-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1/bucket-1/namespace-1"), .name = @constCast("table-1"), .status = @constCast("active"), .resource_type = @constCast("table"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+    };
+    var inventory_rows = [_]db_store.CloudflareInventoryHintRow{.{
+        .kind = @constCast("get_EventListGet"),
+        .resource_id = @constCast("event-1"),
+        .scope = @constCast("account"),
+        .scope_id = @constCast("acct-1"),
+        .display_name = @constCast("Cloudforce event"),
+        .status = @constCast("active"),
+        .category = @constCast("event"),
+        .domain = @constCast(""),
+        .account_id = @constCast("acct-1"),
+        .zone_id = @constCast(""),
+        .related_id = @constCast(""),
+        .flag = @constCast(""),
+        .updated_at = @constCast("2026-06-19T00:00:00Z"),
+    }};
+    const hints = Hints{
+        .cloudflare_accounts = account_rows[0..],
+        .cloudflare_resources = resource_rows[0..],
+        .cloudflare_inventory = inventory_rows[0..],
+    };
+
+    for (routes) |route| try std.testing.expect(actualCaptureReady(route, hints));
+    try std.testing.expectEqualStrings("profile-1", actualCapturePathParamHint(routes[3], "profile_id", hints) orelse "");
+    try std.testing.expectEqualStrings("connector-1", actualCapturePathParamHint(routes[4], "connector_id", hints) orelse "");
+    try std.testing.expectEqualStrings("tag-1", actualCapturePathParamHint(routes[5], "tag_uuid", hints) orelse "");
+    try std.testing.expectEqualStrings("script-tag-1", actualCapturePathParamHint(routes[6], "script_tag", hints) orelse "");
+    try std.testing.expectEqualStrings("bucket-1", actualCapturePathParamHint(routes[8], "bucket_name", hints) orelse "");
+    try std.testing.expectEqualStrings("namespace-1", actualCapturePathParamHint(routes[8], "namespace", hints) orelse "");
+    try std.testing.expectEqualStrings("table-1", actualCapturePathParamHint(routes[8], "table_name", hints) orelse "");
+
+    const node_id = (try actualCaptureQueryParamHint(allocator, routes[7], "nodeId", hints)) orelse return error.ExpectedNodeIdHint;
+    defer allocator.free(node_id);
+    const node_type = (try actualCaptureQueryParamHint(allocator, routes[7], "nodeType", hints)) orelse return error.ExpectedNodeTypeHint;
+    defer allocator.free(node_type);
+    try std.testing.expectEqualStrings("event-1", node_id);
+    try std.testing.expectEqualStrings("event", node_type);
+
+    try std.testing.expectEqualStrings("magic-bgp-list-filter-profiles", actualCaptureMissingInputSources(routes[3], "path", "profile_id")[0].operation_id);
+    try std.testing.expectEqualStrings("mconn-connector-list", actualCaptureMissingInputSources(routes[4], "path", "connector_id")[0].operation_id);
+    try std.testing.expectEqualStrings("get_TagList", actualCaptureMissingInputSources(routes[5], "path", "tag_uuid")[0].operation_id);
+    try std.testing.expectEqualStrings("worker-script-list-workers", actualCaptureMissingInputSources(routes[6], "path", "script_tag")[0].operation_id);
+    try std.testing.expectEqualStrings("get_EventListGet", actualCaptureMissingInputSources(routes[7], "query", "nodeId")[0].operation_id);
+    try std.testing.expectEqualStrings("list-catalogs", actualCaptureMissingInputSources(routes[8], "path", "bucket_name")[0].operation_id);
+    try std.testing.expectEqualStrings("list-namespaces", actualCaptureMissingInputSources(routes[8], "path", "namespace")[0].operation_id);
+    try std.testing.expectEqualStrings("list-tables", actualCaptureMissingInputSources(routes[8], "path", "table_name")[0].operation_id);
 }
