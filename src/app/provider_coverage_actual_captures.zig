@@ -77,6 +77,8 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
     var order = try plan.candidateOrder(gpa);
     defer order.deinit(gpa);
     const review_summary = try actualCaptureReviewSummary(gpa, plan, order.items);
+    var review_groups = try actualCaptureReviewGroups(gpa, plan, order.items);
+    defer review_groups.deinit(gpa);
     try writer.writeAll("Cloudio actual route capture plan\n");
     try writer.writeAll("rank: family static read gaps, ready capture inputs, then official GET/read routes missing an OK route.capture audit event\n");
     try writer.print("filter provider={s} focus={s}", .{ plan.options.filter.provider.name(), plan.options.focus.name() });
@@ -141,6 +143,23 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
         review_summary.waiting_for_inputs,
         review_summary.other,
     });
+    try writer.writeAll("review_groups\n");
+    for (review_groups.items) |group| {
+        try writer.print("  {s}/{s} total={d} ready_to_capture={d} retry_capture={d} diagnostic_blocked={d} blocked_empty_source={d} diagnostic_source_blocked={d} source_ready={d} no_source_mapping={d} waiting_for_inputs={d} other={d}\n", .{
+            group.provider,
+            group.family,
+            group.summary.total,
+            group.summary.ready_to_capture,
+            group.summary.retry_capture,
+            group.summary.diagnostic_blocked,
+            group.summary.blocked_empty_source,
+            group.summary.diagnostic_source_blocked,
+            group.summary.source_ready,
+            group.summary.no_source_mapping,
+            group.summary.waiting_for_inputs,
+            group.summary.other,
+        });
+    }
 
     var visible: usize = 0;
     var omitted: usize = 0;
@@ -222,6 +241,8 @@ fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: a
     var order = try plan.candidateOrder(gpa);
     defer order.deinit(gpa);
     const review_summary = try actualCaptureReviewSummary(gpa, plan, order.items);
+    var review_groups = try actualCaptureReviewGroups(gpa, plan, order.items);
+    defer review_groups.deinit(gpa);
     try writer.writeByte('{');
     try writeJsonField(writer, "kind", "coverage_actual_captures", true);
     try writer.writeAll("\"filter\":");
@@ -247,6 +268,8 @@ fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: a
     try writeActualCaptureSourceSummaryJson(source_summary, writer);
     try writer.writeAll(",\"review_summary\":");
     try writeActualCaptureReviewSummaryJson(review_summary, writer);
+    try writer.writeAll(",\"review_groups\":");
+    try writeActualCaptureReviewGroupsJson(review_groups, writer);
     try writer.writeAll(",\"candidates\":[");
 
     var visible: usize = 0;
@@ -645,6 +668,20 @@ const ActualCaptureReviewSummary = struct {
     }
 };
 
+const ActualCaptureReviewGroup = struct {
+    provider: []const u8,
+    family: []const u8,
+    summary: ActualCaptureReviewSummary = .{},
+};
+
+const ActualCaptureReviewGroups = struct {
+    items: []ActualCaptureReviewGroup,
+
+    fn deinit(self: *ActualCaptureReviewGroups, gpa: Allocator) void {
+        gpa.free(self.items);
+    }
+};
+
 fn actualCaptureReviewSummary(gpa: Allocator, plan: ActualCapturePlan, order: []const ActualCaptureCandidateRank) !ActualCaptureReviewSummary {
     var out = ActualCaptureReviewSummary{};
     const hints_value = plan.hints();
@@ -654,6 +691,36 @@ fn actualCaptureReviewSummary(gpa: Allocator, plan: ActualCapturePlan, order: []
         out.add(review.status);
     }
     return out;
+}
+
+fn actualCaptureReviewGroups(gpa: Allocator, plan: ActualCapturePlan, order: []const ActualCaptureCandidateRank) !ActualCaptureReviewGroups {
+    var groups = std.ArrayList(ActualCaptureReviewGroup).empty;
+    errdefer groups.deinit(gpa);
+    const hints_value = plan.hints();
+    for (order) |rank| {
+        const row = plan.routes.items[rank.route_index];
+        const provider_name = row.route.provider.name();
+        const family_name = if (rank.focus_family) |family| family.name() else "unclassified";
+        const review = try actualCaptureCandidateReview(gpa, row.route, rank.state, plan.source_routes.items, plan.captures.items, plan.source_evidence.items, hints_value);
+        const group_index = actualCaptureReviewGroupIndex(groups.items, provider_name, family_name) orelse blk: {
+            try groups.append(gpa, .{
+                .provider = provider_name,
+                .family = family_name,
+            });
+            break :blk groups.items.len - 1;
+        };
+        groups.items[group_index].summary.add(review.status);
+    }
+    return .{ .items = try groups.toOwnedSlice(gpa) };
+}
+
+fn actualCaptureReviewGroupIndex(groups: []const ActualCaptureReviewGroup, provider_name: []const u8, family_name: []const u8) ?usize {
+    for (groups, 0..) |group, index| {
+        if (!std.mem.eql(u8, group.provider, provider_name)) continue;
+        if (!std.mem.eql(u8, group.family, family_name)) continue;
+        return index;
+    }
+    return null;
 }
 
 fn writeActualCaptureTotalsJson(totals_value: ActualCaptureTotals, writer: anytype) !void {
@@ -691,6 +758,21 @@ fn writeActualCaptureReviewSummaryJson(summary: ActualCaptureReviewSummary, writ
     try writeJsonCountField(writer, "waiting_for_inputs", summary.waiting_for_inputs, true);
     try writeJsonCountField(writer, "other", summary.other, false);
     try writer.writeByte('}');
+}
+
+fn writeActualCaptureReviewGroupsJson(groups: ActualCaptureReviewGroups, writer: anytype) !void {
+    try writer.writeByte('[');
+    var first = true;
+    for (groups.items) |group| {
+        try writeMaybeJsonComma(writer, &first);
+        try writer.writeByte('{');
+        try writeJsonField(writer, "provider", group.provider, true);
+        try writeJsonField(writer, "family", group.family, true);
+        try writer.writeAll("\"summary\":");
+        try writeActualCaptureReviewSummaryJson(group.summary, writer);
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
 }
 
 fn writeActualCaptureSourceSummaryJson(summary: ActualCaptureSourceSummary, writer: anytype) !void {
@@ -1002,6 +1084,7 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":3") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":3") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"review_summary\":{\"total\":3,\"ready_to_capture\":2,\"retry_capture\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_groups\":[{\"provider\":\"hostinger\",\"family\":\"hostinger-vps\",\"summary\":{\"total\":3,\"ready_to_capture\":2,\"retry_capture\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachinesV1\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachineDetailsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"actual_state\":\"non_ok\"") != null);
@@ -1023,6 +1106,7 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio actual route capture plan\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "review_summary total=3 ready_to_capture=2 retry_capture=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "review_groups\n  hostinger/hostinger-vps total=3 ready_to_capture=2 retry_capture=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "state=missing review=ready_to_capture support=partial op=VPS_getVirtualMachineDetailsV1 events=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "state=non_ok review=retry_capture support=partial op=VPS_getBackupsV1 events=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "next: rerun the capture command and inspect the previous non-OK provider response") != null);
@@ -1195,6 +1279,7 @@ test "plans derived Hostinger VPS detail captures from captured resource hints" 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":5") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":4") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"review_summary\":{\"total\":5,\"ready_to_capture\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_groups\":[{\"provider\":\"hostinger\",\"family\":\"hostinger-vps\",\"summary\":{\"total\":5,\"ready_to_capture\":4") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source_not_in_catalog\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getActionDetailsV1 --path-param virtualMachineId='12345' --path-param actionId='99'") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getTemplateDetailsV1 --path-param templateId='1002'") != null);
@@ -1797,6 +1882,7 @@ test "explains Hostinger missing input source routes for broad child groups" {
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source_summary\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"review_summary\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_groups\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"blocked_empty_source\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"no_official_source\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"body_shapes\":{\"array\":1") != null);
@@ -1836,6 +1922,7 @@ test "explains Hostinger missing input source routes for broad child groups" {
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "source_summary total=") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "review_summary total=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "review_groups\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "blocked_empty_source=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "no_official_source=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "source: path:snapshotId <- DNS_getDNSSnapshotListV1") != null);
