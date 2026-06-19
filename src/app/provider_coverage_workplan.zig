@@ -179,33 +179,45 @@ pub fn writeCommandJson(writer: anytype, first: *bool, kind: []const u8, command
     try writer.writeByte('}');
 }
 
-pub fn routesCommand(gpa: Allocator, row: anytype) ![]u8 {
+pub fn routesCommand(gpa: Allocator, row: anytype, options: WorkplanOptions) ![]u8 {
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
     try out.writer.print("cloudio coverage routes {s} ", .{row.provider});
     try writeShellArg(&out.writer, row.tag);
+    try writeFamilyOption(&out.writer, options.family);
     try out.writer.writeAll(" --detail");
     return try out.toOwnedSlice();
 }
 
-pub fn captureCommand(gpa: Allocator, row: anytype, include_plans: bool) ![]u8 {
+pub fn captureCommand(gpa: Allocator, row: anytype, options: WorkplanOptions) ![]u8 {
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
     try out.writer.print("cloudio coverage capture-candidates {s} ", .{row.provider});
     try writeShellArg(&out.writer, row.tag);
-    try out.writer.writeAll(" --limit 25");
-    if (include_plans) try out.writer.writeAll(" --plans");
+    try writeFamilyOption(&out.writer, options.family);
+    try writeCandidateLimitOption(&out.writer, options.candidate_limit);
+    if (options.include_plans) try out.writer.writeAll(" --plans");
     return try out.toOwnedSlice();
 }
 
-pub fn dryRunCommand(gpa: Allocator, row: anytype, include_plans: bool) ![]u8 {
+pub fn dryRunCommand(gpa: Allocator, row: anytype, options: WorkplanOptions) ![]u8 {
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
     try out.writer.print("cloudio coverage dry-run-candidates {s} ", .{row.provider});
     try writeShellArg(&out.writer, row.tag);
-    try out.writer.writeAll(" --limit 25");
-    if (include_plans) try out.writer.writeAll(" --plans");
+    try writeFamilyOption(&out.writer, options.family);
+    try writeCandidateLimitOption(&out.writer, options.candidate_limit);
+    if (options.include_plans) try out.writer.writeAll(" --plans");
     return try out.toOwnedSlice();
+}
+
+fn writeFamilyOption(writer: anytype, family: WorkplanFamily) !void {
+    if (family == .all) return;
+    try writer.print(" --family {s}", .{family.name()});
+}
+
+fn writeCandidateLimitOption(writer: anytype, candidate_limit: usize) !void {
+    try writer.print(" --limit {d}", .{candidate_limit});
 }
 
 pub fn effectiveFocus(options: WorkplanOptions) WorkplanFocus {
@@ -250,16 +262,16 @@ fn writeTextRow(gpa: Allocator, row: anytype, bundle_routes: ?[]const CoverageRo
         evidence.l3_typed_table_evidence,
         if (family) |value| value.name() else "-",
     });
-    const routes = try routesCommand(gpa, row);
+    const routes = try routesCommand(gpa, row, options);
     defer gpa.free(routes);
     try writer.print("  routes: {s}\n", .{routes});
     if (needsCapture(row)) {
-        const capture = try captureCommand(gpa, row, options.include_plans);
+        const capture = try captureCommand(gpa, row, options);
         defer gpa.free(capture);
         try writer.print("  capture-candidates: {s}\n", .{capture});
     }
     if (needsDryRun(row)) {
-        const dry_run = try dryRunCommand(gpa, row, options.include_plans);
+        const dry_run = try dryRunCommand(gpa, row, options);
         defer gpa.free(dry_run);
         try writer.print("  dry-run-candidates: {s}\n", .{dry_run});
     }
@@ -292,16 +304,16 @@ fn writeRowJson(gpa: Allocator, row: anytype, bundle_routes: ?[]const CoverageRo
     try writer.writeByte(',');
     try writer.writeAll("\"commands\":[");
     var first = true;
-    const routes = try routesCommand(gpa, row);
+    const routes = try routesCommand(gpa, row, options);
     defer gpa.free(routes);
     try writeCommandJson(writer, &first, "routes_detail", routes);
     if (needsCapture(row)) {
-        const capture = try captureCommand(gpa, row, options.include_plans);
+        const capture = try captureCommand(gpa, row, options);
         defer gpa.free(capture);
         try writeCommandJson(writer, &first, "capture_candidates", capture);
     }
     if (needsDryRun(row)) {
-        const dry_run = try dryRunCommand(gpa, row, options.include_plans);
+        const dry_run = try dryRunCommand(gpa, row, options);
         defer gpa.free(dry_run);
         try writeCommandJson(writer, &first, "dry_run_candidates", dry_run);
     }
@@ -521,6 +533,54 @@ test "renders coverage workplan rows and commands" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_workplan\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"include_plans\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"capture_candidates\",\"command\":\"cloudio coverage capture-candidates cloudflare 'DNS Records' --limit 25 --plans\"") != null);
+}
+
+test "propagates family and candidate limits into workplan commands" {
+    const allocator = std.testing.allocator;
+    const rows = [_]TestRow{
+        .{
+            .provider = "hostinger",
+            .tag = "VPS: Virtual machine",
+            .evidence = .{
+                .name = "VPS: Virtual machine",
+                .total = 5,
+                .non_deprecated = 5,
+                .routable = 5,
+                .read_routes = 2,
+                .pending_reads = 2,
+                .pending_mutation_dry_runs = 3,
+            },
+        },
+    };
+
+    var text_out = std.Io.Writer.Allocating.init(allocator);
+    defer text_out.deinit();
+    try writeText(allocator, rows[0..], null, .{
+        .provider = .hostinger,
+        .family = .hostinger_vps,
+        .candidate_limit = 7,
+        .include_plans = true,
+    }, &text_out.writer);
+    const text = try text_out.toOwnedSlice();
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "routes: cloudio coverage routes hostinger 'VPS: Virtual machine' --family hostinger-vps --detail") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "capture-candidates: cloudio coverage capture-candidates hostinger 'VPS: Virtual machine' --family hostinger-vps --limit 7 --plans") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "dry-run-candidates: cloudio coverage dry-run-candidates hostinger 'VPS: Virtual machine' --family hostinger-vps --limit 7 --plans") != null);
+
+    var json_out = std.Io.Writer.Allocating.init(allocator);
+    defer json_out.deinit();
+    try writeJson(allocator, rows[0..], null, .{
+        .provider = .hostinger,
+        .family = .hostinger_vps,
+        .candidate_limit = 7,
+        .include_plans = true,
+    }, &json_out.writer);
+    const json = try json_out.toOwnedSlice();
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"family\":\"hostinger-vps\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_limit\":7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"command\":\"cloudio coverage routes hostinger 'VPS: Virtual machine' --family hostinger-vps --detail\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"command\":\"cloudio coverage dry-run-candidates hostinger 'VPS: Virtual machine' --family hostinger-vps --limit 7 --plans\"") != null);
 }
 
 test "classifies provider workplan families through route metadata" {
