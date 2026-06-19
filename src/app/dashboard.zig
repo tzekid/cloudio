@@ -16,6 +16,7 @@ pub const Section = enum {
     vps,
     system,
     caddy,
+    projects,
     providers,
 
     pub fn parse(value: []const u8) ?Section {
@@ -24,6 +25,7 @@ pub const Section = enum {
         if (std.mem.eql(u8, value, "vps")) return .vps;
         if (std.mem.eql(u8, value, "system")) return .system;
         if (std.mem.eql(u8, value, "caddy")) return .caddy;
+        if (std.mem.eql(u8, value, "projects")) return .projects;
         if (std.mem.eql(u8, value, "providers")) return .providers;
         return null;
     }
@@ -35,6 +37,7 @@ pub const Section = enum {
             .vps => "vps",
             .system => "system",
             .caddy => "caddy",
+            .projects => "projects",
             .providers => "providers",
         };
     }
@@ -82,6 +85,7 @@ pub const Dashboard = struct {
     sockets: db_store.NameValueRows,
     containers: db_store.NameValueRows,
     caddy_upstreams: db_store.NameValueRows,
+    projects: db_store.ProjectCorrelations,
 
     pub fn load(ctx: Context, options: Options) !Dashboard {
         const normalized = options.normalized();
@@ -121,6 +125,8 @@ pub const Dashboard = struct {
         errdefer containers.deinit(ctx.gpa);
         var caddy_upstreams = try ctx.db.caddyUpstreams(ctx.gpa);
         errdefer caddy_upstreams.deinit(ctx.gpa);
+        var projects = try ctx.db.projectCorrelations(ctx.gpa, normalized.limit);
+        errdefer projects.deinit(ctx.gpa);
         return .{
             .options = normalized,
             .overview = overview,
@@ -142,6 +148,7 @@ pub const Dashboard = struct {
             .sockets = sockets,
             .containers = containers,
             .caddy_upstreams = caddy_upstreams,
+            .projects = projects,
         };
     }
 
@@ -164,6 +171,7 @@ pub const Dashboard = struct {
         self.sockets.deinit(gpa);
         self.containers.deinit(gpa);
         self.caddy_upstreams.deinit(gpa);
+        self.projects.deinit(gpa);
     }
 
     pub fn writeText(self: Dashboard, writer: anytype) !void {
@@ -199,6 +207,8 @@ pub const Dashboard = struct {
         try self.writeSystemSection(writer, shouldInclude(self.options.section, .system));
         try writer.writeByte(',');
         try self.writeCaddySection(writer, shouldInclude(self.options.section, .caddy));
+        try writer.writeByte(',');
+        try self.writeProjectsSection(writer, shouldInclude(self.options.section, .projects));
         try writer.writeByte(',');
         try self.writeProvidersSection(writer, shouldInclude(self.options.section, .providers));
         try writer.writeAll("},\"actions\":");
@@ -298,6 +308,20 @@ pub const Dashboard = struct {
         try writer.writeAll("]}");
     }
 
+    fn writeProjectsSection(self: Dashboard, writer: anytype, include: bool) !void {
+        try writer.writeAll("\"projects\":");
+        if (!include) return try writer.writeAll("null");
+        try writer.writeAll("{\"items\":[");
+        var first = true;
+        for (self.projects.items) |row| {
+            if (!self.includeProjectRow(row)) continue;
+            if (!first) try writer.writeByte(',');
+            first = false;
+            try writeProjectCorrelationJson(row, writer);
+        }
+        try writer.writeAll("]}");
+    }
+
     fn writeProvidersSection(self: Dashboard, writer: anytype, include: bool) !void {
         try writer.writeAll("\"providers\":");
         if (!include) return try writer.writeAll("null");
@@ -356,6 +380,12 @@ pub const Dashboard = struct {
         if (self.options.issues_only and !app_topology.rowHasIssues(row)) return false;
         const domain = self.options.domain orelse return true;
         return includeDomain(domain, row.host) or includeDomain(domain, row.dns_name);
+    }
+
+    fn includeProjectRow(self: Dashboard, row: db_store.ProjectCorrelation) bool {
+        if (self.options.issues_only and !projectHasIssues(row)) return false;
+        const domain = self.options.domain orelse return true;
+        return includeDomain(domain, row.host);
     }
 };
 
@@ -530,6 +560,73 @@ fn writeNameValueJson(row: db_store.NameValueRow, name_field: []const u8, value_
     try writer.writeByte('}');
 }
 
+fn writeProjectCorrelationJson(row: db_store.ProjectCorrelation, writer: anytype) !void {
+    try writer.writeByte('{');
+    try app_render.writeJsonStringField(writer, "project", row.project, true);
+    try app_render.writeJsonStringField(writer, "status", projectStatus(row), true);
+    try writer.writeAll("\"issues\":");
+    try writeProjectIssuesJson(row, writer);
+    try writer.writeByte(',');
+    try app_render.writeJsonStringField(writer, "source", row.source, true);
+    try app_render.writeJsonStringField(writer, "path", row.path, true);
+    try app_render.writeJsonStringField(writer, "host", row.host, true);
+    try app_render.writeJsonStringField(writer, "caddy_source", row.caddy_source, true);
+    try app_render.writeJsonStringField(writer, "upstream", row.upstream, true);
+    try app_render.writeJsonStringField(writer, "socket_state", row.socket_state, true);
+    try app_render.writeJsonStringField(writer, "socket_process", row.socket_process, true);
+    try app_render.writeJsonStringField(writer, "service", row.service, true);
+    try app_render.writeJsonStringField(writer, "service_state", row.service_state, true);
+    try app_render.writeJsonStringField(writer, "container", row.container, true);
+    try app_render.writeJsonStringField(writer, "container_status", row.container_status, false);
+    try writer.writeByte('}');
+}
+
+fn projectStatus(row: db_store.ProjectCorrelation) []const u8 {
+    if (projectHasIssues(row)) return "degraded";
+    if (row.project.len == 0 and row.host.len != 0) return "caddy_only";
+    return "healthy";
+}
+
+fn projectHasIssues(row: db_store.ProjectCorrelation) bool {
+    return projectWithoutRuntime(row) or
+        upstreamWithoutSocket(row) or
+        serviceNotRunning(row) or
+        containerNotRunning(row);
+}
+
+fn projectWithoutRuntime(row: db_store.ProjectCorrelation) bool {
+    return row.project.len != 0 and row.host.len == 0 and row.upstream.len == 0 and row.service.len == 0 and row.container.len == 0;
+}
+
+fn upstreamWithoutSocket(row: db_store.ProjectCorrelation) bool {
+    return row.upstream.len != 0 and row.socket_state.len == 0;
+}
+
+fn serviceNotRunning(row: db_store.ProjectCorrelation) bool {
+    return row.service.len != 0 and !stateLooksRunning(row.service_state);
+}
+
+fn containerNotRunning(row: db_store.ProjectCorrelation) bool {
+    return row.container.len != 0 and !stateLooksRunning(row.container_status);
+}
+
+fn writeProjectIssuesJson(row: db_store.ProjectCorrelation, writer: anytype) !void {
+    try writer.writeByte('[');
+    var first = true;
+    try writeIssue(writer, &first, projectWithoutRuntime(row), "project_without_runtime");
+    try writeIssue(writer, &first, upstreamWithoutSocket(row), "upstream_without_socket");
+    try writeIssue(writer, &first, serviceNotRunning(row), "service_not_running");
+    try writeIssue(writer, &first, containerNotRunning(row), "container_not_running");
+    try writer.writeByte(']');
+}
+
+fn writeIssue(writer: anytype, first: *bool, present: bool, issue: []const u8) !void {
+    if (!present) return;
+    if (!first.*) try writer.writeByte(',');
+    first.* = false;
+    try app_render.writeJsonString(writer, issue);
+}
+
 fn writeKindCountArrayJson(rows: []const db_store.CloudflareKindCount, writer: anytype) !void {
     for (rows, 0..) |row, index| {
         if (index != 0) try writer.writeByte(',');
@@ -622,8 +719,10 @@ test "dashboard renders stable top-level JSON contract" {
     try std.testing.expect(sections.get("vps").? != .null);
     try std.testing.expect(sections.get("system").? != .null);
     try std.testing.expect(sections.get("caddy").? != .null);
+    try std.testing.expect(sections.get("projects").? != .null);
     try std.testing.expect(sections.get("providers").? != .null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"last_refresh\":{\"id\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"projects\":{\"items\":[{\"project\":\"plosca\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"hostinger.vps.snapshot:123\"") != null);
 }
 
@@ -632,6 +731,7 @@ test "dashboard section parser accepts UI sections" {
     try std.testing.expectEqual(Section.vps, Section.parse("vps").?);
     try std.testing.expectEqual(Section.system, Section.parse("system").?);
     try std.testing.expectEqual(Section.caddy, Section.parse("caddy").?);
+    try std.testing.expectEqual(Section.projects, Section.parse("projects").?);
     try std.testing.expectEqual(Section.providers, Section.parse("providers").?);
     try std.testing.expect(Section.parse("coverage") == null);
 }

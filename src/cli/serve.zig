@@ -62,11 +62,11 @@ pub fn parse(args: []const []const u8) !app_serve.Options {
 }
 
 test "serve parser accepts local server and dashboard filters" {
-    const args = [_][]const u8{ "--host=127.0.0.1", "--port", "9330", "--domain", "plosca.ru", "--section", "domains", "--once" };
+    const args = [_][]const u8{ "--host=127.0.0.1", "--port", "9330", "--domain", "plosca.ru", "--section", "projects", "--once" };
     const options = try parse(args[0..]);
     try std.testing.expectEqualStrings("127.0.0.1", options.host);
     try std.testing.expectEqual(@as(u16, 9330), options.port);
     try std.testing.expectEqualStrings("plosca.ru", options.dashboard.domain.?);
-    try std.testing.expectEqual(app_dashboard.Section.domains, options.dashboard.section);
+    try std.testing.expectEqual(app_dashboard.Section.projects, options.dashboard.section);
     try std.testing.expect(options.once);
 }

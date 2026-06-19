@@ -58,12 +58,12 @@ pub fn parse(args: []const []const u8) !Parsed {
 }
 
 test "dashboard parser accepts requested UI flags" {
-    const args = [_][]const u8{ "--domain", "plosca.ru", "--issues", "--section=domains", "--json", "--limit", "25" };
+    const args = [_][]const u8{ "--domain", "plosca.ru", "--issues", "--section=projects", "--json", "--limit", "25" };
     const parsed = try parse(args[0..]);
     try std.testing.expectEqual(cli_render.RenderFormat.json, parsed.format);
     try std.testing.expectEqualStrings("plosca.ru", parsed.options.domain.?);
     try std.testing.expect(parsed.options.issues_only);
-    try std.testing.expectEqual(app_dashboard.Section.domains, parsed.options.section);
+    try std.testing.expectEqual(app_dashboard.Section.projects, parsed.options.section);
     try std.testing.expectEqual(@as(i64, 25), parsed.options.limit);
 }
 

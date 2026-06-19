@@ -180,8 +180,8 @@ fn usage() void {
         \\  cloudio doctor [--json|--format json]
         \\  cloudio refresh [dashboard|--all|--cloudflare|--hostinger|--caddy|--system|--projects]
         \\  cloudio overview [--json|--format json]
-        \\  cloudio dashboard [--domain <domain>] [--issues] [--section domains|vps|system|caddy|providers] [--limit <n>] --json
-        \\  cloudio serve [--host 127.0.0.1] [--port 9328] [--domain <domain>] [--issues] [--section domains|vps|system|caddy|providers]
+        \\  cloudio dashboard [--domain <domain>] [--issues] [--section domains|vps|system|caddy|projects|providers] [--limit <n>] --json
+        \\  cloudio serve [--host 127.0.0.1] [--port 9328] [--domain <domain>] [--issues] [--section domains|vps|system|caddy|projects|providers]
         \\  cloudio actions plan [--provider <provider>] [--domain <domain>] [--target <target>] --json
         \\  cloudio topology [--limit <n>] [--json|--format json]
         \\  cloudio history|audit [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json|--format json]

@@ -80,7 +80,8 @@ pub fn writeToggleMetadataJson(writer: anytype) !void {
     try writeToggle(writer, "cloudflare.dns.a_record_update", "cloudflare", "dns_record", "update_a_record", true);
     try writeToggle(writer, "hostinger.vps.reboot", "hostinger", "vps", "reboot", true);
     try writeToggle(writer, "hostinger.vps.shutdown", "hostinger", "vps", "shutdown", true);
-    try writeToggle(writer, "hostinger.vps.snapshot", "hostinger", "vps", "snapshot", false);
+    try writeToggle(writer, "hostinger.vps.snapshot", "hostinger", "vps", "snapshot", true);
+    try writeToggle(writer, "hostinger.vps.firewall", "hostinger", "vps", "firewall", false);
     try writer.writeAll("]");
 }
 
@@ -249,6 +250,7 @@ fn writeHostingerPlans(ctx: Context, options: Options, writer: anytype, first: *
         try writeHostingerVpsPlan(ctx, writer, first, row, "reboot", false);
         try writeHostingerVpsPlan(ctx, writer, first, row, "shutdown", true);
         try writeHostingerVpsPlan(ctx, writer, first, row, "snapshot", false);
+        try writeHostingerVpsPlan(ctx, writer, first, row, "firewall", false);
     }
 }
 
@@ -448,5 +450,6 @@ test "actions emit dry-run planner metadata" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"mode\":\"dry_run\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"cloudflare.dns.proxied:record-1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"hostinger.vps.reboot:123\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"hostinger.vps.firewall:123\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"caddy.site.disable:plosca.ru\"") != null);
 }
