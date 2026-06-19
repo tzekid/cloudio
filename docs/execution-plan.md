@@ -43,7 +43,7 @@ The POC already has:
 - Generated provider route metadata for Cloudflare and Hostinger.
 - Generic route plan/read/capture/dry-run surfaces.
 - L0/L1/L2/L3 provider coverage review commands.
-- DB-backed actual route-capture planning with pre-limit `review_summary` and provider/family `review_groups` totals plus candidate-level `actual_state`, `review_status`, and `next_action` fields for family triage.
+- DB-backed actual route-capture planning with pre-limit `review_summary`, provider/family `review_groups` totals, group-level `next_action` and no-execute commands, plus candidate-level `actual_state`, `review_status`, and `next_action` fields for family triage.
 - Provider evidence read models over raw-capture metadata, snapshots, audit events, and route-capture/generated-route matching.
 - Broad Cloudflare and Hostinger inventory projections.
 - Caddy, system, project, project-correlation, overview, export, log, and doctor workflows.

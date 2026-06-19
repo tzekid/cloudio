@@ -145,7 +145,7 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
     });
     try writer.writeAll("review_groups\n");
     for (review_groups.items) |group| {
-        try writer.print("  {s}/{s} total={d} ready_to_capture={d} retry_capture={d} diagnostic_blocked={d} blocked_empty_source={d} diagnostic_source_blocked={d} source_ready={d} no_source_mapping={d} waiting_for_inputs={d} other={d}\n", .{
+        try writer.print("  {s}/{s} total={d} ready_to_capture={d} retry_capture={d} diagnostic_blocked={d} blocked_empty_source={d} diagnostic_source_blocked={d} source_ready={d} no_source_mapping={d} waiting_for_inputs={d} other={d} next={s}\n", .{
             group.provider,
             group.family,
             group.summary.total,
@@ -158,7 +158,9 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
             group.summary.no_source_mapping,
             group.summary.waiting_for_inputs,
             group.summary.other,
+            actualCaptureReviewGroupNextAction(group.summary),
         });
+        try writeActualCaptureReviewGroupCommandsText(gpa, writer, group, plan.options);
     }
 
     var visible: usize = 0;
@@ -269,7 +271,7 @@ fn writeActualCapturePlanJson(plan: ActualCapturePlan, gpa: Allocator, writer: a
     try writer.writeAll(",\"review_summary\":");
     try writeActualCaptureReviewSummaryJson(review_summary, writer);
     try writer.writeAll(",\"review_groups\":");
-    try writeActualCaptureReviewGroupsJson(review_groups, writer);
+    try writeActualCaptureReviewGroupsJson(gpa, review_groups, plan.options, writer);
     try writer.writeAll(",\"candidates\":[");
 
     var visible: usize = 0;
@@ -723,6 +725,96 @@ fn actualCaptureReviewGroupIndex(groups: []const ActualCaptureReviewGroup, provi
     return null;
 }
 
+const ActualCaptureReviewGroupCommandKind = enum {
+    actual_captures,
+    capture_ready,
+    diagnostic_capture,
+};
+
+fn actualCaptureReviewGroupNextAction(summary: ActualCaptureReviewSummary) []const u8 {
+    if (actualCaptureReviewGroupReadyCount(summary) != 0) return "plan_ready_captures";
+    if (summary.diagnostic_blocked != 0 or summary.diagnostic_ready != 0) return "plan_diagnostic_captures";
+    if (summary.diagnostic_source_blocked != 0) return "review_diagnostic_source_blocks";
+    if (summary.source_ready != 0) return "capture_source_routes_first";
+    if (summary.blocked_empty_source != 0) return "record_empty_source_or_adjust_scope";
+    if (summary.source_capture_error != 0 or summary.capture_error != 0) return "inspect_capture_errors";
+    if (summary.needs_source_normalization != 0 or summary.inspect_source_body != 0) return "extend_source_normalization";
+    if (summary.source_not_in_catalog != 0) return "update_source_catalog_mappings";
+    if (summary.source_not_eligible != 0) return "review_source_support_policy";
+    if (summary.no_source_mapping != 0) return "add_source_mappings_or_manual_inputs";
+    if (summary.waiting_for_inputs != 0 or summary.source_has_hints != 0) return "resolve_source_prerequisites";
+    return "review_group_evidence";
+}
+
+fn actualCaptureReviewGroupReadyCount(summary: ActualCaptureReviewSummary) usize {
+    return summary.ready_to_capture + summary.retry_capture;
+}
+
+fn actualCaptureReviewGroupHasFamilyFilter(group: ActualCaptureReviewGroup) bool {
+    return !std.mem.eql(u8, group.family, "unclassified");
+}
+
+fn actualCaptureReviewGroupCommandNeeded(group: ActualCaptureReviewGroup, kind: ActualCaptureReviewGroupCommandKind) bool {
+    return switch (kind) {
+        .actual_captures => true,
+        .capture_ready => actualCaptureReviewGroupReadyCount(group.summary) != 0,
+        .diagnostic_capture => group.summary.diagnostic_blocked != 0 or group.summary.diagnostic_ready != 0,
+    };
+}
+
+fn actualCaptureReviewGroupCommandKindName(kind: ActualCaptureReviewGroupCommandKind) []const u8 {
+    return switch (kind) {
+        .actual_captures => "actual_captures",
+        .capture_ready => "capture_ready",
+        .diagnostic_capture => "diagnostic_capture",
+    };
+}
+
+fn actualCaptureReviewGroupCommand(
+    gpa: Allocator,
+    group: ActualCaptureReviewGroup,
+    options: ActualCaptureOptions,
+    kind: ActualCaptureReviewGroupCommandKind,
+) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(gpa);
+    defer out.deinit();
+    const writer = &out.writer;
+    switch (kind) {
+        .actual_captures => {
+            try writer.print("cloudio coverage actual-captures {s}", .{group.provider});
+            if (actualCaptureReviewGroupHasFamilyFilter(group)) try writer.print(" --family {s}", .{group.family});
+            try writer.print(" --limit {d}", .{options.limit});
+            if (options.include_plans) try writer.writeAll(" --plans");
+        },
+        .capture_ready => {
+            try writer.print("cloudio route capture-ready {s}", .{group.provider});
+            if (actualCaptureReviewGroupHasFamilyFilter(group)) try writer.print(" --family {s}", .{group.family});
+            try writer.print(" --limit {d}", .{options.limit});
+        },
+        .diagnostic_capture => {
+            try writer.print("cloudio route capture-ready {s}", .{group.provider});
+            if (actualCaptureReviewGroupHasFamilyFilter(group)) try writer.print(" --family {s}", .{group.family});
+            try writer.print(" --limit {d} --include-blocked --diagnostic-only", .{options.limit});
+        },
+    }
+    return try out.toOwnedSlice();
+}
+
+fn writeActualCaptureReviewGroupCommandsText(
+    gpa: Allocator,
+    writer: anytype,
+    group: ActualCaptureReviewGroup,
+    options: ActualCaptureOptions,
+) !void {
+    const kinds = [_]ActualCaptureReviewGroupCommandKind{ .actual_captures, .capture_ready, .diagnostic_capture };
+    for (kinds) |kind| {
+        if (!actualCaptureReviewGroupCommandNeeded(group, kind)) continue;
+        const command = try actualCaptureReviewGroupCommand(gpa, group, options, kind);
+        defer gpa.free(command);
+        try writer.print("    command {s}: {s}\n", .{ actualCaptureReviewGroupCommandKindName(kind), command });
+    }
+}
+
 fn writeActualCaptureTotalsJson(totals_value: ActualCaptureTotals, writer: anytype) !void {
     try writer.writeByte('{');
     try writeJsonCountField(writer, "official_read_routes", totals_value.official_read_routes, true);
@@ -760,7 +852,7 @@ fn writeActualCaptureReviewSummaryJson(summary: ActualCaptureReviewSummary, writ
     try writer.writeByte('}');
 }
 
-fn writeActualCaptureReviewGroupsJson(groups: ActualCaptureReviewGroups, writer: anytype) !void {
+fn writeActualCaptureReviewGroupsJson(gpa: Allocator, groups: ActualCaptureReviewGroups, options: ActualCaptureOptions, writer: anytype) !void {
     try writer.writeByte('[');
     var first = true;
     for (groups.items) |group| {
@@ -768,8 +860,23 @@ fn writeActualCaptureReviewGroupsJson(groups: ActualCaptureReviewGroups, writer:
         try writer.writeByte('{');
         try writeJsonField(writer, "provider", group.provider, true);
         try writeJsonField(writer, "family", group.family, true);
+        try writeJsonField(writer, "next_action", actualCaptureReviewGroupNextAction(group.summary), true);
         try writer.writeAll("\"summary\":");
         try writeActualCaptureReviewSummaryJson(group.summary, writer);
+        try writer.writeAll(",\"commands\":[");
+        var first_command = true;
+        const kinds = [_]ActualCaptureReviewGroupCommandKind{ .actual_captures, .capture_ready, .diagnostic_capture };
+        for (kinds) |kind| {
+            if (!actualCaptureReviewGroupCommandNeeded(group, kind)) continue;
+            const command = try actualCaptureReviewGroupCommand(gpa, group, options, kind);
+            defer gpa.free(command);
+            try writeMaybeJsonComma(writer, &first_command);
+            try writer.writeByte('{');
+            try writeJsonField(writer, "kind", actualCaptureReviewGroupCommandKindName(kind), true);
+            try writeJsonField(writer, "command", command, false);
+            try writer.writeByte('}');
+        }
+        try writer.writeByte(']');
         try writer.writeByte('}');
     }
     try writer.writeByte(']');
@@ -1084,7 +1191,8 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":3") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":3") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"review_summary\":{\"total\":3,\"ready_to_capture\":2,\"retry_capture\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_groups\":[{\"provider\":\"hostinger\",\"family\":\"hostinger-vps\",\"summary\":{\"total\":3,\"ready_to_capture\":2,\"retry_capture\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_groups\":[{\"provider\":\"hostinger\",\"family\":\"hostinger-vps\",\"next_action\":\"plan_ready_captures\",\"summary\":{\"total\":3,\"ready_to_capture\":2,\"retry_capture\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"commands\":[{\"kind\":\"actual_captures\",\"command\":\"cloudio coverage actual-captures hostinger --family hostinger-vps --limit 0\"},{\"kind\":\"capture_ready\",\"command\":\"cloudio route capture-ready hostinger --family hostinger-vps --limit 0\"}]") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachinesV1\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachineDetailsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"actual_state\":\"non_ok\"") != null);
@@ -1106,7 +1214,9 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio actual route capture plan\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "review_summary total=3 ready_to_capture=2 retry_capture=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "review_groups\n  hostinger/hostinger-vps total=3 ready_to_capture=2 retry_capture=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "review_groups\n  hostinger/hostinger-vps total=3 ready_to_capture=2 retry_capture=1 diagnostic_blocked=0 blocked_empty_source=0 diagnostic_source_blocked=0 source_ready=0 no_source_mapping=0 waiting_for_inputs=0 other=0 next=plan_ready_captures") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "command actual_captures: cloudio coverage actual-captures hostinger --family hostinger-vps --limit 2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "command capture_ready: cloudio route capture-ready hostinger --family hostinger-vps --limit 2") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "state=missing review=ready_to_capture support=partial op=VPS_getVirtualMachineDetailsV1 events=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "state=non_ok review=retry_capture support=partial op=VPS_getBackupsV1 events=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "next: rerun the capture command and inspect the previous non-OK provider response") != null);
@@ -1279,7 +1389,8 @@ test "plans derived Hostinger VPS detail captures from captured resource hints" 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":5") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":4") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"review_summary\":{\"total\":5,\"ready_to_capture\":4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_groups\":[{\"provider\":\"hostinger\",\"family\":\"hostinger-vps\",\"summary\":{\"total\":5,\"ready_to_capture\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_groups\":[{\"provider\":\"hostinger\",\"family\":\"hostinger-vps\",\"next_action\":\"plan_ready_captures\",\"summary\":{\"total\":5,\"ready_to_capture\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"capture_ready\",\"command\":\"cloudio route capture-ready hostinger --family hostinger-vps --limit 0\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"source_not_in_catalog\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getActionDetailsV1 --path-param virtualMachineId='12345' --path-param actionId='99'") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getTemplateDetailsV1 --path-param templateId='1002'") != null);
@@ -1336,6 +1447,9 @@ test "plans blocked Hostinger diagnostic captures only when explicitly included"
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"candidate_routes\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"ready_candidates\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"next_action\":\"plan_diagnostic_captures\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"diagnostic_capture\",\"command\":\"cloudio route capture-ready hostinger --family reach --limit 0 --include-blocked --diagnostic-only\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"diagnostic_capture\",\"command\":\"cloudio route capture-ready hostinger --family docker --limit 0 --include-blocked --diagnostic-only\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"live_read_supported\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_read_supported\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getProjectListV1 --path-param virtualMachineId='1307809' --diagnostic") != null);
