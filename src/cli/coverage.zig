@@ -308,6 +308,28 @@ fn parseCoverageModeArg(args: []const []const u8, index: *usize, mode: *?app_cov
     };
 }
 
+fn parseCoverageProviderPositional(arg: []const u8, provider: *app_coverage.ProviderFilter, provider_set: *bool) CoverageArg {
+    if (provider_set.*) return .{ .unknown = arg };
+    provider.* = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
+    provider_set.* = true;
+    return .matched;
+}
+
+fn parseCoverageProviderOrTag(arg: []const u8, provider: *app_coverage.ProviderFilter, provider_set: *bool, tag_query: *?[]const u8) CoverageArg {
+    if (!provider_set.*) {
+        if (app_coverage.ProviderFilter.parse(arg)) |parsed| {
+            provider.* = parsed;
+            provider_set.* = true;
+            return .matched;
+        }
+    }
+    if (tag_query.* == null) {
+        tag_query.* = arg;
+        return .matched;
+    }
+    return .{ .unknown = arg };
+}
+
 fn parseSummary(args: []const []const u8) Command {
     var command = SummaryCommand{};
     var index: usize = 0;
@@ -334,11 +356,10 @@ fn parseTags(args: []const []const u8) Command {
             .no_match => {},
         }
         const arg = args[index];
-        if (!provider_set) {
-            command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
-            provider_set = true;
-        } else {
-            return .{ .unknown = arg };
+        switch (parseCoverageProviderPositional(arg, &command.provider, &provider_set)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => unreachable,
         }
     }
     return .{ .tags = command };
@@ -355,11 +376,10 @@ fn parseSources(args: []const []const u8) Command {
             .no_match => {},
         }
         const arg = args[index];
-        if (!provider_set) {
-            command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
-            provider_set = true;
-        } else {
-            return .{ .unknown = arg };
+        switch (parseCoverageProviderPositional(arg, &command.options.provider, &provider_set)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => unreachable,
         }
     }
     return .{ .sources = command };
@@ -376,11 +396,10 @@ fn parseL1(args: []const []const u8) Command {
             .no_match => {},
         }
         const arg = args[index];
-        if (!provider_set) {
-            command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
-            provider_set = true;
-        } else {
-            return .{ .unknown = arg };
+        switch (parseCoverageProviderPositional(arg, &command.provider, &provider_set)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => unreachable,
         }
     }
     return .{ .l1 = command };
@@ -402,11 +421,10 @@ fn parseGaps(args: []const []const u8) Command {
             .no_match => {},
         }
         const arg = args[index];
-        if (!provider_set) {
-            command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
-            provider_set = true;
-        } else {
-            return .{ .unknown = arg };
+        switch (parseCoverageProviderPositional(arg, &command.options.provider, &provider_set)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => unreachable,
         }
     }
     return .{ .gaps = command };
@@ -423,11 +441,10 @@ fn parseLevels(args: []const []const u8) Command {
             .no_match => {},
         }
         const arg = args[index];
-        if (!provider_set) {
-            command.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
-            provider_set = true;
-        } else {
-            return .{ .unknown = arg };
+        switch (parseCoverageProviderPositional(arg, &command.provider, &provider_set)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => unreachable,
         }
     }
     return .{ .levels = command };
@@ -449,11 +466,10 @@ fn parseLevelTags(args: []const []const u8) Command {
             .no_match => {},
         }
         const arg = args[index];
-        if (!provider_set) {
-            command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
-            provider_set = true;
-        } else {
-            return .{ .unknown = arg };
+        switch (parseCoverageProviderPositional(arg, &command.options.provider, &provider_set)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => unreachable,
         }
     }
     return .{ .level_tags = command };
@@ -493,11 +509,12 @@ fn parseFamilies(args: []const []const u8) Command {
             command.options.bundle_candidates = true;
         } else if (app_coverage.WorkplanFocus.parse(arg)) |focus| {
             command.options.focus = focus;
-        } else if (!provider_set) {
-            command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
-            provider_set = true;
         } else {
-            return .{ .unknown = arg };
+            switch (parseCoverageProviderPositional(arg, &command.options.provider, &provider_set)) {
+                .matched => continue,
+                .unknown => |value| return .{ .unknown = value },
+                .no_match => unreachable,
+            }
         }
     }
     return .{ .families = command };
@@ -526,11 +543,12 @@ fn parseTypedModels(args: []const []const u8) Command {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--include-complete") or std.mem.eql(u8, arg, "--include-typed") or std.mem.eql(u8, arg, "--all")) {
             command.options.include_complete = true;
-        } else if (!provider_set) {
-            command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
-            provider_set = true;
         } else {
-            return .{ .unknown = arg };
+            switch (parseCoverageProviderPositional(arg, &command.options.provider, &provider_set)) {
+                .matched => continue,
+                .unknown => |value| return .{ .unknown = value },
+                .no_match => unreachable,
+            }
         }
     }
     return .{ .typed_models = command };
@@ -581,11 +599,12 @@ fn parseWorkplan(args: []const []const u8) Command {
         } else if (app_coverage.WorkplanFamily.parse(arg)) |family| {
             command.options.family = family;
             if (command.options.family != .all) command.options.focus = .control_plane;
-        } else if (!provider_set) {
-            command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
-            provider_set = true;
         } else {
-            return .{ .unknown = arg };
+            switch (parseCoverageProviderPositional(arg, &command.options.provider, &provider_set)) {
+                .matched => continue,
+                .unknown => |value| return .{ .unknown = value },
+                .no_match => unreachable,
+            }
         }
     }
     return .{ .workplan = command };
@@ -668,19 +687,12 @@ fn parseRoutes(args: []const []const u8) Command {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--detail") or std.mem.eql(u8, arg, "--details")) {
             command.filter.detail = true;
-        } else if (!provider_set) {
-            if (app_coverage.ProviderFilter.parse(arg)) |provider| {
-                command.filter.provider = provider;
-                provider_set = true;
-            } else if (command.filter.tag_query == null) {
-                command.filter.tag_query = arg;
-            } else {
-                return .{ .unknown = arg };
-            }
-        } else if (command.filter.tag_query == null) {
-            command.filter.tag_query = arg;
         } else {
-            return .{ .unknown = arg };
+            switch (parseCoverageProviderOrTag(arg, &command.filter.provider, &provider_set, &command.filter.tag_query)) {
+                .matched => continue,
+                .unknown => |value| return .{ .unknown = value },
+                .no_match => unreachable,
+            }
         }
     }
     return .{ .routes = command };
@@ -724,19 +736,12 @@ fn parseCaptureCandidates(args: []const []const u8) Command {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
             command.options.include_plans = true;
-        } else if (!provider_set) {
-            if (app_coverage.ProviderFilter.parse(arg)) |provider| {
-                command.options.filter.provider = provider;
-                provider_set = true;
-            } else if (command.options.filter.tag_query == null) {
-                command.options.filter.tag_query = arg;
-            } else {
-                return .{ .unknown = arg };
-            }
-        } else if (command.options.filter.tag_query == null) {
-            command.options.filter.tag_query = arg;
         } else {
-            return .{ .unknown = arg };
+            switch (parseCoverageProviderOrTag(arg, &command.options.filter.provider, &provider_set, &command.options.filter.tag_query)) {
+                .matched => continue,
+                .unknown => |value| return .{ .unknown = value },
+                .no_match => unreachable,
+            }
         }
     }
     return .{ .capture_candidates = command };
@@ -789,19 +794,12 @@ fn parseActualCaptures(args: []const []const u8) Command {
             command.options.focus = .control_plane;
         } else if (app_coverage.ActualCaptureFocus.parse(arg)) |focus| {
             command.options.focus = focus;
-        } else if (!provider_set) {
-            if (app_coverage.ProviderFilter.parse(arg)) |provider| {
-                command.options.filter.provider = provider;
-                provider_set = true;
-            } else if (command.options.filter.tag_query == null) {
-                command.options.filter.tag_query = arg;
-            } else {
-                return .{ .unknown = arg };
-            }
-        } else if (command.options.filter.tag_query == null) {
-            command.options.filter.tag_query = arg;
         } else {
-            return .{ .unknown = arg };
+            switch (parseCoverageProviderOrTag(arg, &command.options.filter.provider, &provider_set, &command.options.filter.tag_query)) {
+                .matched => continue,
+                .unknown => |value| return .{ .unknown = value },
+                .no_match => unreachable,
+            }
         }
     }
     return .{ .actual_captures = command };
@@ -850,19 +848,12 @@ fn parseDryRunCandidates(args: []const []const u8) Command {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--plans") or std.mem.eql(u8, arg, "--include-plans") or std.mem.eql(u8, arg, "--with-plans")) {
             command.options.include_plans = true;
-        } else if (!provider_set) {
-            if (app_coverage.ProviderFilter.parse(arg)) |provider| {
-                command.options.filter.provider = provider;
-                provider_set = true;
-            } else if (command.options.filter.tag_query == null) {
-                command.options.filter.tag_query = arg;
-            } else {
-                return .{ .unknown = arg };
-            }
-        } else if (command.options.filter.tag_query == null) {
-            command.options.filter.tag_query = arg;
         } else {
-            return .{ .unknown = arg };
+            switch (parseCoverageProviderOrTag(arg, &command.options.filter.provider, &provider_set, &command.options.filter.tag_query)) {
+                .matched => continue,
+                .unknown => |value| return .{ .unknown = value },
+                .no_match => unreachable,
+            }
         }
     }
     return .{ .dry_run_candidates = command };
