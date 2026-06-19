@@ -956,6 +956,17 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(cli_caddy_mod);
+    const cli_cloudflare_options_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/cloudflare_options.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
+        },
+    });
+    linkSqlite(cli_cloudflare_options_mod);
     const cli_cloudflare_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/cloudflare.zig"),
         .target = target,
@@ -963,7 +974,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
             .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "cli_cloudflare_options", .module = cli_cloudflare_options_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
         },
     });
@@ -1114,6 +1125,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cli_coverage_mod);
     addModuleTest(b, test_step, cli_route_mod);
     addModuleTest(b, test_step, cli_caddy_mod);
+    addModuleTest(b, test_step, cli_cloudflare_options_mod);
     addModuleTest(b, test_step, cli_cloudflare_mod);
     addModuleTest(b, test_step, cli_evidence_mod);
     addModuleTest(b, test_step, cli_hostinger_mod);
