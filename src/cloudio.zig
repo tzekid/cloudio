@@ -79,6 +79,8 @@ test "facade exposes stable integration modules" {
     _ = app.cloudflare.DnsRecordMutationArgs;
     _ = app.coverage.Summary;
     _ = app.coverage.CaptureOptions;
+    _ = app.coverage.SourceOptions;
+    _ = app.coverage.SourceReport;
     _ = app.doctor.Report;
     _ = app.evidence.Evidence;
     _ = app.evidence.Matrix;

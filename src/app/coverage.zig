@@ -11,6 +11,7 @@ const app_provider_coverage_typed_models = @import("app_provider_coverage_typed_
 const app_provider_coverage_workplan = @import("app_provider_coverage_workplan");
 const app_provider_route_capture = @import("app_provider_route_capture");
 const app_provider_route_plan = @import("app_provider_route_plan");
+const app_provider_sources = @import("app_provider_sources");
 const db_store = @import("db_store");
 const provider_dispatch = @import("provider_dispatch");
 const provider_routes = @import("provider_routes");
@@ -69,6 +70,10 @@ pub const FamilyOptions = app_provider_coverage_families.FamilyOptions;
 pub const WorkplanOptions = app_provider_coverage_workplan.WorkplanOptions;
 
 pub const TypedModelOptions = app_provider_coverage_typed_models.TypedModelOptions;
+
+pub const SourceOptions = app_provider_sources.SourceOptions;
+
+pub const SourceReport = app_provider_sources.SourceReport;
 
 pub const LevelTagEvidence = app_provider_coverage_levels.LevelTagEvidence;
 
@@ -246,6 +251,30 @@ pub fn writeTypedModelsJsonFromText(gpa: Allocator, cloudflare_text: []const u8,
     var report = try loadLevelTagsFromText(gpa, cloudflare_text, hostinger_text, options.provider);
     defer report.deinit(gpa);
     try app_provider_coverage_typed_models.writeJson(gpa, report.items, options, writer);
+}
+
+pub fn loadSources(io: Io, gpa: Allocator, paths: Paths) !SourceReport {
+    return try app_provider_sources.load(io, gpa, paths);
+}
+
+pub fn loadSourcesFromText(gpa: Allocator, paths: Paths, metadata_text: []const u8, cloudflare_text: []const u8, hostinger_text: []const u8) !SourceReport {
+    return try app_provider_sources.loadFromText(gpa, paths, metadata_text, cloudflare_text, hostinger_text);
+}
+
+pub fn writeSourcesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: SourceOptions, writer: anytype) !void {
+    try app_provider_sources.writeTextFromFiles(io, gpa, paths, options, writer);
+}
+
+pub fn writeSourcesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: SourceOptions, writer: anytype) !void {
+    try app_provider_sources.writeJsonFromFiles(io, gpa, paths, options, writer);
+}
+
+pub fn writeSourcesTextFromText(gpa: Allocator, paths: Paths, metadata_text: []const u8, cloudflare_text: []const u8, hostinger_text: []const u8, options: SourceOptions, writer: anytype) !void {
+    try app_provider_sources.writeTextFromText(gpa, paths, metadata_text, cloudflare_text, hostinger_text, options, writer);
+}
+
+pub fn writeSourcesJsonFromText(gpa: Allocator, paths: Paths, metadata_text: []const u8, cloudflare_text: []const u8, hostinger_text: []const u8, options: SourceOptions, writer: anytype) !void {
+    try app_provider_sources.writeJsonFromText(gpa, paths, metadata_text, cloudflare_text, hostinger_text, options, writer);
 }
 
 pub fn writeWorkplanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions, writer: anytype) !void {

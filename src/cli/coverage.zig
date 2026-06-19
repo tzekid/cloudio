@@ -20,6 +20,11 @@ const SummaryCommand = struct {
     format: RenderFormat = .text,
 };
 
+const SourceCommand = struct {
+    options: app_coverage.SourceOptions = .{},
+    format: RenderFormat = .text,
+};
+
 const TagCommand = struct {
     provider: app_coverage.ProviderFilter = .all,
     format: RenderFormat = .text,
@@ -84,6 +89,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     switch (parseCommand(args)) {
         .help => try commandHelp(ctx),
         .summary => |command| try commandSummary(ctx, command),
+        .sources => |command| try commandSources(ctx, command),
         .tags => |command| try commandTags(ctx, command),
         .l1 => |filter| try commandL1(ctx, filter),
         .gaps => |command| try commandGaps(ctx, command),
@@ -104,6 +110,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
 const Command = union(enum) {
     help,
     summary: SummaryCommand,
+    sources: SourceCommand,
     tags: TagCommand,
     l1: L1Command,
     gaps: GapCommand,
@@ -124,6 +131,9 @@ fn parseCommand(args: []const []const u8) Command {
     if (args.len == 0) return .{ .summary = .{} };
     if (std.mem.eql(u8, args[0], "help") or std.mem.eql(u8, args[0], "--help") or std.mem.eql(u8, args[0], "-h") or std.mem.eql(u8, args[0], "usage")) return .help;
     if (std.mem.eql(u8, args[0], "summary")) return parseSummary(args[1..]);
+    if (std.mem.eql(u8, args[0], "sources") or std.mem.eql(u8, args[0], "source") or std.mem.eql(u8, args[0], "provenance") or std.mem.eql(u8, args[0], "metadata")) {
+        return parseSources(args[1..]);
+    }
     if (std.mem.eql(u8, args[0], "--json") or std.mem.eql(u8, args[0], "--format") or std.mem.startsWith(u8, args[0], "--format=")) return parseSummary(args);
     if (std.mem.eql(u8, args[0], "tags")) {
         return parseTags(args[1..]);
@@ -321,6 +331,27 @@ fn parseTags(args: []const []const u8) Command {
         }
     }
     return .{ .tags = command };
+}
+
+fn parseSources(args: []const []const u8) Command {
+    var command = SourceCommand{};
+    var provider_set = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        switch (parseCoverageArg(args, &index, &command.format)) {
+            .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        const arg = args[index];
+        if (!provider_set) {
+            command.options.provider = app_coverage.ProviderFilter.parse(arg) orelse return .{ .unknown = arg };
+            provider_set = true;
+        } else {
+            return .{ .unknown = arg };
+        }
+    }
+    return .{ .sources = command };
 }
 
 fn parseL1(args: []const []const u8) Command {
@@ -554,6 +585,7 @@ pub const usage_text =
     \\
     \\Usage:
     \\  cloudio coverage [summary] [--json|--format json]
+    \\  cloudio coverage sources|provenance [all|cloudflare|hostinger] [--json|--format json]
     \\  cloudio coverage tags [all|cloudflare|hostinger] [--json|--format json]
     \\  cloudio coverage l1 [all|cloudflare|hostinger] [--json|--format json]
     \\  cloudio coverage gaps|levels|level-tags [all|cloudflare|hostinger] [--limit <n>] [--json|--format json]
@@ -567,6 +599,7 @@ pub const usage_text =
     \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]
     \\
     \\Broad-slice shortcuts:
+    \\  cloudio coverage sources --json
     \\  cloudio coverage workplan control-plane --limit 0
     \\  cloudio coverage workplan security --plans --json
     \\  cloudio coverage workplan hostinger hostinger-vps --bundle --plans --json
@@ -819,6 +852,10 @@ fn commandSummary(ctx: Context, command: SummaryCommand) !void {
     try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeTextFromFiles, app_coverage.writeJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths });
 }
 
+fn commandSources(ctx: Context, command: SourceCommand) !void {
+    try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeSourcesTextFromFiles, app_coverage.writeSourcesJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.options });
+}
+
 fn commandTags(ctx: Context, command: TagCommand) !void {
     try cli_render.printFormatted(ctx.io, ctx.gpa, command.format, app_coverage.writeTagsTextFromFiles, app_coverage.writeTagsJsonFromFiles, .{ ctx.io, ctx.gpa, ctx.paths, command.provider });
 }
@@ -991,6 +1028,33 @@ test "coverage command parser defaults to summary" {
 
     const default_summary_json_args = [_][]const u8{"--format=json"};
     try std.testing.expectEqual(Command{ .summary = .{ .format = .json } }, parseCommand(default_summary_json_args[0..]));
+
+    const sources_args = [_][]const u8{"sources"};
+    switch (parseCommand(sources_args[0..])) {
+        .sources => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.all, command.options.provider);
+            try std.testing.expectEqual(RenderFormat.text, command.format);
+        },
+        else => return error.ExpectedCoverageSources,
+    }
+
+    const hostinger_sources_args = [_][]const u8{ "provenance", "hostinger", "--json" };
+    switch (parseCommand(hostinger_sources_args[0..])) {
+        .sources => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, command.options.provider);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageSources,
+    }
+
+    const cloudflare_metadata_args = [_][]const u8{ "metadata", "cloudflare", "--format", "json" };
+    switch (parseCommand(cloudflare_metadata_args[0..])) {
+        .sources => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.provider);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageSources,
+    }
 
     const tags_args = [_][]const u8{"tags"};
     try std.testing.expectEqual(Command{ .tags = .{} }, parseCommand(tags_args[0..]));

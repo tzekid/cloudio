@@ -251,6 +251,18 @@ generate_manifest() {
     def override_coverage($method; $path):
       [ $overrides[] | select(.method == ($method | ascii_upcase) and .path == $path) ][0] // null;
 
+    def effective_coverage($coverage; $deprecated):
+      if $deprecated then
+        {
+          support: "deprecated",
+          mode: "none",
+          tests: "missing",
+          notes: "Upstream marks this operation deprecated."
+        }
+      else
+        $coverage
+      end;
+
     . as $root
     |
     .paths
@@ -264,7 +276,8 @@ generate_manifest() {
     | .value as $operation
     | (.value.deprecated // false) as $deprecated
     | operation_body($root; $operation) as $body
-    | (override_coverage($method; $path) // default_coverage($method; $deprecated; $body)) as $coverage
+    | (override_coverage($method; $path) // default_coverage($method; $deprecated; $body)) as $raw_coverage
+    | effective_coverage($raw_coverage; $deprecated) as $coverage
     | {
         provider: $provider,
         tag: ($operation.tags[0] // "untagged"),

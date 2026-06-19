@@ -5,7 +5,7 @@
     "hostinger": "https://raw.githubusercontent.com/hostinger/api/main/openapi.json"
   },
   "operation_counts": {
-    "cloudflare": 3151,
+    "cloudflare": 3183,
     "hostinger": 133
   },
   "overrides": {

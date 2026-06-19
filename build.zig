@@ -432,6 +432,17 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const app_provider_sources_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/provider_sources.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+
     const app_provider_coverage_routes_mod = b.createModule(.{
         .root_source_file = b.path("src/app/provider_coverage_routes.zig"),
         .target = target,
@@ -616,6 +627,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
             .{ .name = "app_provider_coverage_typed_models", .module = app_provider_coverage_typed_models_mod },
             .{ .name = "app_provider_coverage_workplan", .module = app_provider_coverage_workplan_mod },
+            .{ .name = "app_provider_sources", .module = app_provider_sources_mod },
             .{ .name = "app_provider_route_capture", .module = app_provider_route_capture_mod },
             .{ .name = "app_provider_route_plan", .module = app_provider_route_plan_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -1073,6 +1085,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_provider_coverage_levels_mod);
     addModuleTest(b, test_step, app_provider_coverage_render_mod);
     addModuleTest(b, test_step, app_provider_coverage_rollups_mod);
+    addModuleTest(b, test_step, app_provider_sources_mod);
     addModuleTest(b, test_step, app_provider_coverage_typed_models_mod);
     addModuleTest(b, test_step, app_provider_coverage_workplan_mod);
     addModuleTest(b, test_step, app_provider_coverage_routes_mod);
