@@ -2,10 +2,10 @@ const std = @import("std");
 const app_topology = @import("app_topology");
 const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
-const db_store = @import("db_store");
+const app_database = @import("app_database");
 
 const Allocator = std.mem.Allocator;
-const Db = db_store.Db;
+const Db = app_database.Db;
 const Io = std.Io;
 
 pub const Context = struct {

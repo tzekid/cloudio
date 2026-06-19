@@ -24,6 +24,7 @@ pub const app = struct {
     pub const caddy = @import("app_caddy");
     pub const cloudflare = @import("app_cloudflare");
     pub const coverage = @import("app_coverage");
+    pub const database = @import("app_database");
     pub const doctor = @import("app_doctor");
     pub const evidence = @import("app_evidence");
     pub const exports = @import("app_export");
@@ -82,6 +83,7 @@ test "facade exposes stable integration modules" {
     _ = app.coverage.ActualCaptureFocus;
     _ = app.coverage.SourceOptions;
     _ = app.coverage.SourceReport;
+    _ = app.database.openInitialized;
     _ = app.doctor.Report;
     _ = app.evidence.Evidence;
     _ = app.evidence.Matrix;

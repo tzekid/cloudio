@@ -75,8 +75,8 @@ check_no_matches \
     src/collectors
 
 check_no_matches \
-    "CLI modules must delegate through app modules, not provider or collector modules" \
-    '@import\("(collector_[^"]+|provider_cloudflare|provider_hostinger|provider_cloudflare_models|provider_hostinger_models)"\)' \
+    "CLI modules must delegate through app modules, not provider, collector, or database modules" \
+    '@import\("(collector_[^"]+|provider_cloudflare|provider_hostinger|provider_cloudflare_models|provider_hostinger_models|db_store|db_[^"]+|sqlite)"\)' \
     src/cli
 
 check_no_matches \

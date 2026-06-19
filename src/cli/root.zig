@@ -8,6 +8,7 @@ const app_overview = @import("app_overview");
 const app_refresh = @import("app_refresh");
 const app_caddy = @import("app_caddy");
 const app_cloudflare = @import("app_cloudflare");
+const app_database = @import("app_database");
 const core_config = @import("core_config");
 const core_version = @import("core_version");
 const cli_args = @import("cli_args");
@@ -23,12 +24,10 @@ const cli_route = @import("cli_route");
 const cli_routes = @import("cli_routes");
 const cli_system = @import("cli_system");
 const cli_topology = @import("cli_topology");
-const db_store = @import("db_store");
-
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Config = core_config.Config;
-const Db = db_store.Db;
+const Db = app_database.Db;
 
 const version = core_version.value;
 
@@ -41,9 +40,8 @@ pub fn run(init: std.process.Init) !void {
     }
 
     const cfg = try Config.load(init.io, arena, init.environ_map);
-    var db = try Db.open(init.io, cfg.db_path);
+    var db = try app_database.openInitialized(init.io, cfg.db_path);
     defer db.close();
-    try db.initSchema();
 
     const cmd = args[1];
     if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "-h")) {
@@ -635,8 +633,7 @@ test "sqlite schema initializes" {
     defer tmp.cleanup();
     const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudio.db", .{tmp.sub_path});
     defer allocator.free(db_path);
-    var db = try Db.open(std.testing.io, db_path);
+    var db = try app_database.openInitialized(std.testing.io, db_path);
     defer db.close();
-    try db.initSchema();
     try std.testing.expectEqual(@as(i64, 0), try db.countTable("snapshots"));
 }

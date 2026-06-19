@@ -60,6 +60,7 @@ Broad slices:
 
 - App render/output consolidation across all app read models.
 - CLI argument and option parsing consolidation across command groups.
+- CLI persistence-boundary consolidation so command adapters open SQLite only through `app/database.zig`, keeping schema startup reusable by a future UI/API adapter.
 - Config/env/credential loading contract cleanup, including tests for `.env`, `.env.fish`, TOML, and process env precedence.
 - Redaction/logging/export audit so every terminal, DB, log, diff, and export path uses the same secret policy.
 - DB repository grouping so command workflows stop hand-rolling similar query loops.

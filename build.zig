@@ -734,6 +734,16 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_provider_api_mod);
 
+    const app_database_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/database.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_database_mod);
+
     const app_cloudflare_mod = b.createModule(.{
         .root_source_file = b.path("src/app/cloudflare.zig"),
         .target = target,
@@ -808,6 +818,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_caddy", .module = app_caddy_mod },
             .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
             .{ .name = "app_coverage", .module = app_coverage_mod },
+            .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_doctor", .module = app_doctor_mod },
             .{ .name = "app_evidence", .module = app_evidence_mod },
             .{ .name = "app_export", .module = app_export_mod },
@@ -903,8 +914,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_caddy", .module = app_caddy_mod },
+            .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
         },
     });
     linkSqlite(cli_caddy_mod);
@@ -914,9 +925,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
+            .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
         },
     });
     linkSqlite(cli_cloudflare_mod);
@@ -926,9 +937,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_hostinger", .module = app_hostinger_mod },
+            .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
         },
     });
     linkSqlite(cli_hostinger_mod);
@@ -937,10 +948,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_evidence", .module = app_evidence_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
         },
     });
     linkSqlite(cli_evidence_mod);
@@ -949,10 +960,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_inventory", .module = app_inventory_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
         },
     });
     linkSqlite(cli_inventory_mod);
@@ -961,10 +972,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_projects", .module = app_projects_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
         },
     });
     linkSqlite(cli_projects_mod);
@@ -973,9 +984,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_system", .module = app_system_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
         },
     });
     linkSqlite(cli_system_mod);
@@ -984,10 +995,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_topology", .module = app_topology_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
         },
     });
     linkSqlite(cli_topology_mod);
@@ -1005,6 +1016,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_refresh", .module = app_refresh_mod },
             .{ .name = "app_caddy", .module = app_caddy_mod },
             .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
+            .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_caddy", .module = cli_caddy_mod },
             .{ .name = "cli_cloudflare", .module = cli_cloudflare_mod },
@@ -1020,7 +1032,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_topology", .module = cli_topology_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_version", .module = core_version_mod },
-            .{ .name = "db_store", .module = db_store_mod },
         },
     });
     linkSqlite(cli_root_mod);
@@ -1098,6 +1109,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_cloudflare_mod);
     addModuleTest(b, test_step, app_hostinger_mod);
     addModuleTest(b, test_step, app_inventory_mod);
+    addModuleTest(b, test_step, app_database_mod);
     addModuleTest(b, test_step, app_refresh_mod);
     addModuleTest(b, test_step, core_config_mod);
     addModuleTest(b, test_step, core_fs_mod);

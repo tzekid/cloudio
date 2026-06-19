@@ -2,11 +2,11 @@ const std = @import("std");
 const app_cloudflare = @import("app_cloudflare");
 const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
-const db_store = @import("db_store");
+const app_database = @import("app_database");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
-const Db = db_store.Db;
+const Db = app_database.Db;
 
 pub const Context = struct {
     io: Io,
