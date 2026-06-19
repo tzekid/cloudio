@@ -1,5 +1,5 @@
 const std = @import("std");
-const core_json = @import("core_json");
+const app_render = @import("app_render");
 
 pub fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     if (needle.len == 0) return true;
@@ -20,85 +20,39 @@ pub fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
 }
 
 pub fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
+    try app_render.writeJsonField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.print(":{d}", .{value});
-    if (trailing_comma) try writer.writeByte(',');
+    try app_render.writeJsonCountField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonNullableCountField(writer: anytype, name: []const u8, value: ?usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |count| {
-        try writer.print("{d}", .{count});
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
+    try app_render.writeJsonNullableCountField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try writer.writeAll(if (value) "true" else "false");
-    if (trailing_comma) try writer.writeByte(',');
+    try app_render.writeJsonBoolField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonNullableStringField(writer: anytype, name: []const u8, value: ?[]const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |text| {
-        try core_json.writeString(writer, text);
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
+    try app_render.writeJsonNullableStringField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonNullableBoolField(writer: anytype, name: []const u8, value: ?bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |flag| {
-        try writer.writeAll(if (flag) "true" else "false");
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
+    try app_render.writeJsonNullableBoolField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonStringArray(writer: anytype, values: anytype) !void {
-    try writer.writeByte('[');
-    for (values, 0..) |value, index| {
-        if (index != 0) try writer.writeByte(',');
-        try core_json.writeString(writer, value);
-    }
-    try writer.writeByte(']');
+    try app_render.writeJsonStringArray(writer, values);
 }
 
 pub fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
-    if (first.*) {
-        first.* = false;
-    } else {
-        try writer.writeByte(',');
-    }
+    try app_render.writeMaybeJsonComma(writer, first);
 }
 
 pub fn writeShellArg(writer: anytype, value: []const u8) !void {
-    try writer.writeByte('\'');
-    for (value) |c| {
-        if (c == '\'') {
-            try writer.writeAll("'\\''");
-        } else {
-            try writer.writeByte(c);
-        }
-    }
-    try writer.writeByte('\'');
+    try app_render.writeShellArg(writer, value);
 }
 
 test "writes shared json and shell-safe fields" {

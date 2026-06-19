@@ -540,7 +540,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "app_render", .module = app_render_mod },
         },
     });
 

@@ -22,6 +22,10 @@ pub fn writeJsonStringField(writer: anytype, name: []const u8, value: []const u8
     if (trailing_comma) try writer.writeByte(',');
 }
 
+pub fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
+    try writeJsonStringField(writer, name, value, trailing_comma);
+}
+
 pub fn writeJsonString(writer: anytype, value: []const u8) !void {
     try core_json.writeString(writer, value);
 }
@@ -40,6 +44,45 @@ pub fn writeJsonBoolField(writer: anytype, name: []const u8, value: bool, traili
     if (trailing_comma) try writer.writeByte(',');
 }
 
+pub fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.print(":{d}", .{value});
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeJsonNullableStringField(writer: anytype, name: []const u8, value: ?[]const u8, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    if (value) |text| {
+        try core_json.writeString(writer, text);
+    } else {
+        try writer.writeAll("null");
+    }
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeJsonNullableCountField(writer: anytype, name: []const u8, value: ?usize, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    if (value) |count| {
+        try writer.print("{d}", .{count});
+    } else {
+        try writer.writeAll("null");
+    }
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeJsonNullableBoolField(writer: anytype, name: []const u8, value: ?bool, trailing_comma: bool) !void {
+    try core_json.writeString(writer, name);
+    try writer.writeByte(':');
+    if (value) |flag| {
+        try writer.writeAll(if (flag) "true" else "false");
+    } else {
+        try writer.writeAll("null");
+    }
+    if (trailing_comma) try writer.writeByte(',');
+}
+
 pub fn writeJsonStringArray(writer: anytype, values: []const []const u8) !void {
     try writer.writeByte('[');
     for (values, 0..) |value, index| {
@@ -47,6 +90,26 @@ pub fn writeJsonStringArray(writer: anytype, values: []const []const u8) !void {
         try core_json.writeString(writer, value);
     }
     try writer.writeByte(']');
+}
+
+pub fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
+    if (first.*) {
+        first.* = false;
+    } else {
+        try writer.writeByte(',');
+    }
+}
+
+pub fn writeShellArg(writer: anytype, value: []const u8) !void {
+    try writer.writeByte('\'');
+    for (value) |c| {
+        if (c == '\'') {
+            try writer.writeAll("'\\''");
+        } else {
+            try writer.writeByte(c);
+        }
+    }
+    try writer.writeByte('\'');
 }
 
 pub fn writeTextField(writer: anytype, label: []const u8, value: []const u8) !void {
@@ -140,8 +203,13 @@ test "app render helpers write strings integers and optional text fields" {
 
     try out.writer.writeByte('{');
     try writeJsonStringField(&out.writer, "name", "quote \" and\nnewline", true);
+    try writeJsonField(&out.writer, "alias", "value", true);
     try writeJsonIntField(&out.writer, "count", @as(i64, 42), true);
+    try writeJsonCountField(&out.writer, "size", @as(usize, 3), true);
     try writeJsonBoolField(&out.writer, "ok", true, true);
+    try writeJsonNullableStringField(&out.writer, "maybe_string", null, true);
+    try writeJsonNullableCountField(&out.writer, "maybe_count", @as(?usize, 8), true);
+    try writeJsonNullableBoolField(&out.writer, "maybe_bool", @as(?bool, false), true);
     try core_json.writeString(&out.writer, "domains");
     try out.writer.writeByte(':');
     const values = [_][]const u8{ "plosca.ru", "sparkdate.love" };
@@ -149,7 +217,19 @@ test "app render helpers write strings integers and optional text fields" {
     try out.writer.writeByte('}');
     const json = try out.toOwnedSlice();
     defer allocator.free(json);
-    try std.testing.expectEqualStrings("{\"name\":\"quote \\\" and\\nnewline\",\"count\":42,\"ok\":true,\"domains\":[\"plosca.ru\",\"sparkdate.love\"]}", json);
+    try std.testing.expectEqualStrings("{\"name\":\"quote \\\" and\\nnewline\",\"alias\":\"value\",\"count\":42,\"size\":3,\"ok\":true,\"maybe_string\":null,\"maybe_count\":8,\"maybe_bool\":false,\"domains\":[\"plosca.ru\",\"sparkdate.love\"]}", json);
+
+    var comma_out = std.Io.Writer.Allocating.init(allocator);
+    defer comma_out.deinit();
+    var first = true;
+    try writeMaybeJsonComma(&comma_out.writer, &first);
+    try comma_out.writer.writeAll("a");
+    try writeMaybeJsonComma(&comma_out.writer, &first);
+    try comma_out.writer.writeAll("b ");
+    try writeShellArg(&comma_out.writer, "it's");
+    const comma_text = try comma_out.toOwnedSlice();
+    defer allocator.free(comma_text);
+    try std.testing.expectEqualStrings("a,b 'it'\\''s'", comma_text);
 
     var text_out = std.Io.Writer.Allocating.init(allocator);
     defer text_out.deinit();
