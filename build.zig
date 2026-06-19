@@ -263,6 +263,19 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
+    const provider_transport_mod = b.createModule(.{
+        .root_source_file = b.path("src/providers/transport.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "net_http", .module = net_http_mod },
+            .{ .name = "provider_auth", .module = provider_auth_mod },
+            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
+            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
+            .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
     const provider_dispatch_mod = b.createModule(.{
         .root_source_file = b.path("src/providers/dispatch.zig"),
         .target = target,
@@ -276,6 +289,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_route_plan", .module = provider_route_plan_mod },
             .{ .name = "provider_route_result", .module = provider_route_result_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
+            .{ .name = "provider_transport", .module = provider_transport_mod },
         },
     });
     const collector_route_capture_mod = b.createModule(.{
@@ -905,6 +919,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_route_result", .module = provider_route_result_mod },
             .{ .name = "provider_route_safety", .module = provider_route_safety_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
+            .{ .name = "provider_transport", .module = provider_transport_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
             .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
             .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
@@ -1219,6 +1234,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, provider_route_plan_mod);
     addModuleTest(b, test_step, provider_route_result_mod);
     addModuleTest(b, test_step, provider_route_safety_mod);
+    addModuleTest(b, test_step, provider_transport_mod);
     addModuleTest(b, test_step, provider_dispatch_mod);
     addModuleTest(b, test_step, provider_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_mod);
