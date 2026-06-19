@@ -1,6 +1,6 @@
 const std = @import("std");
 const app_coverage = @import("app_coverage");
-const cli_coverage = @import("cli_coverage");
+const cli_coverage_parse = @import("cli_coverage_parse");
 const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
 
@@ -79,7 +79,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
             return;
         };
         defer capture_args.deinit(ctx.gpa);
-        const parsed = cli_coverage.parsePlan(ctx.gpa, capture_args.plan_args) catch |err| {
+        const parsed = cli_coverage_parse.parsePlan(ctx.gpa, capture_args.plan_args) catch |err| {
             std.debug.print("invalid route capture arguments: {s}\n", .{@errorName(err)});
             return;
         };
@@ -135,7 +135,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         return;
     }
 
-    const parsed = cli_coverage.parsePlan(ctx.gpa, args[1..]) catch |err| {
+    const parsed = cli_coverage_parse.parsePlan(ctx.gpa, args[1..]) catch |err| {
         std.debug.print("invalid route {s} arguments: {s}\n", .{ action.name(), @errorName(err) });
         return;
     };

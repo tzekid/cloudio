@@ -945,13 +945,23 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_render", .module = cli_render_mod },
         },
     });
+    const cli_coverage_parse_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/coverage_parse.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_coverage", .module = app_coverage_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
+        },
+    });
     const cli_coverage_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/coverage.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_coverage", .module = app_coverage_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "cli_coverage_parse", .module = cli_coverage_parse_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
         },
     });
@@ -962,7 +972,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "app_coverage", .module = app_coverage_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_coverage", .module = cli_coverage_mod },
+            .{ .name = "cli_coverage_parse", .module = cli_coverage_parse_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
         },
     });
@@ -1165,6 +1175,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cli_root_mod);
     addModuleTest(b, test_step, cli_args_mod);
     addModuleTest(b, test_step, cli_render_mod);
+    addModuleTest(b, test_step, cli_coverage_parse_mod);
     addModuleTest(b, test_step, cli_coverage_mod);
     addModuleTest(b, test_step, cli_route_mod);
     addModuleTest(b, test_step, cli_caddy_mod);
