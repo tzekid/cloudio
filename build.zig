@@ -375,8 +375,8 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_history_mod);
 
-    const app_evidence_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/evidence.zig"),
+    const app_evidence_common_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/evidence_common.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -384,6 +384,30 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+    linkSqlite(app_evidence_common_mod);
+    const app_evidence_routes_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/evidence_routes.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
+            .{ .name = "app_evidence_common", .module = app_evidence_common_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+    linkSqlite(app_evidence_routes_mod);
+    const app_evidence_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/evidence.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
+            .{ .name = "app_evidence_common", .module = app_evidence_common_mod },
+            .{ .name = "app_evidence_routes", .module = app_evidence_routes_mod },
+            .{ .name = "db_store", .module = db_store_mod },
         },
     });
     linkSqlite(app_evidence_mod);
@@ -885,6 +909,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_doctor", .module = app_doctor_mod },
             .{ .name = "app_evidence", .module = app_evidence_mod },
+            .{ .name = "app_evidence_common", .module = app_evidence_common_mod },
+            .{ .name = "app_evidence_routes", .module = app_evidence_routes_mod },
             .{ .name = "app_export", .module = app_export_mod },
             .{ .name = "app_history", .module = app_history_mod },
             .{ .name = "app_hostinger", .module = app_hostinger_mod },
@@ -1051,6 +1077,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_evidence", .module = app_evidence_mod },
+            .{ .name = "app_evidence_routes", .module = app_evidence_routes_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
         },
@@ -1196,7 +1223,9 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_history_mod);
     addModuleTest(b, test_step, app_coverage_mod);
     addModuleTest(b, test_step, app_doctor_mod);
+    addModuleTest(b, test_step, app_evidence_common_mod);
     addModuleTest(b, test_step, app_evidence_mod);
+    addModuleTest(b, test_step, app_evidence_routes_mod);
     addModuleTest(b, test_step, app_init_mod);
     addModuleTest(b, test_step, app_log_mod);
     addModuleTest(b, test_step, app_security_mod);

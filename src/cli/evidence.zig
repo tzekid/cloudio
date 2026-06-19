@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_evidence = @import("app_evidence");
+const app_evidence_routes = @import("app_evidence_routes");
 const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
 const app_database = @import("app_database");
@@ -35,9 +36,9 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     switch (command) {
         .events => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeText, app_evidence.writeJson, .{ appContext(ctx), parsed.options }),
         .matrix => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeMatrixText, app_evidence.writeMatrixJson, .{ appContext(ctx), parsed.options }),
-        .routes => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeRouteCapturesText, app_evidence.writeRouteCapturesJson, .{ appContext(ctx), parsed.options }),
-        .coverage => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeRouteCoverageText, app_evidence.writeRouteCoverageJson, .{ appContext(ctx), parsed.options }),
-        .capture_summary => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence.writeRouteCaptureSummaryText, app_evidence.writeRouteCaptureSummaryJson, .{ appContext(ctx), parsed.options }),
+        .routes => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence_routes.writeRouteCapturesText, app_evidence_routes.writeRouteCapturesJson, .{ appContext(ctx), parsed.options }),
+        .coverage => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence_routes.writeRouteCoverageText, app_evidence_routes.writeRouteCoverageJson, .{ appContext(ctx), parsed.options }),
+        .capture_summary => |parsed| try cli_render.printFormatted(ctx.io, ctx.gpa, parsed.format, app_evidence_routes.writeRouteCaptureSummaryText, app_evidence_routes.writeRouteCaptureSummaryJson, .{ appContext(ctx), parsed.options }),
     }
 }
 

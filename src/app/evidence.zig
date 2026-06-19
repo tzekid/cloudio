@@ -1,84 +1,33 @@
 const std = @import("std");
 const app_render = @import("app_render");
-const core_redact = @import("core_redact");
+const evidence_common = @import("app_evidence_common");
+const evidence_routes = @import("app_evidence_routes");
 const db_store = @import("db_store");
-const provider_routes = @import("provider_routes");
 
 const Allocator = std.mem.Allocator;
-const Db = db_store.Db;
-const Io = std.Io;
 
-pub const default_limit = 200;
-
-pub const Context = struct {
-    io: Io,
-    gpa: Allocator,
-    db: *Db,
-    routes: provider_routes.Paths = .{},
-};
-
-pub const ProviderFilter = enum {
-    all,
-    cloudflare,
-    hostinger,
-    caddy,
-    system,
-    projects,
-    route,
-
-    pub fn parse(value: []const u8) ?ProviderFilter {
-        if (std.mem.eql(u8, value, "all")) return .all;
-        if (std.mem.eql(u8, value, "cloudflare")) return .cloudflare;
-        if (std.mem.eql(u8, value, "hostinger")) return .hostinger;
-        if (std.mem.eql(u8, value, "caddy")) return .caddy;
-        if (std.mem.eql(u8, value, "system")) return .system;
-        if (std.mem.eql(u8, value, "projects")) return .projects;
-        if (std.mem.eql(u8, value, "route")) return .route;
-        return null;
-    }
-
-    pub fn label(self: ProviderFilter) []const u8 {
-        return switch (self) {
-            .all => "all",
-            .cloudflare => "cloudflare",
-            .hostinger => "hostinger",
-            .caddy => "caddy",
-            .system => "system",
-            .projects => "projects",
-            .route => "route",
-        };
-    }
-
-    pub fn dbValue(self: ProviderFilter) ?[]const u8 {
-        return switch (self) {
-            .all => null,
-            .cloudflare => "cloudflare",
-            .hostinger => "hostinger",
-            .caddy => "caddy",
-            .system => "system",
-            .projects => "projects",
-            .route => "route",
-        };
-    }
-};
-
-pub const Options = struct {
-    provider: ProviderFilter = .all,
-    limit: i64 = default_limit,
-
-    pub fn normalized(self: Options) Options {
-        return .{
-            .provider = self.provider,
-            .limit = app_render.positiveLimit(self.limit, default_limit),
-        };
-    }
-};
+pub const default_limit = evidence_common.default_limit;
+pub const Context = evidence_common.Context;
+pub const ProviderFilter = evidence_common.ProviderFilter;
+pub const Options = evidence_common.Options;
 
 pub const MatrixOptions = Options;
-pub const RouteCaptureOptions = Options;
-pub const RouteCoverageOptions = Options;
-pub const RouteCaptureSummaryOptions = Options;
-const route_capture_summary_load_limit: i64 = 100_000;
+pub const RouteCaptureOptions = evidence_routes.RouteCaptureOptions;
+pub const RouteCoverageOptions = evidence_routes.RouteCoverageOptions;
+pub const RouteCaptureSummaryOptions = evidence_routes.RouteCaptureSummaryOptions;
+pub const RouteCaptureTotals = evidence_routes.RouteCaptureTotals;
+pub const RouteCaptures = evidence_routes.RouteCaptures;
+pub const RouteCoverageTotals = evidence_routes.RouteCoverageTotals;
+pub const RouteCoverage = evidence_routes.RouteCoverage;
+pub const RouteCaptureSummaryTotals = evidence_routes.RouteCaptureSummaryTotals;
+pub const RouteCaptureSummaryRow = evidence_routes.RouteCaptureSummaryRow;
+pub const RouteCaptureSummary = evidence_routes.RouteCaptureSummary;
+pub const writeRouteCapturesText = evidence_routes.writeRouteCapturesText;
+pub const writeRouteCapturesJson = evidence_routes.writeRouteCapturesJson;
+pub const writeRouteCoverageText = evidence_routes.writeRouteCoverageText;
+pub const writeRouteCoverageJson = evidence_routes.writeRouteCoverageJson;
+pub const writeRouteCaptureSummaryText = evidence_routes.writeRouteCaptureSummaryText;
+pub const writeRouteCaptureSummaryJson = evidence_routes.writeRouteCaptureSummaryJson;
 
 pub const Totals = struct {
     groups: usize = 0,
@@ -152,10 +101,10 @@ pub const Matrix = struct {
             visible += 1;
             try writer.print("{s}\t{s}\t{s}\t{s}\t{s}\tcount={d}\tlatest={s}\n", .{
                 if (row.provider.len == 0) "unclassified" else row.provider,
-                evidenceFamily(row.provider, row.kind),
+                evidence_common.evidenceFamily(row.provider, row.kind),
                 row.source,
                 row.kind,
-                statusClass(row.status),
+                evidence_common.statusClass(row.status),
                 row.count,
                 row.latest_at,
             });
@@ -183,399 +132,6 @@ pub const Matrix = struct {
             first = false;
             visible += 1;
             try writeMatrixRowJson(row, writer);
-        }
-        try writer.writeAll("],");
-        try app_render.writeJsonIntField(writer, "visible", visible, true);
-        try app_render.writeJsonIntField(writer, "omitted", omitted, false);
-        try writer.writeAll("}\n");
-    }
-};
-
-pub const RouteCaptureTotals = struct {
-    operations: usize = 0,
-    captures: i64 = 0,
-    cloudflare: i64 = 0,
-    hostinger: i64 = 0,
-    ok: i64 = 0,
-    errors: i64 = 0,
-};
-
-pub const RouteCaptures = struct {
-    options: RouteCaptureOptions,
-    rows: db_store.RouteCaptureEvidenceRows,
-
-    pub fn load(ctx: Context, options: RouteCaptureOptions) !RouteCaptures {
-        const normalized = options.normalized();
-        return .{
-            .options = normalized,
-            .rows = try ctx.db.routeCaptureEvidence(ctx.gpa, .{
-                .provider = normalized.provider.dbValue(),
-                .limit = normalized.limit,
-            }),
-        };
-    }
-
-    pub fn deinit(self: *RouteCaptures, gpa: Allocator) void {
-        self.rows.deinit(gpa);
-    }
-
-    pub fn totals(self: RouteCaptures) RouteCaptureTotals {
-        var out = RouteCaptureTotals{ .operations = self.rows.items.len };
-        for (self.rows.items) |row| {
-            out.captures += row.count;
-            if (std.mem.eql(u8, row.provider, "cloudflare")) out.cloudflare += row.count;
-            if (std.mem.eql(u8, row.provider, "hostinger")) out.hostinger += row.count;
-            if (statusIsOk(row.status)) out.ok += row.count;
-            if (statusIsError(row.status)) out.errors += row.count;
-        }
-        return out;
-    }
-
-    pub fn writeText(self: RouteCaptures, gpa: Allocator, writer: anytype) !void {
-        const counts = self.totals();
-        try writer.writeAll("Cloudio route capture evidence\n");
-        try writer.print("provider={s} limit={d} operations={d} captures={d} cloudflare={d} hostinger={d} ok={d} errors={d}\n", .{
-            self.options.provider.label(),
-            self.options.limit,
-            counts.operations,
-            counts.captures,
-            counts.cloudflare,
-            counts.hostinger,
-            counts.ok,
-            counts.errors,
-        });
-        if (self.rows.items.len == 0) {
-            try writer.writeAll("none\n");
-            return;
-        }
-        for (self.rows.items) |row| {
-            try writer.print("{s}\t{s}\t{s}\tstatus={s}\tcount={d}\tlatest={s}\tendpoint=", .{
-                row.provider,
-                evidenceFamily(row.provider, row.operation_id),
-                row.operation_id,
-                row.status,
-                row.count,
-                row.latest_at,
-            });
-            try writeRedactedValue(gpa, writer, row.endpoint_sample);
-            try writer.writeByte('\n');
-        }
-    }
-
-    pub fn writeJson(self: RouteCaptures, gpa: Allocator, writer: anytype) !void {
-        try writer.writeAll("{\"kind\":\"route_capture_evidence\",");
-        try app_render.writeJsonStringField(writer, "provider", self.options.provider.label(), true);
-        try app_render.writeJsonIntField(writer, "limit", self.options.limit, true);
-        try writer.writeAll("\"summary\":");
-        try writeRouteCaptureTotalsJson(self.totals(), writer);
-        try writer.writeAll(",\"routes\":[");
-        for (self.rows.items, 0..) |row, index| {
-            if (index != 0) try writer.writeByte(',');
-            try writeRouteCaptureJson(gpa, row, writer);
-        }
-        try writer.writeAll("]}\n");
-    }
-};
-
-pub const RouteCoverageTotals = struct {
-    official_operations: usize = 0,
-    captured_operations: usize = 0,
-    captures: i64 = 0,
-    matched: usize = 0,
-    missing: usize = 0,
-    read: usize = 0,
-    dry_run: usize = 0,
-    write: usize = 0,
-    deprecated: usize = 0,
-    ok: i64 = 0,
-    errors: i64 = 0,
-};
-
-pub const RouteCoverage = struct {
-    options: RouteCoverageOptions,
-    rows: db_store.RouteCaptureEvidenceRows,
-    routes: provider_routes.RouteSet,
-
-    pub fn load(ctx: Context, options: RouteCoverageOptions) !RouteCoverage {
-        const normalized = options.normalized();
-        const route_filter = try routeCoverageProviderFilter(normalized.provider);
-        var rows = try ctx.db.routeCaptureEvidence(ctx.gpa, .{
-            .provider = normalized.provider.dbValue(),
-            .limit = normalized.limit,
-        });
-        errdefer rows.deinit(ctx.gpa);
-        var routes = switch (route_filter) {
-            .all => try provider_routes.loadAll(ctx.io, ctx.gpa, ctx.routes),
-            .cloudflare => try provider_routes.loadProvider(ctx.io, ctx.gpa, ctx.routes, .cloudflare),
-            .hostinger => try provider_routes.loadProvider(ctx.io, ctx.gpa, ctx.routes, .hostinger),
-        };
-        errdefer routes.deinit(ctx.gpa);
-        return .{
-            .options = normalized,
-            .rows = rows,
-            .routes = routes,
-        };
-    }
-
-    pub fn deinit(self: *RouteCoverage, gpa: Allocator) void {
-        self.rows.deinit(gpa);
-        self.routes.deinit(gpa);
-    }
-
-    pub fn totals(self: RouteCoverage) RouteCoverageTotals {
-        var out = RouteCoverageTotals{
-            .official_operations = self.routes.items.len,
-            .captured_operations = self.rows.items.len,
-        };
-        for (self.rows.items) |row| {
-            out.captures += row.count;
-            if (statusIsOk(row.status)) out.ok += row.count;
-            if (statusIsError(row.status)) out.errors += row.count;
-            if (self.findRoute(row)) |route| {
-                out.matched += 1;
-                if (route.deprecated) out.deprecated += 1;
-                switch (route.mode) {
-                    .read => out.read += 1,
-                    .dry_run => out.dry_run += 1,
-                    .write => out.write += 1,
-                    .none => {},
-                }
-            } else {
-                out.missing += 1;
-            }
-        }
-        return out;
-    }
-
-    pub fn findRoute(self: RouteCoverage, row: db_store.RouteCaptureEvidenceRow) ?*const provider_routes.Route {
-        const provider = provider_routes.Provider.parse(row.provider) orelse return null;
-        for (self.routes.items) |*route| {
-            if (route.provider != provider) continue;
-            const operation_id = route.operation_id orelse continue;
-            if (std.mem.eql(u8, operation_id, row.operation_id)) return route;
-        }
-        return null;
-    }
-
-    pub fn writeText(self: RouteCoverage, gpa: Allocator, writer: anytype) !void {
-        const counts = self.totals();
-        try writer.writeAll("Cloudio route coverage evidence\n");
-        try writer.print("provider={s} limit={d} official_operations={d} captured_operations={d} captures={d} matched={d} missing={d} read={d} dry_run={d} write={d} deprecated={d} ok={d} errors={d}\n", .{
-            self.options.provider.label(),
-            self.options.limit,
-            counts.official_operations,
-            counts.captured_operations,
-            counts.captures,
-            counts.matched,
-            counts.missing,
-            counts.read,
-            counts.dry_run,
-            counts.write,
-            counts.deprecated,
-            counts.ok,
-            counts.errors,
-        });
-        if (self.rows.items.len == 0) {
-            try writer.writeAll("none\n");
-            return;
-        }
-        for (self.rows.items) |row| {
-            const route = self.findRoute(row);
-            if (route) |matched| {
-                try writer.print("{s}\t{s}\t{s}\t{s}\t{s}\t{s}\tsupport={s}\tmode={s}\ttests={s}\tdeprecated={}\tstatus={s}\tcount={d}\tlatest={s}\tendpoint=", .{
-                    row.provider,
-                    evidenceFamily(row.provider, row.operation_id),
-                    matched.tag,
-                    row.operation_id,
-                    matched.method.name(),
-                    matched.path_template,
-                    @tagName(matched.support),
-                    @tagName(matched.mode),
-                    matched.tests,
-                    matched.deprecated,
-                    row.status,
-                    row.count,
-                    row.latest_at,
-                });
-            } else {
-                try writer.print("{s}\t{s}\tunmatched\t{s}\tmethod=unknown\tpath=unknown\tsupport=unknown\tmode=unknown\ttests=unknown\tdeprecated=false\tstatus={s}\tcount={d}\tlatest={s}\tendpoint=", .{
-                    row.provider,
-                    evidenceFamily(row.provider, row.operation_id),
-                    row.operation_id,
-                    row.status,
-                    row.count,
-                    row.latest_at,
-                });
-            }
-            try writeRedactedValue(gpa, writer, row.endpoint_sample);
-            try writer.writeByte('\n');
-        }
-    }
-
-    pub fn writeJson(self: RouteCoverage, gpa: Allocator, writer: anytype) !void {
-        try writer.writeAll("{\"kind\":\"route_coverage_evidence\",");
-        try app_render.writeJsonStringField(writer, "provider", self.options.provider.label(), true);
-        try app_render.writeJsonIntField(writer, "limit", self.options.limit, true);
-        try writer.writeAll("\"summary\":");
-        try writeRouteCoverageTotalsJson(self.totals(), writer);
-        try writer.writeAll(",\"routes\":[");
-        for (self.rows.items, 0..) |row, index| {
-            if (index != 0) try writer.writeByte(',');
-            try writeRouteCoverageRowJson(gpa, row, self.findRoute(row), writer);
-        }
-        try writer.writeAll("]}\n");
-    }
-};
-
-pub const RouteCaptureSummaryTotals = struct {
-    families: usize = 0,
-    official_read_routes: usize = 0,
-    captured_read_routes: usize = 0,
-    ok_read_routes: usize = 0,
-    error_read_routes: usize = 0,
-    missing_read_routes: usize = 0,
-    capture_events: i64 = 0,
-    cloudflare_read_routes: usize = 0,
-    hostinger_read_routes: usize = 0,
-};
-
-pub const RouteCaptureSummaryRow = struct {
-    provider: []const u8,
-    family: []const u8,
-    official_read_routes: usize = 0,
-    captured_read_routes: usize = 0,
-    ok_read_routes: usize = 0,
-    error_read_routes: usize = 0,
-    missing_read_routes: usize = 0,
-    capture_events: i64 = 0,
-    latest_at: []const u8 = "",
-    sample_missing_operation: []const u8 = "",
-
-    pub fn capturedPercent(self: RouteCaptureSummaryRow) usize {
-        if (self.official_read_routes == 0) return 0;
-        return (self.captured_read_routes * 100) / self.official_read_routes;
-    }
-};
-
-pub const RouteCaptureSummary = struct {
-    options: RouteCaptureSummaryOptions,
-    rows: []RouteCaptureSummaryRow,
-    captures: db_store.RouteCaptureEvidenceRows,
-    routes: provider_routes.RouteSet,
-
-    pub fn load(ctx: Context, options: RouteCaptureSummaryOptions) !RouteCaptureSummary {
-        const normalized = options.normalized();
-        const route_filter = try routeCoverageProviderFilter(normalized.provider);
-        var captures = try ctx.db.routeCaptureEvidence(ctx.gpa, .{
-            .provider = normalized.provider.dbValue(),
-            .limit = route_capture_summary_load_limit,
-        });
-        errdefer captures.deinit(ctx.gpa);
-        var routes = switch (route_filter) {
-            .all => try provider_routes.loadAll(ctx.io, ctx.gpa, ctx.routes),
-            .cloudflare => try provider_routes.loadProvider(ctx.io, ctx.gpa, ctx.routes, .cloudflare),
-            .hostinger => try provider_routes.loadProvider(ctx.io, ctx.gpa, ctx.routes, .hostinger),
-        };
-        errdefer routes.deinit(ctx.gpa);
-        const rows = try buildRouteCaptureSummaryRows(ctx.gpa, routes.items, captures.items);
-        errdefer ctx.gpa.free(rows);
-        return .{
-            .options = normalized,
-            .rows = rows,
-            .captures = captures,
-            .routes = routes,
-        };
-    }
-
-    pub fn deinit(self: *RouteCaptureSummary, gpa: Allocator) void {
-        gpa.free(self.rows);
-        self.captures.deinit(gpa);
-        self.routes.deinit(gpa);
-    }
-
-    pub fn totals(self: RouteCaptureSummary) RouteCaptureSummaryTotals {
-        var out = RouteCaptureSummaryTotals{ .families = self.rows.len };
-        for (self.rows) |row| {
-            out.official_read_routes += row.official_read_routes;
-            out.captured_read_routes += row.captured_read_routes;
-            out.ok_read_routes += row.ok_read_routes;
-            out.error_read_routes += row.error_read_routes;
-            out.missing_read_routes += row.missing_read_routes;
-            out.capture_events += row.capture_events;
-            if (std.mem.eql(u8, row.provider, "cloudflare")) out.cloudflare_read_routes += row.official_read_routes;
-            if (std.mem.eql(u8, row.provider, "hostinger")) out.hostinger_read_routes += row.official_read_routes;
-        }
-        return out;
-    }
-
-    pub fn writeText(self: RouteCaptureSummary, writer: anytype) !void {
-        const counts = self.totals();
-        try writer.writeAll("Cloudio actual route capture summary\n");
-        try writer.print("provider={s} limit={d} families={d} official_read_routes={d} captured_read_routes={d} ok_read_routes={d} error_read_routes={d} missing_read_routes={d} capture_events={d} cloudflare_read_routes={d} hostinger_read_routes={d}\n", .{
-            self.options.provider.label(),
-            self.options.limit,
-            counts.families,
-            counts.official_read_routes,
-            counts.captured_read_routes,
-            counts.ok_read_routes,
-            counts.error_read_routes,
-            counts.missing_read_routes,
-            counts.capture_events,
-            counts.cloudflare_read_routes,
-            counts.hostinger_read_routes,
-        });
-        if (self.rows.len == 0) {
-            try writer.writeAll("none\n");
-            return;
-        }
-        var visible: usize = 0;
-        var omitted: usize = 0;
-        const limit: usize = @intCast(self.options.limit);
-        for (self.rows) |row| {
-            if (visible >= limit) {
-                omitted += 1;
-                continue;
-            }
-            visible += 1;
-            try writer.print("{s}\t{s}\tread={d}\tcaptured={d}\tok={d}\terrors={d}\tmissing={d}\tcaptured_percent={d}\tcapture_events={d}\tlatest={s}", .{
-                row.provider,
-                row.family,
-                row.official_read_routes,
-                row.captured_read_routes,
-                row.ok_read_routes,
-                row.error_read_routes,
-                row.missing_read_routes,
-                row.capturedPercent(),
-                row.capture_events,
-                if (row.latest_at.len == 0) "-" else row.latest_at,
-            });
-            if (row.sample_missing_operation.len != 0) try writer.print("\tsample_missing={s}", .{row.sample_missing_operation});
-            try writer.writeByte('\n');
-        }
-        if (omitted != 0) try writer.print("omitted={d}\n", .{omitted});
-    }
-
-    pub fn writeJson(self: RouteCaptureSummary, writer: anytype) !void {
-        try writer.writeAll("{\"kind\":\"route_capture_summary\",");
-        try app_render.writeJsonStringField(writer, "provider", self.options.provider.label(), true);
-        try app_render.writeJsonIntField(writer, "limit", self.options.limit, true);
-        try app_render.writeJsonIntField(writer, "loaded_capture_operation_status_rows", self.captures.items.len, true);
-        try writer.writeAll("\"summary\":");
-        try writeRouteCaptureSummaryTotalsJson(self.totals(), writer);
-        try writer.writeAll(",\"families\":[");
-        var visible: usize = 0;
-        var omitted: usize = 0;
-        const limit: usize = @intCast(self.options.limit);
-        var first = true;
-        for (self.rows) |row| {
-            if (visible >= limit) {
-                omitted += 1;
-                continue;
-            }
-            if (!first) try writer.writeByte(',');
-            first = false;
-            visible += 1;
-            try writeRouteCaptureSummaryRowJson(row, writer);
         }
         try writer.writeAll("],");
         try app_render.writeJsonIntField(writer, "visible", visible, true);
@@ -696,42 +252,6 @@ pub fn writeMatrixJson(ctx: Context, options: MatrixOptions, writer: anytype) !v
     try matrix.writeJson(writer);
 }
 
-pub fn writeRouteCapturesText(ctx: Context, options: RouteCaptureOptions, writer: anytype) !void {
-    var captures = try RouteCaptures.load(ctx, options);
-    defer captures.deinit(ctx.gpa);
-    try captures.writeText(ctx.gpa, writer);
-}
-
-pub fn writeRouteCapturesJson(ctx: Context, options: RouteCaptureOptions, writer: anytype) !void {
-    var captures = try RouteCaptures.load(ctx, options);
-    defer captures.deinit(ctx.gpa);
-    try captures.writeJson(ctx.gpa, writer);
-}
-
-pub fn writeRouteCoverageText(ctx: Context, options: RouteCoverageOptions, writer: anytype) !void {
-    var coverage = try RouteCoverage.load(ctx, options);
-    defer coverage.deinit(ctx.gpa);
-    try coverage.writeText(ctx.gpa, writer);
-}
-
-pub fn writeRouteCoverageJson(ctx: Context, options: RouteCoverageOptions, writer: anytype) !void {
-    var coverage = try RouteCoverage.load(ctx, options);
-    defer coverage.deinit(ctx.gpa);
-    try coverage.writeJson(ctx.gpa, writer);
-}
-
-pub fn writeRouteCaptureSummaryText(ctx: Context, options: RouteCaptureSummaryOptions, writer: anytype) !void {
-    var summary = try RouteCaptureSummary.load(ctx, options);
-    defer summary.deinit(ctx.gpa);
-    try summary.writeText(writer);
-}
-
-pub fn writeRouteCaptureSummaryJson(ctx: Context, options: RouteCaptureSummaryOptions, writer: anytype) !void {
-    var summary = try RouteCaptureSummary.load(ctx, options);
-    defer summary.deinit(ctx.gpa);
-    try summary.writeJson(writer);
-}
-
 fn totalsFromSummaries(rows: []const db_store.ProviderEvidenceSummaryRow) Totals {
     var out = Totals{ .groups = rows.len };
     for (rows) |row| {
@@ -742,11 +262,11 @@ fn totalsFromSummaries(rows: []const db_store.ProviderEvidenceSummaryRow) Totals
 
         if (std.mem.eql(u8, row.provider, "cloudflare")) out.cloudflare += row.count else if (std.mem.eql(u8, row.provider, "hostinger")) out.hostinger += row.count else if (std.mem.eql(u8, row.provider, "caddy")) out.caddy += row.count else if (std.mem.eql(u8, row.provider, "system")) out.system += row.count else if (std.mem.eql(u8, row.provider, "projects")) out.projects += row.count else if (std.mem.eql(u8, row.provider, "route")) out.route += row.count else out.unclassified += row.count;
 
-        if (statusIsOk(row.status)) out.ok += row.count;
-        if (statusIsError(row.status)) out.errors += row.count;
-        if (statusIsDryRun(row.status)) out.dry_run += row.count;
-        if (httpStatusIsSuccess(row.status)) out.http_success += row.count;
-        if (httpStatusIsError(row.status)) out.http_error += row.count;
+        if (evidence_common.statusIsOk(row.status)) out.ok += row.count;
+        if (evidence_common.statusIsError(row.status)) out.errors += row.count;
+        if (evidence_common.statusIsDryRun(row.status)) out.dry_run += row.count;
+        if (evidence_common.httpStatusIsSuccess(row.status)) out.http_success += row.count;
+        if (evidence_common.httpStatusIsError(row.status)) out.http_error += row.count;
     }
     return out;
 }
@@ -765,9 +285,9 @@ fn writeEventText(gpa: Allocator, row: db_store.ProviderEvidenceEvent, writer: a
     try writer.print("\t#{d} {s}", .{ row.row_id, row.source });
     try app_render.writeTextField(writer, "provider", if (row.provider.len == 0) "unclassified" else row.provider);
     try app_render.writeTextField(writer, "kind", row.kind);
-    try writeRedactedTextField(gpa, writer, "target", row.target);
+    try evidence_common.writeRedactedTextField(gpa, writer, "target", row.target);
     try app_render.writeTextField(writer, "status", row.status);
-    try writeRedactedTextField(gpa, writer, "detail", row.detail);
+    try evidence_common.writeRedactedTextField(gpa, writer, "detail", row.detail);
     try app_render.writeTextField(writer, "at", row.recorded_at);
     try writer.writeByte('\n');
 }
@@ -794,55 +314,14 @@ fn writeTotalsJson(summary: Totals, writer: anytype) !void {
     try writer.writeByte('}');
 }
 
-fn writeRouteCaptureTotalsJson(summary: RouteCaptureTotals, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonIntField(writer, "operations", summary.operations, true);
-    try app_render.writeJsonIntField(writer, "captures", summary.captures, true);
-    try app_render.writeJsonIntField(writer, "cloudflare", summary.cloudflare, true);
-    try app_render.writeJsonIntField(writer, "hostinger", summary.hostinger, true);
-    try app_render.writeJsonIntField(writer, "ok", summary.ok, true);
-    try app_render.writeJsonIntField(writer, "errors", summary.errors, false);
-    try writer.writeByte('}');
-}
-
-fn writeRouteCoverageTotalsJson(summary: RouteCoverageTotals, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonIntField(writer, "official_operations", summary.official_operations, true);
-    try app_render.writeJsonIntField(writer, "captured_operations", summary.captured_operations, true);
-    try app_render.writeJsonIntField(writer, "captures", summary.captures, true);
-    try app_render.writeJsonIntField(writer, "matched", summary.matched, true);
-    try app_render.writeJsonIntField(writer, "missing", summary.missing, true);
-    try app_render.writeJsonIntField(writer, "read", summary.read, true);
-    try app_render.writeJsonIntField(writer, "dry_run", summary.dry_run, true);
-    try app_render.writeJsonIntField(writer, "write", summary.write, true);
-    try app_render.writeJsonIntField(writer, "deprecated", summary.deprecated, true);
-    try app_render.writeJsonIntField(writer, "ok", summary.ok, true);
-    try app_render.writeJsonIntField(writer, "errors", summary.errors, false);
-    try writer.writeByte('}');
-}
-
-fn writeRouteCaptureSummaryTotalsJson(summary: RouteCaptureSummaryTotals, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonIntField(writer, "families", summary.families, true);
-    try app_render.writeJsonIntField(writer, "official_read_routes", summary.official_read_routes, true);
-    try app_render.writeJsonIntField(writer, "captured_read_routes", summary.captured_read_routes, true);
-    try app_render.writeJsonIntField(writer, "ok_read_routes", summary.ok_read_routes, true);
-    try app_render.writeJsonIntField(writer, "error_read_routes", summary.error_read_routes, true);
-    try app_render.writeJsonIntField(writer, "missing_read_routes", summary.missing_read_routes, true);
-    try app_render.writeJsonIntField(writer, "capture_events", summary.capture_events, true);
-    try app_render.writeJsonIntField(writer, "cloudflare_read_routes", summary.cloudflare_read_routes, true);
-    try app_render.writeJsonIntField(writer, "hostinger_read_routes", summary.hostinger_read_routes, false);
-    try writer.writeByte('}');
-}
-
 fn writeMatrixRowJson(row: db_store.ProviderEvidenceSummaryRow, writer: anytype) !void {
     try writer.writeByte('{');
     try app_render.writeJsonStringField(writer, "provider", row.provider, true);
-    try app_render.writeJsonStringField(writer, "family", evidenceFamily(row.provider, row.kind), true);
+    try app_render.writeJsonStringField(writer, "family", evidence_common.evidenceFamily(row.provider, row.kind), true);
     try app_render.writeJsonStringField(writer, "source", row.source, true);
     try app_render.writeJsonStringField(writer, "kind", row.kind, true);
     try app_render.writeJsonStringField(writer, "status", row.status, true);
-    try app_render.writeJsonStringField(writer, "status_class", statusClass(row.status), true);
+    try app_render.writeJsonStringField(writer, "status_class", evidence_common.statusClass(row.status), true);
     try app_render.writeJsonIntField(writer, "count", row.count, true);
     try app_render.writeJsonStringField(writer, "latest_at", row.latest_at, false);
     try writer.writeByte('}');
@@ -859,275 +338,17 @@ fn writeSummaryJson(row: db_store.ProviderEvidenceSummaryRow, writer: anytype) !
     try writer.writeByte('}');
 }
 
-fn writeRouteCaptureJson(gpa: Allocator, row: db_store.RouteCaptureEvidenceRow, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "provider", row.provider, true);
-    try app_render.writeJsonStringField(writer, "family", evidenceFamily(row.provider, row.operation_id), true);
-    try app_render.writeJsonStringField(writer, "operation_id", row.operation_id, true);
-    try app_render.writeJsonStringField(writer, "status", row.status, true);
-    try app_render.writeJsonStringField(writer, "status_class", statusClass(row.status), true);
-    try writeRedactedJsonStringField(gpa, writer, "endpoint_sample", row.endpoint_sample, true);
-    try app_render.writeJsonIntField(writer, "count", row.count, true);
-    try app_render.writeJsonStringField(writer, "latest_at", row.latest_at, false);
-    try writer.writeByte('}');
-}
-
-fn writeRouteCoverageRowJson(gpa: Allocator, row: db_store.RouteCaptureEvidenceRow, route: ?*const provider_routes.Route, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "provider", row.provider, true);
-    try app_render.writeJsonStringField(writer, "family", evidenceFamily(row.provider, row.operation_id), true);
-    try app_render.writeJsonBoolField(writer, "matched", route != null, true);
-    try app_render.writeJsonStringField(writer, "operation_id", row.operation_id, true);
-    if (route) |matched| {
-        try app_render.writeJsonStringField(writer, "tag", matched.tag, true);
-        try app_render.writeJsonStringField(writer, "method", matched.method.name(), true);
-        try app_render.writeJsonStringField(writer, "path_template", matched.path_template, true);
-        try app_render.writeJsonStringField(writer, "support", @tagName(matched.support), true);
-        try app_render.writeJsonStringField(writer, "mode", @tagName(matched.mode), true);
-        try app_render.writeJsonStringField(writer, "tests", matched.tests, true);
-        try app_render.writeJsonBoolField(writer, "deprecated", matched.deprecated, true);
-        try app_render.writeJsonBoolField(writer, "routable", matched.isRoutable(), true);
-    } else {
-        try app_render.writeJsonStringField(writer, "tag", "", true);
-        try app_render.writeJsonStringField(writer, "method", "", true);
-        try app_render.writeJsonStringField(writer, "path_template", "", true);
-        try app_render.writeJsonStringField(writer, "support", "unknown", true);
-        try app_render.writeJsonStringField(writer, "mode", "unknown", true);
-        try app_render.writeJsonStringField(writer, "tests", "unknown", true);
-        try app_render.writeJsonBoolField(writer, "deprecated", false, true);
-        try app_render.writeJsonBoolField(writer, "routable", false, true);
-    }
-    try app_render.writeJsonStringField(writer, "status", row.status, true);
-    try app_render.writeJsonStringField(writer, "status_class", statusClass(row.status), true);
-    try writeRedactedJsonStringField(gpa, writer, "endpoint_sample", row.endpoint_sample, true);
-    try app_render.writeJsonIntField(writer, "count", row.count, true);
-    try app_render.writeJsonStringField(writer, "latest_at", row.latest_at, false);
-    try writer.writeByte('}');
-}
-
-fn writeRouteCaptureSummaryRowJson(row: RouteCaptureSummaryRow, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "provider", row.provider, true);
-    try app_render.writeJsonStringField(writer, "family", row.family, true);
-    try app_render.writeJsonIntField(writer, "official_read_routes", row.official_read_routes, true);
-    try app_render.writeJsonIntField(writer, "captured_read_routes", row.captured_read_routes, true);
-    try app_render.writeJsonIntField(writer, "ok_read_routes", row.ok_read_routes, true);
-    try app_render.writeJsonIntField(writer, "error_read_routes", row.error_read_routes, true);
-    try app_render.writeJsonIntField(writer, "missing_read_routes", row.missing_read_routes, true);
-    try app_render.writeJsonIntField(writer, "captured_percent", row.capturedPercent(), true);
-    try app_render.writeJsonIntField(writer, "capture_events", row.capture_events, true);
-    try app_render.writeJsonStringField(writer, "latest_at", row.latest_at, true);
-    try app_render.writeJsonStringField(writer, "sample_missing_operation", row.sample_missing_operation, false);
-    try writer.writeByte('}');
-}
-
 fn writeEventJson(gpa: Allocator, row: db_store.ProviderEvidenceEvent, writer: anytype) !void {
     try writer.writeByte('{');
     try app_render.writeJsonIntField(writer, "row_id", row.row_id, true);
     try app_render.writeJsonStringField(writer, "source", row.source, true);
     try app_render.writeJsonStringField(writer, "provider", row.provider, true);
     try app_render.writeJsonStringField(writer, "kind", row.kind, true);
-    try writeRedactedJsonStringField(gpa, writer, "target", row.target, true);
+    try evidence_common.writeRedactedJsonStringField(gpa, writer, "target", row.target, true);
     try app_render.writeJsonStringField(writer, "status", row.status, true);
-    try writeRedactedJsonStringField(gpa, writer, "detail", row.detail, true);
+    try evidence_common.writeRedactedJsonStringField(gpa, writer, "detail", row.detail, true);
     try app_render.writeJsonStringField(writer, "recorded_at", row.recorded_at, false);
     try writer.writeByte('}');
-}
-
-fn writeRedactedTextField(gpa: Allocator, writer: anytype, label: []const u8, value: []const u8) !void {
-    if (value.len == 0) return;
-    try writer.print("\t{s}=", .{label});
-    try writeRedactedValue(gpa, writer, value);
-}
-
-fn writeRedactedJsonStringField(gpa: Allocator, writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    const redacted = try core_redact.secrets(gpa, value);
-    defer gpa.free(redacted);
-    try app_render.writeJsonStringField(writer, name, std.mem.trimEnd(u8, redacted, "\n"), trailing_comma);
-}
-
-fn writeRedactedValue(gpa: Allocator, writer: anytype, value: []const u8) !void {
-    const redacted = try core_redact.secrets(gpa, value);
-    defer gpa.free(redacted);
-    try writer.writeAll(std.mem.trimEnd(u8, redacted, "\n"));
-}
-
-fn statusIsDryRun(status: []const u8) bool {
-    return std.mem.indexOf(u8, status, "dry") != null or std.mem.eql(u8, status, "planned");
-}
-
-fn statusClass(status: []const u8) []const u8 {
-    if (statusIsDryRun(status)) return "dry_run";
-    if (statusIsOk(status)) return "ok";
-    if (statusIsError(status)) return "error";
-    return "other";
-}
-
-fn statusIsOk(status: []const u8) bool {
-    return std.mem.eql(u8, status, "ok") or
-        std.mem.eql(u8, status, "success") or
-        std.mem.eql(u8, status, "done") or
-        httpStatusIsSuccess(status);
-}
-
-fn statusIsError(status: []const u8) bool {
-    return httpStatusIsError(status) or
-        std.mem.indexOf(u8, status, "error") != null or
-        std.mem.indexOf(u8, status, "fail") != null or
-        std.mem.indexOf(u8, status, "denied") != null or
-        std.mem.indexOf(u8, status, "blocked") != null or
-        std.mem.indexOf(u8, status, "permission") != null or
-        std.mem.indexOf(u8, status, "not_found") != null or
-        std.mem.indexOf(u8, status, "missing") != null;
-}
-
-fn httpStatusIsSuccess(status: []const u8) bool {
-    const code = std.fmt.parseInt(i64, status, 10) catch return false;
-    return code >= 200 and code < 400;
-}
-
-fn httpStatusIsError(status: []const u8) bool {
-    const code = std.fmt.parseInt(i64, status, 10) catch return false;
-    return code >= 400;
-}
-
-fn evidenceFamily(provider: []const u8, kind: []const u8) []const u8 {
-    if (std.mem.eql(u8, provider, "caddy")) return "caddy";
-    if (std.mem.eql(u8, provider, "system")) return "system";
-    if (std.mem.eql(u8, provider, "projects")) return "projects";
-    if (std.mem.eql(u8, provider, "hostinger")) return hostingerFamily(kind);
-    if (std.mem.eql(u8, provider, "cloudflare")) return cloudflareFamily(kind);
-    return "unclassified";
-}
-
-fn buildRouteCaptureSummaryRows(gpa: Allocator, routes: []const provider_routes.Route, captures: []const db_store.RouteCaptureEvidenceRow) ![]RouteCaptureSummaryRow {
-    var rows = std.ArrayList(RouteCaptureSummaryRow).empty;
-    errdefer rows.deinit(gpa);
-    for (routes) |route| {
-        if (!routeCountsForCaptureSummary(route)) continue;
-        const operation_id = route.operation_id orelse continue;
-        const provider = route.provider.name();
-        const family = routeFamily(route);
-        const row = try routeCaptureSummaryRow(gpa, &rows, provider, family);
-        row.official_read_routes += 1;
-        const status = routeCaptureStatus(provider, operation_id, captures);
-        if (status.any) {
-            row.captured_read_routes += 1;
-            row.capture_events += status.events;
-            if (status.ok) row.ok_read_routes += 1;
-            if (status.err) row.error_read_routes += 1;
-            if (status.latest_at.len != 0 and latestAtLessThan(row.latest_at, status.latest_at)) row.latest_at = status.latest_at;
-        } else {
-            row.missing_read_routes += 1;
-            if (row.sample_missing_operation.len == 0) row.sample_missing_operation = operation_id;
-        }
-    }
-    std.mem.sort(RouteCaptureSummaryRow, rows.items, {}, routeCaptureSummaryLessThan);
-    return try rows.toOwnedSlice(gpa);
-}
-
-fn routeCountsForCaptureSummary(route: provider_routes.Route) bool {
-    return route.mode == .read and route.isRoutable() and route.operation_id != null;
-}
-
-fn routeCaptureSummaryRow(gpa: Allocator, rows: *std.ArrayList(RouteCaptureSummaryRow), provider: []const u8, family: []const u8) !*RouteCaptureSummaryRow {
-    for (rows.items) |*row| {
-        if (std.mem.eql(u8, row.provider, provider) and std.mem.eql(u8, row.family, family)) return row;
-    }
-    try rows.append(gpa, .{ .provider = provider, .family = family });
-    return &rows.items[rows.items.len - 1];
-}
-
-const RouteCaptureStatus = struct {
-    any: bool = false,
-    ok: bool = false,
-    err: bool = false,
-    events: i64 = 0,
-    latest_at: []const u8 = "",
-};
-
-fn routeCaptureStatus(provider: []const u8, operation_id: []const u8, captures: []const db_store.RouteCaptureEvidenceRow) RouteCaptureStatus {
-    var out = RouteCaptureStatus{};
-    for (captures) |capture| {
-        if (!std.mem.eql(u8, capture.provider, provider)) continue;
-        if (!std.mem.eql(u8, capture.operation_id, operation_id)) continue;
-        out.any = true;
-        out.events += capture.count;
-        if (statusIsOk(capture.status)) out.ok = true;
-        if (statusIsError(capture.status)) out.err = true;
-        if (capture.latest_at.len != 0 and latestAtLessThan(out.latest_at, capture.latest_at)) out.latest_at = capture.latest_at;
-    }
-    return out;
-}
-
-fn routeFamily(route: provider_routes.Route) []const u8 {
-    const tag_family = evidenceFamily(route.provider.name(), route.tag);
-    if (!std.mem.startsWith(u8, tag_family, "other-")) return tag_family;
-    if (route.operation_id) |operation_id| {
-        const operation_family = evidenceFamily(route.provider.name(), operation_id);
-        if (!std.mem.startsWith(u8, operation_family, "other-")) return operation_family;
-    }
-    return tag_family;
-}
-
-fn latestAtLessThan(current: []const u8, candidate: []const u8) bool {
-    if (current.len == 0) return true;
-    return std.mem.order(u8, current, candidate) == .lt;
-}
-
-fn routeCaptureSummaryLessThan(_: void, lhs: RouteCaptureSummaryRow, rhs: RouteCaptureSummaryRow) bool {
-    if (lhs.missing_read_routes != rhs.missing_read_routes) return lhs.missing_read_routes > rhs.missing_read_routes;
-    if (lhs.official_read_routes != rhs.official_read_routes) return lhs.official_read_routes > rhs.official_read_routes;
-    const provider_order = std.mem.order(u8, lhs.provider, rhs.provider);
-    if (provider_order != .eq) return provider_order == .lt;
-    return std.mem.order(u8, lhs.family, rhs.family) == .lt;
-}
-
-fn routeCoverageProviderFilter(provider: ProviderFilter) !provider_routes.ProviderFilter {
-    return switch (provider) {
-        .all => .all,
-        .cloudflare => .cloudflare,
-        .hostinger => .hostinger,
-        .caddy, .system, .projects, .route => error.InvalidRouteCoverageProvider,
-    };
-}
-
-fn cloudflareFamily(kind: []const u8) []const u8 {
-    if (contains(kind, "dns")) return "dns";
-    if (contains(kind, "tls") or contains(kind, "ssl") or contains(kind, "certificate") or contains(kind, "cert")) return "ssl-tls";
-    if (contains(kind, "access")) return "access";
-    if (contains(kind, "tunnel") or contains(kind, "zero-trust") or contains(kind, "gateway") or contains(kind, "warp")) return "zero-trust";
-    if (contains(kind, "ruleset") or contains(kind, "page-rule") or contains(kind, "ua-rule") or contains(kind, "lockdown")) return "rulesets";
-    if (contains(kind, "log") or contains(kind, "audit")) return "logs";
-    if (contains(kind, "cache") or contains(kind, "argo") or contains(kind, "tiered") or contains(kind, "smart-shield") or contains(kind, "variant")) return "cache";
-    if (contains(kind, "security") or contains(kind, "api-shield") or contains(kind, "page-shield") or contains(kind, "bot") or contains(kind, "cloudforce") or contains(kind, "ip-access")) return "security";
-    if (contains(kind, "token")) return "tokens";
-    if (contains(kind, "membership") or contains(kind, "member")) return "memberships";
-    if (contains(kind, "account")) return "accounts";
-    if (contains(kind, "zone")) return "zones";
-    if (contains(kind, "billing")) return "billing";
-    if (contains(kind, "email")) return "email";
-    if (contains(kind, "load-balanc") or contains(kind, "healthcheck") or contains(kind, "health-check")) return "load-balancing";
-    if (contains(kind, "resource-tag")) return "resource-tags";
-    if (contains(kind, "custom-page")) return "custom-pages";
-    return "other-cloudflare";
-}
-
-fn hostingerFamily(kind: []const u8) []const u8 {
-    if (contains(kind, "billing") or contains(kind, "subscription") or contains(kind, "payment")) return "billing";
-    if (contains(kind, "dns")) return "dns";
-    if (contains(kind, "domain") or contains(kind, "whois") or contains(kind, "forwarding")) return "domains";
-    if (contains(kind, "hosting") or contains(kind, "wordpress") or contains(kind, "website")) return "hosting";
-    if (contains(kind, "docker")) return "docker";
-    if (contains(kind, "public-key") or contains(kind, "public_keys")) return "public-keys";
-    if (contains(kind, "vps") or contains(kind, "virtualmachine") or contains(kind, "virtual-machine") or contains(kind, "actions") or contains(kind, "metrics") or contains(kind, "backup") or contains(kind, "snapshot") or contains(kind, "firewall") or contains(kind, "monarx") or contains(kind, "template") or contains(kind, "data-center") or contains(kind, "post-install")) return "hostinger-vps";
-    if (contains(kind, "reach")) return "reach";
-    if (contains(kind, "ecommerce")) return "ecommerce";
-    return "other-hostinger";
-}
-
-fn contains(haystack: []const u8, needle: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(haystack, needle) != null;
 }
 
 test "provider filter parser accepts evidence scopes" {
@@ -1147,7 +368,7 @@ test "evidence read model summarizes and redacts event details" {
     defer tmp.cleanup();
     const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudio-app-evidence.db", .{tmp.sub_path});
     defer allocator.free(db_path);
-    var db = try Db.open(std.testing.io, db_path);
+    var db = try db_store.Db.open(std.testing.io, db_path);
     defer db.close();
     try db.initSchema();
 
