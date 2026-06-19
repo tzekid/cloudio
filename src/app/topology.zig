@@ -50,7 +50,7 @@ pub const Topology = struct {
         const normalized = options.normalized();
         var rows = try ctx.db.topologyRows(ctx.gpa, normalized.limit);
         errdefer rows.deinit(ctx.gpa);
-        try hydrateInferredServices(ctx, &rows);
+        try hydrateDerivedRuntime(ctx, &rows);
         return .{
             .options = normalized,
             .rows = rows,
@@ -401,21 +401,91 @@ fn issueCount(row: db_store.TopologyRow) usize {
     return count;
 }
 
-fn hydrateInferredServices(ctx: Context, rows: *db_store.TopologyRows) !void {
+fn hydrateDerivedRuntime(ctx: Context, rows: *db_store.TopologyRows) !void {
     var services = try ctx.db.serviceList(ctx.gpa);
     defer services.deinit(ctx.gpa);
+    var containers = try ctx.db.containerList(ctx.gpa);
+    defer containers.deinit(ctx.gpa);
 
     for (rows.items) |*row| {
-        const inferred = serviceNameFromSocketProcess(row.socket_process) orelse continue;
-        if (row.service.len == 0) try replaceOwned(ctx.gpa, &row.service, inferred);
-        if (row.service_state.len == 0 and std.mem.eql(u8, row.service, inferred)) {
+        const socket_service = serviceNameFromSocketProcess(row.socket_process);
+        if (row.service.len == 0) {
+            if (socket_service) |inferred| {
+                try replaceOwned(ctx.gpa, &row.service, inferred);
+            } else if (try projectServiceState(ctx.gpa, services.items, row.project)) |match| {
+                defer match.deinit(ctx.gpa);
+                try replaceOwned(ctx.gpa, &row.service, match.name);
+                try replaceOwned(ctx.gpa, &row.service_state, match.state);
+            }
+        }
+        if (row.service_state.len == 0 and row.service.len != 0) {
             if (serviceStateFor(services.items, row.service)) |state| {
                 try replaceOwned(ctx.gpa, &row.service_state, state);
-            } else {
+            } else if (socket_service != null and std.mem.eql(u8, row.service, socket_service.?)) {
                 try replaceOwned(ctx.gpa, &row.service_state, "observed");
             }
         }
+        if (row.container.len == 0) {
+            if (projectContainer(rows.items, containers.items, row.project)) |match| {
+                try replaceOwned(ctx.gpa, &row.container, match.name);
+                try replaceOwned(ctx.gpa, &row.container_status, match.value);
+            }
+        }
     }
+}
+
+const ServiceMatch = struct {
+    name: []u8,
+    state: []u8,
+
+    fn deinit(self: ServiceMatch, allocator: Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.state);
+    }
+};
+
+fn projectServiceState(allocator: Allocator, rows: []const db_store.NameValueRow, project: []const u8) !?ServiceMatch {
+    if (project.len == 0) return null;
+    const candidate = try std.fmt.allocPrint(allocator, "{s}.service", .{project});
+    errdefer allocator.free(candidate);
+    if (serviceStateFor(rows, candidate)) |state| {
+        return .{
+            .name = candidate,
+            .state = try allocator.dupe(u8, state),
+        };
+    }
+    allocator.free(candidate);
+    return null;
+}
+
+fn projectContainer(topology_rows: []const db_store.TopologyRow, containers: []const db_store.NameValueRow, project: []const u8) ?db_store.NameValueRow {
+    if (project.len == 0) return null;
+    var fallback: ?db_store.NameValueRow = null;
+    for (containers) |container| {
+        if (!containerOwnedByProject(topology_rows, container.name, project)) continue;
+        if (stateLooksRunning(container.value)) return container;
+        if (fallback == null) fallback = container;
+    }
+    return fallback;
+}
+
+fn containerOwnedByProject(rows: []const db_store.TopologyRow, container: []const u8, project: []const u8) bool {
+    if (!containerNameMatchesProject(container, project)) return false;
+    for (rows) |row| {
+        if (std.mem.eql(u8, row.source, "docker")) continue;
+        if (row.project.len <= project.len) continue;
+        if (containerNameMatchesProject(container, row.project)) return false;
+    }
+    return true;
+}
+
+fn containerNameMatchesProject(container: []const u8, project: []const u8) bool {
+    if (project.len == 0) return false;
+    if (std.mem.eql(u8, container, project)) return true;
+    if (container.len <= project.len) return false;
+    if (!std.mem.startsWith(u8, container, project)) return false;
+    const separator = container[project.len];
+    return separator == '-' or separator == '_';
 }
 
 fn serviceStateFor(rows: []const db_store.NameValueRow, service: []const u8) ?[]const u8 {
@@ -552,4 +622,47 @@ test "infers systemd service names from socket cgroup process text" {
     try std.testing.expectEqualStrings("plosca-webapp.service", serviceNameFromSocketProcess("users:((\"webapp\",pid=342665,fd=4)) uid:1001 cgroup:/user.slice/user-1001.slice/user@1001.service/app.slice/plosca-webapp.service <->").?);
     try std.testing.expectEqualStrings("docker.service", serviceNameFromSocketProcess("ino:19571 sk:3 cgroup:/system.slice/docker.service <->").?);
     try std.testing.expect(serviceNameFromSocketProcess("users:((\"caddy\",pid=1,fd=3))") == null);
+}
+
+test "topology hydrates project runtime from services and compose containers" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/cloudio-topology-runtime.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    try db.upsertProject("plausible", "compose", "/home/kid/Projects/plausible/compose.yml", null, null, null, null, null);
+    try db.upsertProject("plausible-ce", "compose", "/home/kid/Projects/plausible-ce/compose.yml", null, null, null, null, null);
+    try db.upsertProject("plausible-ce-plausible-1", "docker", null, null, null, null, "plausible-ce-plausible-1", null);
+    try db.upsertProject("zeroclaw", "compose", "/home/kid/Projects/zeroclaw/docker-compose.yml", null, null, null, null, null);
+    try db.upsertContainer("plausible-ce-plausible-1", "plausible:latest", "Up 2 hours", "127.0.0.1:4248->8000/tcp", "raw");
+    try db.upsertService("zeroclaw.service", "user", "active", "running", "Zeroclaw", "raw");
+
+    const ctx = Context{ .gpa = allocator, .db = &db };
+    var topology = try Topology.load(ctx, .{ .limit = 20 });
+    defer topology.deinit(allocator);
+
+    const plausible = findProject(topology.rows.items, "plausible").?;
+    try std.testing.expectEqual(RowStatus.project_only, rowStatus(plausible));
+    try std.testing.expectEqualStrings("", plausible.container);
+
+    const plausible_ce = findProject(topology.rows.items, "plausible-ce").?;
+    try std.testing.expectEqual(RowStatus.healthy, rowStatus(plausible_ce));
+    try std.testing.expectEqualStrings("plausible-ce-plausible-1", plausible_ce.container);
+    try std.testing.expectEqualStrings("Up 2 hours", plausible_ce.container_status);
+
+    const zeroclaw = findProject(topology.rows.items, "zeroclaw").?;
+    try std.testing.expectEqual(RowStatus.healthy, rowStatus(zeroclaw));
+    try std.testing.expectEqualStrings("zeroclaw.service", zeroclaw.service);
+    try std.testing.expectEqualStrings("active", zeroclaw.service_state);
+}
+
+fn findProject(rows: []const db_store.TopologyRow, project: []const u8) ?db_store.TopologyRow {
+    for (rows) |row| {
+        if (std.mem.eql(u8, row.project, project)) return row;
+    }
+    return null;
 }
