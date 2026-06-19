@@ -17,9 +17,14 @@ pub const Selection = struct {
     caddy: bool = true,
     system: bool = true,
     projects: bool = true,
+    dashboard: bool = false,
 
     pub fn all() Selection {
         return .{};
+    }
+
+    pub fn dashboardProfile() Selection {
+        return .{ .dashboard = true };
     }
 
     pub fn none() Selection {
@@ -33,6 +38,7 @@ pub const Selection = struct {
     }
 
     pub fn label(self: Selection) []const u8 {
+        if (self.dashboard) return "dashboard";
         if (self.cloudflare and self.hostinger and self.caddy and self.system and self.projects) return "all";
         return "selected";
     }
@@ -63,8 +69,20 @@ pub const Context = struct {
 
 pub fn run(ctx: Context, selection: Selection) !void {
     const start_snapshot_id = try ctx.db.latestSnapshotId();
-    if (selection.cloudflare) try collector_cloudflare.collectAll(ctx.io, ctx.gpa, ctx.cloudflare_auth, ctx.domains, ctx.db);
-    if (selection.hostinger) try collector_hostinger.collectAll(ctx.io, ctx.gpa, ctx.hostinger_token, ctx.domains, ctx.db);
+    if (selection.cloudflare) {
+        if (selection.dashboard) {
+            try collector_cloudflare.collectDashboard(ctx.io, ctx.gpa, ctx.cloudflare_auth, ctx.domains, ctx.db);
+        } else {
+            try collector_cloudflare.collectAll(ctx.io, ctx.gpa, ctx.cloudflare_auth, ctx.domains, ctx.db);
+        }
+    }
+    if (selection.hostinger) {
+        if (selection.dashboard) {
+            try collector_hostinger.collectDashboard(ctx.io, ctx.gpa, ctx.hostinger_token, ctx.db);
+        } else {
+            try collector_hostinger.collectAll(ctx.io, ctx.gpa, ctx.hostinger_token, ctx.domains, ctx.db);
+        }
+    }
     if (selection.caddy) try collector_caddy.collect(ctx.io, ctx.gpa, ctx.caddy_paths, ctx.db);
     if (selection.system) try collector_system.collect(ctx.io, ctx.gpa, ctx.db);
     if (selection.projects) try collector_projects.collect(ctx.io, ctx.gpa, ctx.projects_root, ctx.db);
@@ -98,6 +116,7 @@ fn writeRefreshLog(ctx: Context, selection: Selection, start_snapshot_id: i64) !
 
 test "refresh selection labels all versus selected" {
     try std.testing.expectEqualStrings("all", Selection.all().label());
+    try std.testing.expectEqualStrings("dashboard", Selection.dashboardProfile().label());
     try std.testing.expectEqualStrings("selected", Selection.none().label());
     try std.testing.expectEqualStrings("selected", (Selection{ .projects = false }).label());
 }

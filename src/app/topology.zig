@@ -62,33 +62,7 @@ pub const Topology = struct {
     }
 
     pub fn summary(self: Topology) Summary {
-        var out = Summary{ .total = self.rows.items.len };
-        for (self.rows.items) |row| {
-            switch (rowStatus(row)) {
-                .healthy => out.healthy += 1,
-                .degraded => out.degraded += 1,
-                .dns_only => out.dns_only += 1,
-                .local_only => out.local_only += 1,
-                .project_only => out.project_only += 1,
-            }
-            if (row.dns_name.len != 0) out.dns += 1;
-            if (row.caddy_source.len != 0 or row.upstream.len != 0) out.caddy += 1;
-            if (row.project.len != 0) out.projects += 1;
-            if (row.socket_state.len != 0) out.sockets += 1;
-            if (row.service_state.len != 0) out.services += 1;
-            if (row.container_status.len != 0) out.containers += 1;
-            switch (dnsMatch(row)) {
-                .direct => out.direct_dns += 1,
-                .wildcard => out.wildcard_dns += 1,
-                .none => {},
-            }
-            if (isCaddyWithoutDns(row)) out.caddy_without_dns += 1;
-            if (isUpstreamWithoutSocket(row)) out.upstream_without_socket += 1;
-            if (isProjectWithoutRuntime(row)) out.project_without_runtime += 1;
-            if (isServiceNotRunning(row)) out.service_not_running += 1;
-            if (isContainerNotRunning(row)) out.container_not_running += 1;
-        }
-        return out;
+        return summarizeRows(self.rows.items);
     }
 
     pub fn writeText(self: Topology, writer: anytype) !void {
@@ -173,7 +147,37 @@ fn writeRowText(row: db_store.TopologyRow, writer: anytype) !void {
     try writer.writeByte('\n');
 }
 
-fn writeSummaryJson(summary: Summary, writer: anytype) !void {
+pub fn summarizeRows(rows: []const db_store.TopologyRow) Summary {
+    var out = Summary{ .total = rows.len };
+    for (rows) |row| {
+        switch (rowStatus(row)) {
+            .healthy => out.healthy += 1,
+            .degraded => out.degraded += 1,
+            .dns_only => out.dns_only += 1,
+            .local_only => out.local_only += 1,
+            .project_only => out.project_only += 1,
+        }
+        if (row.dns_name.len != 0) out.dns += 1;
+        if (row.caddy_source.len != 0 or row.upstream.len != 0) out.caddy += 1;
+        if (row.project.len != 0) out.projects += 1;
+        if (row.socket_state.len != 0) out.sockets += 1;
+        if (row.service_state.len != 0) out.services += 1;
+        if (row.container_status.len != 0) out.containers += 1;
+        switch (dnsMatch(row)) {
+            .direct => out.direct_dns += 1,
+            .wildcard => out.wildcard_dns += 1,
+            .none => {},
+        }
+        if (isCaddyWithoutDns(row)) out.caddy_without_dns += 1;
+        if (isUpstreamWithoutSocket(row)) out.upstream_without_socket += 1;
+        if (isProjectWithoutRuntime(row)) out.project_without_runtime += 1;
+        if (isServiceNotRunning(row)) out.service_not_running += 1;
+        if (isContainerNotRunning(row)) out.container_not_running += 1;
+    }
+    return out;
+}
+
+pub fn writeSummaryJson(summary: Summary, writer: anytype) !void {
     try writer.writeByte('{');
     try app_render.writeJsonIntField(writer, "total", summary.total, true);
     try writer.writeAll("\"statuses\":{");
@@ -203,7 +207,7 @@ fn writeSummaryJson(summary: Summary, writer: anytype) !void {
     try writer.writeByte('}');
 }
 
-fn writeRowJson(row: db_store.TopologyRow, writer: anytype) !void {
+pub fn writeRowJson(row: db_store.TopologyRow, writer: anytype) !void {
     try writer.writeByte('{');
     try app_render.writeJsonStringField(writer, "host", row.host, true);
     try app_render.writeJsonStringField(writer, "status", rowStatus(row).label(), true);
@@ -237,14 +241,14 @@ fn writeRowJson(row: db_store.TopologyRow, writer: anytype) !void {
     try writer.writeByte('}');
 }
 
-const RowStatus = enum {
+pub const RowStatus = enum {
     healthy,
     degraded,
     dns_only,
     local_only,
     project_only,
 
-    fn label(self: RowStatus) []const u8 {
+    pub fn label(self: RowStatus) []const u8 {
         return switch (self) {
             .healthy => "healthy",
             .degraded => "degraded",
@@ -255,12 +259,12 @@ const RowStatus = enum {
     }
 };
 
-const DnsMatch = enum {
+pub const DnsMatch = enum {
     none,
     direct,
     wildcard,
 
-    fn label(self: DnsMatch) []const u8 {
+    pub fn label(self: DnsMatch) []const u8 {
         return switch (self) {
             .none => "none",
             .direct => "direct",
@@ -269,44 +273,44 @@ const DnsMatch = enum {
     }
 };
 
-fn hasDns(row: db_store.TopologyRow) bool {
+pub fn hasDns(row: db_store.TopologyRow) bool {
     return row.dns_name.len != 0;
 }
 
-fn hasCaddy(row: db_store.TopologyRow) bool {
+pub fn hasCaddy(row: db_store.TopologyRow) bool {
     return row.caddy_source.len != 0 or row.upstream.len != 0;
 }
 
-fn hasProject(row: db_store.TopologyRow) bool {
+pub fn hasProject(row: db_store.TopologyRow) bool {
     return row.project.len != 0;
 }
 
-fn hasSocket(row: db_store.TopologyRow) bool {
+pub fn hasSocket(row: db_store.TopologyRow) bool {
     return row.socket_state.len != 0;
 }
 
-fn hasService(row: db_store.TopologyRow) bool {
+pub fn hasService(row: db_store.TopologyRow) bool {
     return row.service.len != 0;
 }
 
-fn hasContainer(row: db_store.TopologyRow) bool {
+pub fn hasContainer(row: db_store.TopologyRow) bool {
     return row.container.len != 0;
 }
 
-fn dnsMatch(row: db_store.TopologyRow) DnsMatch {
+pub fn dnsMatch(row: db_store.TopologyRow) DnsMatch {
     if (row.dns_name.len == 0) return .none;
     if (std.mem.startsWith(u8, row.dns_name, "*.")) return .wildcard;
     return .direct;
 }
 
-fn rowExposure(row: db_store.TopologyRow) []const u8 {
+pub fn rowExposure(row: db_store.TopologyRow) []const u8 {
     if (hasDns(row)) return "public";
     if (hasCaddy(row)) return "local";
     if (hasProject(row) or hasService(row) or hasContainer(row)) return "internal";
     return "unknown";
 }
 
-fn rowStatus(row: db_store.TopologyRow) RowStatus {
+pub fn rowStatus(row: db_store.TopologyRow) RowStatus {
     if (isUpstreamWithoutSocket(row) or isServiceNotRunning(row) or isContainerNotRunning(row)) return .degraded;
     if (isDnsOnly(row)) return .dns_only;
     if (isCaddyWithoutDns(row)) return .local_only;
@@ -390,7 +394,11 @@ fn writeIssueJson(writer: anytype, first: *bool, present: bool, label: []const u
     try app_render.writeJsonString(writer, label);
 }
 
-fn issueCount(row: db_store.TopologyRow) usize {
+pub fn rowHasIssues(row: db_store.TopologyRow) bool {
+    return issueCount(row) != 0;
+}
+
+pub fn issueCount(row: db_store.TopologyRow) usize {
     var count: usize = 0;
     if (isDnsOnly(row)) count += 1;
     if (isCaddyWithoutDns(row)) count += 1;

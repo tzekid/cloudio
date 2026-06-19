@@ -13,8 +13,10 @@ const core_config = @import("core_config");
 const core_version = @import("core_version");
 const cli_args = @import("cli_args");
 const cli_caddy = @import("cli_caddy");
+const cli_actions = @import("cli_actions");
 const cli_cloudflare = @import("cli_cloudflare");
 const cli_coverage = @import("cli_coverage");
+const cli_dashboard = @import("cli_dashboard");
 const cli_evidence = @import("cli_evidence");
 const cli_hostinger = @import("cli_hostinger");
 const cli_inventory = @import("cli_inventory");
@@ -23,6 +25,7 @@ const cli_render = @import("cli_render");
 const cli_route = @import("cli_route");
 const cli_routes = @import("cli_routes");
 const cli_security = @import("cli_security");
+const cli_serve = @import("cli_serve");
 const cli_system = @import("cli_system");
 const cli_topology = @import("cli_topology");
 const Io = std.Io;
@@ -55,6 +58,12 @@ pub fn run(init: std.process.Init) !void {
         try commandRefresh(init.io, init.gpa, cfg, &db, args[2..]);
     } else if (std.mem.eql(u8, cmd, "overview")) {
         try commandOverview(init.io, init.gpa, &db, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "dashboard")) {
+        try cli_dashboard.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
+            .db = &db,
+        }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "topology")) {
         try cli_topology.run(.{
             .io = init.io,
@@ -71,6 +80,12 @@ pub fn run(init: std.process.Init) !void {
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "inventory")) {
         try cli_inventory.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
+            .db = &db,
+        }, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "actions")) {
+        try cli_actions.run(.{
             .io = init.io,
             .gpa = init.gpa,
             .db = &db,
@@ -143,6 +158,12 @@ pub fn run(init: std.process.Init) !void {
             .projects_root = cfg.projects_root,
             .db = &db,
         }, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "serve")) {
+        try cli_serve.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
+            .db = &db,
+        }, args[2..]);
     } else {
         std.debug.print("unknown command: {s}\n\n", .{cmd});
         usage();
@@ -157,8 +178,11 @@ fn usage() void {
         \\Usage:
         \\  cloudio init
         \\  cloudio doctor [--json|--format json]
-        \\  cloudio refresh [--all|--cloudflare|--hostinger|--caddy|--system|--projects]
+        \\  cloudio refresh [dashboard|--all|--cloudflare|--hostinger|--caddy|--system|--projects]
         \\  cloudio overview [--json|--format json]
+        \\  cloudio dashboard [--domain <domain>] [--issues] [--section domains|vps|system|caddy|providers] [--limit <n>] --json
+        \\  cloudio serve [--host 127.0.0.1] [--port 9328] [--domain <domain>] [--issues] [--section domains|vps|system|caddy|providers]
+        \\  cloudio actions plan [--provider <provider>] [--domain <domain>] [--target <target>] --json
         \\  cloudio topology [--limit <n>] [--json|--format json]
         \\  cloudio history|audit [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json|--format json]
         \\  cloudio evidence [events|matrix|routes|coverage|capture-summary] [all|cloudflare|hostinger|caddy|system|projects|route] [--provider <scope>] [--limit <n>] [--json|--format json]
@@ -449,6 +473,7 @@ fn refreshSelectionFromArgs(args: []const []const u8) app_refresh.Selection {
     if (args.len == 0) return .all();
     var out = app_refresh.Selection.none();
     for (args) |arg| {
+        if (std.mem.eql(u8, arg, "dashboard")) return .dashboardProfile();
         if (std.mem.eql(u8, arg, "--all")) return .all();
         if (std.mem.eql(u8, arg, "--cloudflare")) out.cloudflare = true;
         if (std.mem.eql(u8, arg, "--hostinger")) out.hostinger = true;

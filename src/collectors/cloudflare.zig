@@ -185,6 +185,115 @@ pub fn collectAll(io: Io, gpa: Allocator, auth: Auth, domains: []const []const u
     }
 }
 
+pub fn collectDashboard(io: Io, gpa: Allocator, auth: Auth, domains: []const []const u8, db: *Db) !void {
+    var accounts = try collectAccountListOnly(io, gpa, auth, db, false);
+    accounts.deinit(gpa);
+    for (domains) |domain| {
+        var zone = try collectZoneDashboard(io, gpa, auth, db, domain, false);
+        zone.deinit(gpa);
+        var dns = try collectDns(io, gpa, auth, db, domain, false);
+        dns.deinit(gpa);
+    }
+}
+
+pub fn collectAccountListOnly(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_output: bool) !Output {
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "accounts", null, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getAccounts(io, gpa);
+    defer body.deinit(gpa);
+    const redacted = try storeCloudflareResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "accounts",
+        .summary_label = "account list",
+        .endpoint = provider_cloudflare.accounts_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    try persistAccountRows(gpa, db, redacted);
+    return .{ .text = if (capture_output) redacted else null };
+}
+
+fn recordDashboardCollectorError(gpa: Allocator, db: *Db, source: []const u8, kind: []const u8, target: []const u8, err: anyerror) !void {
+    const summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ kind, @errorName(err) });
+    defer gpa.free(summary);
+    _ = try db.insertSnapshot(source, kind, target, "error", summary, null, null);
+}
+
+pub fn collectZoneDashboard(io: Io, gpa: Allocator, auth: Auth, db: *Db, domain: []const u8, capture_output: bool) !Output {
+    const client = clientFromAuth(auth) catch {
+        return try collector_capture.skipped(gpa, db, "cloudflare", "zone", domain, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);
+    };
+    const body = try client.getZones(io, gpa, domain);
+    defer body.deinit(gpa);
+    const redacted = try storeCloudflareResponse(gpa, db, .{
+        .provider = "cloudflare",
+        .kind = "zone",
+        .target = domain,
+        .summary_label = "zone details",
+        .endpoint = provider_cloudflare.zones_path,
+        .status = body.status,
+        .body = body.body,
+    });
+    defer if (!capture_output) gpa.free(redacted);
+    try persistZoneRows(gpa, db, redacted);
+
+    if (try provider_cloudflare_models.zoneIdFromResponse(gpa, redacted)) |zone_id| {
+        defer gpa.free(zone_id);
+        const zone_endpoints = [_]ZoneEndpoint{
+            .dnssec,
+            .dns_settings,
+            .settings,
+            .settings_ssl_automatic_mode,
+        };
+        for (zone_endpoints) |endpoint| {
+            var out = collectZoneEndpoint(io, gpa, auth, db, domain, endpoint, false) catch |err| {
+                try recordDashboardCollectorError(gpa, db, "cloudflare", endpoint.label(), domain, err);
+                continue;
+            };
+            out.deinit(gpa);
+        }
+
+        const settings = [_][]const u8{
+            "ssl",
+            "security_level",
+            "cache_level",
+            "always_use_https",
+            "automatic_https_rewrites",
+            "min_tls_version",
+            "tls_1_3",
+            "browser_cache_ttl",
+            "development_mode",
+        };
+        for (settings) |setting_id| {
+            var out = collectZoneSetting(io, gpa, auth, db, domain, setting_id, false) catch |err| {
+                try recordDashboardCollectorError(gpa, db, "cloudflare", setting_id, domain, err);
+                continue;
+            };
+            out.deinit(gpa);
+        }
+
+        const cache_security_endpoints = [_]ZoneLifecycleReadEndpoint{
+            .cache_reserve,
+            .regional_tiered_cache,
+            .argo_tiered_caching,
+            .smart_tiered_cache,
+            .origin_post_quantum,
+            .smart_shield,
+        };
+        for (cache_security_endpoints) |endpoint| {
+            var out = collectZoneLifecycleReadEndpoint(io, gpa, auth, db, zone_id, endpoint, null, false) catch |err| {
+                try recordDashboardCollectorError(gpa, db, "cloudflare", endpoint.label(), domain, err);
+                continue;
+            };
+            out.deinit(gpa);
+        }
+    }
+
+    return .{ .text = if (capture_output) redacted else null };
+}
+
 pub fn collectAccounts(io: Io, gpa: Allocator, auth: Auth, db: *Db, capture_output: bool) !Output {
     const client = clientFromAuth(auth) catch {
         return try collector_capture.skipped(gpa, db, "cloudflare", "account", null, "missing Cloudflare credentials", "Cloudflare credentials missing", capture_output);

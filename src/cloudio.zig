@@ -21,11 +21,13 @@ pub const db = struct {
 };
 
 pub const app = struct {
+    pub const actions = @import("app_actions");
     pub const caddy = @import("app_caddy");
     pub const cloudflare = @import("app_cloudflare");
     pub const cloudflare_overview = @import("app_cloudflare_overview");
     pub const coverage = @import("app_coverage");
     pub const database = @import("app_database");
+    pub const dashboard = @import("app_dashboard");
     pub const doctor = @import("app_doctor");
     pub const evidence = @import("app_evidence");
     pub const evidence_common = @import("app_evidence_common");
@@ -47,6 +49,7 @@ pub const app = struct {
     pub const refresh = @import("app_refresh");
     pub const route_catalog = @import("app_route_catalog");
     pub const security = @import("app_security");
+    pub const serve = @import("app_serve");
     pub const system = @import("app_system");
     pub const topology = @import("app_topology");
 };
@@ -86,6 +89,7 @@ test "facade exposes stable integration modules" {
     _ = core.config.Config;
     _ = core.fs.ensureParentDir;
     _ = core.output.Output;
+    _ = app.actions.Context;
     _ = app.caddy.Context;
     _ = app.cloudflare.Context;
     _ = app.cloudflare.AccountEndpoint;
@@ -97,6 +101,7 @@ test "facade exposes stable integration modules" {
     _ = app.coverage.SourceOptions;
     _ = app.coverage.SourceReport;
     _ = app.database.openInitialized;
+    _ = app.dashboard.Dashboard;
     _ = app.doctor.Report;
     _ = app.evidence.Evidence;
     _ = app.evidence.Matrix;
@@ -128,6 +133,7 @@ test "facade exposes stable integration modules" {
     _ = app.route_catalog.Catalog;
     _ = app.route_catalog.GroupReport;
     _ = app.security.Report;
+    _ = app.serve.Options;
     _ = app.system.Context;
     _ = app.topology.Topology;
     _ = db.schema.Migration;

@@ -126,6 +126,44 @@ pub fn collectAll(io: Io, gpa: Allocator, token: ?[]const u8, domains: []const [
     }
 }
 
+pub fn collectDashboard(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db) !void {
+    var vps_output = try collectVps(io, gpa, token, db, false);
+    vps_output.deinit(gpa);
+
+    const dashboard_inventory_endpoints = [_]VpsInventoryEndpoint{
+        .firewalls,
+        .public_keys,
+    };
+    for (dashboard_inventory_endpoints) |endpoint| {
+        var inventory = try collectVpsInventoryEndpoint(io, gpa, token, db, endpoint, false);
+        inventory.deinit(gpa);
+    }
+
+    var ids = std.ArrayList([]u8).empty;
+    defer {
+        for (ids.items) |id| gpa.free(id);
+        ids.deinit(gpa);
+    }
+    try dbHostingerIds(gpa, db, &ids);
+    for (ids.items) |id| {
+        var details = try collectVpsDetails(io, gpa, token, db, id, false);
+        details.deinit(gpa);
+        const vm_endpoints = [_]VmEndpoint{
+            .metrics,
+            .actions,
+            .public_keys,
+            .backups,
+            .snapshot,
+            .monarx,
+        };
+        for (vm_endpoints) |endpoint| {
+            var output = try collectVmEndpoint(io, gpa, token, db, id, endpoint, false);
+            output.deinit(gpa);
+        }
+        try collectDockerProjectGroup(io, gpa, token, db, id);
+    }
+}
+
 pub fn collectVps(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, capture_output: bool) !Output {
     const client = clientFromToken(token) catch {
         return try collector_capture.skipped(gpa, db, "hostinger", "vps", null, "missing Hostinger API token", "Hostinger token missing", capture_output);
