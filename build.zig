@@ -86,6 +86,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/providers/typed_routes.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_json", .module = core_json_mod },
+        },
     });
     const provider_capabilities_mod = b.createModule(.{
         .root_source_file = b.path("src/providers/capabilities.zig"),
@@ -152,6 +155,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "db_store", .module = db_store_mod },

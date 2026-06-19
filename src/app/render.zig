@@ -16,14 +16,11 @@ pub const AuditEventJsonOptions = struct {
 };
 
 pub fn writeJsonStringField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
+    try core_json.writeStringField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try writeJsonStringField(writer, name, value, trailing_comma);
+    try core_json.writeStringField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonString(writer: anytype, value: []const u8) !void {
@@ -31,73 +28,35 @@ pub fn writeJsonString(writer: anytype, value: []const u8) !void {
 }
 
 pub fn writeJsonIntField(writer: anytype, name: []const u8, value: anytype, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try writer.print("{d}", .{value});
-    if (trailing_comma) try writer.writeByte(',');
+    try core_json.writeIntField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try writer.writeAll(if (value) "true" else "false");
-    if (trailing_comma) try writer.writeByte(',');
+    try core_json.writeBoolField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.print(":{d}", .{value});
-    if (trailing_comma) try writer.writeByte(',');
+    try core_json.writeCountField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonNullableStringField(writer: anytype, name: []const u8, value: ?[]const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |text| {
-        try core_json.writeString(writer, text);
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
+    try core_json.writeNullableStringField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonNullableCountField(writer: anytype, name: []const u8, value: ?usize, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |count| {
-        try writer.print("{d}", .{count});
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
+    try core_json.writeNullableCountField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonNullableBoolField(writer: anytype, name: []const u8, value: ?bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |flag| {
-        try writer.writeAll(if (flag) "true" else "false");
-    } else {
-        try writer.writeAll("null");
-    }
-    if (trailing_comma) try writer.writeByte(',');
+    try core_json.writeNullableBoolField(writer, name, value, trailing_comma);
 }
 
 pub fn writeJsonStringArray(writer: anytype, values: []const []const u8) !void {
-    try writer.writeByte('[');
-    for (values, 0..) |value, index| {
-        if (index != 0) try writer.writeByte(',');
-        try core_json.writeString(writer, value);
-    }
-    try writer.writeByte(']');
+    try core_json.writeStringArray(writer, values);
 }
 
 pub fn writeMaybeJsonComma(writer: anytype, first: *bool) !void {
-    if (first.*) {
-        first.* = false;
-    } else {
-        try writer.writeByte(',');
-    }
+    try core_json.writeMaybeComma(writer, first);
 }
 
 pub fn writeShellArg(writer: anytype, value: []const u8) !void {

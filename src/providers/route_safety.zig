@@ -72,32 +72,18 @@ pub fn writeRouteSafetyPolicyJson(writer: anytype, name: []const u8, route: prov
 
 fn writePolicyValueJson(writer: anytype, value: RouteSafetyPolicy) !void {
     try writer.writeByte('{');
-    try writeJsonField(writer, "execution", value.execution, true);
-    try writeJsonField(writer, "write_policy", value.write_policy, true);
-    try writeBoolField(writer, "live_provider_request", value.live_provider_request, true);
-    try writeBoolField(writer, "mutation", value.mutation, true);
-    try writeBoolField(writer, "write_enabled", value.write_enabled, true);
-    try writeBoolField(writer, "write_blocked", value.write_blocked, true);
-    try writeBoolField(writer, "dry_run_only", value.dry_run_only, true);
-    try writeBoolField(writer, "live_read_supported", value.live_read_supported, true);
-    try writeBoolField(writer, "diagnostic_read_supported", value.diagnostic_read_supported, true);
-    try writeBoolField(writer, "dry_run_supported", value.dry_run_supported, true);
-    try writeJsonField(writer, "reason", value.reason, false);
+    try core_json.writeStringField(writer, "execution", value.execution, true);
+    try core_json.writeStringField(writer, "write_policy", value.write_policy, true);
+    try core_json.writeBoolField(writer, "live_provider_request", value.live_provider_request, true);
+    try core_json.writeBoolField(writer, "mutation", value.mutation, true);
+    try core_json.writeBoolField(writer, "write_enabled", value.write_enabled, true);
+    try core_json.writeBoolField(writer, "write_blocked", value.write_blocked, true);
+    try core_json.writeBoolField(writer, "dry_run_only", value.dry_run_only, true);
+    try core_json.writeBoolField(writer, "live_read_supported", value.live_read_supported, true);
+    try core_json.writeBoolField(writer, "diagnostic_read_supported", value.diagnostic_read_supported, true);
+    try core_json.writeBoolField(writer, "dry_run_supported", value.dry_run_supported, true);
+    try core_json.writeStringField(writer, "reason", value.reason, false);
     try writer.writeByte('}');
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
-fn writeBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try writer.writeAll(if (value) "true" else "false");
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 test "classifies live read plans as non-mutating plan-only output" {

@@ -36,15 +36,15 @@ pub fn captureMetadataJson(gpa: Allocator, route: provider_routes.Route, capture
     defer out.deinit();
     const writer = &out.writer;
     try writer.writeAll("{");
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "operation", route.operation_id orelse route.path_template, true);
+    try core_json.writeStringField(writer, "provider", route.provider.name(), true);
+    try core_json.writeStringField(writer, "operation", route.operation_id orelse route.path_template, true);
     if (route.operation_id) |id| {
-        try writeJsonField(writer, "operation_id", id, true);
+        try core_json.writeStringField(writer, "operation_id", id, true);
     } else {
         try writer.writeAll("\"operation_id\":null,");
     }
-    try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "endpoint", capture.endpoint, true);
+    try core_json.writeStringField(writer, "method", route.method.name(), true);
+    try core_json.writeStringField(writer, "endpoint", capture.endpoint, true);
     try writer.writeAll("\"snapshot_id\":");
     try writer.print("{d}", .{capture.snapshot_id});
     try writer.writeByte(',');
@@ -57,9 +57,9 @@ pub fn captureMetadataJson(gpa: Allocator, route: provider_routes.Route, capture
     try writer.print("{d}", .{capture.typed_rows});
     try writer.writeByte(',');
     try writer.writeAll("\"snapshot\":{");
-    try writeJsonField(writer, "source", route.provider.name(), true);
-    try writeJsonField(writer, "kind", capture.kind, true);
-    try writeJsonField(writer, "target", capture.target, false);
+    try core_json.writeStringField(writer, "source", route.provider.name(), true);
+    try core_json.writeStringField(writer, "kind", capture.kind, true);
+    try core_json.writeStringField(writer, "target", capture.target, false);
     try writer.writeAll("},");
     try writer.writeAll("\"read\":");
     try writer.writeAll(read_json);
@@ -72,14 +72,14 @@ pub fn paginatedCaptureMetadataJson(gpa: Allocator, route: provider_routes.Route
     defer out.deinit();
     const writer = &out.writer;
     try writer.writeAll("{");
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "operation", route.operation_id orelse route.path_template, true);
+    try core_json.writeStringField(writer, "provider", route.provider.name(), true);
+    try core_json.writeStringField(writer, "operation", route.operation_id orelse route.path_template, true);
     if (route.operation_id) |id| {
-        try writeJsonField(writer, "operation_id", id, true);
+        try core_json.writeStringField(writer, "operation_id", id, true);
     } else {
         try writer.writeAll("\"operation_id\":null,");
     }
-    try writeJsonField(writer, "method", route.method.name(), true);
+    try core_json.writeStringField(writer, "method", route.method.name(), true);
     try writer.writeAll("\"paginated\":true,");
     try writer.writeAll("\"captured_pages\":");
     try writer.print("{d}", .{pages.len});
@@ -115,14 +115,14 @@ fn writeCapturedPageJson(writer: anytype, page: CapturedPageView) !void {
     try writer.writeAll("{\"page\":");
     try writer.print("{d}", .{page.page});
     try writer.writeByte(',');
-    try writeJsonField(writer, "endpoint", page.endpoint, true);
+    try core_json.writeStringField(writer, "endpoint", page.endpoint, true);
     try writer.writeAll("\"snapshot_id\":");
     try writer.print("{d}", .{page.snapshot_id});
     try writer.writeByte(',');
     try writer.writeAll("\"http_status\":");
     try writer.print("{d}", .{page.http_status});
     try writer.writeByte(',');
-    try writeJsonField(writer, "status_text", page.status_text, true);
+    try core_json.writeStringField(writer, "status_text", page.status_text, true);
     try writer.writeAll("\"body_bytes\":");
     try writer.print("{d}", .{page.body_bytes});
     try writer.writeByte(',');
@@ -133,7 +133,7 @@ fn writeCapturedPageJson(writer: anytype, page: CapturedPageView) !void {
     try writer.print("{d}", .{page.typed_rows});
     try writer.writeByte(',');
     if (page.pagination_envelope) |envelope| {
-        try writeJsonField(writer, "pagination_envelope", envelope, true);
+        try core_json.writeStringField(writer, "pagination_envelope", envelope, true);
     } else {
         try writer.writeAll("\"pagination_envelope\":null,");
     }
@@ -163,13 +163,6 @@ fn typedRowsTotal(pages: []const CapturedPageView) usize {
     var total: usize = 0;
     for (pages) |page| total += page.typed_rows;
     return total;
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 test "renders route capture metadata with nested read metadata and no body content" {

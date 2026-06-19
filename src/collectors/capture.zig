@@ -1,4 +1,5 @@
 const std = @import("std");
+const core_json = @import("core_json");
 const core_output = @import("core_output");
 const core_redact = @import("core_redact");
 const db_store = @import("db_store");
@@ -59,32 +60,17 @@ fn emptyBodyDiagnostic(gpa: Allocator, input: ResponseCapture) ![]u8 {
     try writer.print("{d}", .{@intFromEnum(input.status)});
     try writer.writeAll(",\"message\":\"empty response body from provider\"}],\"messages\":[],\"result\":null,\"diagnostic\":{");
     try writer.writeAll("\"provider\":");
-    try writeJsonString(writer, input.provider);
+    try core_json.writeString(writer, input.provider);
     try writer.writeAll(",\"kind\":");
-    try writeJsonString(writer, input.kind);
+    try core_json.writeString(writer, input.kind);
     try writer.writeAll(",\"endpoint\":");
-    try writeJsonString(writer, input.endpoint);
+    try core_json.writeString(writer, input.endpoint);
     try writer.writeAll(",\"http_status\":");
     try writer.print("{d}", .{@intFromEnum(input.status)});
     try writer.writeAll(",\"status\":");
-    try writeJsonString(writer, net_http.statusText(input.status));
+    try core_json.writeString(writer, net_http.statusText(input.status));
     try writer.writeAll("}}\n");
     return try out.toOwnedSlice();
-}
-
-fn writeJsonString(writer: anytype, value: []const u8) !void {
-    try writer.writeByte('"');
-    for (value) |ch| {
-        switch (ch) {
-            '\\' => try writer.writeAll("\\\\"),
-            '"' => try writer.writeAll("\\\""),
-            '\n' => try writer.writeAll("\\n"),
-            '\r' => try writer.writeAll("\\r"),
-            '\t' => try writer.writeAll("\\t"),
-            else => try writer.writeByte(ch),
-        }
-    }
-    try writer.writeByte('"');
 }
 
 pub fn captureResponse(gpa: Allocator, db: *Db, input: ResponseCapture) !Output {

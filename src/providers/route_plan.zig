@@ -38,18 +38,18 @@ pub fn requestPlanJson(gpa: Allocator, plan: provider_request_plan.RequestPlan) 
     defer out.deinit();
     const writer = &out.writer;
     try writer.writeAll("{");
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "group", route.tag, true);
-    try writeJsonField(writer, "operation", route.operation_id orelse route.path_template, true);
+    try core_json.writeStringField(writer, "provider", route.provider.name(), true);
+    try core_json.writeStringField(writer, "group", route.tag, true);
+    try core_json.writeStringField(writer, "operation", route.operation_id orelse route.path_template, true);
     if (route.operation_id) |id| {
-        try writeJsonField(writer, "operation_id", id, true);
+        try core_json.writeStringField(writer, "operation_id", id, true);
     } else {
         try writer.writeAll("\"operation_id\":null,");
     }
-    try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "path", plan.path, true);
-    try writeJsonField(writer, "url", plan.url, true);
-    try writeJsonField(writer, "support", @tagName(route.support), true);
+    try core_json.writeStringField(writer, "method", route.method.name(), true);
+    try core_json.writeStringField(writer, "path", plan.path, true);
+    try core_json.writeStringField(writer, "url", plan.url, true);
+    try core_json.writeStringField(writer, "support", @tagName(route.support), true);
     try writeSecurityField(writer, "security", route, true);
     try writeDispatchField(writer, "dispatch", route, true);
     try writeRouteParamShapeField(writer, "path_param_shapes", route.path_params, true);
@@ -60,20 +60,13 @@ pub fn requestPlanJson(gpa: Allocator, plan: provider_request_plan.RequestPlan) 
     try writeRequestBodyField(writer, "request_body", route.request_body, true);
     try writeRequestBodyInputField(writer, "request_body_input", route.request_body, request.body, true);
     try writeResponsesField(writer, "responses", route.responses, true);
-    try writeJsonField(writer, "mode", plan.mode.name(), true);
+    try core_json.writeStringField(writer, "mode", plan.mode.name(), true);
     try writer.writeAll("\"will_execute\":");
     try writer.writeAll(if (plan.will_execute) "true," else "false,");
     try provider_route_safety.writeRouteSafetyPolicyJson(writer, "safety_policy", route, plan.safety_kind, true);
-    try writeJsonField(writer, "safety", plan.safety, false);
+    try core_json.writeStringField(writer, "safety", plan.safety, false);
     try writer.writeAll("}");
     return try out.toOwnedSlice();
-}
-
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 fn writeRequestBodyField(writer: anytype, name: []const u8, body: provider_routes.RequestBody, trailing_comma: bool) !void {
@@ -82,8 +75,8 @@ fn writeRequestBodyField(writer: anytype, name: []const u8, body: provider_route
     try writer.writeAll("\"required\":");
     try writer.writeAll(if (body.required) "true" else "false");
     try writer.writeByte(',');
-    try writeStringArrayField(writer, "content_types", body.content_types, true);
-    try writeStringArrayField(writer, "schema_refs", body.schema_refs, false);
+    try core_json.writeStringArrayField(writer, "content_types", body.content_types, true);
+    try core_json.writeStringArrayField(writer, "schema_refs", body.schema_refs, false);
     try writer.writeByte('}');
     if (trailing_comma) try writer.writeByte(',');
 }
@@ -94,7 +87,7 @@ fn writeRouteParamField(writer: anytype, name: []const u8, params: []const provi
     for (params, 0..) |param, index| {
         if (index != 0) try writer.writeByte(',');
         try writer.writeByte('{');
-        try writeJsonField(writer, "name", param.name, true);
+        try core_json.writeStringField(writer, "name", param.name, true);
         try writer.writeAll("\"required\":");
         try writer.writeAll(if (param.required) "true" else "false");
         try writer.writeByte('}');
@@ -147,12 +140,12 @@ fn writeRouteParamShapeField(writer: anytype, name: []const u8, params: []const 
     for (params, 0..) |param, index| {
         if (index != 0) try writer.writeByte(',');
         try writer.writeByte('{');
-        try writeJsonField(writer, "name", param.name, true);
+        try core_json.writeStringField(writer, "name", param.name, true);
         try writer.writeAll("\"required\":");
         try writer.writeAll(if (param.required) "true" else "false");
         try writer.writeByte(',');
         if (param.style) |style| {
-            try writeJsonField(writer, "style", style, true);
+            try core_json.writeStringField(writer, "style", style, true);
         } else {
             try writer.writeAll("\"style\":null,");
         }
@@ -164,10 +157,10 @@ fn writeRouteParamShapeField(writer: anytype, name: []const u8, params: []const 
             try writer.writeAll("\"explode\":null,");
         }
         try writer.writeAll("\"schema\":{");
-        try writeStringArrayField(writer, "schema_refs", param.schema.schema_refs, true);
-        try writeStringArrayField(writer, "types", param.schema.types, true);
-        try writeStringArrayField(writer, "formats", param.schema.formats, true);
-        try writeStringArrayField(writer, "enum_values", param.schema.enum_values, false);
+        try core_json.writeStringArrayField(writer, "schema_refs", param.schema.schema_refs, true);
+        try core_json.writeStringArrayField(writer, "types", param.schema.types, true);
+        try core_json.writeStringArrayField(writer, "formats", param.schema.formats, true);
+        try core_json.writeStringArrayField(writer, "enum_values", param.schema.enum_values, false);
         try writer.writeAll("}}");
     }
     try writer.writeByte(']');
@@ -180,7 +173,7 @@ fn writeHeaderInputField(writer: anytype, name: []const u8, params: []const prov
     for (params, 0..) |param, index| {
         if (index != 0) try writer.writeByte(',');
         try writer.writeByte('{');
-        try writeJsonField(writer, "name", param.name, true);
+        try core_json.writeStringField(writer, "name", param.name, true);
         try writer.writeAll("\"provided\":true}");
     }
     try writer.writeByte(']');
@@ -194,7 +187,7 @@ fn writeRequestBodyInputField(writer: anytype, name: []const u8, body: provider_
     try writer.writeAll(if (input.present) "true" else "false");
     try writer.writeByte(',');
     if (input.content_type) |content_type| {
-        try writeJsonField(writer, "content_type", content_type, true);
+        try core_json.writeStringField(writer, "content_type", content_type, true);
     } else {
         try writer.writeAll("\"content_type\":null,");
     }
@@ -217,21 +210,10 @@ fn writeResponsesField(writer: anytype, name: []const u8, responses: []const pro
 
 fn writeResponseValue(writer: anytype, response: provider_routes.Response) !void {
     try writer.writeByte('{');
-    try writeJsonField(writer, "status", response.status, true);
-    try writeStringArrayField(writer, "content_types", response.content_types, true);
-    try writeStringArrayField(writer, "schema_refs", response.schema_refs, false);
+    try core_json.writeStringField(writer, "status", response.status, true);
+    try core_json.writeStringArrayField(writer, "content_types", response.content_types, true);
+    try core_json.writeStringArrayField(writer, "schema_refs", response.schema_refs, false);
     try writer.writeByte('}');
-}
-
-fn writeStringArrayField(writer: anytype, name: []const u8, values: []const []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":[");
-    for (values, 0..) |value, index| {
-        if (index != 0) try writer.writeByte(',');
-        try core_json.writeString(writer, value);
-    }
-    try writer.writeByte(']');
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 test "plans bodyless read routes without executing HTTP" {

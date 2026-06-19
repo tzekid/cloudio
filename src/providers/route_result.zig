@@ -60,20 +60,20 @@ pub fn readRouteResultMetadataJson(gpa: Allocator, route: provider_routes.Route,
     defer out.deinit();
     const writer = &out.writer;
     try writer.writeAll("{");
-    try writeJsonField(writer, "provider", route.provider.name(), true);
-    try writeJsonField(writer, "group", route.tag, true);
-    try writeJsonField(writer, "operation", route.operation_id orelse route.path_template, true);
+    try core_json.writeStringField(writer, "provider", route.provider.name(), true);
+    try core_json.writeStringField(writer, "group", route.tag, true);
+    try core_json.writeStringField(writer, "operation", route.operation_id orelse route.path_template, true);
     if (route.operation_id) |id| {
-        try writeJsonField(writer, "operation_id", id, true);
+        try core_json.writeStringField(writer, "operation_id", id, true);
     } else {
         try writer.writeAll("\"operation_id\":null,");
     }
-    try writeJsonField(writer, "method", route.method.name(), true);
-    try writeJsonField(writer, "path_template", route.path_template, true);
+    try core_json.writeStringField(writer, "method", route.method.name(), true);
+    try core_json.writeStringField(writer, "path_template", route.path_template, true);
     try writer.writeAll("\"http_status\":");
     try writer.print("{d}", .{result.statusCode()});
     try writer.writeByte(',');
-    try writeJsonField(writer, "status_text", result.statusText(), true);
+    try core_json.writeStringField(writer, "status_text", result.statusText(), true);
     if (result.matched_response) |matched| {
         try writeResponseField(writer, "matched_response", matched.*, true);
     } else {
@@ -87,13 +87,6 @@ pub fn readRouteResultMetadataJson(gpa: Allocator, route: provider_routes.Route,
     return try out.toOwnedSlice();
 }
 
-fn writeJsonField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    try core_json.writeString(writer, value);
-    if (trailing_comma) try writer.writeByte(',');
-}
-
 fn writeResponseField(writer: anytype, name: []const u8, response: provider_routes.Response, trailing_comma: bool) !void {
     try core_json.writeString(writer, name);
     try writer.writeByte(':');
@@ -103,21 +96,10 @@ fn writeResponseField(writer: anytype, name: []const u8, response: provider_rout
 
 fn writeResponseValue(writer: anytype, response: provider_routes.Response) !void {
     try writer.writeByte('{');
-    try writeJsonField(writer, "status", response.status, true);
-    try writeStringArrayField(writer, "content_types", response.content_types, true);
-    try writeStringArrayField(writer, "schema_refs", response.schema_refs, false);
+    try core_json.writeStringField(writer, "status", response.status, true);
+    try core_json.writeStringArrayField(writer, "content_types", response.content_types, true);
+    try core_json.writeStringArrayField(writer, "schema_refs", response.schema_refs, false);
     try writer.writeByte('}');
-}
-
-fn writeStringArrayField(writer: anytype, name: []const u8, values: []const []const u8, trailing_comma: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeAll(":[");
-    for (values, 0..) |value, index| {
-        if (index != 0) try writer.writeByte(',');
-        try core_json.writeString(writer, value);
-    }
-    try writer.writeByte(']');
-    if (trailing_comma) try writer.writeByte(',');
 }
 
 test "route result metadata renders matched read response without body content" {

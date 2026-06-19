@@ -84,6 +84,88 @@ pub fn writeString(writer: anytype, value: []const u8) !void {
     try writer.writeByte('"');
 }
 
+pub fn writeStringField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {
+    try writeString(writer, name);
+    try writer.writeByte(':');
+    try writeString(writer, value);
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeIntField(writer: anytype, name: []const u8, value: anytype, trailing_comma: bool) !void {
+    try writeString(writer, name);
+    try writer.writeByte(':');
+    try writer.print("{d}", .{value});
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeCountField(writer: anytype, name: []const u8, value: usize, trailing_comma: bool) !void {
+    try writeIntField(writer, name, value, trailing_comma);
+}
+
+pub fn writeBoolField(writer: anytype, name: []const u8, value: bool, trailing_comma: bool) !void {
+    try writeString(writer, name);
+    try writer.writeByte(':');
+    try writer.writeAll(if (value) "true" else "false");
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeNullableStringField(writer: anytype, name: []const u8, value: ?[]const u8, trailing_comma: bool) !void {
+    try writeString(writer, name);
+    try writer.writeByte(':');
+    if (value) |text| {
+        try writeString(writer, text);
+    } else {
+        try writer.writeAll("null");
+    }
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeNullableCountField(writer: anytype, name: []const u8, value: ?usize, trailing_comma: bool) !void {
+    try writeString(writer, name);
+    try writer.writeByte(':');
+    if (value) |count| {
+        try writer.print("{d}", .{count});
+    } else {
+        try writer.writeAll("null");
+    }
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeNullableBoolField(writer: anytype, name: []const u8, value: ?bool, trailing_comma: bool) !void {
+    try writeString(writer, name);
+    try writer.writeByte(':');
+    if (value) |flag| {
+        try writer.writeAll(if (flag) "true" else "false");
+    } else {
+        try writer.writeAll("null");
+    }
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeStringArray(writer: anytype, values: []const []const u8) !void {
+    try writer.writeByte('[');
+    for (values, 0..) |value, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writeString(writer, value);
+    }
+    try writer.writeByte(']');
+}
+
+pub fn writeStringArrayField(writer: anytype, name: []const u8, values: []const []const u8, trailing_comma: bool) !void {
+    try writeString(writer, name);
+    try writer.writeByte(':');
+    try writeStringArray(writer, values);
+    if (trailing_comma) try writer.writeByte(',');
+}
+
+pub fn writeMaybeComma(writer: anytype, first: *bool) !void {
+    if (first.*) {
+        first.* = false;
+    } else {
+        try writer.writeByte(',');
+    }
+}
+
 test "extracts fields and envelope arrays" {
     const allocator = std.testing.allocator;
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator,
@@ -127,12 +209,30 @@ test "stringifies json values" {
     try std.testing.expect(std.mem.indexOf(u8, text, "\"proxied\":true") != null);
 }
 
-test "writes escaped json strings" {
+test "writes escaped json strings and fields" {
     const allocator = std.testing.allocator;
     var out = std.Io.Writer.Allocating.init(allocator);
     defer out.deinit();
     try writeString(&out.writer, "quote \" and\nnewline");
+    try out.writer.writeByte(' ');
+    try out.writer.writeByte('{');
+    try writeStringField(&out.writer, "name", "plosca.ru", true);
+    try writeIntField(&out.writer, "ttl", @as(i64, 1), true);
+    try writeCountField(&out.writer, "count", @as(usize, 2), true);
+    try writeBoolField(&out.writer, "proxied", false, true);
+    try writeNullableStringField(&out.writer, "maybe", null, true);
+    try writeNullableCountField(&out.writer, "maybe_count", @as(?usize, 3), true);
+    try writeNullableBoolField(&out.writer, "maybe_bool", @as(?bool, true), true);
+    const values = [_][]const u8{ "A", "AAAA" };
+    try writeStringArrayField(&out.writer, "types", values[0..], false);
+    try out.writer.writeByte('}');
+    var first = true;
+    try out.writer.writeByte(' ');
+    try writeMaybeComma(&out.writer, &first);
+    try out.writer.writeAll("a");
+    try writeMaybeComma(&out.writer, &first);
+    try out.writer.writeAll("b");
     const text = try out.toOwnedSlice();
     defer allocator.free(text);
-    try std.testing.expectEqualStrings("\"quote \\\" and\\nnewline\"", text);
+    try std.testing.expectEqualStrings("\"quote \\\" and\\nnewline\" {\"name\":\"plosca.ru\",\"ttl\":1,\"count\":2,\"proxied\":false,\"maybe\":null,\"maybe_count\":3,\"maybe_bool\":true,\"types\":[\"A\",\"AAAA\"]} a,b", text);
 }
