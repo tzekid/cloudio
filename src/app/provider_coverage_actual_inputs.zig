@@ -401,6 +401,84 @@ const cloudflare_audit_organization_log_sources = [_]InputSource{.{
     .purpose = "discover organization audit log event ids and action timestamps",
 }};
 
+const cloudflare_account_load_balancer_monitor_group_sources = [_]InputSource{.{
+    .operation_id = "account-load-balancer-monitor-groups-list-monitor-groups",
+    .hint_kind = "account-load-balancer-monitor-groups-list-monitor-groups",
+    .purpose = "discover account load-balancer monitor group ids",
+}};
+
+const cloudflare_account_load_balancer_monitor_sources = [_]InputSource{.{
+    .operation_id = "account-load-balancer-monitors-list-monitors",
+    .hint_kind = "account-load-balancer-monitors-list-monitors",
+    .purpose = "discover account load-balancer monitor ids",
+}};
+
+const cloudflare_user_load_balancer_monitor_sources = [_]InputSource{.{
+    .operation_id = "load-balancer-monitors-list-monitors",
+    .hint_kind = "load-balancer-monitors-list-monitors",
+    .purpose = "discover user load-balancer monitor ids",
+}};
+
+const cloudflare_account_load_balancer_pool_sources = [_]InputSource{.{
+    .operation_id = "account-load-balancer-pools-list-pools",
+    .hint_kind = "account-load-balancer-pools-list-pools",
+    .purpose = "discover account load-balancer pool ids",
+}};
+
+const cloudflare_user_load_balancer_pool_sources = [_]InputSource{.{
+    .operation_id = "load-balancer-pools-list-pools",
+    .hint_kind = "load-balancer-pools-list-pools",
+    .purpose = "discover user load-balancer pool ids",
+}};
+
+const cloudflare_zone_load_balancer_sources = [_]InputSource{.{
+    .operation_id = "load-balancers-list-load-balancers",
+    .hint_kind = "load-balancers-list-load-balancers",
+    .purpose = "discover zone load-balancer ids",
+}};
+
+const cloudflare_tunnel_sources = [_]InputSource{.{
+    .operation_id = "cloudflare-tunnel-list-cloudflare-tunnels",
+    .hint_kind = "cloudflare-tunnel-list-cloudflare-tunnels",
+    .purpose = "discover Cloudflare tunnel ids",
+}};
+
+const cloudflare_warp_connector_sources = [_]InputSource{.{
+    .operation_id = "cloudflare-tunnel-list-warp-connector-tunnels",
+    .hint_kind = "cloudflare-tunnel-list-warp-connector-tunnels",
+    .purpose = "discover WARP connector tunnel ids",
+}};
+
+const cloudflare_gre_tunnel_sources = [_]InputSource{.{
+    .operation_id = "magic-gre-tunnels-list-gre-tunnels",
+    .hint_kind = "magic-gre-tunnels-list-gre-tunnels",
+    .purpose = "discover Magic GRE tunnel ids",
+}};
+
+const cloudflare_ipsec_tunnel_sources = [_]InputSource{.{
+    .operation_id = "magic-ipsec-tunnels-list-ipsec-tunnels",
+    .hint_kind = "magic-ipsec-tunnels-list-ipsec-tunnels",
+    .purpose = "discover Magic IPsec tunnel ids",
+}};
+
+const cloudflare_tunnel_route_sources = [_]InputSource{.{
+    .operation_id = "tunnel-route-list-tunnel-routes",
+    .hint_kind = "tunnel-route-list-tunnel-routes",
+    .purpose = "discover Zero Trust tunnel route ids and IP routes",
+}};
+
+const cloudflare_tunnel_connector_sources = [_]InputSource{.{
+    .operation_id = "cloudflare-tunnel-list-cloudflare-tunnel-connections",
+    .hint_kind = "cloudflare-tunnel-list-cloudflare-tunnel-connections",
+    .purpose = "discover Cloudflare tunnel connector ids",
+}};
+
+const cloudflare_warp_connector_connection_sources = [_]InputSource{.{
+    .operation_id = "cloudflare-tunnel-list-warp-connector-tunnel-connections",
+    .hint_kind = "cloudflare-tunnel-list-warp-connector-tunnel-connections",
+    .purpose = "discover WARP connector connection ids",
+}};
+
 pub fn loadActualCaptureCloudflareAccountHints(gpa: Allocator, db: *Db, provider: ProviderFilter) !?db_store.CloudflareAccountRows {
     if (!provider.includes("cloudflare")) return null;
     return try db.cloudflareAccountRows(gpa, actual_capture_cloudflare_scope_hint_limit);
@@ -585,6 +663,7 @@ fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []co
     if (std.mem.eql(u8, name, "script_name")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "worker-script-list-workers", "workers-scripts", "worker-scripts" });
     if (std.mem.eql(u8, name, "script_tag")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "worker-script-list-workers", "workers-scripts", "worker-scripts" });
     if (std.mem.eql(u8, name, "profile_id") and actualCaptureRoutePathContains(route, "/magic/bgp/filter_profiles/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"magic-bgp-list-filter-profiles"});
+    if (std.mem.eql(u8, name, "connector_id") and (actualCaptureRoutePathContains(route, "/cfd_tunnel/") or actualCaptureRoutePathContains(route, "/warp_connector/"))) return actualCaptureCloudflareTunnelConnectorIdHint(route, hints);
     if (std.mem.eql(u8, name, "connector_id") and actualCaptureRoutePathContains(route, "/magic/connectors/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "mconn-connector-list", "magic-connectors" });
     if (std.mem.eql(u8, name, "tag_uuid") and actualCaptureRoutePathContains(route, "/cloudforce-one/events/tags/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"get_TagList"});
     if (std.mem.eql(u8, name, "bucket_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "list-catalogs", "get-catalog-details", "r2-catalog" });
@@ -595,6 +674,14 @@ fn actualCaptureCloudflarePathParamHint(route: provider_routes.Route, name: []co
     if (std.mem.eql(u8, name, "rule_identifier")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-email-routing-rules", "email-routing-rules" });
     if (std.mem.eql(u8, name, "destination_address_identifier")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "zone-email-routing-destination-addresses", "email-routing-destination-addresses" });
     if (std.mem.eql(u8, name, "name") and containsIgnoreCase(route.tag, "API Shield Labels")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{"zone-api-shield-labels"});
+    if (std.mem.eql(u8, name, "monitor_group_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-load-balancer-monitor-groups-list-monitor-groups", "account-load-balancer-monitor-groups", "account-load-balancer-monitor-group" });
+    if (std.mem.eql(u8, name, "monitor_id")) return actualCaptureCloudflareLoadBalancerMonitorIdHint(route, hints);
+    if (std.mem.eql(u8, name, "pool_id")) return actualCaptureCloudflareLoadBalancerPoolIdHint(route, hints);
+    if (std.mem.eql(u8, name, "load_balancer_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "load-balancers-list-load-balancers", "zone-load-balancers", "zone-load-balancer" });
+    if (std.mem.eql(u8, name, "tunnel_id")) return actualCaptureCloudflareTunnelIdHint(route, hints);
+    if (std.mem.eql(u8, name, "gre_tunnel_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "magic-gre-tunnels-list-gre-tunnels", "magic-gre-tunnels", "magic-gre-tunnel" });
+    if (std.mem.eql(u8, name, "ipsec_tunnel_id")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "magic-ipsec-tunnels-list-ipsec-tunnels", "magic-ipsec-tunnels", "magic-ipsec-tunnel" });
+    if (std.mem.eql(u8, name, "route_id") or std.mem.eql(u8, name, "ip")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "tunnel-route-list-tunnel-routes", "tunnel-routes", "tunnel-route" });
     return actualCapturePathParamEnumHint(route, name);
 }
 
@@ -761,6 +848,30 @@ fn actualCaptureCloudflareLogpushJobIdHint(route: provider_routes.Route, hints: 
     if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-accounts-account_id-logpush-jobs", "logpush-account-jobs", "logpush-jobs" });
     if (actualCaptureCloudflareRouteZoneScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-zones-zone_id-logpush-jobs", "logpush-zone-jobs", "logpush-jobs" });
     return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "get-accounts-account_id-logpush-jobs", "get-zones-zone_id-logpush-jobs", "logpush-account-jobs", "logpush-zone-jobs", "logpush-jobs" });
+}
+
+fn actualCaptureCloudflareLoadBalancerMonitorIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-load-balancer-monitors-list-monitors", "account-load-balancer-monitors", "account-load-balancer-monitor" });
+    if (actualCaptureRoutePathContains(route, "/user/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "load-balancer-monitors-list-monitors", "user-load-balancer-monitors", "load-balancer-monitors", "load-balancer-monitor" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-load-balancer-monitors-list-monitors", "load-balancer-monitors-list-monitors", "account-load-balancer-monitors", "user-load-balancer-monitors", "load-balancer-monitors" });
+}
+
+fn actualCaptureCloudflareLoadBalancerPoolIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-load-balancer-pools-list-pools", "account-load-balancer-pools", "account-load-balancer-pool" });
+    if (actualCaptureRoutePathContains(route, "/user/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "load-balancer-pools-list-pools", "user-load-balancer-pools", "load-balancer-pools", "load-balancer-pool" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "account-load-balancer-pools-list-pools", "load-balancer-pools-list-pools", "account-load-balancer-pools", "user-load-balancer-pools", "load-balancer-pools" });
+}
+
+fn actualCaptureCloudflareTunnelIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureRoutePathContains(route, "/warp_connector/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "cloudflare-tunnel-list-warp-connector-tunnels", "warp-connector-tunnels", "warp-connector-tunnel" });
+    if (actualCaptureRoutePathContains(route, "/cfd_tunnel/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "cloudflare-tunnel-list-cloudflare-tunnels", "cloudflare-tunnel-list-all-tunnels", "cloudflare-tunnels", "cloudflare-tunnel" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "cloudflare-tunnel-list-cloudflare-tunnels", "cloudflare-tunnel-list-all-tunnels", "cloudflare-tunnel-list-warp-connector-tunnels", "cloudflare-tunnels", "warp-connector-tunnels" });
+}
+
+fn actualCaptureCloudflareTunnelConnectorIdHint(route: provider_routes.Route, hints: Hints) ?[]const u8 {
+    if (actualCaptureRoutePathContains(route, "/warp_connector/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "cloudflare-tunnel-list-warp-connector-tunnel-connections", "tunnel-warp-connections", "warp-connector-connections", "warp-connector-connection" });
+    if (actualCaptureRoutePathContains(route, "/cfd_tunnel/")) return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "cloudflare-tunnel-list-cloudflare-tunnel-connections", "tunnel-cfd-connections", "cloudflare-tunnel-connections", "cloudflare-tunnel-connection" });
+    return actualCaptureCloudflareResourceIdHint(route, hints, &.{ "cloudflare-tunnel-list-cloudflare-tunnel-connections", "cloudflare-tunnel-list-warp-connector-tunnel-connections", "tunnel-cfd-connections", "tunnel-warp-connections" });
 }
 
 fn actualCaptureCloudflareCloudforceEventHint(route: provider_routes.Route, hints: Hints) ?db_store.CloudflareInventoryHintRow {
@@ -1685,11 +1796,20 @@ fn actualCaptureCloudflareMissingInputSources(route: provider_routes.Route, inpu
         if (std.mem.eql(u8, input_name, "script_name")) return cloudflare_worker_script_sources[0..];
         if (std.mem.eql(u8, input_name, "script_tag")) return cloudflare_worker_script_sources[0..];
         if (std.mem.eql(u8, input_name, "profile_id") and actualCaptureRoutePathContains(route, "/magic/bgp/filter_profiles/")) return cloudflare_magic_bgp_filter_profile_sources[0..];
+        if (std.mem.eql(u8, input_name, "connector_id") and (actualCaptureRoutePathContains(route, "/cfd_tunnel/") or actualCaptureRoutePathContains(route, "/warp_connector/"))) return actualCaptureCloudflareTunnelConnectorSources(route);
         if (std.mem.eql(u8, input_name, "connector_id") and actualCaptureRoutePathContains(route, "/magic/connectors/")) return cloudflare_magic_connector_sources[0..];
         if (std.mem.eql(u8, input_name, "tag_uuid") and actualCaptureRoutePathContains(route, "/cloudforce-one/events/tags/")) return cloudflare_cloudforce_tag_sources[0..];
         if (std.mem.eql(u8, input_name, "bucket_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return cloudflare_r2_catalog_sources[0..];
         if (std.mem.eql(u8, input_name, "namespace") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return cloudflare_r2_namespace_sources[0..];
         if (std.mem.eql(u8, input_name, "table_name") and actualCaptureRoutePathContains(route, "/r2-catalog/")) return cloudflare_r2_table_sources[0..];
+        if (std.mem.eql(u8, input_name, "monitor_group_id")) return cloudflare_account_load_balancer_monitor_group_sources[0..];
+        if (std.mem.eql(u8, input_name, "monitor_id")) return actualCaptureCloudflareLoadBalancerMonitorSources(route);
+        if (std.mem.eql(u8, input_name, "pool_id")) return actualCaptureCloudflareLoadBalancerPoolSources(route);
+        if (std.mem.eql(u8, input_name, "load_balancer_id")) return cloudflare_zone_load_balancer_sources[0..];
+        if (std.mem.eql(u8, input_name, "tunnel_id")) return actualCaptureCloudflareTunnelSources(route);
+        if (std.mem.eql(u8, input_name, "gre_tunnel_id")) return cloudflare_gre_tunnel_sources[0..];
+        if (std.mem.eql(u8, input_name, "ipsec_tunnel_id")) return cloudflare_ipsec_tunnel_sources[0..];
+        if (std.mem.eql(u8, input_name, "route_id") or std.mem.eql(u8, input_name, "ip")) return cloudflare_tunnel_route_sources[0..];
         if (std.mem.eql(u8, input_name, "id")) return actualCaptureCloudflareIdSources(route, operation_id);
     }
 
@@ -1698,6 +1818,30 @@ fn actualCaptureCloudflareMissingInputSources(route: provider_routes.Route, inpu
         if (std.mem.eql(u8, input_name, "action_time")) return actualCaptureCloudflareAuditSources(route, operation_id);
     }
 
+    return &.{};
+}
+
+fn actualCaptureCloudflareLoadBalancerMonitorSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_account_load_balancer_monitor_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/user/")) return cloudflare_user_load_balancer_monitor_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareLoadBalancerPoolSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureCloudflareRouteAccountScoped(route)) return cloudflare_account_load_balancer_pool_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/user/")) return cloudflare_user_load_balancer_pool_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareTunnelSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureRoutePathContains(route, "/warp_connector/")) return cloudflare_warp_connector_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/cfd_tunnel/")) return cloudflare_tunnel_sources[0..];
+    return &.{};
+}
+
+fn actualCaptureCloudflareTunnelConnectorSources(route: provider_routes.Route) []const InputSource {
+    if (actualCaptureRoutePathContains(route, "/warp_connector/")) return cloudflare_warp_connector_connection_sources[0..];
+    if (actualCaptureRoutePathContains(route, "/cfd_tunnel/")) return cloudflare_tunnel_connector_sources[0..];
     return &.{};
 }
 
@@ -1813,6 +1957,143 @@ test "plans actual captures from generated enum parameter metadata" {
     const format = (try actualCaptureQueryParamHint(allocator, enum_query_route, "format", .{})) orelse return error.ExpectedFormatHint;
     defer allocator.free(format);
     try std.testing.expectEqualStrings("JSON", format);
+}
+
+test "maps Cloudflare load-balancer and tunnel child captures to list sources" {
+    const allocator = std.testing.allocator;
+    const route_jsons = [_][]const u8{
+        \\{"provider":"cloudflare","tag":"Account Load Balancer Monitors","method":"GET","path":"/accounts/{account_id}/load_balancers/monitors","operation_id":"account-load-balancer-monitors-list-monitors","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Account Load Balancer Monitors","method":"GET","path":"/accounts/{account_id}/load_balancers/monitors/{monitor_id}","operation_id":"account-load-balancer-monitors-monitor-details","path_params":[{"name":"account_id","required":true},{"name":"monitor_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Load Balancer Monitors","method":"GET","path":"/user/load_balancers/monitors","operation_id":"load-balancer-monitors-list-monitors","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Load Balancer Monitors","method":"GET","path":"/user/load_balancers/monitors/{monitor_id}","operation_id":"load-balancer-monitors-monitor-details","path_params":[{"name":"monitor_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Account Load Balancer Pools","method":"GET","path":"/accounts/{account_id}/load_balancers/pools","operation_id":"account-load-balancer-pools-list-pools","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Account Load Balancer Pools","method":"GET","path":"/accounts/{account_id}/load_balancers/pools/{pool_id}","operation_id":"account-load-balancer-pools-pool-details","path_params":[{"name":"account_id","required":true},{"name":"pool_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Load Balancers","method":"GET","path":"/zones/{zone_id}/load_balancers","operation_id":"load-balancers-list-load-balancers","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Load Balancers","method":"GET","path":"/zones/{zone_id}/load_balancers/{load_balancer_id}","operation_id":"load-balancers-load-balancer-details","path_params":[{"name":"zone_id","required":true},{"name":"load_balancer_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Cloudflare Tunnel","method":"GET","path":"/accounts/{account_id}/cfd_tunnel","operation_id":"cloudflare-tunnel-list-cloudflare-tunnels","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Cloudflare Tunnel","method":"GET","path":"/accounts/{account_id}/cfd_tunnel/{tunnel_id}","operation_id":"cloudflare-tunnel-get-a-cloudflare-tunnel","path_params":[{"name":"account_id","required":true},{"name":"tunnel_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Cloudflare Tunnel","method":"GET","path":"/accounts/{account_id}/warp_connector","operation_id":"cloudflare-tunnel-list-warp-connector-tunnels","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Cloudflare Tunnel","method":"GET","path":"/accounts/{account_id}/warp_connector/{tunnel_id}","operation_id":"cloudflare-tunnel-get-a-warp-connector-tunnel","path_params":[{"name":"account_id","required":true},{"name":"tunnel_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Magic GRE tunnels","method":"GET","path":"/accounts/{account_id}/magic/gre_tunnels","operation_id":"magic-gre-tunnels-list-gre-tunnels","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Magic GRE tunnels","method":"GET","path":"/accounts/{account_id}/magic/gre_tunnels/{gre_tunnel_id}","operation_id":"magic-gre-tunnels-list-gre-tunnel-details","path_params":[{"name":"account_id","required":true},{"name":"gre_tunnel_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Magic IPsec tunnels","method":"GET","path":"/accounts/{account_id}/magic/ipsec_tunnels","operation_id":"magic-ipsec-tunnels-list-ipsec-tunnels","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Magic IPsec tunnels","method":"GET","path":"/accounts/{account_id}/magic/ipsec_tunnels/{ipsec_tunnel_id}","operation_id":"magic-ipsec-tunnels-list-ipsec-tunnel-details","path_params":[{"name":"account_id","required":true},{"name":"ipsec_tunnel_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Tunnel Routing","method":"GET","path":"/accounts/{account_id}/teamnet/routes","operation_id":"tunnel-route-list-tunnel-routes","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Tunnel Routing","method":"GET","path":"/accounts/{account_id}/teamnet/routes/{route_id}","operation_id":"tunnel-route-get-tunnel-route","path_params":[{"name":"account_id","required":true},{"name":"route_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Cloudflare Tunnel","method":"GET","path":"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/connections","operation_id":"cloudflare-tunnel-list-cloudflare-tunnel-connections","path_params":[{"name":"account_id","required":true},{"name":"tunnel_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Cloudflare Tunnel","method":"GET","path":"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/connections/{connector_id}","operation_id":"cloudflare-tunnel-get-cloudflare-tunnel-connector","path_params":[{"name":"account_id","required":true},{"name":"tunnel_id","required":true},{"name":"connector_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Cloudflare Tunnel","method":"GET","path":"/accounts/{account_id}/warp_connector/{tunnel_id}/connections","operation_id":"cloudflare-tunnel-list-warp-connector-tunnel-connections","path_params":[{"name":"account_id","required":true},{"name":"tunnel_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+        ,
+        \\{"provider":"cloudflare","tag":"Cloudflare Tunnel","method":"GET","path":"/accounts/{account_id}/warp_connector/{tunnel_id}/connections/{connector_id}","operation_id":"cloudflare-tunnel-get-warp-connector-tunnel-connector","path_params":[{"name":"account_id","required":true},{"name":"tunnel_id","required":true},{"name":"connector_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false}
+    };
+    var routes: [route_jsons.len]provider_routes.Route = undefined;
+    for (route_jsons, 0..) |route_json, idx| {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, route_json, .{});
+        defer parsed.deinit();
+        routes[idx] = try provider_routes.Route.init(allocator, .cloudflare, parsed.value);
+    }
+    defer for (routes) |route| route.deinit(allocator);
+
+    var account_rows = [_]db_store.CloudflareAccountRow{.{
+        .id = @constCast("acct-1"),
+        .name = @constCast("Main account"),
+        .account_type = @constCast("standard"),
+        .status = @constCast("active"),
+        .updated_at = @constCast("2026-06-19T00:00:00Z"),
+    }};
+    var zone_rows = [_]db_store.CloudflareZoneRow{.{
+        .id = @constCast("zone-1"),
+        .name = @constCast("plosca.ru"),
+        .account_id = @constCast("acct-1"),
+        .status = @constCast("active"),
+        .paused = @constCast("false"),
+        .zone_type = @constCast("full"),
+        .name_servers = @constCast("ns1.example,ns2.example"),
+        .updated_at = @constCast("2026-06-19T00:00:00Z"),
+    }};
+    const scope_hints = Hints{
+        .cloudflare_accounts = account_rows[0..],
+        .cloudflare_zones = zone_rows[0..],
+    };
+
+    try std.testing.expect(actualCaptureReady(routes[0], scope_hints));
+    try std.testing.expect(actualCaptureReady(routes[2], scope_hints));
+    try std.testing.expect(actualCaptureReady(routes[6], scope_hints));
+    try std.testing.expectEqualStrings("account-load-balancer-monitors-list-monitors", actualCaptureMissingInputSources(routes[1], "path", "monitor_id")[0].operation_id);
+    try std.testing.expectEqualStrings("load-balancer-monitors-list-monitors", actualCaptureMissingInputSources(routes[3], "path", "monitor_id")[0].operation_id);
+    try std.testing.expectEqualStrings("account-load-balancer-pools-list-pools", actualCaptureMissingInputSources(routes[5], "path", "pool_id")[0].operation_id);
+    try std.testing.expectEqualStrings("load-balancers-list-load-balancers", actualCaptureMissingInputSources(routes[7], "path", "load_balancer_id")[0].operation_id);
+    try std.testing.expectEqualStrings("cloudflare-tunnel-list-cloudflare-tunnels", actualCaptureMissingInputSources(routes[9], "path", "tunnel_id")[0].operation_id);
+    try std.testing.expectEqualStrings("cloudflare-tunnel-list-warp-connector-tunnels", actualCaptureMissingInputSources(routes[11], "path", "tunnel_id")[0].operation_id);
+    try std.testing.expectEqualStrings("magic-gre-tunnels-list-gre-tunnels", actualCaptureMissingInputSources(routes[13], "path", "gre_tunnel_id")[0].operation_id);
+    try std.testing.expectEqualStrings("magic-ipsec-tunnels-list-ipsec-tunnels", actualCaptureMissingInputSources(routes[15], "path", "ipsec_tunnel_id")[0].operation_id);
+    try std.testing.expectEqualStrings("tunnel-route-list-tunnel-routes", actualCaptureMissingInputSources(routes[17], "path", "route_id")[0].operation_id);
+    try std.testing.expectEqualStrings("cloudflare-tunnel-list-cloudflare-tunnel-connections", actualCaptureMissingInputSources(routes[19], "path", "connector_id")[0].operation_id);
+    try std.testing.expectEqualStrings("cloudflare-tunnel-list-warp-connector-tunnel-connections", actualCaptureMissingInputSources(routes[21], "path", "connector_id")[0].operation_id);
+
+    var resource_rows = [_]db_store.CloudflareResourceHintRow{
+        .{ .kind = @constCast("account-load-balancer-monitors-list-monitors"), .resource_id = @constCast("acct-monitor-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Account monitor"), .status = @constCast("active"), .resource_type = @constCast("monitor"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("load-balancer-monitors-list-monitors"), .resource_id = @constCast("user-monitor-1"), .scope = @constCast("user"), .scope_id = @constCast("user"), .name = @constCast("User monitor"), .status = @constCast("active"), .resource_type = @constCast("monitor"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("account-load-balancer-pools-list-pools"), .resource_id = @constCast("pool-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Pool"), .status = @constCast("active"), .resource_type = @constCast("pool"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("load-balancers-list-load-balancers"), .resource_id = @constCast("lb-1"), .scope = @constCast("zone"), .scope_id = @constCast("zone-1"), .name = @constCast("Load balancer"), .status = @constCast("active"), .resource_type = @constCast("load_balancer"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("cloudflare-tunnel-list-cloudflare-tunnels"), .resource_id = @constCast("tunnel-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Tunnel"), .status = @constCast("active"), .resource_type = @constCast("tunnel"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("cloudflare-tunnel-list-warp-connector-tunnels"), .resource_id = @constCast("warp-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("WARP"), .status = @constCast("active"), .resource_type = @constCast("warp_connector"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("cloudflare-tunnel-list-cloudflare-tunnel-connections"), .resource_id = @constCast("cfd-connector-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("CFD connector"), .status = @constCast("connected"), .resource_type = @constCast("connector"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("cloudflare-tunnel-list-warp-connector-tunnel-connections"), .resource_id = @constCast("warp-connector-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("WARP connector"), .status = @constCast("connected"), .resource_type = @constCast("connector"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("magic-gre-tunnels-list-gre-tunnels"), .resource_id = @constCast("gre-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("GRE"), .status = @constCast("active"), .resource_type = @constCast("gre_tunnel"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("magic-ipsec-tunnels-list-ipsec-tunnels"), .resource_id = @constCast("ipsec-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("IPsec"), .status = @constCast("active"), .resource_type = @constCast("ipsec_tunnel"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+        .{ .kind = @constCast("tunnel-route-list-tunnel-routes"), .resource_id = @constCast("route-1"), .scope = @constCast("account"), .scope_id = @constCast("acct-1"), .name = @constCast("Route"), .status = @constCast("active"), .resource_type = @constCast("route"), .updated_at = @constCast("2026-06-19T00:00:00Z") },
+    };
+    const resource_hints = Hints{
+        .cloudflare_accounts = account_rows[0..],
+        .cloudflare_zones = zone_rows[0..],
+        .cloudflare_resources = resource_rows[0..],
+    };
+
+    try std.testing.expect(actualCaptureReady(routes[1], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[3], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[5], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[7], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[9], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[11], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[13], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[15], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[17], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[18], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[19], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[20], resource_hints));
+    try std.testing.expect(actualCaptureReady(routes[21], resource_hints));
+    try std.testing.expectEqualStrings("acct-monitor-1", actualCapturePathParamHint(routes[1], "monitor_id", resource_hints) orelse "");
+    try std.testing.expectEqualStrings("user-monitor-1", actualCapturePathParamHint(routes[3], "monitor_id", resource_hints) orelse "");
+    try std.testing.expectEqualStrings("pool-1", actualCapturePathParamHint(routes[5], "pool_id", resource_hints) orelse "");
+    try std.testing.expectEqualStrings("lb-1", actualCapturePathParamHint(routes[7], "load_balancer_id", resource_hints) orelse "");
+    try std.testing.expectEqualStrings("tunnel-1", actualCapturePathParamHint(routes[9], "tunnel_id", resource_hints) orelse "");
+    try std.testing.expectEqualStrings("warp-1", actualCapturePathParamHint(routes[11], "tunnel_id", resource_hints) orelse "");
+    try std.testing.expectEqualStrings("gre-1", actualCapturePathParamHint(routes[13], "gre_tunnel_id", resource_hints) orelse "");
+    try std.testing.expectEqualStrings("ipsec-1", actualCapturePathParamHint(routes[15], "ipsec_tunnel_id", resource_hints) orelse "");
+    try std.testing.expectEqualStrings("route-1", actualCapturePathParamHint(routes[17], "route_id", resource_hints) orelse "");
+    try std.testing.expectEqualStrings("cfd-connector-1", actualCapturePathParamHint(routes[19], "connector_id", resource_hints) orelse "");
+    try std.testing.expectEqualStrings("warp-connector-1", actualCapturePathParamHint(routes[21], "connector_id", resource_hints) orelse "");
 }
 
 test "plans Cloudflare audit history inputs from matching event timestamps" {

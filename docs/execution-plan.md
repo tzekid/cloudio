@@ -43,7 +43,7 @@ The POC already has:
 - Generated provider route metadata for Cloudflare and Hostinger.
 - Generic route plan/read/capture/dry-run surfaces.
 - L0/L1/L2/L3 provider coverage review commands.
-- DB-backed actual route-capture planning with pre-limit `review_summary`, provider/family `review_groups` totals, group-level `next_action` and no-execute commands, generated enum parameter defaults, plus candidate-level `actual_state`, `review_status`, and `next_action` fields for family triage.
+- DB-backed actual route-capture planning with pre-limit `review_summary`, provider/family `review_groups` totals, group-level `next_action` and no-execute commands, generated enum parameter defaults, read-only family-scoped source-route mappings for child-resource IDs, plus candidate-level `actual_state`, `review_status`, and `next_action` fields for family triage.
 - Provider evidence read models over raw-capture metadata, snapshots, audit events, and route-capture/generated-route matching.
 - Broad Cloudflare and Hostinger inventory projections.
 - Caddy, system, project, project-correlation, overview, export, log, and doctor workflows.
@@ -187,11 +187,13 @@ Acceptance:
    - Review the full VPS family workplan bundle.
    - Review `cloudio coverage actual-captures hostinger --family hostinger-vps --limit=0 --plans --json` before editing, and classify work by `review_status` across the whole VPS family.
    - Treat `ready_to_capture` and `retry_capture` as capture work, `blocked_empty_source` and `diagnostic_blocked` as evidence to document, and source-normalization statuses as typed-input/modeling work.
+   - When an endpoint needs child IDs, add the list-source mapping for the whole Hostinger resource group in one patch before capturing individual child routes.
    - Tighten collection, typed projections, pagination/error handling, and dry-run plans across the whole VPS family.
 
 4. Cloudflare account/security family pass.
    - Re-check latest Cloudflare docs/spec.
    - Review accounts, memberships, tokens, IAM, security posture, API Shield, rulesets, and related route bundles as a group.
+   - Prefer broad source-mapping slices that cover an entire route family at once, as with load-balancing monitor/pool/load-balancer details and tunnel/tunnel-route/connector details.
    - Add or upgrade L2 capture evidence, typed projection, and dry-run plan evidence for the selected family.
 
 5. Caddy/system/project correlation.
