@@ -47,23 +47,21 @@ fn parseCommand(args: []const []const u8) !Command {
 
 fn parse(args: []const []const u8) !Parsed {
     var parsed = Parsed{};
-    var provider_seen = false;
-    var query_seen = false;
-    var index: usize = 0;
-    while (index < args.len) : (index += 1) {
-        if (try cli_args.parseFormatOption(args, &index, &parsed.format, error.MissingFormat, error.InvalidFormat)) continue;
-        if (try cli_args.parsePositiveI64Arg(args, &index, .{"--limit"}, error.MissingRoutesLimit, error.InvalidRoutesLimit)) |limit| {
-            parsed.options.limit = limit;
-            continue;
-        }
-        if (try cli_args.parseProviderOption(args, &index, &parsed.options.provider, &provider_seen, app_route_catalog.ProviderFilter.parse, .{"--provider"}, error.MissingRoutesProvider, error.InvalidRoutesProvider)) continue;
-        if (try cli_args.parseQueryOption(args, &index, &parsed.options.query, &query_seen, .{"--query"}, error.MissingRoutesQuery)) continue;
-
-        const arg = args[index];
-        if (cli_args.parseProviderPositional(arg, &parsed.options.provider, &provider_seen, app_route_catalog.ProviderFilter.parse)) continue;
-        if (cli_args.parseQueryPositional(arg, &parsed.options.query, &query_seen)) continue;
-        return error.UnexpectedRoutesArgument;
-    }
+    try cli_args.parseFormatProviderQueryLimit(
+        args,
+        &parsed.options,
+        &parsed.format,
+        app_route_catalog.ProviderFilter.parse,
+        .{"--provider"},
+        error.MissingRoutesProvider,
+        error.InvalidRoutesProvider,
+        .{"--query"},
+        error.MissingRoutesQuery,
+        .{"--limit"},
+        error.MissingRoutesLimit,
+        error.InvalidRoutesLimit,
+        error.UnexpectedRoutesArgument,
+    );
     return parsed;
 }
 

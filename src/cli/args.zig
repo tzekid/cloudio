@@ -173,6 +173,69 @@ pub fn parseFormatPositiveLimit(
     return parsed;
 }
 
+pub fn parseFormatProviderLimit(
+    args: []const []const u8,
+    options: anytype,
+    format: *cli_render.RenderFormat,
+    comptime parse_provider: anytype,
+    comptime provider_names: anytype,
+    missing_provider_error: anyerror,
+    invalid_provider_error: anyerror,
+    comptime limit_names: anytype,
+    missing_limit_error: anyerror,
+    invalid_limit_error: anyerror,
+    unexpected_error: anyerror,
+) !void {
+    var provider_seen = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        if (try parseFormatOption(args, &index, format, error.MissingFormat, error.InvalidFormat)) continue;
+        if (try parsePositiveI64Arg(args, &index, limit_names, missing_limit_error, invalid_limit_error)) |limit| {
+            options.limit = limit;
+            continue;
+        }
+        if (try parseProviderOption(args, &index, &options.provider, &provider_seen, parse_provider, provider_names, missing_provider_error, invalid_provider_error)) continue;
+
+        const arg = args[index];
+        if (parseProviderPositional(arg, &options.provider, &provider_seen, parse_provider)) continue;
+        return unexpected_error;
+    }
+}
+
+pub fn parseFormatProviderQueryLimit(
+    args: []const []const u8,
+    options: anytype,
+    format: *cli_render.RenderFormat,
+    comptime parse_provider: anytype,
+    comptime provider_names: anytype,
+    missing_provider_error: anyerror,
+    invalid_provider_error: anyerror,
+    comptime query_names: anytype,
+    missing_query_error: anyerror,
+    comptime limit_names: anytype,
+    missing_limit_error: anyerror,
+    invalid_limit_error: anyerror,
+    unexpected_error: anyerror,
+) !void {
+    var provider_seen = false;
+    var query_seen = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        if (try parseFormatOption(args, &index, format, error.MissingFormat, error.InvalidFormat)) continue;
+        if (try parsePositiveI64Arg(args, &index, limit_names, missing_limit_error, invalid_limit_error)) |limit| {
+            options.limit = limit;
+            continue;
+        }
+        if (try parseProviderOption(args, &index, &options.provider, &provider_seen, parse_provider, provider_names, missing_provider_error, invalid_provider_error)) continue;
+        if (try parseQueryOption(args, &index, &options.query, &query_seen, query_names, missing_query_error)) continue;
+
+        const arg = args[index];
+        if (parseProviderPositional(arg, &options.provider, &provider_seen, parse_provider)) continue;
+        if (parseQueryPositional(arg, &options.query, &query_seen)) continue;
+        return unexpected_error;
+    }
+}
+
 test "matches recognizes exact aliases only" {
     try std.testing.expect(matches("--limit", .{"--limit"}));
     try std.testing.expect(matches("--path-template", .{ "--path", "--path-template" }));
@@ -258,6 +321,17 @@ const ProviderFixture = enum {
     }
 };
 
+const ProviderLimitFixture = struct {
+    provider: ProviderFixture = .all,
+    limit: i64 = 20,
+};
+
+const ProviderQueryLimitFixture = struct {
+    provider: ProviderFixture = .all,
+    query: ?[]const u8 = null,
+    limit: i64 = 20,
+};
+
 test "provider and query helpers share common command parsing" {
     var provider: ProviderFixture = .all;
     var provider_seen = false;
@@ -322,4 +396,46 @@ test "format and positive limit helper preserves split inline behavior" {
 
     const invalid_limit = [_][]const u8{"--limit=0"};
     try std.testing.expectError(error.InvalidLimit, parseFormatPositiveLimit(invalid_limit[0..], 20, .{"--limit"}, error.MissingLimit, error.InvalidLimit, error.Unexpected));
+}
+
+test "format provider limit helper shares common adapter grammar" {
+    var options = ProviderLimitFixture{};
+    var format: cli_render.RenderFormat = .text;
+    const args = [_][]const u8{ "hostinger", "--limit=5", "--json" };
+    try parseFormatProviderLimit(args[0..], &options, &format, ProviderFixture.parse, .{"--provider"}, error.MissingProvider, error.InvalidProvider, .{"--limit"}, error.MissingLimit, error.InvalidLimit, error.Unexpected);
+    try std.testing.expectEqual(ProviderFixture.hostinger, options.provider);
+    try std.testing.expectEqual(@as(i64, 5), options.limit);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, format);
+
+    options = .{};
+    format = .text;
+    const flag_args = [_][]const u8{ "--provider", "cloudflare", "--format=json" };
+    try parseFormatProviderLimit(flag_args[0..], &options, &format, ProviderFixture.parse, .{"--provider"}, error.MissingProvider, error.InvalidProvider, .{"--limit"}, error.MissingLimit, error.InvalidLimit, error.Unexpected);
+    try std.testing.expectEqual(ProviderFixture.cloudflare, options.provider);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, format);
+
+    const invalid_provider = [_][]const u8{"--provider=other"};
+    try std.testing.expectError(error.InvalidProvider, parseFormatProviderLimit(invalid_provider[0..], &options, &format, ProviderFixture.parse, .{"--provider"}, error.MissingProvider, error.InvalidProvider, .{"--limit"}, error.MissingLimit, error.InvalidLimit, error.Unexpected));
+}
+
+test "format provider query limit helper shares common adapter grammar" {
+    var options = ProviderQueryLimitFixture{};
+    var format: cli_render.RenderFormat = .text;
+    const args = [_][]const u8{ "cloudflare", "dns", "--limit", "7", "--json" };
+    try parseFormatProviderQueryLimit(args[0..], &options, &format, ProviderFixture.parse, .{"--provider"}, error.MissingProvider, error.InvalidProvider, .{"--query"}, error.MissingQuery, .{"--limit"}, error.MissingLimit, error.InvalidLimit, error.Unexpected);
+    try std.testing.expectEqual(ProviderFixture.cloudflare, options.provider);
+    try std.testing.expectEqualStrings("dns", options.query.?);
+    try std.testing.expectEqual(@as(i64, 7), options.limit);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, format);
+
+    options = .{};
+    format = .text;
+    const flag_args = [_][]const u8{ "--provider=hostinger", "--query=vps", "--format", "json" };
+    try parseFormatProviderQueryLimit(flag_args[0..], &options, &format, ProviderFixture.parse, .{"--provider"}, error.MissingProvider, error.InvalidProvider, .{"--query"}, error.MissingQuery, .{"--limit"}, error.MissingLimit, error.InvalidLimit, error.Unexpected);
+    try std.testing.expectEqual(ProviderFixture.hostinger, options.provider);
+    try std.testing.expectEqualStrings("vps", options.query.?);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, format);
+
+    const extra = [_][]const u8{ "cloudflare", "dns", "extra" };
+    try std.testing.expectError(error.Unexpected, parseFormatProviderQueryLimit(extra[0..], &options, &format, ProviderFixture.parse, .{"--provider"}, error.MissingProvider, error.InvalidProvider, .{"--query"}, error.MissingQuery, .{"--limit"}, error.MissingLimit, error.InvalidLimit, error.Unexpected));
 }

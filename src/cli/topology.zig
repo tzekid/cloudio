@@ -35,17 +35,18 @@ fn appContext(ctx: Context) app_topology.Context {
 }
 
 fn parse(args: []const []const u8) !Parsed {
-    var parsed = Parsed{};
-    var index: usize = 0;
-    while (index < args.len) : (index += 1) {
-        if (try cli_args.parseFormatOption(args, &index, &parsed.format, error.MissingFormat, error.InvalidFormat)) continue;
-        if (try cli_args.parsePositiveI64Arg(args, &index, .{"--limit"}, error.MissingTopologyLimit, error.InvalidTopologyLimit)) |limit| {
-            parsed.options.limit = limit;
-            continue;
-        }
-        return error.UnexpectedTopologyArgument;
-    }
-    return parsed;
+    const parsed = try cli_args.parseFormatPositiveLimit(
+        args,
+        app_topology.default_limit,
+        .{"--limit"},
+        error.MissingTopologyLimit,
+        error.InvalidTopologyLimit,
+        error.UnexpectedTopologyArgument,
+    );
+    return .{
+        .options = .{ .limit = parsed.limit },
+        .format = parsed.format,
+    };
 }
 
 test "topology parser accepts format and limit" {
