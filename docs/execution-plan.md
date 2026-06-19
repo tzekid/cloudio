@@ -173,6 +173,7 @@ Acceptance:
    - Use `cloudio history --json` and `cloudio export history --json` as the first operational-history contract for UI/API consumers.
    - Use `cloudio evidence --json` as the provider/system capture evidence contract over raw-capture metadata, snapshots, and audit events.
    - Use `cloudio evidence matrix --json`, `cloudio evidence routes --json`, and `cloudio evidence capture-summary --json` to review DB-backed family/status evidence, operation-level L2 route capture evidence, and the split between raw capture gaps, fixture/diagnostic-covered gaps, and truly unresolved L2 read work.
+   - Use `cloudio coverage typed-models --focus control-plane --json` to prove the required L3 typed-model backlog separately from optional outside-control-plane generic inventory modeling.
    - Use `cloudio routes --json` as the compact provider-route metadata contract for UI/API consumers.
    - Use `cloudio topology --json` as the operational graph contract for UI/API consumers; it joins provider DNS, Caddy routes, projects, sockets, services, and containers, then derives row status, exposure, DNS match type, capabilities, and issue arrays.
 

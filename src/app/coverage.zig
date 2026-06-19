@@ -978,8 +978,14 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
     const json = try json_out.toOwnedSlice();
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"coverage_typed_model_candidates\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"summary\":{\"generic_inventory_rows\":4,\"control_plane_generic_inventory_rows\":3,\"outside_control_plane_generic_inventory_rows\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"control_plane_typed_gap\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"outside_control_plane_typed_gap\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Workers\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"focus_family\":null") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"scope\":\"outside-control-plane\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"required_for_goal\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"next_action\":\"optional_generic_inventory_modeling\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"typed_gap\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"routes_detail\",\"command\":\"cloudio coverage routes cloudflare 'Workers' --support partial --mode read --detail\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"tag\":\"Horizons: Websites\"") == null);
@@ -999,6 +1005,21 @@ test "ranks typed model candidates from L3 generic inventory evidence" {
     try std.testing.expect(std.mem.indexOf(u8, complete_json, "\"tag\":\"Accounts\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, complete_json, "\"tag\":\"Security Center Insights\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, complete_json, "\"status\":\"typed\"") != null);
+
+    var focused_json_out = std.Io.Writer.Allocating.init(allocator);
+    defer focused_json_out.deinit();
+    try writeTypedModelsJsonFromText(allocator, cloudflare, hostinger, .{
+        .provider = .cloudflare,
+        .focus = .control_plane,
+        .limit = 0,
+    }, &focused_json_out.writer);
+    const focused_json = try focused_json_out.toOwnedSlice();
+    defer allocator.free(focused_json);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"focus\":\"control-plane\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"control_plane_typed_gap\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"tag\":\"Workers\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"focus_filtered_rows_hidden\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, focused_json, "\"typed_or_complete_rows_hidden\":2") != null);
 }
 
 test "renders broad provider coverage workplan commands by tag" {

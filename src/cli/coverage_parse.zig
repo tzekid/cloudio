@@ -504,14 +504,29 @@ fn parseTypedModels(args: []const []const u8) Command {
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
-        switch (parseCoverageFamilyArg(args, &index, &command.options.family)) {
+        switch (parseCoverageFocusArg(args, &index, &command.options.focus)) {
             .matched => continue,
+            .unknown => |value| return .{ .unknown = value },
+            .no_match => {},
+        }
+        switch (parseCoverageFamilyArg(args, &index, &command.options.family)) {
+            .matched => {
+                if (command.options.family != .all) command.options.focus = .control_plane;
+                continue;
+            },
             .unknown => |value| return .{ .unknown = value },
             .no_match => {},
         }
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--include-complete") or std.mem.eql(u8, arg, "--include-typed") or std.mem.eql(u8, arg, "--all")) {
             command.options.include_complete = true;
+        } else if (std.mem.eql(u8, arg, "--control-plane") or std.mem.eql(u8, arg, "--cloudio-relevant")) {
+            command.options.focus = .control_plane;
+        } else if (app_coverage.WorkplanFocus.parse(arg)) |focus| {
+            command.options.focus = focus;
+        } else if (app_coverage.WorkplanFamily.parse(arg)) |family| {
+            command.options.family = family;
+            if (command.options.family != .all) command.options.focus = .control_plane;
         } else {
             switch (parseCoverageProviderPositional(arg, &command.options.provider, &provider_set)) {
                 .matched => continue,
@@ -589,7 +604,7 @@ pub const usage_text =
     \\  cloudio coverage l1 [all|cloudflare|hostinger] [--json|--format json]
     \\  cloudio coverage gaps|levels|level-tags [all|cloudflare|hostinger] [--limit <n>] [--json|--format json]
     \\  cloudio coverage families [all|cloudflare|hostinger] [--focus all|control-plane] [--limit <n>] [--bundle] [--plans] [--candidate-limit <n>] [--json|--format json]
-    \\  cloudio coverage typed-models [all|cloudflare|hostinger] [--family <family>] [--limit <n>] [--include-complete] [--json|--format json]
+    \\  cloudio coverage typed-models [all|cloudflare|hostinger] [all|control-plane|<family>] [--focus all|control-plane] [--family <family>] [--limit <n>] [--include-complete] [--json|--format json]
     \\  cloudio coverage workplan [all|cloudflare|hostinger] [all|control-plane|<family>] [--focus all|control-plane] [--family <family>] [--limit <n>] [--plans] [--bundle] [--candidate-limit <n>] [--json|--format json]
     \\  cloudio coverage capture-candidates [all|cloudflare|hostinger] [tag-query] [--family <family>] [--support <status>] [--limit <n>] [--plans] [--json|--format json]
     \\  cloudio coverage actual-captures [all|cloudflare|hostinger] [all|control-plane] [tag-query] [--focus all|control-plane] [--family <family>] [--support <status>] [--operation <id>] [--limit <n>] [--plans] [--json|--format json]
@@ -1096,8 +1111,21 @@ test "coverage command parser defaults to summary" {
         .typed_models => |command| {
             try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.provider);
             try std.testing.expectEqual(app_coverage.WorkplanFamily.security, command.options.family);
+            try std.testing.expectEqual(app_coverage.WorkplanFocus.control_plane, command.options.focus);
             try std.testing.expectEqual(@as(usize, 7), command.options.limit);
             try std.testing.expect(command.options.include_complete);
+            try std.testing.expectEqual(RenderFormat.json, command.format);
+        },
+        else => return error.ExpectedCoverageTypedModels,
+    }
+
+    const typed_models_focus_args = [_][]const u8{ "typed-models", "cloudflare", "control-plane", "--limit=0", "--json" };
+    switch (parseCommand(typed_models_focus_args[0..])) {
+        .typed_models => |command| {
+            try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, command.options.provider);
+            try std.testing.expectEqual(app_coverage.WorkplanFocus.control_plane, command.options.focus);
+            try std.testing.expectEqual(app_coverage.WorkplanFamily.all, command.options.family);
+            try std.testing.expectEqual(@as(usize, 0), command.options.limit);
             try std.testing.expectEqual(RenderFormat.json, command.format);
         },
         else => return error.ExpectedCoverageTypedModels,
