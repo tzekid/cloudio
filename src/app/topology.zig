@@ -48,9 +48,12 @@ pub const Topology = struct {
 
     pub fn load(ctx: Context, options: Options) !Topology {
         const normalized = options.normalized();
+        var rows = try ctx.db.topologyRows(ctx.gpa, normalized.limit);
+        errdefer rows.deinit(ctx.gpa);
+        try hydrateInferredServices(ctx, &rows);
         return .{
             .options = normalized,
-            .rows = try ctx.db.topologyRows(ctx.gpa, normalized.limit),
+            .rows = rows,
         };
     }
 
@@ -336,7 +339,7 @@ fn isContainerNotRunning(row: db_store.TopologyRow) bool {
 }
 
 fn stateLooksRunning(value: []const u8) bool {
-    return containsIgnoreCase(value, "running") or containsIgnoreCase(value, "active") or containsIgnoreCase(value, "up");
+    return containsIgnoreCase(value, "running") or containsIgnoreCase(value, "active") or containsIgnoreCase(value, "up") or containsIgnoreCase(value, "observed");
 }
 
 fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
@@ -398,6 +401,52 @@ fn issueCount(row: db_store.TopologyRow) usize {
     return count;
 }
 
+fn hydrateInferredServices(ctx: Context, rows: *db_store.TopologyRows) !void {
+    var services = try ctx.db.serviceList(ctx.gpa);
+    defer services.deinit(ctx.gpa);
+
+    for (rows.items) |*row| {
+        const inferred = serviceNameFromSocketProcess(row.socket_process) orelse continue;
+        if (row.service.len == 0) try replaceOwned(ctx.gpa, &row.service, inferred);
+        if (row.service_state.len == 0 and std.mem.eql(u8, row.service, inferred)) {
+            if (serviceStateFor(services.items, row.service)) |state| {
+                try replaceOwned(ctx.gpa, &row.service_state, state);
+            } else {
+                try replaceOwned(ctx.gpa, &row.service_state, "observed");
+            }
+        }
+    }
+}
+
+fn serviceStateFor(rows: []const db_store.NameValueRow, service: []const u8) ?[]const u8 {
+    for (rows) |row| {
+        if (std.mem.eql(u8, row.name, service)) return row.value;
+    }
+    return null;
+}
+
+fn replaceOwned(allocator: Allocator, field: *[]u8, value: []const u8) !void {
+    const copy = try allocator.dupe(u8, value);
+    allocator.free(field.*);
+    field.* = copy;
+}
+
+fn serviceNameFromSocketProcess(value: []const u8) ?[]const u8 {
+    const suffix = ".service";
+    const suffix_start = std.mem.lastIndexOf(u8, value, suffix) orelse return null;
+    var start = suffix_start;
+    while (start > 0) {
+        const previous = value[start - 1];
+        if (previous == '/' or previous == ' ' or previous == '\t' or previous == '\r' or previous == '\n' or previous == ':' or previous == '(' or previous == ')') break;
+        start -= 1;
+    }
+    const end = suffix_start + suffix.len;
+    if (start >= end) return null;
+    const service = value[start..end];
+    if (!std.mem.endsWith(u8, service, suffix)) return null;
+    return service;
+}
+
 test "topology read model connects DNS Caddy project and system state" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -419,11 +468,11 @@ test "topology read model connects DNS Caddy project and system state" {
     try db.insertCaddyUpstream("api.plosca.ru", "", "127.0.0.1:9000");
     try db.insertCaddyUpstream("local-only.plosca.ru", "", "127.0.0.1:9100");
     try db.insertCaddyUpstream("local-only.plosca.ru", "", "127.0.0.1:9100");
-    try db.upsertProject("api", "compose", "/home/kid/Projects/api/compose.yaml", "api.plosca.ru", "127.0.0.1:9000", "api.service", "api-1", null);
+    try db.upsertProject("api", "compose", "/home/kid/Projects/api/compose.yaml", "api.plosca.ru", "127.0.0.1:9000", null, "api-1", null);
     try db.upsertProject("compose-only", "compose", "/home/kid/Projects/compose-only/compose.yaml", null, null, null, null, null);
     try db.upsertProject("worker", "systemd", "/home/kid/Projects/worker", null, null, "worker.service", "worker-1", null);
-    try db.insertSocket("tcp", "LISTEN", "127.0.0.1:9000", "api", "raw");
-    try db.upsertService("api.service", "user", "running", "running", "API", "raw");
+    try db.insertSocket("tcp", "LISTEN", "127.0.0.1:9000", "users:((\"api\",pid=1,fd=3)) cgroup:/user.slice/user-1000.slice/user@1000.service/app.slice/api.service <->", "raw");
+    try db.upsertService("api.service", "user", "active", "running", "API", "raw");
     try db.upsertService("worker.service", "user", "failed", "failed", "Worker", "raw");
     try db.upsertContainer("api-1", "api:latest", "Up", "9000/tcp", "raw");
     try db.upsertContainer("worker-1", "worker:latest", "Exited (1)", "", "raw");
@@ -465,6 +514,7 @@ test "topology read model connects DNS Caddy project and system state" {
     try std.testing.expect(std.mem.indexOf(u8, text, "dns_type=MX") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "dns_type=TXT") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "socket=LISTEN") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "service=api.service\tservice_state=active") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "dns-only.plosca.ru\tstatus=dns_only\texposure=public\tdns_match=direct\tdns=dns-only.plosca.ru") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "local-only.plosca.ru\tstatus=degraded\texposure=local\tdns_match=none") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "issues=caddy_without_dns,upstream_without_socket") != null);
@@ -493,6 +543,13 @@ test "topology read model connects DNS Caddy project and system state" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"exposure\":\"public\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"dns_match\":\"direct\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"capabilities\":{\"dns\":true,\"caddy\":true,\"project\":true,\"socket\":true,\"service\":true,\"container\":true}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"service\":\"api.service\",\"service_state\":\"active\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"issues\":[\"caddy_without_dns\",\"upstream_without_socket\"]") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"issues\":[\"service_not_running\",\"container_not_running\"]") != null);
+}
+
+test "infers systemd service names from socket cgroup process text" {
+    try std.testing.expectEqualStrings("plosca-webapp.service", serviceNameFromSocketProcess("users:((\"webapp\",pid=342665,fd=4)) uid:1001 cgroup:/user.slice/user-1001.slice/user@1001.service/app.slice/plosca-webapp.service <->").?);
+    try std.testing.expectEqualStrings("docker.service", serviceNameFromSocketProcess("ino:19571 sk:3 cgroup:/system.slice/docker.service <->").?);
+    try std.testing.expect(serviceNameFromSocketProcess("users:((\"caddy\",pid=1,fd=3))") == null);
 }

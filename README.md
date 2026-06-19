@@ -89,7 +89,7 @@ zig build run -- evidence capture-summary hostinger --json
 
 `evidence matrix` rolls stored evidence into provider family/status/source groups for broad review. `evidence routes` reads `route.capture` audit rows and extracts provider operation IDs, so L2 route-capture proof can be inspected without scraping recent logs or calling provider APIs. `evidence coverage` joins those DB captures to the generated Cloudflare/Hostinger route manifests and prints official tag, method, path, support, mode, deprecation, and test metadata for each captured operation without making live provider calls. `evidence capture-summary` compares official non-deprecated read routes with actual SQLite route-capture evidence by provider family, so generated coverage claims are not confused with live L2 collection proof.
 
-Topology reads SQLite only and connects Cloudflare DNS records, Caddy routes, project metadata, listening sockets, systemd service state, and Docker container state. The JSON read model also derives status, exposure, DNS match type, capability booleans, and issue arrays/counts such as `upstream_without_socket`, `project_without_runtime`, and `dns_without_local_target` for UI/API consumers:
+Topology reads SQLite only and connects Cloudflare DNS records, Caddy routes, project metadata, listening sockets, systemd service state, and Docker container state. It also derives systemd service names from socket cgroup process text, then hydrates service state from collected `systemctl` rows when available. The JSON read model derives status, exposure, DNS match type, capability booleans, and issue arrays/counts such as `upstream_without_socket`, `project_without_runtime`, and `dns_without_local_target` for UI/API consumers:
 
 ```sh
 zig build run -- topology
