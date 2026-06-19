@@ -1,4 +1,5 @@
 const std = @import("std");
+const app_provider_family = @import("app_provider_family");
 const app_render = @import("app_render");
 const core_redact = @import("core_redact");
 const db_store = @import("db_store");
@@ -9,6 +10,7 @@ const Db = db_store.Db;
 const Io = std.Io;
 
 pub const default_limit = 200;
+pub const unbounded_storage_limit = 100_000;
 
 pub const Context = struct {
     io: Io,
@@ -69,10 +71,18 @@ pub const Options = struct {
     pub fn normalized(self: Options) Options {
         return .{
             .provider = self.provider,
-            .limit = app_render.positiveLimit(self.limit, default_limit),
+            .limit = if (self.limit == 0) 0 else app_render.positiveLimit(self.limit, default_limit),
         };
     }
 };
+
+pub fn storageLimit(limit: i64) i64 {
+    return if (limit == 0) unbounded_storage_limit else app_render.positiveLimit(limit, default_limit);
+}
+
+pub fn displayLimit(limit: i64, row_count: usize) usize {
+    return if (limit == 0) row_count else @intCast(app_render.positiveLimit(limit, default_limit));
+}
 
 pub fn writeRedactedTextField(gpa: Allocator, writer: anytype, label: []const u8, value: []const u8) !void {
     if (value.len == 0) return;
@@ -135,6 +145,7 @@ pub fn evidenceFamily(provider: []const u8, kind: []const u8) []const u8 {
     if (std.mem.eql(u8, provider, "caddy")) return "caddy";
     if (std.mem.eql(u8, provider, "system")) return "system";
     if (std.mem.eql(u8, provider, "projects")) return "projects";
+    if (app_provider_family.tagFamily(provider, kind)) |family| return family.name();
     if (std.mem.eql(u8, provider, "hostinger")) return hostingerFamily(kind);
     if (std.mem.eql(u8, provider, "cloudflare")) return cloudflareFamily(kind);
     return "unclassified";
@@ -203,5 +214,7 @@ test "status and family helpers classify evidence consistently" {
     try std.testing.expectEqualStrings("error", statusClass("not_found"));
     try std.testing.expectEqualStrings("dry_run", statusClass("dry_run"));
     try std.testing.expectEqualStrings("hostinger-vps", evidenceFamily("hostinger", "VPS_getVirtualMachinesV1"));
+    try std.testing.expectEqualStrings("security", evidenceFamily("hostinger", "VPS: Firewall"));
+    try std.testing.expectEqualStrings("docker", evidenceFamily("hostinger", "VPS: Docker Manager"));
     try std.testing.expectEqualStrings("dns", evidenceFamily("cloudflare", "DNS Records for a Zone"));
 }

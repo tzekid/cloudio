@@ -386,11 +386,18 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_history_mod);
 
+    const app_provider_family_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/provider_family.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const app_evidence_common_mod = b.createModule(.{
         .root_source_file = b.path("src/app/evidence_common.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_provider_family", .module = app_provider_family_mod },
             .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -511,6 +518,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_provider_family", .module = app_provider_family_mod },
             .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
@@ -931,6 +939,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_log", .module = app_log_mod },
             .{ .name = "app_overview", .module = app_overview_mod },
             .{ .name = "app_projects", .module = app_projects_mod },
+            .{ .name = "app_provider_family", .module = app_provider_family_mod },
             .{ .name = "app_provider_list", .module = app_provider_list_mod },
             .{ .name = "app_provider_coverage_actual_plan", .module = app_provider_coverage_actual_plan_mod },
             .{ .name = "app_provider_coverage_actual_ready", .module = app_provider_coverage_actual_ready_mod },
@@ -1246,6 +1255,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_system_mod);
     addModuleTest(b, test_step, app_topology_mod);
     addModuleTest(b, test_step, app_provider_api_mod);
+    addModuleTest(b, test_step, app_provider_family_mod);
     addModuleTest(b, test_step, app_provider_l1_mod);
     addModuleTest(b, test_step, app_provider_coverage_actual_captures_mod);
     addModuleTest(b, test_step, app_provider_coverage_actual_commands_mod);

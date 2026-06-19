@@ -33,7 +33,7 @@ pub const RouteCaptures = struct {
             .options = normalized,
             .rows = try ctx.db.routeCaptureEvidence(ctx.gpa, .{
                 .provider = normalized.provider.dbValue(),
-                .limit = normalized.limit,
+                .limit = evidence_common.storageLimit(normalized.limit),
             }),
         };
     }
@@ -124,7 +124,7 @@ pub const RouteCoverage = struct {
         const route_filter = try evidence_common.routeCoverageProviderFilter(normalized.provider);
         var rows = try ctx.db.routeCaptureEvidence(ctx.gpa, .{
             .provider = normalized.provider.dbValue(),
-            .limit = normalized.limit,
+            .limit = evidence_common.storageLimit(normalized.limit),
         });
         errdefer rows.deinit(ctx.gpa);
         var routes = switch (route_filter) {
@@ -207,7 +207,7 @@ pub const RouteCoverage = struct {
             if (route) |matched| {
                 try writer.print("{s}\t{s}\t{s}\t{s}\t{s}\t{s}\tsupport={s}\tmode={s}\ttests={s}\tdeprecated={}\tstatus={s}\tcount={d}\tlatest={s}\tendpoint=", .{
                     row.provider,
-                    evidence_common.evidenceFamily(row.provider, row.operation_id),
+                    routeFamily(matched.*),
                     matched.tag,
                     row.operation_id,
                     matched.method.name(),
@@ -353,7 +353,7 @@ pub const RouteCaptureSummary = struct {
         }
         var visible: usize = 0;
         var omitted: usize = 0;
-        const limit: usize = @intCast(self.options.limit);
+        const limit = evidence_common.displayLimit(self.options.limit, self.rows.len);
         for (self.rows) |row| {
             if (visible >= limit) {
                 omitted += 1;
@@ -388,7 +388,7 @@ pub const RouteCaptureSummary = struct {
         try writer.writeAll(",\"families\":[");
         var visible: usize = 0;
         var omitted: usize = 0;
-        const limit: usize = @intCast(self.options.limit);
+        const limit = evidence_common.displayLimit(self.options.limit, self.rows.len);
         var first = true;
         for (self.rows) |row| {
             if (visible >= limit) {
@@ -500,7 +500,7 @@ fn writeRouteCaptureJson(gpa: Allocator, row: db_store.RouteCaptureEvidenceRow, 
 fn writeRouteCoverageRowJson(gpa: Allocator, row: db_store.RouteCaptureEvidenceRow, route: ?*const provider_routes.Route, writer: anytype) !void {
     try writer.writeByte('{');
     try app_render.writeJsonStringField(writer, "provider", row.provider, true);
-    try app_render.writeJsonStringField(writer, "family", evidence_common.evidenceFamily(row.provider, row.operation_id), true);
+    try app_render.writeJsonStringField(writer, "family", if (route) |matched| routeFamily(matched.*) else evidence_common.evidenceFamily(row.provider, row.operation_id), true);
     try app_render.writeJsonBoolField(writer, "matched", route != null, true);
     try app_render.writeJsonStringField(writer, "operation_id", row.operation_id, true);
     if (route) |matched| {

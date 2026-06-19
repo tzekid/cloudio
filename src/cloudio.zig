@@ -39,6 +39,7 @@ pub const app = struct {
     pub const log = @import("app_log");
     pub const overview = @import("app_overview");
     pub const projects = @import("app_projects");
+    pub const provider_family = @import("app_provider_family");
     pub const provider_list = @import("app_provider_list");
     pub const provider_coverage_actual_plan = @import("app_provider_coverage_actual_plan");
     pub const provider_coverage_actual_ready = @import("app_provider_coverage_actual_ready");
@@ -115,6 +116,7 @@ test "facade exposes stable integration modules" {
     _ = app.log.Context;
     _ = app.overview.Overview;
     _ = app.projects.Context;
+    _ = app.provider_family.WorkplanFamily;
     _ = app.provider_list.Options;
     _ = app.provider_coverage_actual_plan.ActualCapturePlan;
     _ = app.provider_coverage_actual_ready.ActualReadyCaptureOptions;

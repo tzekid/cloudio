@@ -73,19 +73,22 @@ fn parseCommand(args: []const []const u8) !Command {
 
 fn parseOptions(args: []const []const u8) !Parsed {
     var parsed = Parsed{};
-    try cli_args.parseFormatProviderLimit(
-        args,
-        &parsed.options,
-        &parsed.format,
-        app_evidence.ProviderFilter.parse,
-        .{"--provider"},
-        error.MissingEvidenceProvider,
-        error.InvalidEvidenceProvider,
-        .{"--limit"},
-        error.MissingEvidenceLimit,
-        error.InvalidEvidenceLimit,
-        error.UnexpectedEvidenceArgument,
-    );
+    var provider_seen = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        if (try cli_args.parseFormatOption(args, &index, &parsed.format, error.MissingFormat, error.InvalidFormat)) continue;
+        if (try cli_args.parseProviderOption(args, &index, &parsed.options.provider, &provider_seen, app_evidence.ProviderFilter.parse, .{"--provider"}, error.MissingEvidenceProvider, error.InvalidEvidenceProvider)) continue;
+        if (try cli_args.parseRequiredValueArg(args, &index, .{"--limit"}, error.MissingEvidenceLimit)) |value| {
+            const limit = try cli_args.parseSignedI64(value, error.InvalidEvidenceLimit);
+            if (limit < 0) return error.InvalidEvidenceLimit;
+            parsed.options.limit = limit;
+            continue;
+        }
+
+        const arg = args[index];
+        if (cli_args.parseProviderPositional(arg, &parsed.options.provider, &provider_seen, app_evidence.ProviderFilter.parse)) continue;
+        return error.UnexpectedEvidenceArgument;
+    }
     return parsed;
 }
 
@@ -129,13 +132,19 @@ test "evidence parser accepts provider limit and format" {
     try std.testing.expectEqual(app_evidence.ProviderFilter.hostinger, summary.options.provider);
     try std.testing.expectEqual(@as(i64, 4), summary.options.limit);
     try std.testing.expectEqual(cli_render.RenderFormat.json, summary.format);
+
+    const all_summary_args = [_][]const u8{ "capture-summary", "hostinger", "--limit=0", "--json" };
+    const all_summary = (try parseCommand(all_summary_args[0..])).capture_summary;
+    try std.testing.expectEqual(app_evidence.ProviderFilter.hostinger, all_summary.options.provider);
+    try std.testing.expectEqual(@as(i64, 0), all_summary.options.limit);
+    try std.testing.expectEqual(cli_render.RenderFormat.json, all_summary.format);
 }
 
 test "evidence parser rejects invalid options" {
     const invalid_provider = [_][]const u8{ "--provider", "other" };
     try std.testing.expectError(error.InvalidEvidenceProvider, parseCommand(invalid_provider[0..]));
 
-    const invalid_limit = [_][]const u8{"--limit=0"};
+    const invalid_limit = [_][]const u8{"--limit=-1"};
     try std.testing.expectError(error.InvalidEvidenceLimit, parseCommand(invalid_limit[0..]));
 
     const unexpected = [_][]const u8{"extra"};

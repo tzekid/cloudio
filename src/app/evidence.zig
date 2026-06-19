@@ -92,7 +92,7 @@ pub const Matrix = struct {
         }
         var visible: usize = 0;
         var omitted: usize = 0;
-        const limit: usize = @intCast(self.options.limit);
+        const limit = evidence_common.displayLimit(self.options.limit, self.summaries.items.len);
         for (self.summaries.items) |row| {
             if (visible >= limit) {
                 omitted += 1;
@@ -121,7 +121,7 @@ pub const Matrix = struct {
         try writer.writeAll(",\"groups\":[");
         var visible: usize = 0;
         var omitted: usize = 0;
-        const limit: usize = @intCast(self.options.limit);
+        const limit = evidence_common.displayLimit(self.options.limit, self.summaries.items.len);
         var first = true;
         for (self.summaries.items) |row| {
             if (visible >= limit) {
@@ -154,7 +154,7 @@ pub const Evidence = struct {
             .summaries = summaries,
             .events = try ctx.db.providerEvidenceEvents(ctx.gpa, .{
                 .provider = normalized.provider.dbValue(),
-                .limit = normalized.limit,
+                .limit = evidence_common.storageLimit(normalized.limit),
             }),
         };
     }
