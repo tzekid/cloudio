@@ -144,10 +144,12 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
             try writer.print("  {s}\n", .{row.route.tag});
         }
         const route_status = actualRouteCaptureStatus(provider_name, row.route.operation_id.?, plan.captures.items);
-        try writer.print("    {s} {s} | state={s} support={s} op={s} events={d} family_priority={d} family_pending_read_gaps={d} family_ready={d}/{d}", .{
+        const review = try actualCaptureCandidateReview(gpa, row.route, state, plan.source_routes.items, plan.captures.items, plan.source_evidence.items, hints_value);
+        try writer.print("    {s} {s} | state={s} review={s} support={s} op={s} events={d} family_priority={d} family_pending_read_gaps={d} family_ready={d}/{d}", .{
             row.route.method.name(),
             row.route.path_template,
             state.name(),
+            review.status,
             @tagName(row.route.support),
             row.route.operation_id.?,
             route_status.events,
@@ -171,6 +173,7 @@ fn writeActualCapturePlanText(plan: ActualCapturePlan, gpa: Allocator, writer: a
         });
         try writeActualMissingInputsText(writer, row.route, hints_value);
         try writer.writeByte('\n');
+        try writer.print("      next: {s}\n", .{review.next_action});
         if (actualCaptureMissingInputCount(row.route, hints_value) != 0) {
             try writeActualMissingInputSourcesText(gpa, writer, row.route, plan.source_routes.items, plan.captures.items, plan.source_evidence.items, hints_value);
         }
@@ -607,6 +610,7 @@ fn writeActualCaptureCandidateJson(
     const command = try actualCaptureCommand(gpa, route, hints);
     defer gpa.free(command);
     const status = actualRouteCaptureStatus(route.provider.name(), route.operation_id.?, captures);
+    const review = try actualCaptureCandidateReview(gpa, route, state, routes, captures, source_evidence, hints);
     try writer.writeByte('{');
     try writeJsonField(writer, "provider", route.provider.name(), true);
     try writeJsonField(writer, "tag", route.tag, true);
@@ -621,6 +625,8 @@ fn writeActualCaptureCandidateJson(
     try writeJsonField(writer, "operation_id", route.operation_id.?, true);
     try writeJsonField(writer, "support", @tagName(route.support), true);
     try writeJsonField(writer, "actual_state", state.name(), true);
+    try writeJsonField(writer, "review_status", review.status, true);
+    try writeJsonField(writer, "next_action", review.next_action, true);
     try writeJsonCountField(writer, "capture_events", @intCast(@max(status.events, 0)), true);
     try writeJsonNullableStringField(writer, "latest_capture_at", if (status.latest_at.len == 0) null else status.latest_at, true);
     try writeJsonNullableStringField(writer, "pagination", routePaginationKind(route), true);
@@ -650,6 +656,156 @@ fn writeActualCaptureCandidateJson(
         try writer.writeAll(plan);
     }
     try writer.writeByte('}');
+}
+
+const ActualCaptureCandidateReview = struct {
+    status: []const u8,
+    next_action: []const u8,
+};
+
+fn actualCaptureCandidateReview(
+    gpa: Allocator,
+    route: provider_routes.Route,
+    state: ActualCaptureState,
+    routes: []const CoverageRoute,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
+    hints: ActualCaptureHints,
+) !ActualCaptureCandidateReview {
+    if (state == .ok) return .{
+        .status = "captured",
+        .next_action = "review existing OK capture evidence",
+    };
+
+    const ready = actualCaptureReady(route, hints);
+    const diagnostic_ready = !ready and actualCaptureReadyWithPolicy(route, hints, true);
+    const missing_inputs = actualCaptureMissingInputCount(route, hints);
+    if (missing_inputs != 0) {
+        return try actualCaptureMissingInputCandidateReview(gpa, route, routes, captures, source_evidence, hints);
+    }
+
+    switch (state) {
+        .ok => unreachable,
+        .missing => {
+            if (ready) return .{
+                .status = "ready_to_capture",
+                .next_action = "run the capture command to collect this read route",
+            };
+            if (diagnostic_ready) return .{
+                .status = "diagnostic_ready",
+                .next_action = "run the diagnostic capture command to record blocked-permission evidence",
+            };
+            return .{
+                .status = "blocked_by_policy",
+                .next_action = "update route support policy or required inputs before capture",
+            };
+        },
+        .non_ok => {
+            if (!provider_capabilities.routeLiveReadSupported(route) and provider_capabilities.routeDiagnosticReadSupported(route)) {
+                return .{
+                    .status = "diagnostic_blocked",
+                    .next_action = "review diagnostic capture evidence; live reads are disabled by support policy",
+                };
+            }
+            if (ready) return .{
+                .status = "retry_capture",
+                .next_action = "rerun the capture command and inspect the previous non-OK provider response",
+            };
+            return .{
+                .status = "capture_error",
+                .next_action = "inspect existing route capture error evidence before retrying",
+            };
+        },
+    }
+}
+
+fn actualCaptureMissingInputCandidateReview(
+    gpa: Allocator,
+    route: provider_routes.Route,
+    routes: []const CoverageRoute,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
+    hints: ActualCaptureHints,
+) !ActualCaptureCandidateReview {
+    var fallback = ActualCaptureCandidateReview{
+        .status = "waiting_for_inputs",
+        .next_action = "capture or normalize the listed source routes to discover required identifiers",
+    };
+    var saw_source = false;
+
+    for (route.path_params) |param| {
+        if (!param.required) continue;
+        if (actualCapturePathParamHint(route, param.name, hints) != null) continue;
+        if (try actualCaptureMissingInputSourceReview(gpa, route, routes, captures, source_evidence, hints, "path", param.name, &fallback, &saw_source)) |review| return review;
+    }
+    for (route.query_params) |param| {
+        if (!param.required) continue;
+        if (actualCaptureHasQueryParamHint(route, param.name, hints)) continue;
+        if (try actualCaptureMissingInputSourceReview(gpa, route, routes, captures, source_evidence, hints, "query", param.name, &fallback, &saw_source)) |review| return review;
+    }
+    for (route.header_params) |param| {
+        if (!param.required) continue;
+        if (try actualCaptureMissingInputSourceReview(gpa, route, routes, captures, source_evidence, hints, "header", param.name, &fallback, &saw_source)) |review| return review;
+    }
+
+    if (!saw_source) return .{
+        .status = "no_source_mapping",
+        .next_action = "add a source mapping for the required route parameter",
+    };
+    return fallback;
+}
+
+fn actualCaptureMissingInputSourceReview(
+    gpa: Allocator,
+    route: provider_routes.Route,
+    routes: []const CoverageRoute,
+    captures: []const db_store.RouteCaptureEvidenceRow,
+    source_evidence: []const db_store.RouteSourceEvidenceRow,
+    hints: ActualCaptureHints,
+    input_source: []const u8,
+    input_name: []const u8,
+    fallback: *ActualCaptureCandidateReview,
+    saw_source: *bool,
+) !?ActualCaptureCandidateReview {
+    const sources = actualCaptureMissingInputSources(route, input_source, input_name);
+    if (sources.len == 0) return null;
+    saw_source.* = true;
+    for (sources) |source| {
+        const source_route = actualCaptureFindRouteByOperationId(routes, route.provider, source.operation_id);
+        const source_state = if (source_route) |found| actualCaptureState(found, captures) else null;
+        const hint_count = actualCaptureSourceHintCount(route, hints, input_source, input_name, source);
+        const evidence = actualCaptureFindSourceEvidence(source_evidence, route.provider.name(), source.operation_id);
+        const body = try actualCaptureSourceBodyEvidence(gpa, evidence);
+        const result = actualCaptureSourceResult(source_route, source_state, hints, hint_count, body);
+        const next_action = actualCaptureSourceNextAction(source_route, source_state, hints, hint_count, body);
+        const review = actualCaptureReviewFromSourceResult(result, next_action);
+        if (actualCaptureSourceReviewIsImmediate(review.status)) return review;
+        fallback.* = review;
+    }
+    return null;
+}
+
+fn actualCaptureReviewFromSourceResult(result: []const u8, next_action: []const u8) ActualCaptureCandidateReview {
+    if (std.mem.eql(u8, result, "ready_to_capture")) return .{ .status = "source_ready", .next_action = next_action };
+    if (std.mem.eql(u8, result, "captured_with_hints")) return .{ .status = "source_has_hints", .next_action = next_action };
+    if (std.mem.eql(u8, result, "captured_empty")) return .{ .status = "blocked_empty_source", .next_action = next_action };
+    if (std.mem.eql(u8, result, "captured_without_hints")) return .{ .status = "needs_source_normalization", .next_action = next_action };
+    if (std.mem.eql(u8, result, "captured_unknown_body")) return .{ .status = "inspect_source_body", .next_action = next_action };
+    if (std.mem.eql(u8, result, "diagnostic_blocked")) return .{ .status = "diagnostic_source_blocked", .next_action = next_action };
+    if (std.mem.eql(u8, result, "captured_error")) return .{ .status = "source_capture_error", .next_action = next_action };
+    if (std.mem.eql(u8, result, "not_in_catalog")) return .{ .status = "source_not_in_catalog", .next_action = next_action };
+    if (std.mem.eql(u8, result, "not_eligible")) return .{ .status = "source_not_eligible", .next_action = next_action };
+    return .{ .status = "waiting_for_inputs", .next_action = next_action };
+}
+
+fn actualCaptureSourceReviewIsImmediate(status: []const u8) bool {
+    return std.mem.eql(u8, status, "source_ready") or
+        std.mem.eql(u8, status, "blocked_empty_source") or
+        std.mem.eql(u8, status, "needs_source_normalization") or
+        std.mem.eql(u8, status, "inspect_source_body") or
+        std.mem.eql(u8, status, "diagnostic_source_blocked") or
+        std.mem.eql(u8, status, "source_capture_error") or
+        std.mem.eql(u8, status, "source_not_in_catalog");
 }
 
 fn routeReadPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
@@ -725,6 +881,8 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachinesV1\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"operation_id\":\"VPS_getVirtualMachineDetailsV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"actual_state\":\"non_ok\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_status\":\"ready_to_capture\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_status\":\"retry_capture\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getVirtualMachineDetailsV1 --path-param virtualMachineId='12345'") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getMetricsV1 --path-param virtualMachineId='12345' --query-param date_from='") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "--query-param date_to='") != null);
@@ -740,8 +898,9 @@ test "plans actual Hostinger VPS captures from audit evidence and DB hints" {
     const text = try text_out.toOwnedSlice();
     defer allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "Cloudio actual route capture plan\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "state=missing support=partial op=VPS_getVirtualMachineDetailsV1 events=0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "state=non_ok support=partial op=VPS_getBackupsV1 events=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "state=missing review=ready_to_capture support=partial op=VPS_getVirtualMachineDetailsV1 events=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "state=non_ok review=retry_capture support=partial op=VPS_getBackupsV1 events=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "next: rerun the capture command and inspect the previous non-OK provider response") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "ready=true live_read_supported=true missing_inputs=-") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "omitted=1") != null);
 }
@@ -915,6 +1074,8 @@ test "plans derived Hostinger VPS detail captures from captured resource hints" 
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getFirewallDetailsV1 --path-param firewallId='55'") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "cloudio route capture hostinger --operation VPS_getMetricsV1 --path-param virtualMachineId='12345' --query-param date_from='") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"missing_inputs\":[{\"source\":\"path\",\"name\":\"postInstallScriptId\"}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_status\":\"source_not_in_catalog\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"next_action\":\"update the route catalog or remove the stale hint mapping\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "REPLACE_date_to") == null);
 
     const planned = try actualReadyCaptureJsonFromText(std.testing.io, allocator, "", hostinger, &db, .{ .hostinger = "test-token" }, .{
@@ -1514,6 +1675,7 @@ test "explains Hostinger missing input source routes for broad child groups" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"snapshotId\",\"source_operation_id\":\"DNS_getDNSSnapshotListV1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"ready_to_capture\",\"next_action\":\"capture the source route to discover identifiers\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"whoisId\",\"source_operation_id\":\"domains_getWHOISProfileListV1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"review_status\":\"blocked_empty_source\",\"next_action\":\"source collection is empty; no child identifiers are available\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"captured_empty\",\"next_action\":\"source collection is empty; no child identifiers are available\",\"source_status\":\"ok\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"body_shape\":\"array\",\"body_item_count\":0,\"body_bytes\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"input_name\":\"websiteId\",\"source_operation_id\":null,\"hint_kind\":null,\"hint_count\":0,\"result\":\"no_official_source\"") != null);
