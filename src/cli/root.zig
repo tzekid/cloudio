@@ -173,7 +173,7 @@ fn usage() void {
         \\  cloudio coverage plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-content-type <type>]
         \\  cloudio routes [list|catalog|groups|families|summary|tags] [all|cloudflare|hostinger] [query] [--provider <provider>] [--query <text>] [--limit <n>] [--json|--format json]
         \\  cloudio route plan|read|capture|dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--paginate] [--max-pages <n>] [--body-present|--body-content-type <type>]
-        \\  cloudio route capture-ready <cloudflare|hostinger> [tag-query] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--execute]
+        \\  cloudio route capture-ready <cloudflare|hostinger> [all|control-plane] [tag-query] [--focus all|control-plane] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--execute]
         \\  cloudio log [--json|--format json]
         \\  cloudio cloudflare account [list]|account show <account-id>|account profile <account-id>|account organizations <account-id>
         \\  cloudio cloudflare account dns-record-usage <account-id>

@@ -832,6 +832,48 @@ test "ranks actual captures by family coverage gaps before manifest order" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"family_missing_tests\":1") != null);
 }
 
+test "ranks actual-ready capture plans with actual capture family order" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/actual-ready-rank.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertCloudflareAccount("acct-1", "Main account", "standard", "active", "{\"id\":\"acct-1\"}");
+    try db.upsertCloudflareZone("zone-1", "plosca.ru", "acct-1", "active", false, "full", "ns1.example,ns2.example", "{\"id\":\"zone-1\"}");
+
+    const cloudflare =
+        \\{"provider":"cloudflare","tag":"Accounts","method":"GET","path":"/accounts","operation_id":"accounts-list","path_params":[],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"low static priority but first in manifest"}
+        \\{"provider":"cloudflare","tag":"SSL Universal","method":"GET","path":"/zones/{zone_id}/ssl/universal/settings","operation_id":"universal-ssl-settings-for-a-zone-get-universal-ssl-settings","path_params":[{"name":"zone_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"planned","mode":"read","tests":"missing","deprecated":false,"notes":"high static read gap should rank first"}
+        \\{"provider":"cloudflare","tag":"Access applications","method":"GET","path":"/accounts/{account_id}/access/apps","operation_id":"access-applications-list-access-applications","path_params":[{"name":"account_id","required":true}],"query_params":[],"header_params":[],"request_body":{"required":false,"content_types":[],"schema_refs":[]},"responses":[{"status":"200","content_types":["application/json"],"schema_refs":[]}],"security":{"required":true,"alternatives":[["api_token"]]},"support":"partial","mode":"read","tests":"fixture","deprecated":false,"notes":"ready capture but no static family gap"}
+        \\
+    ;
+
+    const planned = try actualReadyCaptureJsonFromText(std.testing.io, allocator, cloudflare, "", &db, .{ .cloudflare = .{ .token = "test-token" } }, .{
+        .filter = .{ .provider = .cloudflare },
+        .focus = .control_plane,
+        .limit = 0,
+        .execute = false,
+        .configured_domains = &.{"plosca.ru"},
+    });
+    defer allocator.free(planned);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"focus\":\"control-plane\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"candidate_routes\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"ready_routes\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"planned\":3") != null);
+
+    const ssl_index = std.mem.indexOf(u8, planned, "\"operation_id\":\"universal-ssl-settings-for-a-zone-get-universal-ssl-settings\"") orelse return error.ExpectedSslCandidate;
+    const accounts_index = std.mem.indexOf(u8, planned, "\"operation_id\":\"accounts-list\"") orelse return error.ExpectedAccountsCandidate;
+    const access_index = std.mem.indexOf(u8, planned, "\"operation_id\":\"access-applications-list-access-applications\"") orelse return error.ExpectedAccessCandidate;
+    try std.testing.expect(ssl_index < accounts_index);
+    try std.testing.expect(ssl_index < access_index);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"focus_family\":\"ssl-tls\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"family_priority\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "test-token") == null);
+}
+
 test "plans derived Hostinger VPS detail captures from captured resource hints" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});

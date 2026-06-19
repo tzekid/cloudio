@@ -190,12 +190,18 @@ fn parseCaptureReadyArgs(args: []const []const u8) !ParsedCaptureReadyArgs {
             parsed.options.max_pages = try cli_args.parsePositiveUsize(value, error.InvalidRouteCaptureReadyMaxPages);
         } else if (try parseCaptureReadyValue(args, &index, .{ "--family", "--control-plane-family" })) |value| {
             parsed.options.filter.family = app_coverage.WorkplanFamily.parse(value) orelse return error.InvalidRouteCaptureReadyFamily;
+        } else if (try parseCaptureReadyValue(args, &index, .{"--focus"})) |value| {
+            parsed.options.focus = app_coverage.ActualCaptureFocus.parse(value) orelse return error.InvalidRouteCaptureReadyFocus;
         } else if (try parseCaptureReadyValue(args, &index, .{ "--operation", "--operation-id" })) |value| {
             parsed.options.filter.operation_id = value;
         } else if (try parseCaptureReadyValue(args, &index, .{ "--path", "--path-template" })) |value| {
             parsed.options.filter.path_template = value;
         } else if (try parseCaptureReadyValue(args, &index, .{"--support"})) |value| {
             parsed.options.filter.support = app_coverage.SupportFilter.parse(value) orelse return error.InvalidRouteCaptureReadySupport;
+        } else if (std.mem.eql(u8, arg, "--control-plane") or std.mem.eql(u8, arg, "--cloudio-relevant")) {
+            parsed.options.focus = .control_plane;
+        } else if (app_coverage.ActualCaptureFocus.parse(arg)) |focus| {
+            parsed.options.focus = focus;
         } else if (!provider_set) {
             if (app_coverage.ProviderFilter.parse(arg)) |provider| {
                 parsed.options.filter.provider = provider;
@@ -261,7 +267,7 @@ fn usage() void {
         \\  cloudio route plan <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\  cloudio route read <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value]
         \\  cloudio route capture <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--kind <snapshot-kind>] [--target <snapshot-target>] [--paginate] [--max-pages <n>] [--diagnostic]
-        \\  cloudio route capture-ready <cloudflare|hostinger> [tag-query] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--include-blocked|--diagnostic-only] [--execute]
+        \\  cloudio route capture-ready <cloudflare|hostinger> [all|control-plane] [tag-query] [--focus all|control-plane] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--include-blocked|--diagnostic-only] [--execute]
         \\  cloudio route dry-run <cloudflare|hostinger> --operation <id> [--path-param name=value] [--query-param name=value] [--header-param name=value] [--body-present|--body-content-type <type>]
         \\
     , .{});
@@ -288,6 +294,7 @@ test "route capture-ready parser builds provider family execution options" {
         "--limit=0",
         "--max-pages",
         "3",
+        "--focus=control-plane",
         "--operation",
         "VPS_getBackupsV1",
         "--diagnostic-only",
@@ -296,6 +303,7 @@ test "route capture-ready parser builds provider family execution options" {
     const parsed = try parseCaptureReadyArgs(args[0..]);
     try std.testing.expectEqual(app_coverage.ProviderFilter.hostinger, parsed.options.filter.provider);
     try std.testing.expectEqual(app_coverage.WorkplanFamily.hostinger_vps, parsed.options.filter.family);
+    try std.testing.expectEqual(app_coverage.ActualCaptureFocus.control_plane, parsed.options.focus);
     try std.testing.expectEqualStrings("VPS_getBackupsV1", parsed.options.filter.operation_id orelse "");
     try std.testing.expectEqual(@as(usize, 0), parsed.options.limit);
     try std.testing.expectEqual(@as(usize, 3), parsed.options.max_pages);
@@ -308,9 +316,17 @@ test "route capture-ready parser builds provider family execution options" {
     try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, tag.options.filter.provider);
     try std.testing.expectEqualStrings("Logs", tag.options.filter.tag_query orelse "");
     try std.testing.expectEqual(app_coverage.SupportFilter.partial, tag.options.filter.support.?);
+    try std.testing.expectEqual(app_coverage.ActualCaptureFocus.all, tag.options.focus);
     try std.testing.expect(!tag.options.execute);
 
+    const focused_args = [_][]const u8{ "cloudflare", "control-plane", "--limit=2" };
+    const focused = try parseCaptureReadyArgs(focused_args[0..]);
+    try std.testing.expectEqual(app_coverage.ProviderFilter.cloudflare, focused.options.filter.provider);
+    try std.testing.expectEqual(app_coverage.ActualCaptureFocus.control_plane, focused.options.focus);
+    try std.testing.expectEqual(@as(usize, 2), focused.options.limit);
+
     try std.testing.expectError(error.InvalidRouteCaptureReadyMaxPages, parseCaptureReadyArgs(&.{ "--max-pages", "0" }));
+    try std.testing.expectError(error.InvalidRouteCaptureReadyFocus, parseCaptureReadyArgs(&.{ "--focus", "narrow" }));
     try std.testing.expectError(error.MissingRouteCaptureReadyOptionValue, parseCaptureReadyArgs(&.{"--family"}));
 }
 

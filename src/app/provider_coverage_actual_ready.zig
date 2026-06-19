@@ -32,11 +32,12 @@ pub const CaptureOptions = app_provider_route_capture.CaptureOptions;
 
 const ActualCaptureState = app_provider_coverage_actual_inputs.CaptureState;
 const ActualCaptureHints = app_provider_coverage_actual_inputs.Hints;
+const ActualCaptureFocus = app_provider_coverage_actual_plan.ActualCaptureFocus;
 const ActualCapturePlan = app_provider_coverage_actual_plan.ActualCapturePlan;
+const ActualCaptureCandidateRank = app_provider_coverage_actual_plan.ActualCaptureCandidateRank;
 const loadActualCapturePlanFromFiles = app_provider_coverage_actual_plan.loadActualCapturePlanFromFiles;
 const loadActualCapturePlanFromText = app_provider_coverage_actual_plan.loadActualCapturePlanFromText;
 const actualCaptureRouteFilter = app_provider_coverage_actual_inputs.actualCaptureRouteFilter;
-const actualCaptureState = app_provider_coverage_actual_inputs.actualCaptureState;
 const actualCaptureReadyWithPolicy = app_provider_coverage_actual_inputs.actualCaptureReadyWithPolicy;
 const actualCaptureUsesDiagnosticRead = app_provider_coverage_actual_inputs.actualCaptureUsesDiagnosticRead;
 const actualCapturePathParamHint = app_provider_coverage_actual_inputs.actualCapturePathParamHint;
@@ -45,6 +46,7 @@ const actualCaptureCommand = app_provider_coverage_actual_commands.actualCapture
 
 pub const ActualReadyCaptureOptions = struct {
     filter: RouteFilter = .{},
+    focus: ActualCaptureFocus = .all,
     limit: usize = 25,
     max_pages: usize = default_capture_max_pages,
     execute: bool = false,
@@ -83,6 +85,7 @@ pub fn actualReadyCaptureJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, db:
     try validateActualReadyCaptureProvider(auth, options.filter.provider);
     var plan = try loadActualCapturePlanFromFiles(io, gpa, paths, db, .{
         .filter = options.filter,
+        .focus = options.focus,
         .limit = 0,
         .include_plans = false,
         .configured_domains = options.configured_domains,
@@ -95,6 +98,7 @@ pub fn actualReadyCaptureJsonFromText(io: Io, gpa: Allocator, cloudflare_text: [
     try validateActualReadyCaptureProvider(auth, options.filter.provider);
     var plan = try loadActualCapturePlanFromText(gpa, cloudflare_text, hostinger_text, db, .{
         .filter = options.filter,
+        .focus = options.focus,
         .limit = 0,
         .include_plans = false,
         .configured_domains = options.configured_domains,
@@ -110,6 +114,8 @@ fn validateActualReadyCaptureProvider(auth: Auth, provider: ProviderFilter) !voi
 
 fn actualReadyCaptureJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, plan: ActualCapturePlan, options: ActualReadyCaptureOptions) ![]u8 {
     const hints = plan.hints();
+    var order = try plan.candidateOrder(gpa);
+    defer order.deinit(gpa);
     var summary = ActualReadyCaptureSummary{};
     var items_out = std.Io.Writer.Allocating.init(gpa);
     defer items_out.deinit();
@@ -117,9 +123,9 @@ fn actualReadyCaptureJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, plan: Act
     try items_writer.writeByte('[');
     var first = true;
 
-    for (plan.routes.items) |row| {
-        const state = actualCaptureState(row.route, plan.captures.items) orelse continue;
-        if (state == .ok) continue;
+    for (order.items) |rank| {
+        const row = plan.routes.items[rank.route_index];
+        const state = rank.state;
         summary.candidate_routes += 1;
         if (!actualCaptureReadyWithPolicy(row.route, hints, options.include_blocked)) {
             summary.skipped_unready += 1;
@@ -140,7 +146,7 @@ fn actualReadyCaptureJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, plan: Act
         } else {
             summary.planned += 1;
         }
-        try writeActualReadyCaptureItemJson(io, gpa, db, auth, row.route, state, hints, options, &summary, items_writer);
+        try writeActualReadyCaptureItemJson(io, gpa, db, auth, row.route, state, rank, hints, options, &summary, items_writer);
     }
 
     try items_writer.writeByte(']');
@@ -155,6 +161,7 @@ fn actualReadyCaptureJson(io: Io, gpa: Allocator, db: *Db, auth: Auth, plan: Act
     try writeJsonBoolField(writer, "execute", options.execute, true);
     try writeJsonBoolField(writer, "include_blocked", options.include_blocked, true);
     try writeJsonBoolField(writer, "diagnostic_only", options.diagnostic_only, true);
+    try writeJsonField(writer, "focus", options.focus.name(), true);
     try writer.writeAll("\"filter\":");
     try app_provider_coverage_routes.writeRouteFilterJson(actualCaptureRouteFilter(options.filter), writer);
     try writer.writeByte(',');
@@ -189,6 +196,7 @@ fn writeActualReadyCaptureItemJson(
     auth: Auth,
     route: provider_routes.Route,
     state: ActualCaptureState,
+    rank: ActualCaptureCandidateRank,
     hints: ActualCaptureHints,
     options: ActualReadyCaptureOptions,
     summary: *ActualReadyCaptureSummary,
@@ -199,6 +207,12 @@ fn writeActualReadyCaptureItemJson(
     try writer.writeByte('{');
     try writeJsonField(writer, "provider", route.provider.name(), true);
     try writeJsonField(writer, "tag", route.tag, true);
+    try writeJsonNullableStringField(writer, "focus_family", if (rank.focus_family) |family| family.name() else null, true);
+    try writeJsonCountField(writer, "family_priority", rank.familyPriority(), true);
+    try writeJsonCountField(writer, "family_candidate_routes", rank.family_candidate_routes, true);
+    try writeJsonCountField(writer, "family_ready_candidates", rank.family_ready_candidates, true);
+    try writeJsonCountField(writer, "family_pending_read_gaps", rank.family_pending_read_gaps, true);
+    try writeJsonCountField(writer, "family_missing_tests", rank.family_missing_tests, true);
     try writeJsonField(writer, "operation_id", route.operation_id orelse route.path_template, true);
     try writeJsonField(writer, "method", route.method.name(), true);
     try writeJsonField(writer, "path_template", route.path_template, true);
