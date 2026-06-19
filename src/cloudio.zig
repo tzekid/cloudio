@@ -30,6 +30,7 @@ pub const app = struct {
     pub const exports = @import("app_export");
     pub const history = @import("app_history");
     pub const hostinger = @import("app_hostinger");
+    pub const hostinger_overview = @import("app_hostinger_overview");
     pub const init = @import("app_init");
     pub const inventory = @import("app_inventory");
     pub const log = @import("app_log");
@@ -96,6 +97,7 @@ test "facade exposes stable integration modules" {
     _ = app.hostinger.Context;
     _ = app.hostinger.HostingArgs;
     _ = app.hostinger.VmEndpoint;
+    _ = app.hostinger_overview.VpsOverview;
     _ = app.init.Result;
     _ = app.inventory.Context;
     _ = app.inventory.Provider;

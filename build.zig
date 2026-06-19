@@ -772,15 +772,26 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_cloudflare_mod);
 
+    const app_hostinger_overview_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/hostinger_overview.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_provider_api", .module = app_provider_api_mod },
+            .{ .name = "app_render", .module = app_render_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_hostinger_overview_mod);
+
     const app_hostinger_mod = b.createModule(.{
         .root_source_file = b.path("src/app/hostinger.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "collector_hostinger", .module = collector_hostinger_mod },
-            .{ .name = "app_provider_api", .module = app_provider_api_mod },
+            .{ .name = "app_hostinger_overview", .module = app_hostinger_overview_mod },
             .{ .name = "app_provider_list", .module = app_provider_list_mod },
-            .{ .name = "app_render", .module = app_render_mod },
             .{ .name = "core_output", .module = core_output_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
@@ -836,6 +847,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_export", .module = app_export_mod },
             .{ .name = "app_history", .module = app_history_mod },
             .{ .name = "app_hostinger", .module = app_hostinger_mod },
+            .{ .name = "app_hostinger_overview", .module = app_hostinger_overview_mod },
             .{ .name = "app_init", .module = app_init_mod },
             .{ .name = "app_inventory", .module = app_inventory_mod },
             .{ .name = "app_log", .module = app_log_mod },
@@ -1136,6 +1148,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_render_mod);
     addModuleTest(b, test_step, app_route_catalog_mod);
     addModuleTest(b, test_step, app_cloudflare_mod);
+    addModuleTest(b, test_step, app_hostinger_overview_mod);
     addModuleTest(b, test_step, app_hostinger_mod);
     addModuleTest(b, test_step, app_inventory_mod);
     addModuleTest(b, test_step, app_database_mod);

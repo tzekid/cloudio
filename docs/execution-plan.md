@@ -49,7 +49,7 @@ The POC already has:
 - A redaction audit command, `cloudio security redaction`, that checks configured API token/key bytes against Cloudio output/storage surfaces without printing those bytes.
 - A public `cloudio.zig` facade that keeps collectors out of future embedding code.
 
-The current simplification slices added `src/app/render.zig` and migrated overview, inventory, Cloudflare, Hostinger, doctor, and run-log app read models away from repeated local JSON/text helpers.
+The current simplification slices added `src/app/render.zig`, migrated overview, inventory, Cloudflare, Hostinger, doctor, and run-log app read models away from repeated local JSON/text helpers, and split Hostinger account/VPS overview read models into `src/app/hostinger_overview.zig` so `src/app/hostinger.zig` stays a provider workflow facade.
 
 ## Execution Phases
 

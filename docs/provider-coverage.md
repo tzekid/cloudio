@@ -1,6 +1,6 @@
 # Provider Coverage Baseline
 
-Last checked: 2026-06-18.
+Last checked: 2026-06-19.
 
 Canonical sources:
 
@@ -35,7 +35,7 @@ Generated coverage defaults classify non-deprecated `GET` operations with `reque
 
 ## Cloudflare Current Coverage
 
-Official schema size checked today: 3151 operations. Read-only account/zone/DNS URL/auth handling lives in `src/providers/cloudflare/client.zig`; account, zone, DNS record, and zone-id response normalization lives in `src/providers/cloudflare/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Cloudflare collection, diagnostics, and SQLite normalization live in `src/collectors/cloudflare.zig`.
+Official schema size checked today: 3183 operations. Read-only account/zone/DNS URL/auth handling lives in `src/providers/cloudflare/client.zig`; account, zone, DNS record, and zone-id response normalization lives in `src/providers/cloudflare/models.zig`; shared redacted response capture lives in `src/collectors/capture.zig`; current Cloudflare collection, diagnostics, and SQLite normalization live in `src/collectors/cloudflare.zig`.
 
 Current POC status is intentionally narrow and read-only:
 
