@@ -417,10 +417,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "provider_auth", .module = provider_auth_mod },
-            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
             .{ .name = "provider_route_plan", .module = provider_route_plan_mod },
             .{ .name = "provider_route_result", .module = provider_route_result_mod },
             .{ .name = "provider_routes", .module = provider_routes_mod },
+            .{ .name = "provider_transport", .module = provider_transport_mod },
         },
     });
 

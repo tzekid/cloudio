@@ -1,9 +1,9 @@
 const std = @import("std");
 const provider_auth = @import("provider_auth");
-const provider_dispatch = @import("provider_dispatch");
 const provider_route_plan = @import("provider_route_plan");
 const provider_route_result = @import("provider_route_result");
 const provider_routes = @import("provider_routes");
+const provider_transport = @import("provider_transport");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -138,8 +138,9 @@ pub fn readMetadataJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanIn
     var routes = try loadCandidateRoutes(io, gpa, paths, input.filter.provider);
     defer routes.deinit(gpa);
     const route = try selectSingleRoute(routes.items, input.filter);
-    const client = provider_dispatch.Client.init(auth);
-    const result = try client.callReadRouteResultRequest(io, gpa, route.*, input.request);
+    const transport = provider_transport.ReadTransport.init(auth);
+    const response = try transport.callReadRouteRequest(io, gpa, route.*, input.request);
+    const result = provider_route_result.matchReadRouteResponse(route.*, response);
     defer result.deinit(gpa);
     return try provider_route_result.readRouteResultMetadataJson(gpa, route.*, result.view());
 }
@@ -148,16 +149,14 @@ pub fn dryRunJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, a
     var routes = try loadCandidateRoutes(io, gpa, paths, input.filter.provider);
     defer routes.deinit(gpa);
     const route = try selectSingleRoute(routes.items, input.filter);
-    const client = provider_dispatch.Client.init(auth);
-    return try client.dryRunRouteRequest(gpa, route.*, input.request);
+    return try dryRunRouteJsonForAuth(gpa, route.*, input.request, auth);
 }
 
 pub fn dryRunJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, input: RoutePlanInput, auth: Auth) ![]u8 {
     var routes = try loadCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, input.filter.provider);
     defer routes.deinit(gpa);
     const route = try selectSingleRoute(routes.items, input.filter);
-    const client = provider_dispatch.Client.init(auth);
-    return try client.dryRunRouteRequest(gpa, route.*, input.request);
+    return try dryRunRouteJsonForAuth(gpa, route.*, input.request, auth);
 }
 
 pub fn writeTextFromFiles(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, writer: anytype) !void {
@@ -181,6 +180,12 @@ fn loadCandidateRoutesFromText(gpa: Allocator, cloudflare_text: []const u8, host
         .cloudflare => try provider_routes.loadProviderFromText(gpa, .cloudflare, cloudflare_text),
         .hostinger => try provider_routes.loadProviderFromText(gpa, .hostinger, hostinger_text),
     };
+}
+
+fn dryRunRouteJsonForAuth(gpa: Allocator, route: provider_routes.Route, request: Request, auth: Auth) ![]u8 {
+    const transport = provider_transport.ReadTransport.init(auth);
+    if (route.provider != transport.provider()) return error.ProviderRouteAuthMismatch;
+    return try provider_route_plan.dryRunPlanJsonRequestWithBase(gpa, route, request, transport.baseUrl(route.provider));
 }
 
 fn selectSingleRoute(routes: []const provider_routes.Route, filter: RouteFilter) !*const provider_routes.Route {
