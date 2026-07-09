@@ -5,31 +5,33 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Login - cloudio</title>
 <link rel="stylesheet" href="/assets/app.css">
-<script type="module" src="/assets/datastar.js"></script>
-<script src="/assets/app.js"></script>
 </head>
 <body>
 <div class="login-wrap">
-  <div class="login-box" data-signals="{token: '', busy: false}">
+  <div class="login-box">
     <h1>cloud<span>io</span></h1>
-    <form data-on-submit__prevent="window.doLogin($token)">
+    <form id="login-form">
       <div class="form-field">
         <label for="token">Platform token</label>
-        <input id="token" type="password" data-bind-token autocomplete="current-password" autofocus>
+        <input id="token" type="password" autocomplete="current-password" autofocus>
       </div>
       <div class="login-error" id="login-error"></div>
-      <button type="submit" class="primary" data-attr-disabled="$busy">Sign in</button>
+      <button type="submit" class="primary" id="login-btn">Sign in</button>
     </form>
   </div>
 </div>
 <script>
-window.doLogin = async function (token) {
+document.getElementById("login-form").addEventListener("submit", async function (event) {
+  event.preventDefault();
   const errEl = document.getElementById("login-error");
+  const btn = document.getElementById("login-btn");
+  const token = document.getElementById("token").value.trim();
   errEl.textContent = "";
   if (!token) {
     errEl.textContent = "Token is required.";
     return;
   }
+  btn.disabled = true;
   try {
     const res = await fetch("/api/login", {
       method: "POST",
@@ -46,8 +48,10 @@ window.doLogin = async function (token) {
     }
   } catch (err) {
     errEl.textContent = "Network error: " + err.message;
+  } finally {
+    btn.disabled = false;
   }
-};
+});
 </script>
 </body>
 </html>
