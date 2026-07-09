@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard - cloudio</title>
+<link rel="stylesheet" href="/assets/app.css">
+<script type="module" src="/assets/datastar.js"></script>
+<script src="/assets/app.js"></script>
+</head>
+<body>
+
+<div class="flex" style="margin-bottom: 14px;">
+  <input type="text" id="domain-filter" placeholder="Filter by domain (e.g. example.com)" style="width: 280px;">
+  <label class="dim" style="font-size:12px;"><input type="checkbox" id="issues-only"> Issues only</label>
+  <span class="spacer"></span>
+  <span class="dim" id="last-refresh"></span>
+</div>
+
+<div class="cards" id="summary-cards"></div>
+
+<div class="panel">
+  <h2>Topology</h2>
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Status</th>
+        <th>Host</th>
+        <th>DNS Match</th>
+        <th>Exposure</th>
+        <th>Upstream</th>
+        <th>Service</th>
+        <th>Container</th>
+        <th>Issues</th>
+      </tr>
+    </thead>
+    <tbody id="topology-body">
+      <tr><td class="empty" colspan="8">Loading...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+(function () {
+  const c = window.cloudio;
+  c.injectLayout("Dashboard");
+
+  const STATUS_COLOR = {
+    healthy: "green",
+    degraded: "red",
+    dns_only: "amber",
+    local_only: "amber",
+    project_only: "amber",
+  };
+
+  let timer = null;
+
+  async function load() {
+    const domain = document.getElementById("domain-filter").value.trim();
+    const issues = document.getElementById("issues-only").checked;
+    const params = new URLSearchParams({ section: "domains" });
+    if (domain) params.set("domain", domain);
+    if (issues) params.set("issues", "1");
+    let data;
+    try {
+      data = await c.api("/api/dashboard?" + params.toString());
+    } catch (err) {
+      c.toast("Failed to load dashboard: " + err.message, "error");
+      document.getElementById("topology-body").innerHTML =
+        '<tr><td class="empty" colspan="8">Failed to load: ' + c.esc(err.message) + "</td></tr>";
+      return;
+    }
+
+    const summary = (data.summary && data.summary.topology) || {};
+    const statuses = summary.statuses || {};
+    const issuesSummary = summary.issues || {};
+    const issueTotal = Object.values(issuesSummary).reduce((a, b) => a + b, 0);
+    const cards = [
+      { label: "Hosts", value: summary.total || 0, cls: "" },
+      { label: "Healthy", value: statuses.healthy || 0, cls: "ok" },
+      { label: "Degraded", value: statuses.degraded || 0, cls: statuses.degraded ? "bad" : "" },
+      { label: "DNS only", value: statuses.dns_only || 0, cls: statuses.dns_only ? "warn" : "" },
+      { label: "Local only", value: statuses.local_only || 0, cls: statuses.local_only ? "warn" : "" },
+      { label: "Project only", value: statuses.project_only || 0, cls: statuses.project_only ? "warn" : "" },
+      { label: "Issues", value: issueTotal, cls: issueTotal ? "bad" : "ok" },
+    ];
+    document.getElementById("summary-cards").innerHTML = cards
+      .map(function (card) {
+        return '<div class="card ' + card.cls + '"><div class="card-value">' + card.value +
+          '</div><div class="card-label">' + c.esc(card.label) + "</div></div>";
+      })
+      .join("");
+
+    const refresh = data.summary && data.summary.last_refresh;
+    document.getElementById("last-refresh").textContent =
+      refresh && refresh.created_at ? "Last data refresh: " + c.fmtTime(refresh.created_at) : "";
+
+    const rows = (data.sections && data.sections.domains && data.sections.domains.topology) || [];
+    c.renderTable("topology-body", rows, [
+      { render: (r) => c.statusDot(STATUS_COLOR[r.status] || "", r.status) },
+      { render: (r) => c.esc(r.host || r.project || "(unnamed)"), cls: "mono" },
+      { render: (r) => r.dns_match === "none" ? '<span class="dim">none</span>' : c.badge(r.dns_match, r.dns_match === "direct" ? "green" : "blue") },
+      { key: "exposure", cls: "dim" },
+      { key: "upstream", cls: "mono" },
+      { render: (r) => r.service ? c.esc(r.service) + (r.service_state ? ' <span class="dim">(' + c.esc(r.service_state) + ")</span>" : "") : "" },
+      { render: (r) => r.container ? c.esc(r.container) + (r.container_status ? ' <span class="dim">(' + c.esc(r.container_status) + ")</span>" : "") : "" },
+      { render: (r) => (r.issues || []).map((i) => c.badge(i, "red")).join(" ") },
+    ], "No topology rows");
+  }
+
+  document.getElementById("domain-filter").addEventListener("input", function () {
+    clearTimeout(timer);
+    timer = setTimeout(load, 300);
+  });
+  document.getElementById("issues-only").addEventListener("change", load);
+  document.addEventListener("cloudio:reload", load);
+  load();
+})();
+</script>
+</body>
+</html>

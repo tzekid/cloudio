@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docker — cloudio</title>
+<link rel="stylesheet" href="/assets/app.css">
+<script type="module" src="/assets/datastar.js"></script>
+<script src="/assets/app.js"></script>
+<style>
+:root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --muted:#8b949e; --accent:#58a6ff; --ok:#3fb950; --err:#f85149; --warn:#d29922; }
+body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.layout { display:flex; min-height:100vh; }
+.sidebar { width:180px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--border); padding:12px 0; }
+.sidebar .brand { padding:4px 16px 12px; font-weight:700; color:var(--accent); }
+.sidebar a { display:block; padding:6px 16px; color:var(--muted); text-decoration:none; }
+.sidebar a:hover { color:var(--fg); }
+.sidebar a.active { color:var(--fg); background:var(--bg); border-left:2px solid var(--accent); }
+.main { flex:1; padding:16px 20px; min-width:0; }
+h1 { font-size:16px; margin:0 0 12px; }
+h2 { font-size:13px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+.panel { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:14px; }
+table { width:100%; border-collapse:collapse; }
+th,td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--border); vertical-align:middle; }
+th { color:var(--muted); font-weight:600; }
+input,select,button { background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:4px 8px; font:inherit; }
+button { cursor:pointer; }
+button:hover { border-color:var(--accent); }
+button.danger:hover { border-color:var(--err); color:var(--err); }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.muted { color:var(--muted); }
+.notice { padding:8px 10px; border:1px solid var(--warn); border-radius:4px; color:var(--warn); margin-bottom:10px; }
+.notice.error { border-color:var(--err); color:var(--err); }
+.hidden { display:none; }
+.pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; border:1px solid var(--border); }
+.pill.running { color:var(--ok); border-color:var(--ok); }
+.pill.stopped { color:var(--err); border-color:var(--err); }
+.status-msg { margin-left:8px; }
+.status-msg.ok { color:var(--ok); }
+.status-msg.err { color:var(--err); }
+pre.logs { background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:10px; overflow:auto; max-height:480px; white-space:pre-wrap; word-break:break-all; margin:8px 0 0; }
+tr.selectable { cursor:pointer; }
+tr.selected td { background:rgba(88,166,255,.08); }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">cloudio</div>
+    <a href="/">Dashboard</a>
+    <a href="/apps.html">Apps</a>
+    <a href="/routes.html">Routes</a>
+    <a href="/dns.html">DNS</a>
+    <a href="/vps.html">VPS</a>
+    <a href="/docker.html" class="active">Docker</a>
+    <a href="/audit.html">Audit</a>
+  </nav>
+  <main class="main">
+    <h1>Docker</h1>
+    <div id="notice" class="notice hidden"></div>
+
+    <div class="panel">
+      <h2>Containers</h2>
+      <table>
+        <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th></th></tr></thead>
+        <tbody id="containers-body"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+      </table>
+      <div class="row" style="margin-top:8px">
+        <button id="refresh-containers">Refresh list</button>
+        <span id="action-status" class="status-msg"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Logs</h2>
+      <div class="row">
+        <span id="logs-target" class="muted">Click a container row to view logs.</span>
+        <label for="tail">tail</label>
+        <select id="tail"><option>100</option><option selected>200</option><option>500</option></select>
+        <button id="logs-refresh">Refresh</button>
+        <span id="logs-status" class="status-msg"></span>
+      </div>
+      <pre id="logs" class="logs muted">No logs loaded.</pre>
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  async function plainFetch(url, opts) {
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch (_) {}
+    if (!res.ok) {
+      const err = new Error("HTTP " + res.status + " " + url);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
+    return body;
+  }
+  function fetchJson(url, opts) {
+    const fn = (window.cloudio && window.cloudio.fetchJson) ? window.cloudio.fetchJson : plainFetch;
+    return fn(url, opts);
+  }
+  const $ = (id) => document.getElementById(id);
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function setStatus(id, ok, msg) {
+    const el = $(id);
+    el.textContent = msg;
+    el.className = "status-msg " + (ok ? "ok" : "err");
+    setTimeout(() => { el.textContent = ""; }, 6000);
+  }
+  function notice(msg, isError) {
+    const el = $("notice");
+    if (!msg) { el.className = "notice hidden"; return; }
+    el.textContent = msg;
+    el.className = "notice" + (isError ? " error" : "");
+  }
+
+  let selected = null;
+  let actionable = true;
+
+  function pillClass(status) {
+    const s = String(status || "").toLowerCase();
+    if (s.includes("up") || s.includes("run")) return "running";
+    if (s.includes("exit") || s.includes("stop") || s.includes("dead")) return "stopped";
+    return "";
+  }
+
+  function render(containers) {
+    const body = $("containers-body");
+    if (!containers.length) {
+      body.innerHTML = '<tr><td colspan="5" class="muted">No containers.</td></tr>';
+      return;
+    }
+    body.innerHTML = containers.map((c) => {
+      const actions = actionable
+        ? '<button class="ct-act" data-name="' + esc(c.name) + '" data-action="start">start</button> ' +
+          '<button class="ct-act" data-name="' + esc(c.name) + '" data-action="stop">stop</button> ' +
+          '<button class="ct-act danger" data-name="' + esc(c.name) + '" data-action="restart">restart</button>'
+        : "";
+      return '<tr class="selectable' + (selected === c.name ? " selected" : "") + '" data-name="' + esc(c.name) + '">' +
+        "<td>" + esc(c.name) + "</td><td>" + esc(c.image) + '</td><td><span class="pill ' + pillClass(c.status) + '">' +
+        esc(c.status) + "</span></td><td>" + esc(c.ports) + "</td><td>" + actions + "</td></tr>";
+    }).join("");
+  }
+
+  async function loadContainers() {
+    notice(null);
+    try {
+      const data = await fetchJson("/api/containers");
+      actionable = true;
+      render(data.containers || []);
+      return;
+    } catch (_) { /* fall back to dashboard system snapshot */ }
+    try {
+      const dash = await fetchJson("/api/dashboard?section=system");
+      const rows = (dash.sections && dash.sections.system && dash.sections.system.containers) || [];
+      actionable = false;
+      // dashboard system containers are name/value rows; value is status-ish text
+      render(rows.map((r) => ({ name: r.name, image: "", status: r.value, ports: "" })));
+      notice("/api/containers not available yet — showing read-only snapshot from /api/dashboard.", false);
+    } catch (e) {
+      $("containers-body").innerHTML = '<tr><td colspan="5" class="muted">No data.</td></tr>';
+      notice("Container endpoints not available yet.", true);
+    }
+  }
+
+  $("containers-body").addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("button.ct-act");
+    if (btn) {
+      const action = btn.dataset.action;
+      const name = btn.dataset.name;
+      if ((action === "stop" || action === "restart") && !confirm(action + " container " + name + "?")) return;
+      try {
+        const res = await fetchJson("/api/containers/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, action }),
+        });
+        const ok = res && res.ok !== false;
+        setStatus("action-status", ok, ok ? name + " " + (res.state || action + " requested") : "failed");
+        if (ok) setTimeout(loadContainers, 1200);
+      } catch (e) {
+        setStatus("action-status", false, e.status === 404 ? "endpoint not available yet" : "error: " + e.message);
+      }
+      return;
+    }
+    const row = ev.target.closest("tr.selectable");
+    if (row) {
+      selected = row.dataset.name;
+      $("logs-target").textContent = "container: " + selected;
+      document.querySelectorAll("tr.selectable").forEach((tr) =>
+        tr.classList.toggle("selected", tr.dataset.name === selected));
+      loadLogs();
+    }
+  });
+
+  async function loadLogs() {
+    if (!selected) { setStatus("logs-status", false, "select a container first"); return; }
+    const tail = $("tail").value;
+    const pre = $("logs");
+    pre.textContent = "Loading logs…";
+    pre.className = "logs muted";
+    try {
+      const res = await fetchJson("/api/containers/logs?name=" + encodeURIComponent(selected) + "&tail=" + tail);
+      if (res && res.ok !== false) {
+        pre.textContent = res.logs || "(empty)";
+        pre.className = "logs";
+      } else {
+        pre.textContent = "Failed to fetch logs.";
+      }
+    } catch (e) {
+      pre.textContent = e.status === 404 ? "Logs endpoint not available yet." : "Error: " + e.message;
+    }
+  }
+
+  $("logs-refresh").addEventListener("click", loadLogs);
+  $("tail").addEventListener("change", () => { if (selected) loadLogs(); });
+  $("refresh-containers").addEventListener("click", loadContainers);
+
+  loadContainers();
+})();
+</script>
+</body>
+</html>

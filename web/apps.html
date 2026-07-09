@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apps - cloudio</title>
+<link rel="stylesheet" href="/assets/app.css">
+<script type="module" src="/assets/datastar.js"></script>
+<script src="/assets/app.js"></script>
+</head>
+<body>
+
+<div class="panel">
+  <h2>New App</h2>
+  <div class="panel-body" data-signals="{name: '', sourceKind: 'repo', repoUrl: '', workdir: '', creating: false}">
+    <div class="form-row">
+      <div class="form-field">
+        <label>Name</label>
+        <input type="text" data-bind-name placeholder="myapp">
+      </div>
+      <div class="form-field">
+        <label>Source</label>
+        <select data-bind-source-kind>
+          <option value="repo">Git repo URL</option>
+          <option value="workdir">Existing workdir</option>
+        </select>
+      </div>
+      <div class="form-field" data-show="$sourceKind === 'repo'">
+        <label>Repo URL</label>
+        <input type="text" data-bind-repo-url placeholder="https://github.com/user/repo" style="width: 320px;">
+      </div>
+      <div class="form-field" data-show="$sourceKind === 'workdir'">
+        <label>Workdir</label>
+        <input type="text" data-bind-workdir placeholder="/home/kid/Projects/myapp" style="width: 320px;">
+      </div>
+      <button class="primary" data-attr-disabled="$creating"
+              data-on-click="$creating = true; window.createApp($name, $sourceKind, $repoUrl, $workdir).finally(() => { $creating = false })">
+        Create
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Apps</h2>
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Status</th>
+        <th>Port</th>
+        <th>Alias</th>
+        <th>Toolchain</th>
+        <th>Last Deploy</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="apps-body">
+      <tr><td class="empty" colspan="7">Loading...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="panel hidden" id="detail-panel">
+  <h2 id="detail-title">App</h2>
+  <div class="panel-body">
+    <div class="flex" style="margin-bottom: 10px;">
+      <button class="small" id="detail-close">Close</button>
+      <span class="spacer"></span>
+      <span class="dim" id="detail-meta"></span>
+    </div>
+    <h3 style="font-size: 12.5px; color: var(--text-dim); text-transform: uppercase;">Deploy History</h3>
+    <table class="data" style="margin-bottom: 14px;">
+      <thead>
+        <tr><th>ID</th><th>Status</th><th>SHA</th><th>Started</th><th>Finished</th><th>Detail</th><th></th></tr>
+      </thead>
+      <tbody id="deploys-body"></tbody>
+    </table>
+    <h3 style="font-size: 12.5px; color: var(--text-dim); text-transform: uppercase;">
+      Deploy Log <span class="dim" id="log-status" style="text-transform: none;"></span>
+    </h3>
+    <pre class="log" id="deploy-log">Select a deploy to view its log.</pre>
+  </div>
+</div>
+
+<script>
+(function () {
+  const c = window.cloudio;
+  c.injectLayout("Apps");
+
+  const STATUS_COLOR = { running: "green", ok: "green", success: "green", deployed: "green",
+    stopped: "amber", pending: "amber", deploying: "amber", failed: "red", error: "red" };
+
+  let apps = [];
+  let selectedApp = null;
+  let sse = null;
+  let pollTimer = null;
+
+  function color(status) {
+    return STATUS_COLOR[String(status || "").toLowerCase()] || "";
+  }
+
+  async function loadApps() {
+    let data;
+    try {
+      data = await c.api("/api/apps");
+    } catch (err) {
+      document.getElementById("apps-body").innerHTML =
+        '<tr><td class="empty" colspan="7">Apps endpoint not available yet (' + c.esc(err.message) + ")</td></tr>";
+      return;
+    }
+    apps = (data && data.apps) || [];
+    c.renderTable("apps-body", apps, [
+      { render: (r) => '<a href="#" data-app="' + c.esc(r.name) + '" class="app-link mono">' + c.esc(r.name) + "</a>" },
+      { render: (r) => c.statusDot(color(r.status), r.status || "unknown") },
+      { key: "port", cls: "mono" },
+      { render: (r) => r.alias_host ? '<a href="https://' + c.esc(r.alias_host) + '" target="_blank" rel="noopener">' + c.esc(r.alias_host) + "</a>" : "" },
+      { key: "toolchain", cls: "dim" },
+      { render: (r) => {
+          const d = r.last_deploy;
+          if (!d) return '<span class="dim">never</span>';
+          return c.badge(d.status, color(d.status)) + ' <span class="mono">' + c.esc(c.shortSha(d.git_sha)) +
+            '</span> <span class="dim">' + c.esc(c.fmtTime(d.finished_at || d.started_at)) + "</span>";
+        } },
+      { render: (r) => {
+          const n = c.esc(r.name);
+          return '<span class="flex">' +
+            '<button class="small primary" data-act="deploy" data-app="' + n + '">Deploy</button>' +
+            '<button class="small" data-act="start" data-app="' + n + '">Start</button>' +
+            '<button class="small" data-act="stop" data-app="' + n + '">Stop</button>' +
+            '<button class="small" data-act="restart" data-app="' + n + '">Restart</button>' +
+            '<button class="small" data-act="rollback" data-app="' + n + '">Rollback</button>' +
+            '<button class="small danger" data-act="delete" data-app="' + n + '">Delete</button>' +
+            "</span>";
+        } },
+    ], "No apps yet");
+  }
+
+  window.createApp = async function (name, sourceKind, repoUrl, workdir) {
+    name = (name || "").trim();
+    if (!name) { c.toast("App name is required", "error"); return; }
+    const body = { name: name };
+    if (sourceKind === "workdir") {
+      if (!workdir.trim()) { c.toast("Workdir is required", "error"); return; }
+      body.workdir = workdir.trim();
+    } else {
+      if (!repoUrl.trim()) { c.toast("Repo URL is required", "error"); return; }
+      body.repo_url = repoUrl.trim();
+    }
+    try {
+      await c.api("/api/apps", { method: "POST", body: body });
+      c.toast("App " + name + " created", "success");
+      loadApps();
+    } catch (err) {
+      c.toast("Create failed: " + err.message, "error");
+    }
+  };
+
+  async function doAction(action, name) {
+    try {
+      if (action === "deploy") {
+        c.toast("Deploying " + name + "...");
+        openDetail(name);
+        startLiveLog(name);
+        const res = await c.api("/api/apps/" + encodeURIComponent(name) + "/deploy", { method: "POST" });
+        c.toast("Deploy " + (res && res.ok ? "finished: " + (res.status || "ok") : "failed: " + ((res && res.status) || "unknown")),
+          res && res.ok ? "success" : "error");
+        if (selectedApp === name) loadDetail(name);
+      } else if (action === "rollback") {
+        if (!confirm("Rollback " + name + " to the previous deploy?")) return;
+        const res = await c.api("/api/apps/" + encodeURIComponent(name) + "/rollback", { method: "POST", body: { deploy_id: null } });
+        c.toast("Rollback " + (res && res.ok !== false ? "done" : "failed"), res && res.ok !== false ? "success" : "error");
+      } else if (action === "delete") {
+        if (!confirm("Delete app " + name + "? This cannot be undone.")) return;
+        await c.api("/api/apps/" + encodeURIComponent(name), { method: "DELETE" });
+        c.toast("App " + name + " deleted", "success");
+        if (selectedApp === name) closeDetail();
+      } else {
+        const res = await c.api("/api/apps/" + encodeURIComponent(name) + "/service", { method: "POST", body: { action: action } });
+        c.toast(name + " " + action + ": " + ((res && (res.state || res.detail)) || (res && res.ok ? "ok" : "failed")),
+          res && res.ok ? "success" : "error");
+      }
+    } catch (err) {
+      c.toast(action + " failed: " + err.message, "error");
+    }
+    loadApps();
+  }
+
+  /* Detail drawer */
+  function openDetail(name) {
+    selectedApp = name;
+    document.getElementById("detail-panel").classList.remove("hidden");
+    document.getElementById("detail-title").textContent = "App: " + name;
+    loadDetail(name);
+  }
+
+  function closeDetail() {
+    selectedApp = null;
+    stopLiveLog();
+    document.getElementById("detail-panel").classList.add("hidden");
+  }
+
+  async function loadDetail(name) {
+    const app = apps.find((a) => a.name === name);
+    document.getElementById("detail-meta").textContent = app
+      ? [app.workdir, app.repo_url].filter(Boolean).join(" | ")
+      : "";
+    let data;
+    try {
+      data = await c.api("/api/apps/" + encodeURIComponent(name) + "/deploys");
+    } catch (err) {
+      document.getElementById("deploys-body").innerHTML =
+        '<tr><td class="empty" colspan="7">Deploy history not available yet (' + c.esc(err.message) + ")</td></tr>";
+      return;
+    }
+    const rows = (data && (data.deploys || data.rows)) || (Array.isArray(data) ? data : []);
+    c.renderTable("deploys-body", rows, [
+      { key: "id", cls: "mono" },
+      { render: (r) => c.badge(r.status, color(r.status)) },
+      { render: (r) => c.esc(c.shortSha(r.git_sha)), cls: "mono" },
+      { render: (r) => c.esc(c.fmtTime(r.started_at)), cls: "dim" },
+      { render: (r) => c.esc(c.fmtTime(r.finished_at)), cls: "dim" },
+      { key: "detail", cls: "dim" },
+      { render: (r) => '<button class="small" data-log-deploy="' + r.id + '">Log</button>' },
+    ], "No deploys");
+  }
+
+  async function loadLog(name, deployId) {
+    stopLiveLog();
+    const pre = document.getElementById("deploy-log");
+    document.getElementById("log-status").textContent = "(deploy " + deployId + ")";
+    pre.textContent = "Loading...";
+    try {
+      const data = await c.api("/api/apps/" + encodeURIComponent(name) + "/log?deploy_id=" + deployId);
+      pre.textContent = (data && data.log) || "(empty log)";
+    } catch (err) {
+      pre.textContent = "Log not available: " + err.message;
+    }
+  }
+
+  /* Live deploy log: SSE with polling fallback. */
+  function startLiveLog(name) {
+    stopLiveLog();
+    const pre = document.getElementById("deploy-log");
+    document.getElementById("log-status").textContent = "(live)";
+    pre.textContent = "";
+    try {
+      sse = new EventSource("/api/events/deploy/" + encodeURIComponent(name));
+      sse.addEventListener("log", function (ev) {
+        pre.textContent += ev.data + "\n";
+        pre.scrollTop = pre.scrollHeight;
+      });
+      sse.addEventListener("done", function () {
+        document.getElementById("log-status").textContent = "(finished)";
+        stopLiveLog();
+        loadApps();
+        if (selectedApp) loadDetail(selectedApp);
+      });
+      sse.onerror = function () {
+        stopLiveLog();
+        document.getElementById("log-status").textContent = "(live stream unavailable, polling)";
+        pollLog(name);
+      };
+    } catch (_) {
+      pollLog(name);
+    }
+  }
+
+  function pollLog(name) {
+    const pre = document.getElementById("deploy-log");
+    pollTimer = setInterval(async function () {
+      try {
+        const data = await c.api("/api/apps/" + encodeURIComponent(name) + "/log");
+        if (data && data.log) {
+          pre.textContent = data.log;
+          pre.scrollTop = pre.scrollHeight;
+        }
+      } catch (_) { /* keep polling until stopped */ }
+    }, 2000);
+  }
+
+  function stopLiveLog() {
+    if (sse) { sse.close(); sse = null; }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  /* Event delegation */
+  document.getElementById("apps-body").addEventListener("click", function (ev) {
+    const link = ev.target.closest(".app-link");
+    if (link) {
+      ev.preventDefault();
+      openDetail(link.dataset.app);
+      return;
+    }
+    const btn = ev.target.closest("button[data-act]");
+    if (btn) doAction(btn.dataset.act, btn.dataset.app);
+  });
+  document.getElementById("deploys-body").addEventListener("click", function (ev) {
+    const btn = ev.target.closest("button[data-log-deploy]");
+    if (btn && selectedApp) loadLog(selectedApp, btn.dataset.logDeploy);
+  });
+  document.getElementById("detail-close").addEventListener("click", closeDetail);
+  document.addEventListener("cloudio:reload", loadApps);
+
+  loadApps();
+})();
+</script>
+</body>
+</html>

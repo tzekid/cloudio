@@ -292,6 +292,59 @@ pub const migrations = [_]Migration{
         \\CREATE INDEX IF NOT EXISTS idx_cloudflare_security_severity ON cloudflare_security_items(severity, kind, updated_at DESC);
         ,
     },
+    .{
+        .version = 8,
+        .name = "platform_apps_and_writes",
+        .sql =
+        \\CREATE TABLE IF NOT EXISTS apps (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  name TEXT NOT NULL UNIQUE,
+        \\  repo_url TEXT,
+        \\  workdir TEXT,
+        \\  toolchain TEXT,
+        \\  port INTEGER,
+        \\  alias_host TEXT,
+        \\  env_json TEXT,
+        \\  status TEXT NOT NULL DEFAULT 'registered',
+        \\  current_deploy_id INTEGER,
+        \\  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \\  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        \\);
+        \\CREATE TABLE IF NOT EXISTS deploys (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  app_id INTEGER NOT NULL,
+        \\  git_sha TEXT,
+        \\  status TEXT NOT NULL DEFAULT 'pending',
+        \\  log_path TEXT,
+        \\  detail TEXT,
+        \\  started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \\  finished_at TEXT
+        \\);
+        \\CREATE INDEX IF NOT EXISTS idx_deploys_app_id ON deploys(app_id, id DESC);
+        \\CREATE TABLE IF NOT EXISTS caddy_desired_routes (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  host TEXT NOT NULL UNIQUE,
+        \\  upstream TEXT,
+        \\  kind TEXT NOT NULL DEFAULT 'manual',
+        \\  extra_directives TEXT,
+        \\  raw_block TEXT,
+        \\  enabled INTEGER NOT NULL DEFAULT 1,
+        \\  app_id INTEGER,
+        \\  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        \\);
+        \\CREATE TABLE IF NOT EXISTS audit_actions (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  kind TEXT NOT NULL,
+        \\  target TEXT,
+        \\  request_json TEXT,
+        \\  result TEXT NOT NULL DEFAULT 'pending',
+        \\  detail TEXT,
+        \\  actor TEXT,
+        \\  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        \\);
+        \\CREATE INDEX IF NOT EXISTS idx_audit_actions_kind_id ON audit_actions(kind, id DESC);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;
@@ -383,6 +436,10 @@ test "applies migrations idempotently" {
     try std.testing.expect(try tableExists(handle.?, "snapshots"));
     try std.testing.expect(try tableExists(handle.?, "audit_events"));
     try std.testing.expect(try tableExists(handle.?, "cloudflare_security_items"));
+    try std.testing.expect(try tableExists(handle.?, "apps"));
+    try std.testing.expect(try tableExists(handle.?, "deploys"));
+    try std.testing.expect(try tableExists(handle.?, "caddy_desired_routes"));
+    try std.testing.expect(try tableExists(handle.?, "audit_actions"));
 }
 
 fn tableExists(handle: *sqlite.sqlite3, table: []const u8) !bool {

@@ -442,6 +442,31 @@ pub const CloudflareDnsRecordRows = struct {
     }
 };
 
+pub const ContainerRow = struct {
+    name: []u8,
+    image: []u8,
+    status: []u8,
+    ports: []u8,
+    updated_at: []u8,
+
+    pub fn deinit(self: ContainerRow, allocator: Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.image);
+        allocator.free(self.status);
+        allocator.free(self.ports);
+        allocator.free(self.updated_at);
+    }
+};
+
+pub const ContainerRows = struct {
+    items: []ContainerRow,
+
+    pub fn deinit(self: *ContainerRows, allocator: Allocator) void {
+        for (self.items) |row| row.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub const CloudflareKindCount = struct {
     kind: []u8,
     count: i64,
@@ -1571,6 +1596,36 @@ pub const Db = struct {
 
     pub fn socketList(self: *Db, gpa: Allocator) !NameValueRows {
         return try self.nameValueRows(gpa, "SELECT COALESCE(local_address,''), COALESCE(process,'') FROM sockets ORDER BY 1 LIMIT 200");
+    }
+
+    pub fn containerRows(self: *Db, gpa: Allocator, limit: i64) !ContainerRows {
+        const stmt = try self.prepare(
+            \\SELECT COALESCE(name,''), COALESCE(image,''), COALESCE(status,''), COALESCE(ports,''), updated_at
+            \\FROM containers
+            \\ORDER BY name
+            \\LIMIT ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, positiveLimit(limit, 200));
+        var rows = std.ArrayList(ContainerRow).empty;
+        errdefer {
+            for (rows.items) |row| row.deinit(gpa);
+            rows.deinit(gpa);
+        }
+        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            var row = ContainerRow{
+                .name = try dupeColumn(gpa, stmt, 0),
+                .image = try dupeColumn(gpa, stmt, 1),
+                .status = try dupeColumn(gpa, stmt, 2),
+                .ports = try dupeColumn(gpa, stmt, 3),
+                .updated_at = try dupeColumn(gpa, stmt, 4),
+            };
+            rows.append(gpa, row) catch |err| {
+                row.deinit(gpa);
+                return err;
+            };
+        }
+        return .{ .items = try rows.toOwnedSlice(gpa) };
     }
 
     pub fn containerList(self: *Db, gpa: Allocator) !NameValueRows {

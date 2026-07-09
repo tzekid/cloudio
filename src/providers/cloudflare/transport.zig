@@ -62,6 +62,27 @@ pub fn getWithLegacyHeaders(io: Io, gpa: Allocator, auth: Auth, url: []const u8,
     return try net_http.get(gpa, io, url, headers, &.{});
 }
 
+pub fn requestJson(io: Io, gpa: Allocator, auth: Auth, method: std.http.Method, url: []const u8, body: ?[]const u8) !net_http.Response {
+    const common = jsonHeaders();
+    if (auth.token) |token| {
+        if (token.len == 0) return error.MissingCloudflareAuth;
+        const auth_header = try std.fmt.allocPrint(gpa, "Bearer {s}", .{token});
+        defer gpa.free(auth_header);
+        const privileged = [_]std.http.Header{.{ .name = "Authorization", .value = auth_header }};
+        return try net_http.request(gpa, io, method, url, body, &common, &privileged);
+    }
+    const email = auth.email orelse return error.MissingCloudflareAuth;
+    const key = auth.key orelse return error.MissingCloudflareAuth;
+    if (email.len == 0 or key.len == 0) return error.MissingCloudflareAuth;
+    const legacy = [_]std.http.Header{
+        .{ .name = "Accept", .value = "application/json" },
+        .{ .name = "Content-Type", .value = "application/json" },
+        .{ .name = "X-Auth-Email", .value = email },
+        .{ .name = "X-Auth-Key", .value = key },
+    };
+    return try net_http.request(gpa, io, method, url, body, &legacy, &.{});
+}
+
 pub fn getPublic(io: Io, gpa: Allocator, url: []const u8) !net_http.Response {
     return try getPublicWithHeaders(io, gpa, url, &.{});
 }

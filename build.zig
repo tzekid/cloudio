@@ -976,15 +976,109 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_dashboard_mod);
 
+    const app_writes_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/writes.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_writes_mod);
+
+    const app_caddy_desired_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/caddy_desired.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "app_writes", .module = app_writes_mod },
+            .{ .name = "core_fs", .module = core_fs_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_output", .module = core_output_mod },
+            .{ .name = "core_process", .module = core_process_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_caddy_desired_mod);
+
+    const app_system_control_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/system_control.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "app_writes", .module = app_writes_mod },
+            .{ .name = "core_fs", .module = core_fs_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_process", .module = core_process_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_system_control_mod);
+
+    const app_provider_writes_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/provider_writes.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "app_writes", .module = app_writes_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "net_http", .module = net_http_mod },
+            .{ .name = "provider_auth", .module = provider_auth_mod },
+            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
+            .{ .name = "provider_cloudflare_transport", .module = provider_cloudflare_transport_mod },
+            .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
+            .{ .name = "provider_hostinger_transport", .module = provider_hostinger_transport_mod },
+            .{ .name = "provider_routes", .module = provider_routes_mod },
+        },
+    });
+    linkSqlite(app_provider_writes_mod);
+
+    const app_deploy_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/deploy.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "app_caddy_desired", .module = app_caddy_desired_mod },
+            .{ .name = "app_system_control", .module = app_system_control_mod },
+            .{ .name = "app_writes", .module = app_writes_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_fs", .module = core_fs_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_process", .module = core_process_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_deploy_mod);
+
     const app_serve_mod = b.createModule(.{
         .root_source_file = b.path("src/app/serve.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_actions", .module = app_actions_mod },
+            .{ .name = "app_caddy_desired", .module = app_caddy_desired_mod },
             .{ .name = "app_dashboard", .module = app_dashboard_mod },
+            .{ .name = "app_deploy", .module = app_deploy_mod },
+            .{ .name = "app_history", .module = app_history_mod },
             .{ .name = "app_inventory", .module = app_inventory_mod },
+            .{ .name = "app_provider_writes", .module = app_provider_writes_mod },
+            .{ .name = "app_refresh", .module = app_refresh_mod },
+            .{ .name = "app_system_control", .module = app_system_control_mod },
             .{ .name = "app_topology", .module = app_topology_mod },
+            .{ .name = "app_writes", .module = app_writes_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_log", .module = core_log_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
     });
@@ -1285,6 +1379,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_dashboard", .module = app_dashboard_mod },
             .{ .name = "app_serve", .module = app_serve_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "core_config", .module = core_config_mod },
         },
     });
     linkSqlite(cli_serve_mod);
@@ -1401,6 +1496,11 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_actions_mod);
     addModuleTest(b, test_step, app_dashboard_mod);
     addModuleTest(b, test_step, app_serve_mod);
+    addModuleTest(b, test_step, app_writes_mod);
+    addModuleTest(b, test_step, app_caddy_desired_mod);
+    addModuleTest(b, test_step, app_system_control_mod);
+    addModuleTest(b, test_step, app_provider_writes_mod);
+    addModuleTest(b, test_step, app_deploy_mod);
     addModuleTest(b, test_step, app_provider_api_mod);
     addModuleTest(b, test_step, app_provider_family_mod);
     addModuleTest(b, test_step, app_provider_l1_mod);

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit — cloudio</title>
+<link rel="stylesheet" href="/assets/app.css">
+<script type="module" src="/assets/datastar.js"></script>
+<script src="/assets/app.js"></script>
+<style>
+:root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --muted:#8b949e; --accent:#58a6ff; --ok:#3fb950; --err:#f85149; --warn:#d29922; }
+body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.layout { display:flex; min-height:100vh; }
+.sidebar { width:180px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--border); padding:12px 0; }
+.sidebar .brand { padding:4px 16px 12px; font-weight:700; color:var(--accent); }
+.sidebar a { display:block; padding:6px 16px; color:var(--muted); text-decoration:none; }
+.sidebar a:hover { color:var(--fg); }
+.sidebar a.active { color:var(--fg); background:var(--bg); border-left:2px solid var(--accent); }
+.main { flex:1; padding:16px 20px; min-width:0; }
+h1 { font-size:16px; margin:0 0 12px; }
+.panel { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:14px; }
+table { width:100%; border-collapse:collapse; }
+th,td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
+th { color:var(--muted); font-weight:600; }
+input,select,button { background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:4px 8px; font:inherit; }
+button { cursor:pointer; }
+button:hover { border-color:var(--accent); }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.muted { color:var(--muted); }
+.notice { padding:8px 10px; border:1px solid var(--err); border-radius:4px; color:var(--err); margin-bottom:10px; }
+.hidden { display:none; }
+.badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; border:1px solid var(--border); }
+.badge.ok { color:var(--ok); border-color:var(--ok); }
+.badge.error { color:var(--err); border-color:var(--err); }
+tr.entry { cursor:pointer; }
+tr.entry:hover td { background:rgba(88,166,255,.05); }
+tr.detail td { background:var(--bg); }
+tr.detail pre { margin:4px 0; white-space:pre-wrap; word-break:break-all; }
+.detail-label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">cloudio</div>
+    <a href="/">Dashboard</a>
+    <a href="/apps.html">Apps</a>
+    <a href="/routes.html">Routes</a>
+    <a href="/dns.html">DNS</a>
+    <a href="/vps.html">VPS</a>
+    <a href="/docker.html">Docker</a>
+    <a href="/audit.html" class="active">Audit</a>
+  </nav>
+  <main class="main">
+    <h1>Audit log</h1>
+    <div class="panel">
+      <div class="row">
+        <label for="limit">Limit</label>
+        <select id="limit">
+          <option>50</option><option selected>100</option><option>200</option><option>500</option>
+        </select>
+        <button id="refresh">Refresh</button>
+        <label><input id="auto" type="checkbox"> auto-refresh 10s</label>
+        <span id="updated" class="muted"></span>
+      </div>
+    </div>
+    <div id="notice" class="notice hidden"></div>
+    <div class="panel">
+      <table>
+        <thead><tr><th style="width:170px">Time</th><th>Action</th><th>Target</th><th style="width:80px">Result</th><th></th></tr></thead>
+        <tbody id="audit-body"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  async function plainFetch(url, opts) {
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch (_) {}
+    if (!res.ok) {
+      const err = new Error("HTTP " + res.status + " " + url);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
+    return body;
+  }
+  function fetchJson(url, opts) {
+    const fn = (window.cloudio && window.cloudio.fetchJson) ? window.cloudio.fetchJson : plainFetch;
+    return fn(url, opts);
+  }
+  const $ = (id) => document.getElementById(id);
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function pretty(text) {
+    if (text == null || text === "") return "";
+    try { return JSON.stringify(JSON.parse(text), null, 2); } catch (_) { return String(text); }
+  }
+
+  let actions = [];
+  const expanded = new Set();
+  let timer = null;
+
+  function render() {
+    const body = $("audit-body");
+    if (!actions.length) {
+      body.innerHTML = '<tr><td colspan="5" class="muted">No audit entries.</td></tr>';
+      return;
+    }
+    const rows = [];
+    for (const a of actions) {
+      const badge = a.result === "ok" ? "ok" : "error";
+      const hasDetail = (a.request != null && a.request !== "") || (a.detail != null && a.detail !== "");
+      rows.push('<tr class="entry" data-id="' + a.id + '">' +
+        "<td>" + esc(a.created_at) + "</td><td>" + esc(a.action) + "</td><td>" + esc(a.target) +
+        '</td><td><span class="badge ' + badge + '">' + esc(a.result) + "</span></td><td>" +
+        (hasDetail ? '<span class="muted">' + (expanded.has(a.id) ? "collapse" : "expand") + "</span>" : "") + "</td></tr>");
+      if (expanded.has(a.id)) {
+        let inner = "";
+        if (a.request) inner += '<div class="detail-label">request</div><pre>' + esc(pretty(a.request)) + "</pre>";
+        if (a.detail) inner += '<div class="detail-label">detail</div><pre>' + esc(pretty(a.detail)) + "</pre>";
+        if (!inner) inner = '<span class="muted">No request or detail payload.</span>';
+        rows.push('<tr class="detail"><td colspan="5">' + inner + "</td></tr>");
+      }
+    }
+    body.innerHTML = rows.join("");
+  }
+
+  async function load() {
+    try {
+      const data = await fetchJson("/api/audit?limit=" + $("limit").value);
+      actions = (data && data.actions) || [];
+      $("notice").className = "notice hidden";
+      $("updated").textContent = "updated " + new Date().toLocaleTimeString();
+      render();
+    } catch (e) {
+      const el = $("notice");
+      el.textContent = e.status === 404 ? "Audit endpoint not available yet." : "Failed to load audit log: " + e.message;
+      el.className = "notice";
+    }
+  }
+
+  $("audit-body").addEventListener("click", (ev) => {
+    const row = ev.target.closest("tr.entry");
+    if (!row) return;
+    const id = Number(row.dataset.id);
+    if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
+    render();
+  });
+
+  $("refresh").addEventListener("click", load);
+  $("limit").addEventListener("change", load);
+  $("auto").addEventListener("change", (ev) => {
+    if (ev.target.checked) {
+      timer = setInterval(load, 10000);
+    } else if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

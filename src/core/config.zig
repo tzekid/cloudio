@@ -17,6 +17,10 @@ const Setting = enum {
     cloudflare_email,
     cloudflare_api_key,
     hostinger_api_token,
+    platform_token,
+    apps_root,
+    port_range,
+    refresh_seconds,
 };
 
 const EnvBinding = struct {
@@ -41,6 +45,8 @@ const env_bindings = [_]EnvBinding{
     .{ .key = "CLOUDFLARE_API_KEY", .setting = .cloudflare_api_key },
     .{ .key = "HOSTINGER_API_TOKEN", .setting = .hostinger_api_token },
     .{ .key = "HAPI_API_TOKEN", .setting = .hostinger_api_token },
+    .{ .key = "CLOUDIO_PLATFORM_TOKEN", .setting = .platform_token },
+    .{ .key = "CLOUDIO_APPS_ROOT", .setting = .apps_root },
 };
 
 const config_bindings = [_]ConfigBinding{
@@ -55,6 +61,10 @@ const config_bindings = [_]ConfigBinding{
     .{ .section = "cloudflare", .key = "email", .setting = .cloudflare_email },
     .{ .section = "cloudflare", .key = "api_key", .setting = .cloudflare_api_key },
     .{ .section = "hostinger", .key = "api_token", .setting = .hostinger_api_token },
+    .{ .section = "platform", .key = "token", .setting = .platform_token },
+    .{ .section = "platform", .key = "apps_root", .setting = .apps_root },
+    .{ .section = "platform", .key = "port_range", .setting = .port_range },
+    .{ .section = "platform", .key = "refresh_seconds", .setting = .refresh_seconds },
 };
 
 pub const Config = struct {
@@ -72,6 +82,11 @@ pub const Config = struct {
     cloudflare_email: ?[]const u8 = null,
     cloudflare_api_key: ?[]const u8 = null,
     hostinger_api_token: ?[]const u8 = null,
+    platform_token: ?[]const u8 = null,
+    apps_root: []const u8 = "/home/kid/Projects",
+    port_min: u16 = 42000,
+    port_max: u16 = 42999,
+    refresh_seconds: u32 = 300,
 
     pub fn load(io: Io, arena: Allocator, env: *std.process.Environ.Map) !Config {
         var cfg = Config{ .domains = try parseList(arena, "plosca.ru") };
@@ -194,6 +209,14 @@ fn applySetting(arena: Allocator, cfg: *Config, setting: Setting, raw_value: []c
         .cloudflare_email => cfg.cloudflare_email = try arena.dupe(u8, value),
         .cloudflare_api_key => cfg.cloudflare_api_key = try arena.dupe(u8, value),
         .hostinger_api_token => cfg.hostinger_api_token = try arena.dupe(u8, value),
+        .platform_token => cfg.platform_token = try arena.dupe(u8, value),
+        .apps_root => cfg.apps_root = try arena.dupe(u8, value),
+        .port_range => {
+            const dash = std.mem.indexOfScalar(u8, value, '-') orelse return;
+            cfg.port_min = std.fmt.parseInt(u16, trim(value[0..dash]), 10) catch return;
+            cfg.port_max = std.fmt.parseInt(u16, trim(value[dash + 1 ..]), 10) catch return;
+        },
+        .refresh_seconds => cfg.refresh_seconds = std.fmt.parseInt(u32, value, 10) catch return,
     }
 }
 
@@ -265,6 +288,24 @@ test "parse list supports mixed separators" {
     try std.testing.expectEqual(@as(usize, 4), list.len);
     try std.testing.expectEqualStrings("plosca.ru", list[0]);
     try std.testing.expectEqualStrings("sparkdate.love", list[1]);
+}
+
+test "config parser reads platform settings" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var cfg = Config{ .domains = try parseList(arena.allocator(), "plosca.ru") };
+    try applyConfigText(arena.allocator(), &cfg,
+        \\[platform]
+        \\token = "secret"
+        \\apps_root = "/srv/apps"
+        \\port_range = "43000-43100"
+        \\refresh_seconds = 60
+    );
+    try std.testing.expectEqualStrings("secret", cfg.platform_token.?);
+    try std.testing.expectEqualStrings("/srv/apps", cfg.apps_root);
+    try std.testing.expectEqual(@as(u16, 43000), cfg.port_min);
+    try std.testing.expectEqual(@as(u16, 43100), cfg.port_max);
+    try std.testing.expectEqual(@as(u32, 60), cfg.refresh_seconds);
 }
 
 test "config parser reads provider settings" {

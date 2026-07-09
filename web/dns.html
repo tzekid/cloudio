@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DNS — cloudio</title>
+<link rel="stylesheet" href="/assets/app.css">
+<script type="module" src="/assets/datastar.js"></script>
+<script src="/assets/app.js"></script>
+<style>
+/* Minimal fallback styles; app.css overrides when present. */
+:root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --muted:#8b949e; --accent:#58a6ff; --ok:#3fb950; --err:#f85149; --warn:#d29922; }
+body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.layout { display:flex; min-height:100vh; }
+.sidebar { width:180px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--border); padding:12px 0; }
+.sidebar .brand { padding:4px 16px 12px; font-weight:700; color:var(--accent); }
+.sidebar a { display:block; padding:6px 16px; color:var(--muted); text-decoration:none; }
+.sidebar a:hover { color:var(--fg); }
+.sidebar a.active { color:var(--fg); background:var(--bg); border-left:2px solid var(--accent); }
+.main { flex:1; padding:16px 20px; min-width:0; }
+h1 { font-size:16px; margin:0 0 12px; }
+h2 { font-size:13px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+.panel { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:14px; }
+table { width:100%; border-collapse:collapse; }
+th,td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--border); vertical-align:middle; }
+th { color:var(--muted); font-weight:600; }
+input,select,button { background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:4px 8px; font:inherit; }
+button { cursor:pointer; }
+button:hover { border-color:var(--accent); }
+button.danger:hover { border-color:var(--err); color:var(--err); }
+button.proxy-on { color:var(--warn); border-color:var(--warn); }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.muted { color:var(--muted); }
+.notice { padding:8px 10px; border:1px solid var(--warn); border-radius:4px; color:var(--warn); margin-bottom:10px; }
+.notice.error { border-color:var(--err); color:var(--err); }
+.hidden { display:none; }
+.status-msg { margin-left:8px; }
+.status-msg.ok { color:var(--ok); }
+.status-msg.err { color:var(--err); }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">cloudio</div>
+    <a href="/">Dashboard</a>
+    <a href="/apps.html">Apps</a>
+    <a href="/routes.html">Routes</a>
+    <a href="/dns.html" class="active">DNS</a>
+    <a href="/vps.html">VPS</a>
+    <a href="/docker.html">Docker</a>
+    <a href="/audit.html">Audit</a>
+  </nav>
+  <main class="main">
+    <h1>DNS</h1>
+
+    <div class="panel">
+      <div class="row">
+        <label for="domain">Domain</label>
+        <input id="domain" type="text" placeholder="example.com" size="28">
+        <button id="load-btn">Load</button>
+        <span id="source-note" class="muted"></span>
+      </div>
+    </div>
+
+    <div id="notice" class="notice hidden"></div>
+
+    <div class="panel">
+      <h2>Records</h2>
+      <table>
+        <thead><tr><th>Type</th><th>Name</th><th>Content</th><th>TTL</th><th>Proxied</th><th></th></tr></thead>
+        <tbody id="records-body"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="panel" id="add-panel">
+      <h2>Add record</h2>
+      <form id="add-form" class="row">
+        <select id="add-type">
+          <option>A</option><option>AAAA</option><option>CNAME</option><option>TXT</option><option>MX</option>
+        </select>
+        <input id="add-name" placeholder="name" required size="20">
+        <input id="add-content" placeholder="content" required size="28">
+        <input id="add-ttl" type="number" value="1" min="1" title="TTL (1 = auto)" style="width:80px">
+        <label><input id="add-proxied" type="checkbox"> proxied</label>
+        <button type="submit">Add</button>
+        <span id="add-status" class="status-msg"></span>
+      </form>
+    </div>
+
+    <div class="panel">
+      <h2>Zone tools</h2>
+      <div class="row" style="margin-bottom:8px">
+        <button id="purge-btn">Purge Cache</button>
+        <span id="purge-status" class="status-msg"></span>
+      </div>
+      <div class="row" style="margin-bottom:8px">
+        <label for="ssl-mode">SSL mode</label>
+        <select id="ssl-mode">
+          <option value="off">off</option>
+          <option value="flexible">flexible</option>
+          <option value="full">full</option>
+          <option value="strict">strict</option>
+        </select>
+        <button id="ssl-btn">Apply</button>
+        <span id="ssl-status" class="status-msg"></span>
+      </div>
+      <div class="row">
+        <label>Always HTTPS</label>
+        <button id="https-on">On</button>
+        <button id="https-off">Off</button>
+        <span id="https-status" class="status-msg"></span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  async function plainFetch(url, opts) {
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch (_) {}
+    if (!res.ok) {
+      const err = new Error("HTTP " + res.status + " " + url);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
+    return body;
+  }
+  function fetchJson(url, opts) {
+    const fn = (window.cloudio && window.cloudio.fetchJson) ? window.cloudio.fetchJson : plainFetch;
+    return fn(url, opts);
+  }
+  const $ = (id) => document.getElementById(id);
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function setStatus(id, ok, msg) {
+    const el = $(id);
+    el.textContent = msg;
+    el.className = "status-msg " + (ok ? "ok" : "err");
+    setTimeout(() => { el.textContent = ""; }, 6000);
+  }
+  function showNotice(msg, isError) {
+    const el = $("notice");
+    el.textContent = msg;
+    el.className = "notice" + (isError ? " error" : "");
+  }
+  function hideNotice() { $("notice").className = "notice hidden"; }
+
+  // state
+  let records = [];          // {id, zone_id, name, type, content, ttl, proxied(bool)}
+  let zoneId = "";
+  let writable = false;      // true when /api/dns/records is live
+  let editingId = null;
+
+  function normProxied(v) {
+    if (typeof v === "boolean") return v;
+    const s = String(v || "").toLowerCase();
+    return s === "true" || s === "1" || s === "proxied" || s === "on";
+  }
+
+  async function loadInventoryDomains() {
+    // Determine default domain from inventory DNS rows.
+    try {
+      const data = await fetchJson("/api/inventory?limit=500");
+      const items = (data && data.items) || [];
+      const dns = items.filter((i) => i.kind === "dns-records");
+      if (dns.length && !$("domain").value) {
+        $("domain").value = dns[0].domain || dns[0].display_name || "";
+      }
+      if (!$("domain").value) await loadZoneDomain();
+      return dns;
+    } catch (_) {
+      if (!$("domain").value) await loadZoneDomain();
+      return [];
+    }
+  }
+
+  async function loadZoneDomain() {
+    // Fall back to the first Cloudflare zone name from the dashboard.
+    try {
+      const dash = await fetchJson("/api/dashboard?section=providers");
+      const zones = (((dash.sections || {}).providers || {}).cloudflare || {}).zones || [];
+      if (zones.length) $("domain").value = zones[0].name || "";
+    } catch (_) { /* leave empty */ }
+  }
+
+  async function loadRecords() {
+    const domain = $("domain").value.trim();
+    hideNotice();
+    // Prefer the live write-capable endpoint.
+    try {
+      const data = await fetchJson("/api/dns/records?domain=" + encodeURIComponent(domain));
+      zoneId = data.zone_id || "";
+      records = (data.records || []).map((r) => ({
+        id: r.id, zone_id: r.zone_id || zoneId, name: r.name, type: r.type,
+        content: r.content, ttl: r.ttl, proxied: normProxied(r.proxied),
+      }));
+      writable = true;
+      $("source-note").textContent = "source: /api/dns/records";
+      render();
+      return;
+    } catch (_) { /* endpoint not wired yet; fall back */ }
+
+    writable = false;
+    const dns = await loadInventoryDomains();
+    const rows = dns.filter((i) => !domain || i.domain === domain ||
+      (i.display_name || "").endsWith(domain));
+    records = rows.map((i) => ({
+      id: i.resource_id, zone_id: i.zone_id, name: i.display_name,
+      type: i.category, content: i.related_id, ttl: "", proxied: normProxied(i.flag) || i.flag === "proxied",
+    }));
+    zoneId = rows.length ? rows[0].zone_id : "";
+    $("source-note").textContent = "source: /api/inventory (read-only)";
+    if (records.length) {
+      showNotice("DNS write endpoint not available yet — showing read-only inventory data.", false);
+    } else {
+      showNotice("DNS endpoint not available yet and no inventory DNS rows found for this domain.", true);
+    }
+    render();
+  }
+
+  function render() {
+    const body = $("records-body");
+    if (!records.length) {
+      body.innerHTML = '<tr><td colspan="6" class="muted">No records.</td></tr>';
+      return;
+    }
+    body.innerHTML = records.map((r) => {
+      if (editingId === r.id) return editRowHtml(r);
+      const proxyBtn = writable
+        ? '<button class="proxy-toggle ' + (r.proxied ? "proxy-on" : "") + '" data-id="' + esc(r.id) + '">' + (r.proxied ? "proxied" : "dns only") + "</button>"
+        : '<span class="muted">' + (r.proxied ? "proxied" : "dns only") + "</span>";
+      const actions = writable
+        ? '<button class="edit-btn" data-id="' + esc(r.id) + '">edit</button> <button class="danger del-btn" data-id="' + esc(r.id) + '">delete</button>'
+        : "";
+      return "<tr><td>" + esc(r.type) + "</td><td>" + esc(r.name) + "</td><td>" + esc(r.content) +
+        "</td><td>" + esc(r.ttl) + "</td><td>" + proxyBtn + "</td><td>" + actions + "</td></tr>";
+    }).join("");
+  }
+
+  function editRowHtml(r) {
+    return '<tr data-edit="' + esc(r.id) + '">' +
+      '<td><select class="e-type">' + ["A", "AAAA", "CNAME", "TXT", "MX"].map((t) =>
+        "<option" + (t === r.type ? " selected" : "") + ">" + t + "</option>").join("") + "</select></td>" +
+      '<td><input class="e-name" value="' + esc(r.name) + '" size="18"></td>' +
+      '<td><input class="e-content" value="' + esc(r.content) + '" size="24"></td>' +
+      '<td><input class="e-ttl" type="number" value="' + esc(r.ttl || 1) + '" style="width:70px"></td>' +
+      '<td><label><input class="e-proxied" type="checkbox"' + (r.proxied ? " checked" : "") + "> proxied</label></td>" +
+      '<td><button class="save-btn" data-id="' + esc(r.id) + '">save</button> <button class="cancel-btn">cancel</button></td></tr>';
+  }
+
+  async function writeCall(method, url, payload, statusId, okMsg) {
+    try {
+      const opts = { method, headers: { "Content-Type": "application/json" } };
+      if (payload) opts.body = JSON.stringify(payload);
+      const res = await fetchJson(url, opts);
+      const ok = res && res.ok !== false;
+      setStatus(statusId, ok, ok ? okMsg : "failed (status " + (res && res.status) + ")");
+      return ok;
+    } catch (e) {
+      setStatus(statusId, false, e.status === 404 ? "endpoint not available yet" : "error: " + e.message);
+      return false;
+    }
+  }
+
+  $("records-body").addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("button");
+    if (!btn) return;
+    const id = btn.dataset.id;
+    const rec = records.find((r) => String(r.id) === String(id));
+    if (btn.classList.contains("edit-btn")) { editingId = id; render(); return; }
+    if (btn.classList.contains("cancel-btn")) { editingId = null; render(); return; }
+    if (btn.classList.contains("del-btn") && rec) {
+      if (!confirm("Delete " + rec.type + " record " + rec.name + "?")) return;
+      const ok = await writeCall("DELETE", "/api/dns/records?zone_id=" + encodeURIComponent(rec.zone_id) +
+        "&record_id=" + encodeURIComponent(rec.id), null, "add-status", "deleted");
+      if (ok) loadRecords();
+      return;
+    }
+    if (btn.classList.contains("proxy-toggle") && rec) {
+      const ok = await writeCall("PUT", "/api/dns/records", {
+        zone_id: rec.zone_id, record_id: rec.id,
+        record: { type: rec.type, name: rec.name, content: rec.content, ttl: Number(rec.ttl) || 1, proxied: !rec.proxied },
+      }, "add-status", "proxied " + (!rec.proxied ? "on" : "off"));
+      if (ok) loadRecords();
+      return;
+    }
+    if (btn.classList.contains("save-btn") && rec) {
+      const row = btn.closest("tr");
+      const ok = await writeCall("PUT", "/api/dns/records", {
+        zone_id: rec.zone_id, record_id: rec.id,
+        record: {
+          type: row.querySelector(".e-type").value,
+          name: row.querySelector(".e-name").value.trim(),
+          content: row.querySelector(".e-content").value.trim(),
+          ttl: Number(row.querySelector(".e-ttl").value) || 1,
+          proxied: row.querySelector(".e-proxied").checked,
+        },
+      }, "add-status", "saved");
+      if (ok) { editingId = null; loadRecords(); }
+    }
+  });
+
+  $("add-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    if (!zoneId) { setStatus("add-status", false, "no zone_id known for this domain"); return; }
+    const ok = await writeCall("POST", "/api/dns/records", {
+      zone_id: zoneId,
+      record: {
+        type: $("add-type").value,
+        name: $("add-name").value.trim(),
+        content: $("add-content").value.trim(),
+        ttl: Number($("add-ttl").value) || 1,
+        proxied: $("add-proxied").checked,
+      },
+    }, "add-status", "record added");
+    if (ok) { $("add-form").reset(); $("add-ttl").value = 1; loadRecords(); }
+  });
+
+  $("purge-btn").addEventListener("click", () => {
+    if (!zoneId) { setStatus("purge-status", false, "no zone_id known"); return; }
+    if (!confirm("Purge the entire cache for this zone?")) return;
+    writeCall("POST", "/api/cache/purge", { zone_id: zoneId }, "purge-status", "cache purged");
+  });
+  $("ssl-btn").addEventListener("click", () => {
+    if (!zoneId) { setStatus("ssl-status", false, "no zone_id known"); return; }
+    writeCall("POST", "/api/zone/setting", { zone_id: zoneId, setting: "ssl", value: $("ssl-mode").value }, "ssl-status", "ssl mode set");
+  });
+  $("https-on").addEventListener("click", () => {
+    if (!zoneId) { setStatus("https-status", false, "no zone_id known"); return; }
+    writeCall("POST", "/api/zone/setting", { zone_id: zoneId, setting: "always_use_https", value: "on" }, "https-status", "always https on");
+  });
+  $("https-off").addEventListener("click", () => {
+    if (!zoneId) { setStatus("https-status", false, "no zone_id known"); return; }
+    writeCall("POST", "/api/zone/setting", { zone_id: zoneId, setting: "always_use_https", value: "off" }, "https-status", "always https off");
+  });
+
+  $("load-btn").addEventListener("click", loadRecords);
+  $("domain").addEventListener("keydown", (ev) => { if (ev.key === "Enter") loadRecords(); });
+
+  (async function init() {
+    await loadInventoryDomains();
+    await loadRecords();
+  })();
+})();
+</script>
+</body>
+</html>

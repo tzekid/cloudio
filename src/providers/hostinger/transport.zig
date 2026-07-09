@@ -22,6 +22,18 @@ pub fn getWithHeaders(io: Io, gpa: Allocator, token: []const u8, url: []const u8
     return try net_http.get(gpa, io, url, headers, &.{});
 }
 
+pub fn requestJson(io: Io, gpa: Allocator, token: []const u8, method: std.http.Method, url: []const u8, body: ?[]const u8) !net_http.Response {
+    if (token.len == 0) return error.MissingHostingerToken;
+    const auth = try std.fmt.allocPrint(gpa, "Bearer {s}", .{token});
+    defer gpa.free(auth);
+    const headers = [_]std.http.Header{
+        .{ .name = "Accept", .value = "application/json" },
+        .{ .name = "Content-Type", .value = "application/json" },
+        .{ .name = "Authorization", .value = auth },
+    };
+    return try net_http.request(gpa, io, method, url, body, &headers, &.{});
+}
+
 fn mergeHeaders(gpa: Allocator, base: []const std.http.Header, extra: []const std.http.Header) ![]std.http.Header {
     const merged = try gpa.alloc(std.http.Header, base.len + extra.len);
     @memcpy(merged[0..base.len], base);

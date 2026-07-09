@@ -163,6 +163,7 @@ pub fn run(init: std.process.Init) !void {
             .io = init.io,
             .gpa = init.gpa,
             .db = &db,
+            .config = cfg,
         }, args[2..]);
     } else {
         std.debug.print("unknown command: {s}\n\n", .{cmd});

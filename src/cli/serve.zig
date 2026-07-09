@@ -3,6 +3,7 @@ const app_database = @import("app_database");
 const app_dashboard = @import("app_dashboard");
 const app_serve = @import("app_serve");
 const cli_args = @import("cli_args");
+const core_config = @import("core_config");
 
 const Allocator = std.mem.Allocator;
 const Db = app_database.Db;
@@ -12,6 +13,7 @@ pub const Context = struct {
     io: Io,
     gpa: Allocator,
     db: *Db,
+    config: core_config.Config,
 };
 
 pub fn run(ctx: Context, args: []const []const u8) !void {
@@ -19,7 +21,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         std.debug.print("invalid serve command: {s}\n", .{@errorName(err)});
         return err;
     };
-    try app_serve.run(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db }, options);
+    try app_serve.run(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }, options);
 }
 
 pub fn parse(args: []const []const u8) !app_serve.Options {

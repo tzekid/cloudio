@@ -1,10 +1,29 @@
 # Cloudio
 
-Cloudio is a Zig CLI-first POC for reading this VPS control-plane state into SQLite.
-
-The POC is intentionally read-only for infrastructure. It may create or update its own SQLite database, but it does not write Caddy configs, reload services, or mutate Cloudflare/Hostinger resources.
+Cloudio is a self-hosted VPS management platform in Zig: a web UI plus CLI that reads and manages the VPS control plane — Caddy routes, Cloudflare DNS, Hostinger VPS/firewall, Docker containers, and git-based binary deployments — with all state and an audit trail in SQLite.
 
 The broad execution plan is tracked in [docs/execution-plan.md](docs/execution-plan.md).
+
+## Platform (web UI)
+
+```sh
+zig build
+CLOUDIO_PLATFORM_TOKEN=your-secret ./zig-out/bin/cloudio serve --port 9331
+```
+
+Open `http://127.0.0.1:9331/`, log in with the token (stored as a cookie; APIs also accept `Authorization: Bearer`). Pages: dashboard, apps (register/deploy/rollback with live SSE logs), Caddy routes (desired state, preview, validate + apply + reload), Cloudflare DNS, VPS/firewall, Docker, and audit.
+
+Platform config lives under `[platform]` in `cloudio.local.toml`:
+
+```toml
+[platform]
+token = "your-secret"          # or CLOUDIO_PLATFORM_TOKEN
+apps_root = "/home/kid/Projects"
+port_range = "42000-42999"     # ports auto-assigned to deployed apps
+refresh_seconds = 300          # background provider refresh interval
+```
+
+Deploys clone/pull the app source, detect the toolchain (zig/go/rust/node/prebuilt), build, install into `apps_root/<name>/releases/<sha>/` behind an atomic `current` symlink, write a `cloudio-<name>.service` systemd unit, health-check the assigned port, and upsert a Caddy route for `<name>.<domain>`. Every write action (providers, Caddy, systemd, Docker, deploys) is recorded in the `audit_actions` table with secrets redacted.
 
 ## Quick Start
 

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login - cloudio</title>
+<link rel="stylesheet" href="/assets/app.css">
+<script type="module" src="/assets/datastar.js"></script>
+<script src="/assets/app.js"></script>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-box" data-signals="{token: '', busy: false}">
+    <h1>cloud<span>io</span></h1>
+    <form data-on-submit__prevent="window.doLogin($token)">
+      <div class="form-field">
+        <label for="token">Platform token</label>
+        <input id="token" type="password" data-bind-token autocomplete="current-password" autofocus>
+      </div>
+      <div class="login-error" id="login-error"></div>
+      <button type="submit" class="primary" data-attr-disabled="$busy">Sign in</button>
+    </form>
+  </div>
+</div>
+<script>
+window.doLogin = async function (token) {
+  const errEl = document.getElementById("login-error");
+  errEl.textContent = "";
+  if (!token) {
+    errEl.textContent = "Token is required.";
+    return;
+  }
+  try {
+    const res = await fetch("/api/login", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: token }),
+    });
+    if (res.ok) {
+      window.location.href = "/";
+    } else if (res.status === 401) {
+      errEl.textContent = "Invalid token.";
+    } else {
+      errEl.textContent = "Login failed (" + res.status + ").";
+    }
+  } catch (err) {
+    errEl.textContent = "Network error: " + err.message;
+  }
+};
+</script>
+</body>
+</html>
