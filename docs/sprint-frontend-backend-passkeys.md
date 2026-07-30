@@ -775,13 +775,13 @@ Recommended model:
   `packages/hostinger` in Cloudio.
 - A GitHub Actions workflow tests the complete monorepo and each package in
   isolation.
-- After `main` passes, the workflow creates a history containing only the
+- After `master` passes, the workflow creates a history containing only the
   package prefix and pushes it to the corresponding public repository.
 - The split repository root contains the package's `build.zig`, source, tests,
-  examples, README, license, and workflow.
+  README example, license, and workflow.
 - Standalone repositories state clearly that development and pull requests
   happen in the Cloudio monorepo.
-- Direct pushes to split-repository `main` are blocked.
+- Direct pushes to split-repository `master` are blocked.
 - Synchronization is one-way. There is no automatic import of standalone PRs.
 
 One-way is important. Bidirectional subtree synchronization creates ambiguous
@@ -794,9 +794,11 @@ https://docs.github.com/en/get-started/using-git/splitting-a-subfolder-out-into-
 
 For ongoing publishing, use a deterministic subtree split of
 `packages/<provider>` in CI. The built-in `GITHUB_TOKEN` is scoped to the current
-repository, so cross-repository pushes should use a narrowly permissioned GitHub
-App installation token rather than a personal access token:
-https://docs.github.com/en/enterprise-cloud@latest/apps/creating-github-apps/authenticating-with-a-github-app/making-authenticated-api-requests-with-a-github-app-in-a-github-actions-workflow
+repository. Each public mirror therefore has one unique write-enabled deploy
+key whose private half is stored only as an Actions secret on the canonical
+repository. An active ruleset blocks ordinary updates, deletion, and force
+pushes to `master`; deploy keys are the only publishing bypass. No personal
+access token is stored.
 
 ### 5.14 Package release flow
 
@@ -896,6 +898,10 @@ successful publication from the exact committed package prefixes.
 - [x] Provider packages have small documented public roots and no Cloudio imports.
 - [x] Cloudio consumes local package sources from the monorepo.
 - [x] Public repositories are reproducible one-way mirrors of package directories.
+- [x] Public `master` branches reject ordinary pushes and accept only the
+  protected mirror workflow.
+- [x] `v0.1.0` releases and canonical root tags point to the verified split
+  commits, and clean consumer projects compile the README examples.
 - [x] Root CLI, server behavior, database schema, and provider behavior remain
   compatible unless a separately documented fix is required.
 - [x] The full pre-refactor and new contract suites pass.
