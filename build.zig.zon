@@ -1,6 +1,16 @@
 .{
     .name = .cloudio,
     .version = "0.0.1",
+    .dependencies = .{
+        .passcay = .{
+            .url = "git+https://github.com/uzyn/passcay.git#3.1.0",
+            .hash = "passcay-3.1.0-ckLGcmQzBAC1vu-rL_dmObKye8Fbs8qHsFUeDtRAr1ni",
+        },
+        .zbor = .{
+            .url = "git+https://codeberg.org/r4gus/zbor?ref=0.21.2#658c1c0ec607557b52d2e2a42acbfad31058ecee",
+            .hash = "zbor-0.21.2-kr-CoPF7AwAU2EqWqJzgxd1jHhpaaRBK0_c1LCgiwTbn",
+        },
+    },
     .minimum_zig_version = "0.16.0",
     .paths = .{""},
     .fingerprint = 0x396b39ced4202bc9,

@@ -13,6 +13,7 @@ const authenticatedPages = new Map([
   ["vps.html", "vps.js"],
   ["docker.html", "docker.js"],
   ["audit.html", "audit.js"],
+  ["security.html", "security.js"],
 ]);
 const errors = [];
 
@@ -61,6 +62,12 @@ for (const [filename, pageScript] of authenticatedPages) {
 const loginHtml = read("web/login.html");
 checkHtmlBasics("login.html", loginHtml);
 check(loginHtml.includes('defer src="/assets/pages/login.js"'), "login.html: missing deferred login script");
+check(loginHtml.includes('defer src="/assets/passkeys.js"'), "login.html: missing shared passkey adapter");
+
+const setupHtml = read("web/setup.html");
+checkHtmlBasics("setup.html", setupHtml);
+check(setupHtml.includes('defer src="/assets/passkeys.js"'), "setup.html: missing shared passkey adapter");
+check(setupHtml.includes('defer src="/assets/pages/setup.js"'), "setup.html: missing deferred setup script");
 
 const appScript = read("web/assets/app.js");
 check(/href:\s*"\/"/.test(appScript), "app.js: Cloudio brand must link to /");
@@ -68,8 +75,8 @@ check(/"aria-label":\s*"Cloudio dashboard"/.test(appScript), "app.js: Cloudio br
 check(/function\s+confirmAction/.test(appScript), "app.js: shared confirmation dialog helper is missing");
 check(/function\s+api/.test(appScript), "app.js: shared API wrapper is missing");
 
-const pageScripts = [...authenticatedPages.values(), "login.js"].map((name) => `web/assets/pages/${name}`);
-for (const relativePath of ["web/assets/app.js", ...pageScripts]) {
+const pageScripts = [...authenticatedPages.values(), "login.js", "setup.js"].map((name) => `web/assets/pages/${name}`);
+for (const relativePath of ["web/assets/app.js", "web/assets/passkeys.js", ...pageScripts]) {
   const source = read(relativePath);
   check(!/\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write\s*\(/.test(source), `${relativePath}: unsafe dynamic HTML construction is forbidden`);
   const syntax = spawnSync(process.execPath, ["--check", join(root, relativePath)], { encoding: "utf8" });
@@ -88,4 +95,4 @@ if (errors.length) {
   process.exit(1);
 }
 
-process.stdout.write(`web-ui-check: ${authenticatedPages.size} authenticated pages, login, shared UI, and ${pageScripts.length + 1} scripts passed\n`);
+process.stdout.write(`web-ui-check: ${authenticatedPages.size} authenticated pages, login/setup, shared UI, and ${pageScripts.length + 2} scripts passed\n`);

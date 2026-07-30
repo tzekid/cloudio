@@ -8,10 +8,17 @@ The broad execution plan is tracked in [docs/execution-plan.md](docs/execution-p
 
 ```sh
 zig build
-CLOUDIO_PLATFORM_TOKEN=your-secret ./zig-out/bin/cloudio serve --port 9331
+CLOUDIO_AUTH_ORIGIN=http://localhost:9331 \
+  CLOUDIO_AUTH_RP_ID=localhost \
+  ./zig-out/bin/cloudio serve --port 9331
 ```
 
-Open `http://127.0.0.1:9331/`, log in with the token (stored as a cookie; APIs also accept `Authorization: Bearer`). Pages: dashboard, apps (register/deploy/rollback with live SSE logs), Caddy routes (desired state, preview, validate + apply + reload), Cloudflare DNS, VPS/firewall, Docker, and audit.
+For local development, run `cloudio auth bootstrap --ttl 10m`, open the
+one-use link, and create a passkey. Production must configure its exact HTTPS
+origin and RP ID before bootstrap. Pages: dashboard, apps
+(register/deploy/rollback with live SSE logs), Caddy routes (desired state,
+preview, validate + apply + reload), Cloudflare DNS, VPS/firewall, Docker,
+audit, and passkey security.
 
 The web UI is dependency-free HTML, CSS, and JavaScript. All authenticated
 pages use the same responsive shell, request wrapper, status vocabulary, and
@@ -22,8 +29,10 @@ The backend keeps protocol, policy, and domain work separate:
 
 - `src/http` owns bounded HTTP/1.1 parsing, routing, responses, static files,
   SSE framing, and connection lifecycle, with no Cloudio dependencies.
-- `src/server` owns the single route table, authentication/idempotency policy
-  pipeline, and grouped thin handlers.
+- `src/server` owns the single route table, default-deny session/CSRF/
+  idempotency policy pipeline, and grouped thin handlers.
+- `src/security/passkeys.zig` is the narrow boundary around the pinned
+  WebAuthn verifier; `src/app/authentication.zig` owns ceremonies and sessions.
 - `src/runtime/scheduler.zig` owns background refresh and retention scheduling.
 - `src/db/repositories` owns concrete SQL by domain; `db/store.zig` is now a
   small compatibility facade.
@@ -36,19 +45,50 @@ Run the complete integrated and standalone-package gate with:
 /usr/bin/zig build check
 ```
 
-Platform config lives under `[platform]` in `cloudio.local.toml`:
+Platform and passkey config lives in `cloudio.local.toml`:
 
 ```toml
 [platform]
-token = "your-secret"          # or CLOUDIO_PLATFORM_TOKEN
 apps_root = "/home/kid/Projects"
 port_range = "42000-42999"     # ports auto-assigned to deployed apps
 refresh_seconds = 300          # background provider refresh interval
+
+[auth]
+origin = "https://cloudio.example.com" # or CLOUDIO_AUTH_ORIGIN
+rp_id = "cloudio.example.com"          # or CLOUDIO_AUTH_RP_ID
 ```
+
+Authentication is passkey-only. Cloudio requires user verification (Touch ID,
+Face ID, device passcode, or a security key), stores only public credentials
+and SHA-256 session/bootstrap token hashes, and protects every non-public route.
+The production cookie is `__Host-cloudio_session` with `Secure`, `HttpOnly`,
+`SameSite=Strict`, a host-only path, and a fixed 12-hour lifetime. Every unsafe
+authenticated request also requires exact-origin validation and a
+session-bound CSRF token.
+
+Bootstrap, inspect, and recover from the host CLI:
+
+```sh
+cloudio auth status
+cloudio auth bootstrap --ttl 10m
+cloudio auth reset --backup .cloudio/backups/before-auth-reset.db --confirm
+```
+
+Bootstrap is refused after a passkey exists. Reset first creates and verifies a
+new online SQLite backup, then removes credentials and sessions; it does not
+open setup automatically.
 
 Deploys clone/pull the app source, detect the toolchain (zig/go/rust/node/prebuilt), build, install into `apps_root/<name>/releases/<sha>/` behind an atomic `current` symlink, write a `cloudio-<name>.service` systemd unit, health-check the assigned port, and upsert a Caddy route for `<name>.<domain>`. Every write action (providers, Caddy, systemd, Docker, deploys) is recorded in the `audit_actions` table with secrets redacted.
 
-Platform writes use an explicit safety contract. Every mutating API request requires an `Idempotency-Key`; replaying the same key and request returns the stored response, while reusing it for different input is rejected. Destructive routes also require `X-Cloudio-Confirm: confirmed`. `X-Cloudio-Actor` is optional and is recorded with the audit action; the browser supplies `web`. Deploy, rollback, and delete operations take a per-app database lock. Failed or unhealthy releases automatically restore the previous release when one exists, and deleting an app removes its unit, release tree, deploy history, and Caddy route after path validation.
+Platform writes use an explicit safety contract. Every product mutation
+requires an `Idempotency-Key`; replaying the same key and request returns the
+stored response, while reusing it for different input is rejected. Destructive
+routes also require `X-Cloudio-Confirm: confirmed`. The authenticated actor is
+derived from the passkey session rather than trusted from a request header.
+Deploy, rollback, and delete operations take a per-app database lock. Failed or
+unhealthy releases automatically restore the previous release when one exists,
+and deleting an app removes its unit, release tree, deploy history, and Caddy
+route after path validation.
 
 Append-only storage has configurable lifecycle management:
 

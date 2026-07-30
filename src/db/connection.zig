@@ -10,6 +10,7 @@ const cloudflare_repository = @import("repositories/cloudflare.zig");
 const hostinger_repository = @import("repositories/hostinger.zig");
 const inventory_repository = @import("repositories/inventory.zig");
 const system_repository = @import("repositories/system.zig");
+const auth_repository = @import("repositories/auth.zig");
 
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -73,6 +74,10 @@ pub const Db = struct {
     }
 
     pub fn system(self: *Db) system_repository.Repository {
+        return .{ .handle = self.handle };
+    }
+
+    pub fn auth(self: *Db) auth_repository.Repository {
         return .{ .handle = self.handle };
     }
 
@@ -365,5 +370,4 @@ pub const Db = struct {
     pub fn writeSnapshotsAfter(self: *Db, writer: anytype, after_id: i64) !void {
         return self.captures().writeSnapshotsAfter(writer, after_id);
     }
-
 };

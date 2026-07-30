@@ -4,7 +4,14 @@ pub const Stream = struct {
     out: *std.Io.Writer,
 
     pub fn begin(out: *std.Io.Writer) !Stream {
-        try out.writeAll("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n");
+        return beginWithHeaders(out, "");
+    }
+
+    pub fn beginWithHeaders(out: *std.Io.Writer, extra_headers: []const u8) !Stream {
+        try out.print(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n{s}Connection: close\r\n\r\n",
+            .{extra_headers},
+        );
         try out.flush();
         return .{ .out = out };
     }

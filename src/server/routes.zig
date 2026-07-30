@@ -6,7 +6,7 @@ const dashboard = @import("handlers/dashboard.zig");
 const events = @import("handlers/events.zig");
 const providers = @import("handlers/providers.zig");
 const refresh = @import("handlers/refresh.zig");
-const session = @import("handlers/session.zig");
+const authentication = @import("handlers/authentication.zig");
 const system = @import("handlers/system.zig");
 
 pub const all = [_]types.Route{
@@ -16,7 +16,17 @@ pub const all = [_]types.Route{
     route("GET", "/api/inventory", dashboard.inventory),
     route("POST", "/api/actions/plan", dashboard.actionsPlan),
     route("GET", "/api/audit", dashboard.audit),
-    publicRoute("POST", "/api/login", session.login),
+    publicRoute("POST", "/api/auth/setup/options", authentication.setupOptions),
+    publicRoute("POST", "/api/auth/setup/verify", authentication.setupVerify),
+    publicRoute("POST", "/api/auth/login/options", authentication.loginOptions),
+    publicRoute("POST", "/api/auth/login/verify", authentication.loginVerify),
+    route("GET", "/api/auth/session", authentication.session),
+    route("POST", "/api/auth/logout", authentication.logout),
+    route("GET", "/api/auth/credentials", authentication.credentials),
+    route("POST", "/api/auth/credentials/options", authentication.credentialOptions),
+    route("POST", "/api/auth/credentials/verify", authentication.credentialVerify),
+    route("PATCH", "/api/auth/credentials/:id", authentication.credentialLabel),
+    route("DELETE", "/api/auth/credentials/:id", authentication.credentialRevoke),
     stream("GET", "/api/events/ping", events.ping),
     stream("GET", "/api/events/changes", events.changes),
     route("GET", "/api/caddy/routes", caddy.routesGet),

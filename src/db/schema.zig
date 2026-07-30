@@ -406,6 +406,64 @@ pub const migrations = [_]Migration{
         \\CREATE INDEX IF NOT EXISTS idx_topology_changes_resource_key ON topology_changes(resource_key, id DESC);
         ,
     },
+    .{
+        .version = 12,
+        .name = "passkey_authentication",
+        .sql =
+        \\CREATE TABLE IF NOT EXISTS auth_users (
+        \\  id TEXT PRIMARY KEY,
+        \\  display_name TEXT NOT NULL,
+        \\  created_at INTEGER NOT NULL
+        \\);
+        \\CREATE TABLE IF NOT EXISTS auth_credentials (
+        \\  credential_id TEXT PRIMARY KEY,
+        \\  user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+        \\  public_key TEXT NOT NULL,
+        \\  algorithm INTEGER NOT NULL,
+        \\  sign_count INTEGER NOT NULL DEFAULT 0,
+        \\  transports TEXT NOT NULL DEFAULT '',
+        \\  aaguid TEXT NOT NULL DEFAULT '',
+        \\  backup_eligible INTEGER NOT NULL DEFAULT 0,
+        \\  backup_state INTEGER NOT NULL DEFAULT 0,
+        \\  label TEXT NOT NULL,
+        \\  created_at INTEGER NOT NULL,
+        \\  last_used_at INTEGER,
+        \\  revoked_at INTEGER
+        \\);
+        \\CREATE INDEX IF NOT EXISTS idx_auth_credentials_user_active
+        \\  ON auth_credentials(user_id, revoked_at);
+        \\CREATE TABLE IF NOT EXISTS auth_challenges (
+        \\  id TEXT PRIMARY KEY,
+        \\  purpose TEXT NOT NULL,
+        \\  challenge TEXT NOT NULL UNIQUE,
+        \\  user_id TEXT,
+        \\  binding_hash TEXT,
+        \\  expires_at INTEGER NOT NULL,
+        \\  used_at INTEGER,
+        \\  created_at INTEGER NOT NULL
+        \\);
+        \\CREATE INDEX IF NOT EXISTS idx_auth_challenges_expiry
+        \\  ON auth_challenges(expires_at, used_at);
+        \\CREATE TABLE IF NOT EXISTS auth_sessions (
+        \\  token_hash TEXT PRIMARY KEY,
+        \\  user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+        \\  csrf_token TEXT NOT NULL,
+        \\  created_at INTEGER NOT NULL,
+        \\  expires_at INTEGER NOT NULL,
+        \\  last_seen_at INTEGER NOT NULL,
+        \\  revoked_at INTEGER
+        \\);
+        \\CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry
+        \\  ON auth_sessions(expires_at, revoked_at);
+        \\CREATE TABLE IF NOT EXISTS auth_bootstrap (
+        \\  id INTEGER PRIMARY KEY CHECK (id = 1),
+        \\  token_hash TEXT NOT NULL,
+        \\  expires_at INTEGER NOT NULL,
+        \\  created_at INTEGER NOT NULL,
+        \\  consumed_at INTEGER
+        \\);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;
@@ -498,6 +556,8 @@ test "applies migrations idempotently" {
     try std.testing.expect(try tableExists(handle.?, "audit_events"));
     try std.testing.expect(try tableExists(handle.?, "cloudflare_security_items"));
     try std.testing.expect(try tableExists(handle.?, "apps"));
+    try std.testing.expect(try tableExists(handle.?, "auth_credentials"));
+    try std.testing.expect(try tableExists(handle.?, "auth_sessions"));
     try std.testing.expect(try tableExists(handle.?, "deploys"));
     try std.testing.expect(try tableExists(handle.?, "caddy_desired_routes"));
     try std.testing.expect(try tableExists(handle.?, "audit_actions"));

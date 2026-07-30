@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security · Cloudio</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/app.js"></script>
+  <script defer src="/assets/passkeys.js"></script>
+  <script defer src="/assets/pages/security.js"></script>
+</head>
+<body>
+  <main id="page-content">
+    <p class="page-intro">Manage the passkeys that can unlock Cloudio. Keep at least two passkeys so a lost device does not become an outage.</p>
+
+    <section class="security-overview" aria-label="Authentication status">
+      <div class="stat-card tone-success">
+        <div class="stat-value">Passkeys</div>
+        <div class="stat-label">Authentication method</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="passkey-count">—</div>
+        <div class="stat-label">Active passkeys</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">12h</div>
+        <div class="stat-label">Session lifetime</div>
+      </div>
+    </section>
+
+    <div id="security-notice" class="notice hidden" aria-live="polite"></div>
+
+    <section class="panel" aria-labelledby="passkeys-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="passkeys-title">Your passkeys</h2>
+          <p>Biometric data stays on your device. Cloudio stores public keys only.</p>
+        </div>
+        <button id="add-passkey" class="button-primary" type="button">Add passkey</button>
+      </div>
+      <div class="table-scroll">
+        <table class="responsive-table">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Type</th>
+              <th scope="col">Created</th>
+              <th scope="col">Last used</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="passkeys-body">
+            <tr><td class="empty-state loading-state" colspan="5">Loading passkeys…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="recovery-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="recovery-title">Recovery</h2>
+          <p>Recovery is intentionally local and operator-controlled.</p>
+        </div>
+      </div>
+      <div class="panel-body stack">
+        <p class="muted security-copy">If every passkey is lost, use <code>cloudio auth reset --backup &lt;path&gt; --confirm</code> on the server. Cloudio verifies an online database backup before revoking credentials and sessions.</p>
+        <div class="cluster">
+          <button id="sign-out" type="button">Sign out of this session</button>
+          <span id="security-status" class="status-message" aria-live="polite"></span>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -9,10 +9,12 @@
     { id: "vps", href: "/vps.html", label: "VPS" },
     { id: "docker", href: "/docker.html", label: "Docker" },
     { id: "audit", href: "/audit.html", label: "Audit" },
+    { id: "security", href: "/security.html", label: "Security" },
   ];
 
   const statusTimers = new WeakMap();
   let dialogElements = null;
+  let sessionPromise = null;
 
   function byId(id) {
     return document.getElementById(id);
@@ -320,8 +322,15 @@
 
     const method = String(opts.method || "GET").toUpperCase();
     opts.headers = Object.assign({ Accept: "application/json" }, opts.headers || {});
-    const mutation = !["GET", "HEAD", "OPTIONS"].includes(method) &&
-      url !== "/api/login" && url !== "/api/actions/plan";
+    const unsafe = !["GET", "HEAD", "OPTIONS"].includes(method);
+    const mutation = unsafe &&
+      !url.startsWith("/api/auth/") &&
+      url !== "/api/actions/plan";
+
+    if (unsafe) {
+      const session = await authenticatedSession();
+      opts.headers["X-Cloudio-CSRF"] = session.csrf_token;
+    }
 
     if (mutation) {
       const randomPart = window.crypto && window.crypto.randomUUID
@@ -345,6 +354,7 @@
 
     if (response.status === 401 ||
         (response.redirected && new URL(response.url).pathname === "/login.html")) {
+      sessionPromise = null;
       window.location.assign("/login.html");
       const authError = new Error("Authentication required");
       authError.status = 401;
@@ -369,6 +379,26 @@
       throw error;
     }
     return data;
+  }
+
+  async function authenticatedSession() {
+    if (!sessionPromise) {
+      sessionPromise = fetch("/api/auth/session", {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      }).then(async function (response) {
+        if (!response.ok) {
+          sessionPromise = null;
+          window.location.assign("/login.html");
+          throw new Error("Authentication required");
+        }
+        return response.json();
+      }).catch(function (error) {
+        sessionPromise = null;
+        throw error;
+      });
+    }
+    return sessionPromise;
   }
 
   function renderTable(target, rows, columns, emptyText) {
@@ -521,6 +551,7 @@
 
   window.cloudio = {
     api: api,
+    authenticatedSession: authenticatedSession,
     badge: badge,
     button: button,
     byId: byId,

@@ -5,21 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign in · Cloudio</title>
   <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/passkeys.js"></script>
   <script defer src="/assets/pages/login.js"></script>
 </head>
 <body class="login-page">
   <main class="login-card">
     <a class="login-brand" href="/" aria-label="Cloudio dashboard">cloud<span>io</span></a>
-    <h1>Sign in to the control plane</h1>
-    <p class="login-copy">Use the platform token configured on this Cloudio instance.</p>
-    <form id="login-form" class="login-form">
-      <div class="field">
-        <label for="platform-token">Platform token</label>
-        <input id="platform-token" name="token" type="password" autocomplete="current-password" required autofocus>
-      </div>
+    <div class="auth-mark" aria-hidden="true"></div>
+    <h1>Unlock the control plane</h1>
+    <p class="login-copy">Use Touch ID, Face ID, your device passcode, or a hardware security key.</p>
+    <div class="login-form">
       <div class="login-error" id="login-error" role="alert" aria-live="polite"></div>
-      <button id="login-button" class="button-primary" type="submit">Sign in</button>
-    </form>
+      <button id="login-button" class="button-primary" type="button" autofocus>Use a passkey</button>
+    </div>
+    <p class="login-footnote">Passwords and shared access tokens are not accepted.</p>
   </main>
 </body>
 </html>

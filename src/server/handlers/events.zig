@@ -5,13 +5,13 @@ const http = @import("http");
 const runtime_events = @import("runtime_events");
 const context = @import("../context.zig");
 
-pub fn ping(_: context.Context, _: http.Request, _: http.Params, out: *std.Io.Writer) !void {
-    const stream = try http.SseStream.begin(out);
+pub fn ping(ctx: context.Context, _: http.Request, _: http.Params, out: *std.Io.Writer) !void {
+    const stream = try http.SseStream.beginWithHeaders(out, ctx.response_headers);
     try stream.writeEvent(null, "{\"ok\":true}");
 }
 
 pub fn changes(ctx: context.Context, _: http.Request, _: http.Params, out: *std.Io.Writer) !void {
-    const stream = try http.SseStream.begin(out);
+    const stream = try http.SseStream.beginWithHeaders(out, ctx.response_headers);
     var last = runtime_events.current();
     var payload: [64]u8 = undefined;
     try stream.writeEvent("epoch", std.fmt.bufPrint(&payload, "{{\"epoch\":{d}}}", .{last}) catch unreachable);
@@ -26,7 +26,7 @@ pub fn changes(ctx: context.Context, _: http.Request, _: http.Params, out: *std.
 }
 
 pub fn deploy(ctx: context.Context, _: http.Request, params: http.Params, out: *std.Io.Writer) !void {
-    const stream = try http.SseStream.begin(out);
+    const stream = try http.SseStream.beginWithHeaders(out, ctx.response_headers);
     const name = params.get("name") orelse {
         try stream.writeEvent("error", "{\"error\":\"bad_app_name\"}");
         return;

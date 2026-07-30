@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up a passkey · Cloudio</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/passkeys.js"></script>
+  <script defer src="/assets/pages/setup.js"></script>
+</head>
+<body class="login-page">
+  <main class="login-card setup-card">
+    <a class="login-brand" href="/" aria-label="Cloudio dashboard">cloud<span>io</span></a>
+    <div class="auth-mark" aria-hidden="true"></div>
+    <h1>Create the owner passkey</h1>
+    <p class="login-copy">This one-use link authorizes the first passkey. Cloudio stores only its public key.</p>
+    <form id="setup-form" class="login-form">
+      <div class="field">
+        <label for="passkey-label">Passkey name</label>
+        <input id="passkey-label" name="label" type="text" maxlength="64" value="Primary passkey" autocomplete="off" required>
+      </div>
+      <div class="login-error" id="setup-error" role="alert" aria-live="polite"></div>
+      <button id="setup-button" class="button-primary" type="submit">Create passkey</button>
+    </form>
+    <p class="login-footnote">The authorization is removed after one successful enrollment or when it expires.</p>
+  </main>
+</body>
+</html>

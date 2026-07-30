@@ -1,13 +1,24 @@
 const std = @import("std");
+const app_authentication = @import("app_authentication");
 const app_writes = @import("app_writes");
 const http = @import("http");
 const auth = @import("auth.zig");
 const common = @import("common.zig");
 const context = @import("context.zig");
+const rate_limit = @import("rate_limit.zig");
 const routes = @import("routes.zig");
 const types = @import("types.zig");
 
 const web_root = "web";
+
+pub const security_headers =
+    "Cache-Control: no-store\r\n" ++
+    "Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'\r\n" ++
+    "X-Content-Type-Options: nosniff\r\n" ++
+    "Referrer-Policy: no-referrer\r\n" ++
+    "X-Frame-Options: DENY\r\n" ++
+    "Cross-Origin-Opener-Policy: same-origin\r\n" ++
+    "Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), publickey-credentials-create=(self), publickey-credentials-get=(self), usb=()\r\n";
 
 pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
     defer stream.close(ctx.io);
@@ -21,58 +32,137 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
     defer arena_state.deinit();
     const request = (http.request.read(arena_state.allocator(), &reader.interface, .{}) catch |err| switch (err) {
         error.BodyTooLarge => {
-            try http.response.write(out, 413, "application/json", "", "{\"error\":\"payload_too_large\"}\n");
+            try writeJson(out, 413, "{\"error\":\"payload_too_large\"}\n");
             return;
         },
         error.BadRequest, error.TooManyHeaders => {
-            try http.response.write(out, 400, "application/json", "", "{\"error\":\"bad_request\"}\n");
+            try writeJson(out, 400, "{\"error\":\"bad_request\"}\n");
             return;
         },
         else => return err,
     }) orelse return;
 
+    app_authentication.validatePolicy(ctx.config.auth_origin, ctx.config.auth_rp_id) catch |err| {
+        std.debug.print("cloudio auth policy invalid: {s}\n", .{@errorName(err)});
+        try writeJson(out, 500, "{\"error\":\"auth_policy_invalid\"}\n");
+        return;
+    };
+
+    const secure_origin = std.mem.startsWith(u8, ctx.config.auth_origin, "https://");
+    const raw_session_token = auth.sessionToken(request, secure_origin);
+    const session_value: ?app_authentication.Session = if (raw_session_token) |token|
+        try app_authentication.validateSession(appAuthContext(ctx), token)
+    else
+        null;
+    defer if (session_value) |session| session.deinit(ctx.gpa);
+    const authenticated = session_value != null;
     const path = request.path();
-    const authorized = if (ctx.config.platform_token) |token| auth.isAuthorized(request, token) else true;
+
     if (!std.mem.startsWith(u8, path, "/api/")) {
-        if (!authorized and !staticPathIsPublic(path)) {
-            try http.response.write(out, 302, "text/html", "Location: /login.html\r\n", "");
+        const bootstrap_active = try ctx.db.auth().bootstrapActive(nowSeconds());
+        if (!authenticated and !staticPathIsPublic(path, bootstrap_active)) {
+            try http.response.write(
+                out,
+                302,
+                "text/html; charset=utf-8",
+                security_headers ++ "Location: /login.html\r\n",
+                "",
+            );
             return;
         }
-        try http.static.serve(ctx.io, ctx.gpa, web_root, path, http.static.default_max_file_bytes, out);
+        try http.static.serveWithHeaders(
+            ctx.io,
+            ctx.gpa,
+            web_root,
+            path,
+            http.static.default_max_file_bytes,
+            security_headers,
+            out,
+        );
+        return;
+    }
+
+    // Default deny happens before route discovery: anonymous callers cannot
+    // use status codes to enumerate private endpoints.
+    if (!authenticated and !publicApiPath(path)) {
+        try writeJson(out, 401, "{\"error\":\"unauthorized\"}\n");
         return;
     }
 
     const matched = http.router.match(types.Route, &routes.all, request.method, path) orelse {
         if (http.router.pathExists(types.Route, &routes.all, path)) {
-            try http.response.write(out, 405, "application/json", "", "{\"error\":\"method_not_allowed\"}\n");
+            try writeJson(out, 405, "{\"error\":\"method_not_allowed\"}\n");
         } else {
-            try http.response.write(out, 404, "application/json", "", "{\"error\":\"not_found\"}\n");
+            try writeJson(out, 404, "{\"error\":\"not_found\"}\n");
         }
         return;
     };
     const route = matched.route;
-    if (route.access == .authenticated and !authorized) {
-        try http.response.write(out, 401, "application/json", "", "{\"error\":\"unauthorized\"}\n");
+    if (route.access == .authenticated and !authenticated) {
+        try writeJson(out, 401, "{\"error\":\"unauthorized\"}\n");
         return;
     }
-    if (route.mutation == .destructive and !std.mem.eql(u8, request.header("x-cloudio-confirm") orelse "", "confirmed")) {
-        try http.response.write(out, 428, "application/json", "", "{\"error\":\"confirmation_required\",\"required_header\":\"X-Cloudio-Confirm: confirmed\"}\n");
+
+    if (auth.isUnsafeMethod(request.method)) {
+        if (!auth.originMatches(request, ctx.config.auth_origin)) {
+            try writeJson(out, 403, "{\"error\":\"origin_denied\"}\n");
+            return;
+        }
+        if (!auth.hasJsonBody(request)) {
+            try writeJson(out, 400, "{\"error\":\"json_content_type_required\"}\n");
+            return;
+        }
+        if (route.access == .authenticated) {
+            const session = session_value.?;
+            const csrf = request.header("x-cloudio-csrf") orelse "";
+            if (!auth.constantTimeEqual(csrf, session.csrf_token)) {
+                try writeJson(out, 403, "{\"error\":\"csrf_denied\"}\n");
+                return;
+            }
+        }
+    }
+
+    if (route.access == .public and !allowAuthRequest(ctx, request, path)) {
+        try http.response.write(
+            out,
+            429,
+            "application/json",
+            security_headers ++ "Retry-After: 60\r\n",
+            "{\"error\":\"rate_limited\"}\n",
+        );
         return;
     }
-    const actor = auth.actor(request, ctx.config.platform_token != null) orelse {
-        try http.response.write(out, 400, "application/json", "", "{\"error\":\"invalid_actor\"}\n");
+
+    if (route.mutation == .destructive and
+        !std.mem.eql(u8, request.header("x-cloudio-confirm") orelse "", "confirmed"))
+    {
+        try writeJson(
+            out,
+            428,
+            "{\"error\":\"confirmation_required\",\"required_header\":\"X-Cloudio-Confirm: confirmed\"}\n",
+        );
         return;
-    };
+    }
+
     const idempotency_key = request.header("idempotency-key") orelse "";
     var request_ctx = ctx;
+    request_ctx.response_headers = security_headers;
+    if (session_value) |session| {
+        request_ctx.auth_user_id = session.user_id;
+        request_ctx.auth_csrf_token = session.csrf_token;
+    }
     request_ctx.write_meta = .{
-        .actor = actor,
+        .actor = if (authenticated) "passkey" else "public-auth",
         .idempotency_key = if (idempotency_key.len == 0) null else idempotency_key,
     };
 
     if (route.mutation != .none) {
         if (!auth.isValidIdempotencyKey(idempotency_key)) {
-            try http.response.write(out, 428, "application/json", "", "{\"error\":\"idempotency_key_required\",\"required_header\":\"Idempotency-Key\"}\n");
+            try writeJson(
+                out,
+                428,
+                "{\"error\":\"idempotency_key_required\",\"required_header\":\"Idempotency-Key\"}\n",
+            );
             return;
         }
         const fingerprint = auth.mutationFingerprint(request);
@@ -83,21 +173,27 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
             &fingerprint,
             request.method,
             request.target,
-            actor,
+            "passkey",
         );
         switch (claim) {
             .execute => {},
             .replay => |stored| {
                 defer stored.deinit(ctx.gpa);
-                try http.response.write(out, stored.status, "application/json", "Idempotency-Replayed: true\r\n", stored.body);
+                try http.response.write(
+                    out,
+                    stored.status,
+                    "application/json",
+                    security_headers ++ "Idempotency-Replayed: true\r\n",
+                    stored.body,
+                );
                 return;
             },
             .in_progress => {
-                try http.response.write(out, 409, "application/json", "", "{\"error\":\"request_in_progress\"}\n");
+                try writeJson(out, 409, "{\"error\":\"request_in_progress\"}\n");
                 return;
             },
             .conflict => {
-                try http.response.write(out, 409, "application/json", "", "{\"error\":\"idempotency_key_reused\"}\n");
+                try writeJson(out, 409, "{\"error\":\"idempotency_key_reused\"}\n");
                 return;
             },
         }
@@ -114,25 +210,122 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
             defer body.deinit();
             var extra_headers = std.Io.Writer.Allocating.init(ctx.gpa);
             defer extra_headers.deinit();
-            const status = handler(request_ctx, request, matched.params, &body.writer, &extra_headers.writer) catch |err| {
-                std.debug.print("cloudio handler {s} failed: {s}\n", .{ route.pattern, @errorName(err) });
+            try extra_headers.writer.writeAll(security_headers);
+            const status_code = handler(
+                request_ctx,
+                request,
+                matched.params,
+                &body.writer,
+                &extra_headers.writer,
+            ) catch |err| {
                 const mapped = common.mapApiError(err);
+                if (mapped.status >= 500) {
+                    std.debug.print("cloudio handler {s} failed: {s}\n", .{ route.pattern, @errorName(err) });
+                }
                 if (route.mutation != .none) {
                     app_writes.completeMutation(ctx.db, idempotency_key, mapped.status, mapped.body) catch |complete_err| {
                         std.debug.print("cloudio idempotency completion failed: {s}\n", .{@errorName(complete_err)});
                     };
                 }
-                try http.response.write(out, mapped.status, "application/json", "", mapped.body);
+                try http.response.write(
+                    out,
+                    mapped.status,
+                    "application/json",
+                    security_headers,
+                    mapped.body,
+                );
                 return;
             };
             if (route.mutation != .none) {
-                try app_writes.completeMutation(ctx.db, idempotency_key, status, body.written());
+                try app_writes.completeMutation(ctx.db, idempotency_key, status_code, body.written());
             }
-            try http.response.write(out, status, "application/json", extra_headers.written(), body.written());
+            try http.response.write(
+                out,
+                status_code,
+                "application/json",
+                extra_headers.written(),
+                body.written(),
+            );
         },
     }
 }
 
-fn staticPathIsPublic(path: []const u8) bool {
-    return std.mem.eql(u8, path, "/login.html") or std.mem.startsWith(u8, path, "/assets/");
+fn appAuthContext(ctx: context.Context) app_authentication.Context {
+    return .{
+        .io = ctx.io,
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+        .origin = ctx.config.auth_origin,
+        .rp_id = ctx.config.auth_rp_id,
+    };
+}
+
+fn staticPathIsPublic(path: []const u8, bootstrap_active: bool) bool {
+    if (std.mem.eql(u8, path, "/login.html") or
+        std.mem.eql(u8, path, "/assets/app.css") or
+        std.mem.eql(u8, path, "/assets/passkeys.js") or
+        std.mem.eql(u8, path, "/assets/pages/login.js"))
+    {
+        return true;
+    }
+    return bootstrap_active and
+        (std.mem.eql(u8, path, "/setup.html") or
+            std.mem.eql(u8, path, "/assets/pages/setup.js"));
+}
+
+fn publicApiPath(path: []const u8) bool {
+    return std.mem.eql(u8, path, "/api/auth/setup/options") or
+        std.mem.eql(u8, path, "/api/auth/setup/verify") or
+        std.mem.eql(u8, path, "/api/auth/login/options") or
+        std.mem.eql(u8, path, "/api/auth/login/verify");
+}
+
+fn allowAuthRequest(ctx: context.Context, request: http.Request, path: []const u8) bool {
+    const now = nowSeconds();
+    const category: []const u8 = if (std.mem.startsWith(u8, path, "/api/auth/setup/"))
+        "setup"
+    else if (std.mem.endsWith(u8, path, "/verify"))
+        "verify"
+    else
+        "options";
+    const global_limit: u32 = if (std.mem.eql(u8, category, "setup")) 40 else 100;
+    if (!rate_limit.allow(category, global_limit, 5 * 60, now)) return false;
+
+    if (!ctx.trust_proxy_client_ip) return true;
+    const forwarded = request.header("x-forwarded-for") orelse return true;
+    const first = std.mem.trim(
+        u8,
+        if (std.mem.indexOfScalar(u8, forwarded, ',')) |comma| forwarded[0..comma] else forwarded,
+        " \t",
+    );
+    if (first.len == 0 or first.len > 64) return false;
+    var key_buffer: [80]u8 = undefined;
+    const client_key = std.fmt.bufPrint(&key_buffer, "{s}:{s}", .{ category, first }) catch return false;
+    if (std.mem.startsWith(u8, path, "/api/auth/setup/")) {
+        return rate_limit.allow(client_key, 12, 10 * 60, now);
+    }
+    if (std.mem.endsWith(u8, path, "/verify")) {
+        return rate_limit.allow(client_key, 20, 5 * 60, now);
+    }
+    return rate_limit.allow(client_key, 30, 5 * 60, now);
+}
+
+fn nowSeconds() i64 {
+    var ts: std.os.linux.timespec = undefined;
+    const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
+    if (std.os.linux.errno(rc) != .SUCCESS or ts.sec < 0) return 0;
+    return @intCast(ts.sec);
+}
+
+fn writeJson(out: *std.Io.Writer, status_code: u16, body: []const u8) !void {
+    try http.response.write(out, status_code, "application/json", security_headers, body);
+}
+
+test "anonymous surface is an explicit allowlist" {
+    try std.testing.expect(staticPathIsPublic("/login.html", false));
+    try std.testing.expect(!staticPathIsPublic("/assets/app.js", false));
+    try std.testing.expect(!staticPathIsPublic("/setup.html", false));
+    try std.testing.expect(staticPathIsPublic("/setup.html", true));
+    try std.testing.expect(publicApiPath("/api/auth/login/options"));
+    try std.testing.expect(!publicApiPath("/api/dashboard"));
 }

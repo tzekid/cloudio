@@ -15,6 +15,10 @@ pub const Context = struct {
     config: core_config.Config = .{ .domains = &.{} },
     write_meta: app_writes.Metadata = .{},
     dashboard: app_dashboard.Options = .{},
+    auth_user_id: ?[]const u8 = null,
+    auth_csrf_token: ?[]const u8 = null,
+    response_headers: []const u8 = "",
+    trust_proxy_client_ip: bool = false,
 };
 
 pub fn deploy(ctx: Context) app_deploy.Context {

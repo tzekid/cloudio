@@ -27,6 +27,7 @@ pub fn statusText(status: u16) []const u8 {
         404 => "Not Found",
         405 => "Method Not Allowed",
         409 => "Conflict",
+        429 => "Too Many Requests",
         413 => "Payload Too Large",
         422 => "Unprocessable Content",
         428 => "Precondition Required",

@@ -9,8 +9,13 @@
   SQLite is split into concrete repositories, and the independently buildable
   Cloudflare/Hostinger packages live under `packages/` with one-way public
   mirror automation.
-- Milestone 3 — passkey-only authentication: next. Its implementation must
-  build on the single route-policy pipeline delivered by Milestone 2.
+- Milestone 3 — passkey-only authentication: implemented as of 2026-07-30.
+  Cloudio now defaults every route and request to denied, uses discoverable
+  WebAuthn passkeys for setup and sign-in, protects authenticated mutations
+  with strict-origin and CSRF checks, and provides both CLI-authorized
+  bootstrap enrollment and a one-time browser setup flow. Production rollout
+  and the owner's first physical passkey ceremony are tracked by the
+  milestone runbook.
 
 Cloudio work should move in broad, reviewable slices. A slice is a coherent subsystem or provider family, not one endpoint at a time, unless the change is a narrow bug fix needed to unblock the broader goal.
 
@@ -62,6 +67,13 @@ The POC already has:
 - A redaction audit command, `cloudio security redaction`, that checks configured API token/key bytes against Cloudio output/storage surfaces without printing those bytes.
 - A public `cloudio.zig` facade that keeps collectors out of future embedding code.
 - A shipped local HTTP platform and browser UI over app-level JSON contracts.
+- Passkey-only authentication with hashed server-side sessions, one-time
+  hashed bootstrap capabilities, challenge expiry, strict origin/RP
+  validation, and credential management through the shared app-service
+  boundary.
+- A default-deny HTTP policy pipeline with exact public-route exceptions,
+  origin and CSRF enforcement for mutations, security headers, and bounded
+  authentication rate limiting.
 - Typed live-write adapters for Caddy, Cloudflare DNS/settings/cache, Hostinger VPS/firewall, Docker/systemd, and app deployment; generic provider mutation dispatch remains dry-run-only.
 - Request idempotency/replay, destructive confirmation headers, actor metadata, per-app deployment locks, automatic failed-health rollback, and complete app cleanup.
 - Configurable snapshot/provider-raw/metrics retention with preview, online backup, bounded prune, WAL checkpoint, and explicit compaction commands.
@@ -186,7 +198,17 @@ Acceptance:
 
 ## Next Broad Slices
 
-1. Maintain app presentation consolidation.
+1. Operate and verify passkey recovery.
+   - Complete the owner's first passkey ceremony from the one-time setup URL.
+   - Enroll a second passkey on a different device or hardware key before it
+     is needed.
+   - Exercise the documented offline backup and `auth reset` recovery drill
+     without weakening the normal browser route policy.
+   - Keep passwords, bearer tokens, email recovery, OAuth, teams, roles, and
+     remote administrative bypasses out of scope until a real requirement
+     exists.
+
+2. Maintain app presentation consolidation.
    - Extend the app render helper pattern to any remaining repeated app-level JSON/text rendering.
    - Keep CLI rendering separate from reusable app read-model JSON.
    - Use `cloudio history --json` and `cloudio export history --json` as the first operational-history contract for UI/API consumers.
@@ -198,11 +220,11 @@ Acceptance:
    - Use `cloudio topology changes --json` for persisted added/changed/removed operational deltas.
    - Keep browser API behavior in `web/assets/app.js`; page scripts must not grow independent fetch/auth/idempotency parsers.
 
-2. Maintain command parsing and option handling.
+3. Maintain command parsing and option handling.
    - Consolidate repeated `--json`, `--format`, `--limit`, `--domain`, `--query`, `--path-param`, `--query-param`, and `--header-param` handling.
    - Preserve all current command behavior with smoke tests.
 
-3. Hostinger VPS family pass.
+4. Hostinger VPS family pass.
    - Re-check latest Hostinger docs/spec.
    - Review the full VPS family workplan bundle.
    - Review `cloudio coverage actual-captures hostinger --family hostinger-vps --limit=0 --plans --json` before editing, and classify work by `review_status` across the whole VPS family.
@@ -210,13 +232,13 @@ Acceptance:
    - When an endpoint needs child IDs, add the list-source mapping for the whole Hostinger resource group in one patch before capturing individual child routes.
    - Tighten collection, typed projections, pagination/error handling, and dry-run plans across the whole VPS family.
 
-4. Cloudflare account/security family pass.
+5. Cloudflare account/security family pass.
    - Re-check latest Cloudflare docs/spec.
    - Review accounts, memberships, tokens, IAM, security posture, API Shield, rulesets, and related route bundles as a group.
    - Prefer broad source-mapping slices that cover an entire route family at once, as with load-balancing monitor/pool/load-balancer details and tunnel/tunnel-route/connector details.
    - Add or upgrade L2 capture evidence, typed projection, and dry-run plan evidence for the selected family.
 
-5. Caddy/system/project correlation.
+6. Caddy/system/project correlation.
    - The unified topology read model and persisted delta projection now connect DNS records, Caddy sites, upstream sockets, systemd units, Docker containers, compose files, and project roots. Continue enriching fields through typed projections rather than page-specific joins.
 
 ## Goal-Turn Checklist

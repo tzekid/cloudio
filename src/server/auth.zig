@@ -1,26 +1,60 @@
 const std = @import("std");
 const http = @import("http");
 
-pub const cookie_name = "cloudio_token";
+pub const secure_cookie_name = "__Host-cloudio_session";
+pub const local_cookie_name = "cloudio_session";
 
-pub fn isAuthorized(request: http.Request, token: []const u8) bool {
-    if (bearerToken(request.header("authorization") orelse "")) |candidate| {
-        if (tokenEquals(candidate, token)) return true;
-    }
-    if (cookieValue(request.header("cookie") orelse "", cookie_name)) |candidate| {
-        if (tokenEquals(candidate, token)) return true;
-    }
-    return false;
+pub fn cookieName(secure_origin: bool) []const u8 {
+    return if (secure_origin) secure_cookie_name else local_cookie_name;
 }
 
-pub fn actor(request: http.Request, auth_enabled: bool) ?[]const u8 {
-    if (request.header("x-cloudio-actor")) |value| {
-        if (!isValidActor(value)) return null;
-        return value;
-    }
-    if (request.header("authorization") != null) return "api";
-    if (request.header("cookie") != null) return "web";
-    return if (auth_enabled) "api" else "local";
+pub fn sessionToken(request: http.Request, secure_origin: bool) ?[]const u8 {
+    return cookieValue(
+        request.header("cookie") orelse "",
+        cookieName(secure_origin),
+    );
+}
+
+pub fn writeSessionCookie(
+    writer: anytype,
+    secure_origin: bool,
+    token: []const u8,
+    max_age: i64,
+) !void {
+    try writer.print(
+        "Set-Cookie: {s}={s}; Path=/; HttpOnly; SameSite=Strict; Max-Age={d}{s}\r\n",
+        .{
+            cookieName(secure_origin),
+            token,
+            max_age,
+            if (secure_origin) "; Secure" else "",
+        },
+    );
+}
+
+pub fn writeClearedSessionCookie(writer: anytype, secure_origin: bool) !void {
+    try writer.print(
+        "Set-Cookie: {s}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0{s}\r\n",
+        .{ cookieName(secure_origin), if (secure_origin) "; Secure" else "" },
+    );
+}
+
+pub fn originMatches(request: http.Request, expected_origin: []const u8) bool {
+    const provided = request.header("origin") orelse return false;
+    return constantTimeEqual(provided, expected_origin);
+}
+
+pub fn isUnsafeMethod(method: []const u8) bool {
+    return std.mem.eql(u8, method, "POST") or
+        std.mem.eql(u8, method, "PUT") or
+        std.mem.eql(u8, method, "PATCH") or
+        std.mem.eql(u8, method, "DELETE");
+}
+
+pub fn hasJsonBody(request: http.Request) bool {
+    if (request.body.len == 0) return true;
+    const value = request.header("content-type") orelse return false;
+    return std.ascii.startsWithIgnoreCase(value, "application/json");
 }
 
 pub fn isValidIdempotencyKey(value: []const u8) bool {
@@ -46,54 +80,50 @@ pub fn mutationFingerprint(request: http.Request) [64]u8 {
     return std.fmt.bytesToHex(digest, .lower);
 }
 
-pub fn tokenEquals(a: []const u8, b: []const u8) bool {
+pub fn constantTimeEqual(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     var difference: u8 = 0;
     for (a, b) |left, right| difference |= left ^ right;
     return difference == 0;
 }
 
-fn bearerToken(authorization: []const u8) ?[]const u8 {
-    const prefix = "Bearer ";
-    if (!std.mem.startsWith(u8, authorization, prefix)) return null;
-    const token = std.mem.trim(u8, authorization[prefix.len..], " \t");
-    return if (token.len == 0) null else token;
-}
-
-fn cookieValue(header: []const u8, name: []const u8) ?[]const u8 {
+pub fn cookieValue(header: []const u8, name: []const u8) ?[]const u8 {
     var items = std.mem.splitScalar(u8, header, ';');
     while (items.next()) |raw| {
         const pair = std.mem.trim(u8, raw, " \t");
         const equals = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
-        if (std.mem.eql(u8, std.mem.trim(u8, pair[0..equals], " \t"), name)) return pair[equals + 1 ..];
+        if (std.mem.eql(u8, std.mem.trim(u8, pair[0..equals], " \t"), name)) {
+            const value = pair[equals + 1 ..];
+            return if (value.len == 0) null else value;
+        }
     }
     return null;
 }
 
-fn isValidActor(value: []const u8) bool {
-    if (value.len == 0 or value.len > 64) return false;
-    for (value) |ch| {
-        switch (ch) {
-            'A'...'Z', 'a'...'z', '0'...'9', '_', '-', '.', '@', ':' => {},
-            else => return false,
-        }
-    }
-    return true;
+test "session cookie is host-only secure and never readable by script" {
+    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer out.deinit();
+    try writeSessionCookie(&out.writer, true, "opaque", 43200);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "__Host-cloudio_session=opaque") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "; Secure") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "; HttpOnly") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "; SameSite=Strict") != null);
 }
 
-test "authentication helpers validate tokens metadata and fingerprints" {
+test "authentication helpers validate metadata fingerprints and origins" {
     const request = http.Request{
         .method = "POST",
         .target = "/api/apps",
         .headers = &.{
-            .{ .name = "Authorization", .value = "Bearer secret" },
-            .{ .name = "Idempotency-Key", .value = "request-1234" },
+            .{ .name = "Origin", .value = "https://cloudio.example.test" },
+            .{ .name = "Cookie", .value = "__Host-cloudio_session=secret" },
+            .{ .name = "Content-Type", .value = "application/json; charset=utf-8" },
         },
         .body = "{}",
     };
-    try std.testing.expect(isAuthorized(request, "secret"));
-    try std.testing.expect(isValidIdempotencyKey(request.header("idempotency-key").?));
-    try std.testing.expectEqualStrings("api", actor(request, true).?);
+    try std.testing.expectEqualStrings("secret", sessionToken(request, true).?);
+    try std.testing.expect(originMatches(request, "https://cloudio.example.test"));
+    try std.testing.expect(hasJsonBody(request));
     const first = mutationFingerprint(request);
     const second = mutationFingerprint(request);
     try std.testing.expectEqualSlices(u8, &first, &second);

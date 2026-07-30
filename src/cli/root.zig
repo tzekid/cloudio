@@ -13,6 +13,7 @@ const app_database = @import("app_database");
 const core_config = @import("core_config");
 const core_version = @import("core_version");
 const cli_args = @import("cli_args");
+const cli_auth = @import("cli_auth");
 const cli_caddy = @import("cli_caddy");
 const cli_actions = @import("cli_actions");
 const cli_cloudflare = @import("cli_cloudflare");
@@ -124,6 +125,13 @@ pub fn run(init: std.process.Init) !void {
             .config = cfg,
             .db = &db,
         }, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "auth")) {
+        try cli_auth.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
+            .config = cfg,
+            .db = &db,
+        }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "maintenance")) {
         try cli_maintenance.run(.{
             .io = init.io,
@@ -217,6 +225,9 @@ fn usage() void {
         \\  cloudio route capture-ready <cloudflare|hostinger> [all|control-plane] [tag-query] [--focus all|control-plane] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--execute]
         \\  cloudio log [--json|--format json]
         \\  cloudio security [redaction|secrets|audit] [--json|--format json]
+        \\  cloudio auth status [--json|--format json]
+        \\  cloudio auth bootstrap [--ttl 10m]
+        \\  cloudio auth reset --backup <path> --confirm
         \\  cloudio maintenance [status|prune|compact|run] [--apply --backup <path>] [--json|--format json]
         \\  cloudio maintenance backup --output <path> [--json|--format json]
         \\  cloudio cloudflare account [list]|account show <account-id>|account profile <account-id>|account organizations <account-id>

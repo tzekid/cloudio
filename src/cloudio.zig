@@ -21,6 +21,7 @@ pub const db = struct {
 };
 
 pub const app = struct {
+    pub const authentication = @import("app_authentication");
     pub const actions = @import("app_actions");
     pub const caddy = @import("app_caddy");
     pub const cloudflare = @import("app_cloudflare");
@@ -91,6 +92,7 @@ test "facade exposes stable integration modules" {
     _ = core.fs.ensureParentDir;
     _ = core.output.Output;
     _ = app.actions.Context;
+    _ = app.authentication.Context;
     _ = app.caddy.Context;
     _ = app.cloudflare.Context;
     _ = app.cloudflare.AccountEndpoint;

@@ -3,6 +3,16 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const passcay_dep = b.dependency("passcay", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const passcay_mod = passcay_dep.module("passcay");
+    const zbor_dep = b.dependency("zbor", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const zbor_mod = zbor_dep.module("zbor");
 
     const sqlite_c = b.addTranslateC(.{
         .root_source_file = b.path("c/sqlite.h"),
@@ -155,6 +165,15 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(db_store_mod);
+    const security_passkeys_mod = b.createModule(.{
+        .root_source_file = b.path("src/security/passkeys.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "passcay", .module = passcay_mod },
+            .{ .name = "zbor", .module = zbor_mod },
+        },
+    });
     const collector_capture_mod = b.createModule(.{
         .root_source_file = b.path("src/collectors/capture.zig"),
         .target = target,
@@ -808,6 +827,18 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(app_security_mod);
+    const app_authentication_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/authentication.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_time", .module = core_time_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "security_passkeys", .module = security_passkeys_mod },
+        },
+    });
+    linkSqlite(app_authentication_mod);
 
     const app_caddy_mod = b.createModule(.{
         .root_source_file = b.path("src/app/caddy.zig"),
@@ -1130,6 +1161,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_authentication", .module = app_authentication_mod },
             .{ .name = "app_actions", .module = app_actions_mod },
             .{ .name = "app_caddy_desired", .module = app_caddy_desired_mod },
             .{ .name = "app_dashboard", .module = app_dashboard_mod },
@@ -1166,6 +1198,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_authentication", .module = app_authentication_mod },
             .{ .name = "app_caddy", .module = app_caddy_mod },
             .{ .name = "app_actions", .module = app_actions_mod },
             .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
@@ -1464,6 +1497,20 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(cli_security_mod);
+    const cli_auth_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/auth.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_authentication", .module = app_authentication_mod },
+            .{ .name = "app_database", .module = app_database_mod },
+            .{ .name = "app_maintenance", .module = app_maintenance_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+        },
+    });
+    linkSqlite(cli_auth_mod);
     const cli_maintenance_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/maintenance.zig"),
         .target = target,
@@ -1494,6 +1541,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
             .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "cli_auth", .module = cli_auth_mod },
             .{ .name = "cli_actions", .module = cli_actions_mod },
             .{ .name = "cli_caddy", .module = cli_caddy_mod },
             .{ .name = "cli_cloudflare", .module = cli_cloudflare_mod },
@@ -1559,6 +1607,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cli_projects_mod);
     addModuleTest(b, test_step, cli_routes_mod);
     addModuleTest(b, test_step, cli_security_mod);
+    addModuleTest(b, test_step, cli_auth_mod);
     addModuleTest(b, test_step, cli_maintenance_mod);
     addModuleTest(b, test_step, cli_serve_mod);
     addModuleTest(b, test_step, cli_system_mod);
@@ -1575,6 +1624,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_init_mod);
     addModuleTest(b, test_step, app_log_mod);
     addModuleTest(b, test_step, app_security_mod);
+    addModuleTest(b, test_step, app_authentication_mod);
     addModuleTest(b, test_step, app_caddy_mod);
     addModuleTest(b, test_step, app_projects_mod);
     addModuleTest(b, test_step, app_system_mod);
@@ -1652,6 +1702,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, provider_hostinger_models_mod);
     addModuleTest(b, test_step, db_schema_mod);
     addModuleTest(b, test_step, db_store_mod);
+    addModuleTest(b, test_step, security_passkeys_mod);
     addModuleTest(b, test_step, collector_capture_mod);
     addModuleTest(b, test_step, collector_capture_normalize_mod);
     addModuleTest(b, test_step, collector_route_capture_mod);

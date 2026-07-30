@@ -1142,6 +1142,73 @@ dialog::backdrop {
   width: 100%;
 }
 
+.auth-mark {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 16px;
+  border: 1px solid rgba(88, 166, 255, 0.52);
+  border-radius: 50%;
+  background: var(--accent-soft);
+}
+
+.auth-mark::before {
+  position: absolute;
+  top: 12px;
+  left: 17px;
+  width: 12px;
+  height: 15px;
+  border: 2px solid var(--accent);
+  border-radius: 7px 7px 5px 5px;
+  content: "";
+}
+
+.auth-mark::after {
+  position: absolute;
+  top: 29px;
+  left: 22px;
+  width: 4px;
+  height: 7px;
+  border-radius: 3px;
+  background: var(--accent);
+  content: "";
+}
+
+.login-footnote {
+  padding-top: 14px;
+  margin: 16px 0 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-subtle);
+  font-size: 10.5px;
+  text-align: center;
+}
+
+.setup-card {
+  width: min(400px, 100%);
+}
+
+.security-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.security-overview .stat-value {
+  font-size: 17px;
+}
+
+.security-copy {
+  max-width: 820px;
+  margin: 0;
+}
+
+@media (max-width: 620px) {
+  .security-overview {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1180px) {
   .summary-grid {
     grid-template-columns: repeat(4, minmax(110px, 1fr));

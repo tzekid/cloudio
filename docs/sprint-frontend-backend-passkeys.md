@@ -956,19 +956,22 @@ credential, user-presence/user-verification flags, and signature.
 
 Do not write WebAuthn cryptographic verification from scratch.
 
-Candidate Zig dependency: Passcay 3.x, pinned to an exact release and package
-hash. Its current public documentation states Zig 0.16 support, pure
-`std.crypto`, broad COSE support, and FIDO2 server conformance:
+Selected dependency: Passcay 3.1.0, pinned to tag commit
+`a448bfa5613b68897e12de11e784a1d7721233a4` and Zig package hash
+`passcay-3.1.0-ckLGcmQzBAC1vu-rL_dmObKye8Fbs8qHsFUeDtRAr1ni`. Its public
+documentation states Zig 0.16 support, pure `std.crypto`, broad COSE support,
+and FIDO2 server conformance:
 https://github.com/uzyn/passcay
 
-Before adoption:
+Adoption review completed on 2026-07-30:
 
-- review the exact pinned source
-- run its test and conformance suites
-- verify its registration/authentication expectations match Cloudio's policy
-- wrap it behind a small Cloudio `PasskeyVerifier` adapter
-- do not fork unless a blocking issue is found and maintained upstream is not
-  responsive
+- the exact tag source and MIT license were reviewed
+- all 80 upstream tests passed locally and the tagged upstream CI run passed
+- Cloudio's adapter adds bounded inputs, cross-origin/top-origin rejection,
+  backup-flag consistency, and an ES256/RS256 allowlist around Passcay's exact
+  challenge/origin/RP-ID/UP/UV/signature verification
+- `zbor` 0.21.2 is pinned solely to read the verified COSE algorithm identifier
+- no fork or vendored cryptographic implementation was necessary
 
 ### 6.3 Passkey policy
 
@@ -1003,49 +1006,55 @@ Add append-only migrations for:
 
 ```text
 auth_users
-  id BLOB PRIMARY KEY
+  id TEXT PRIMARY KEY
   display_name TEXT NOT NULL
-  created_at TEXT NOT NULL
+  created_at INTEGER NOT NULL
 
 auth_credentials
-  credential_id BLOB PRIMARY KEY
-  user_id BLOB NOT NULL
-  public_key BLOB NOT NULL
+  credential_id TEXT PRIMARY KEY
+  user_id TEXT NOT NULL
+  public_key TEXT NOT NULL
   algorithm INTEGER NOT NULL
   sign_count INTEGER NOT NULL DEFAULT 0
   transports TEXT
-  aaguid BLOB
+  aaguid TEXT
   backup_eligible INTEGER
   backup_state INTEGER
   label TEXT
-  created_at TEXT NOT NULL
-  last_used_at TEXT
-  revoked_at TEXT
+  created_at INTEGER NOT NULL
+  last_used_at INTEGER
+  revoked_at INTEGER
 
 auth_challenges
   id TEXT PRIMARY KEY
   purpose TEXT NOT NULL
-  challenge BLOB NOT NULL
-  expires_at TEXT NOT NULL
-  used_at TEXT
+  challenge TEXT NOT NULL
+  user_id TEXT
+  binding_hash TEXT
+  expires_at INTEGER NOT NULL
+  used_at INTEGER
 
 auth_sessions
-  token_hash BLOB PRIMARY KEY
-  user_id BLOB NOT NULL
-  csrf_token BLOB NOT NULL
-  created_at TEXT NOT NULL
-  expires_at TEXT NOT NULL
-  last_used_at TEXT NOT NULL
-  revoked_at TEXT
+  token_hash TEXT PRIMARY KEY
+  user_id TEXT NOT NULL
+  csrf_token TEXT NOT NULL
+  created_at INTEGER NOT NULL
+  expires_at INTEGER NOT NULL
+  last_seen_at INTEGER NOT NULL
+  revoked_at INTEGER
 
 auth_bootstrap
   id INTEGER PRIMARY KEY CHECK (id = 1)
-  token_hash BLOB NOT NULL
-  expires_at TEXT NOT NULL
-  consumed_at TEXT
+  token_hash TEXT NOT NULL
+  expires_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL
+  consumed_at INTEGER
 ```
 
-Binary values are stored as BLOBs. Raw session/bootstrap tokens are never stored.
+Opaque binary values are encoded as canonical unpadded base64url text and
+token digests as lowercase SHA-256 hex; timestamps are epoch seconds. This
+keeps SQLite inspection and the small repository layer straightforward without
+changing the security properties. Raw session/bootstrap tokens are never stored.
 The session-bound CSRF token may be stored because it cannot authenticate
 without the separate HttpOnly session cookie. Challenges are short-lived and
 single-use.
@@ -1081,9 +1090,11 @@ The setup surface is available only when:
 - an unconsumed bootstrap token exists
 - its ten-minute TTL has not expired
 
-After successful registration, credential creation, bootstrap consumption, and
-first-session creation happen in one database transaction. Further setup
-requests return 404 or 410.
+Every verification attempt atomically consumes its challenge before expensive
+cryptographic verification, so failures cannot be replayed. After successful
+verification, credential creation, bootstrap consumption, and first-session
+creation happen in one database transaction. Further anonymous setup requests
+are removed from the public static allowlist.
 
 An unexpired token is still high entropy; the ten-minute window is not treated
 as the security boundary.
@@ -1103,6 +1114,7 @@ GET  /api/auth/session          authenticated
 POST /api/auth/credentials/options   authenticated + CSRF
 POST /api/auth/credentials/verify    authenticated + CSRF
 GET  /api/auth/credentials            authenticated
+PATCH /api/auth/credentials/:id       authenticated + CSRF
 DELETE /api/auth/credentials/:id      authenticated + CSRF + confirmation
 ```
 
@@ -1186,9 +1198,9 @@ Max-Age=43200
 Do not set `Domain`. Do not place credential IDs, user data, or authorization
 claims in the cookie.
 
-Development may use an insecure cookie only when the configured origin is
-exactly `http://localhost:<port>`. Production startup refuses passkey mode
-without an HTTPS origin and valid RP ID.
+Development may use an insecure cookie only for an explicitly configured
+`http://localhost:<port>` or loopback origin. Every other origin must be HTTPS,
+and the configured origin host must exactly equal the RP ID.
 
 ### 6.10 Authorization coverage
 
@@ -1257,6 +1269,10 @@ Content-Security-Policy:
 X-Content-Type-Options: nosniff
 Referrer-Policy: no-referrer
 Cache-Control: no-store            # auth and API responses
+X-Frame-Options: DENY
+Cross-Origin-Opener-Policy: same-origin
+Permissions-Policy: publickey-credentials-create/get=(self);
+                    camera/geolocation/microphone/payment/usb=()
 ```
 
 Caddy owns HSTS at the HTTPS boundary. Inline scripts/styles were removed in
@@ -1270,8 +1286,11 @@ Rate-limit login options and verification:
 - a small global ceiling suitable for a single-user service
 - tighter limits for bootstrap verification
 
-Trust forwarding headers only when the direct peer is the configured loopback
-proxy. Otherwise use the socket peer address.
+Trust `X-Forwarded-For` only when the server is explicitly bound to loopback;
+always retain a separate global ceiling so forwarding-header or address churn
+cannot bypass the limiter. Non-proxied operation uses the global ceiling
+because the reusable HTTP connection callback intentionally does not expose
+application policy.
 
 Audit:
 
@@ -1318,8 +1337,8 @@ credential cannot be removed through HTTP.
 5. Open the one-time setup link and register the first passkey.
 6. Verify logout and passkey login from the intended Mac/iPhone.
 7. Add a second credential if available.
-8. Remove/ignore `CLOUDIO_PLATFORM_TOKEN` and delete the old login endpoint,
-   cookie code, bearer-token path, and password input.
+8. Confirm `CLOUDIO_PLATFORM_TOKEN`, the old login endpoint, raw-token cookie,
+   bearer-token path, and password input no longer exist.
 9. Verify the default-deny route matrix.
 
 There is no indefinite dual-auth period. The local reset/bootstrap commands are
@@ -1366,18 +1385,40 @@ End-to-end:
 
 ### 6.17 Security acceptance criteria
 
-- The platform token is no longer an interactive or API credential.
-- Login is passkey-only with user verification required.
-- The first credential is enrolled through a 10-minute, high-entropy, one-time
+- [x] The platform token is no longer an interactive or API credential.
+- [x] Login is passkey-only with user verification required.
+- [x] The first credential is enrolled through a 10-minute, high-entropy, one-time
   bootstrap link.
-- Cloudio stores no biometric/passcode/private-key material.
-- Every non-allowlisted route requires a valid revocable session.
-- Every unsafe cookie-authenticated request requires exact Origin and CSRF.
-- Session cookies are host-only, Secure, HttpOnly, Strict, expiring, and
+- [x] Cloudio stores no biometric/passcode/private-key material.
+- [x] Every non-allowlisted route requires a valid revocable session.
+- [x] Every unsafe cookie-authenticated request requires exact Origin and CSRF.
+- [x] Session cookies are host-only, Secure, HttpOnly, Strict, expiring, and
   server-side revocable.
-- Challenges are unpredictable, single-use, and expiring.
-- No inline code is required by CSP.
-- SSH reset is tested before token authentication is removed.
+- [x] Challenges are unpredictable, single-use, and expiring.
+- [x] No inline code is required by CSP.
+- [x] SSH reset creates and verifies a backup before credential removal.
+
+### 6.17.1 Definition of done
+
+- [x] Migration 12 is append-only and preserves all existing operational data.
+- [x] The reviewed WebAuthn dependency and transitive CBOR parser are exact-pin
+  dependencies with third-party notices.
+- [x] CLI status, bootstrap, and backup-gated reset workflows are implemented.
+- [x] The setup secret is fragment-only in navigation, removed immediately
+  from browser history, sent only in a dedicated HTTPS header, and stored only
+  as a hash.
+- [x] Login, setup, and Security pages match the Milestone 1 design system and
+  remain keyboard/mobile/reduced-motion compatible.
+- [x] Multiple credentials, labels, revocation, last-credential protection,
+  logout, and session revocation are implemented.
+- [x] All HTTP, API, static, and SSE surfaces are default-deny except the
+  reviewed login/setup allowlist.
+- [x] Security headers, exact-origin enforcement, CSRF, one-use challenges,
+  rate limits, bounded parsing, and safe audit events are implemented.
+- [ ] Full integrated checks, production backup/deployment, HSTS, bootstrap,
+  and external route verification are complete.
+- [ ] A real owner passkey has been enrolled and login/logout verified by the
+  operator (requires the operator's biometric/passcode interaction).
 
 ### 6.18 Explicit non-goals
 

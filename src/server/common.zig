@@ -52,6 +52,13 @@ pub fn mapApiError(err: anyerror) ApiErrorResponse {
         error.NoRollbackTarget => .{ .status = 409, .body = "{\"error\":\"no_rollback_target\"}\n" },
         error.ReleaseMissing => .{ .status = 422, .body = "{\"error\":\"release_missing\"}\n" },
         error.InvalidName, error.SourceRequired, error.SourceConflict, error.WorkdirMissing, error.UnknownRoute => .{ .status = 400, .body = "{\"error\":\"bad_request\"}\n" },
+        error.InvalidAuthPolicy, error.InsecureAuthOrigin, error.AuthRpOriginMismatch => .{ .status = 500, .body = "{\"error\":\"auth_policy_invalid\"}\n" },
+        error.InvalidBootstrap, error.InvalidChallenge, error.InvalidPasskeyResponse, error.Unauthorized => .{ .status = 401, .body = "{\"error\":\"authentication_failed\"}\n" },
+        error.AuthAlreadyConfigured, error.CredentialAlreadyRegistered => .{ .status = 409, .body = "{\"error\":\"authentication_conflict\"}\n" },
+        error.AuthNotConfigured => .{ .status = 409, .body = "{\"error\":\"passkey_setup_required\"}\n" },
+        error.LastCredential => .{ .status = 409, .body = "{\"error\":\"last_passkey_cannot_be_removed\"}\n" },
+        error.CredentialNotFound => .{ .status = 404, .body = "{\"error\":\"credential_not_found\"}\n" },
+        error.InvalidCredentialLabel, error.InvalidTransports, error.InvalidBootstrapTtl => .{ .status = 400, .body = "{\"error\":\"bad_request\"}\n" },
         else => .{ .status = 500, .body = "{\"error\":\"internal\"}\n" },
     };
 }

@@ -11,8 +11,20 @@ pub fn serve(
     max_file_bytes: usize,
     out: *std.Io.Writer,
 ) !void {
+    return serveWithHeaders(io, gpa, root, request_path, max_file_bytes, "", out);
+}
+
+pub fn serveWithHeaders(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    root: []const u8,
+    request_path: []const u8,
+    max_file_bytes: usize,
+    extra_headers: []const u8,
+    out: *std.Io.Writer,
+) !void {
     if (!isSafePath(request_path)) {
-        try response.write(out, 403, "application/json", "", "{\"error\":\"forbidden\"}\n");
+        try response.write(out, 403, "application/json", extra_headers, "{\"error\":\"forbidden\"}\n");
         return;
     }
     const relative = if (std.mem.eql(u8, request_path, "/")) "/index.html" else request_path;
@@ -20,13 +32,13 @@ pub fn serve(
     defer gpa.free(full);
     const data = std.Io.Dir.cwd().readFileAlloc(io, full, gpa, .limited(max_file_bytes)) catch |err| switch (err) {
         error.FileNotFound, error.IsDir, error.AccessDenied => {
-            try response.write(out, 404, "application/json", "", "{\"error\":\"not_found\"}\n");
+            try response.write(out, 404, "application/json", extra_headers, "{\"error\":\"not_found\"}\n");
             return;
         },
         else => |e| return e,
     };
     defer gpa.free(data);
-    try response.write(out, 200, contentType(relative), "", data);
+    try response.write(out, 200, contentType(relative), extra_headers, data);
 }
 
 pub fn isSafePath(path: []const u8) bool {

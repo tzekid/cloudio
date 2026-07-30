@@ -4,6 +4,7 @@ const db_schema = @import("db_schema");
 const models = @import("models.zig");
 const helpers = @import("helpers.zig");
 const connection = @import("connection.zig");
+const auth_repository = @import("repositories/auth.zig");
 
 pub const Db = connection.Db;
 pub const DbError = models.DbError;
@@ -64,6 +65,10 @@ pub const RouteCaptureEvidenceRows = models.RouteCaptureEvidenceRows;
 pub const RouteSourceEvidenceRow = models.RouteSourceEvidenceRow;
 pub const RouteSourceEvidenceRows = models.RouteSourceEvidenceRows;
 pub const columnText = helpers.columnText;
+pub const AuthChallenge = auth_repository.Challenge;
+pub const AuthCredential = auth_repository.Credential;
+pub const AuthCredentials = auth_repository.Credentials;
+pub const AuthSession = auth_repository.Session;
 
 test "sqlite schema initializes" {
     const allocator = std.testing.allocator;
