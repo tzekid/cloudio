@@ -21,6 +21,7 @@ pub const Context = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
     db: *db_store.Db,
+    write_meta: app_writes.Metadata = .{},
 };
 
 pub const ServiceAction = enum { start, stop, restart, reload, enable, disable };
@@ -185,7 +186,51 @@ pub fn installUnit(ctx: Context, app_name: []const u8, unit_text: []const u8, un
         detail = "unit written; daemon-reload skipped (non-system unit_dir)";
     }
 
-    _ = try app_writes.record(ctx.gpa, ctx.db, "systemd.unit.install", service_name, null, .ok, detail);
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "systemd.unit.install", service_name, null, .ok, detail);
+}
+
+/// Removes a Cloudio-owned app unit. Systemd is touched only for the real
+/// system unit directory and only when explicitly requested.
+pub fn removeUnit(ctx: Context, app_name: []const u8, unit_dir: []const u8, run_systemd: bool) !bool {
+    const service_name = try unitName(ctx.gpa, app_name);
+    defer ctx.gpa.free(service_name);
+    const path = try std.fs.path.join(ctx.gpa, &.{ unit_dir, service_name });
+    defer ctx.gpa.free(path);
+
+    const unit_exists = try core_fs.fileExists(ctx.io, path);
+    if (unit_exists and run_systemd and std.mem.eql(u8, unit_dir, system_unit_dir)) {
+        const stop = try core_process.run(ctx.gpa, ctx.io, &.{ "systemctl", "disable", "--now", service_name }, max_command_bytes);
+        defer stop.deinit(ctx.gpa);
+        try auditCommand(ctx, "systemd.unit.disable_remove", service_name, stop);
+        if (!stop.ok()) return error.CommandFailed;
+    }
+
+    var removed = unit_exists;
+    if (unit_exists) {
+        Io.Dir.cwd().deleteFile(ctx.io, path) catch |err| switch (err) {
+            error.FileNotFound => removed = false,
+            else => |e| return e,
+        };
+    }
+
+    if (unit_exists and run_systemd and std.mem.eql(u8, unit_dir, system_unit_dir)) {
+        const reload = try core_process.run(ctx.gpa, ctx.io, &.{ "systemctl", "daemon-reload" }, max_command_bytes);
+        defer reload.deinit(ctx.gpa);
+        try auditCommand(ctx, "systemd.daemon_reload", service_name, reload);
+        if (!reload.ok()) return error.CommandFailed;
+    }
+
+    _ = try app_writes.recordWithMetadata(
+        ctx.gpa,
+        ctx.db,
+        ctx.write_meta,
+        "systemd.unit.remove",
+        service_name,
+        null,
+        .ok,
+        if (removed) "unit removed" else "unit already absent",
+    );
+    return removed;
 }
 
 pub fn enableAndRestart(ctx: Context, app_name: []const u8, writer: anytype) !void {
@@ -206,7 +251,7 @@ fn isActiveState(ctx: Context, name: []const u8) ![]u8 {
 fn auditCommand(ctx: Context, kind: []const u8, target: []const u8, result: core_process.CommandResult) !void {
     const combined = try combineOutput(ctx.gpa, result);
     defer ctx.gpa.free(combined);
-    _ = try app_writes.record(ctx.gpa, ctx.db, kind, target, null, if (result.ok()) .ok else .err, combined);
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, kind, target, null, if (result.ok()) .ok else .err, combined);
 }
 
 fn writeActionJson(writer: anytype, target_field: []const u8, name: []const u8, action: []const u8, state: []const u8, result: core_process.CommandResult) !void {
@@ -340,4 +385,8 @@ test "installUnit writes file into tmp dir, skips daemon-reload, records audit" 
     try std.testing.expect(std.mem.indexOf(u8, json, "daemon-reload skipped") != null);
 
     try std.testing.expectError(error.InvalidName, installUnit(ctx, "../evil", unit_text, unit_dir));
+
+    try std.testing.expect(try removeUnit(ctx, "demo", unit_dir, false));
+    try std.testing.expect(!(try core_fs.fileExists(std.testing.io, unit_path)));
+    try std.testing.expect(!(try removeUnit(ctx, "demo", unit_dir, false)));
 }

@@ -13,6 +13,29 @@ CLOUDIO_PLATFORM_TOKEN=your-secret ./zig-out/bin/cloudio serve --port 9331
 
 Open `http://127.0.0.1:9331/`, log in with the token (stored as a cookie; APIs also accept `Authorization: Bearer`). Pages: dashboard, apps (register/deploy/rollback with live SSE logs), Caddy routes (desired state, preview, validate + apply + reload), Cloudflare DNS, VPS/firewall, Docker, and audit.
 
+The web UI is dependency-free HTML, CSS, and JavaScript. All authenticated
+pages use the same responsive shell, request wrapper, status vocabulary, and
+confirmation dialog. Run `zig build web-check` for the frontend structural and
+JavaScript syntax gate; it is also included in `zig build check`.
+
+The backend keeps protocol, policy, and domain work separate:
+
+- `src/http` owns bounded HTTP/1.1 parsing, routing, responses, static files,
+  SSE framing, and connection lifecycle, with no Cloudio dependencies.
+- `src/server` owns the single route table, authentication/idempotency policy
+  pipeline, and grouped thin handlers.
+- `src/runtime/scheduler.zig` owns background refresh and retention scheduling.
+- `src/db/repositories` owns concrete SQL by domain; `db/store.zig` is now a
+  small compatibility facade.
+- `packages/cloudflare` and `packages/hostinger` are independently buildable
+  Zig 0.16 libraries and the canonical source for their public mirrors.
+
+Run the complete integrated and standalone-package gate with:
+
+```sh
+/usr/bin/zig build check
+```
+
 Platform config lives under `[platform]` in `cloudio.local.toml`:
 
 ```toml
@@ -24,6 +47,31 @@ refresh_seconds = 300          # background provider refresh interval
 ```
 
 Deploys clone/pull the app source, detect the toolchain (zig/go/rust/node/prebuilt), build, install into `apps_root/<name>/releases/<sha>/` behind an atomic `current` symlink, write a `cloudio-<name>.service` systemd unit, health-check the assigned port, and upsert a Caddy route for `<name>.<domain>`. Every write action (providers, Caddy, systemd, Docker, deploys) is recorded in the `audit_actions` table with secrets redacted.
+
+Platform writes use an explicit safety contract. Every mutating API request requires an `Idempotency-Key`; replaying the same key and request returns the stored response, while reusing it for different input is rejected. Destructive routes also require `X-Cloudio-Confirm: confirmed`. `X-Cloudio-Actor` is optional and is recorded with the audit action; the browser supplies `web`. Deploy, rollback, and delete operations take a per-app database lock. Failed or unhealthy releases automatically restore the previous release when one exists, and deleting an app removes its unit, release tree, deploy history, and Caddy route after path validation.
+
+Append-only storage has configurable lifecycle management:
+
+```toml
+[storage]
+auto_prune = false
+snapshot_retention_days = 14
+provider_raw_retention_days = 14
+metrics_retention_days = 30
+maintenance_interval_hours = 24
+maintenance_batch_rows = 5000
+```
+
+Preview, back up, prune, and compact with:
+
+```sh
+cloudio maintenance status
+cloudio maintenance backup --output .cloudio/backups/cloudio.db
+cloudio maintenance prune --apply --backup .cloudio/backups/before-prune.db
+cloudio maintenance run --apply --backup .cloudio/backups/before-maintenance.db
+```
+
+Manual pruning or compaction is refused without a new online SQLite backup path. Scheduled pruning is disabled by default and runs only when `storage.auto_prune` is enabled.
 
 ## Quick Start
 
@@ -38,6 +86,8 @@ zig build run -- overview
 zig build run -- overview --json
 zig build run -- topology
 zig build run -- topology --json
+zig build run -- topology capture --json
+zig build run -- topology changes --json
 zig build run -- history
 zig build run -- history --json
 zig build run -- history --limit 50
@@ -114,7 +164,11 @@ Topology reads SQLite only and connects Cloudflare DNS records, Caddy routes, pr
 zig build run -- topology
 zig build run -- topology --json
 zig build run -- topology --limit 50 --json
+zig build run -- topology capture --json
+zig build run -- topology changes --limit 50 --json
 ```
+
+The server captures topology deltas after each refresh. `topology_state` holds the latest typed operational projection and `topology_changes` records added, changed, and removed resources without duplicating unchanged snapshots.
 
 Central inventory reads join the typed Cloudflare and Hostinger inventory projections without calling live provider APIs:
 

@@ -39,6 +39,7 @@ pub const app = struct {
     pub const init = @import("app_init");
     pub const inventory = @import("app_inventory");
     pub const log = @import("app_log");
+    pub const maintenance = @import("app_maintenance");
     pub const overview = @import("app_overview");
     pub const projects = @import("app_projects");
     pub const provider_family = @import("app_provider_family");
@@ -122,6 +123,7 @@ test "facade exposes stable integration modules" {
     _ = app.inventory.Context;
     _ = app.inventory.Provider;
     _ = app.log.Context;
+    _ = app.maintenance.Policy;
     _ = app.overview.Overview;
     _ = app.projects.Context;
     _ = app.provider_family.WorkplanFamily;

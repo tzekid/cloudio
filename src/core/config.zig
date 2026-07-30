@@ -21,6 +21,12 @@ const Setting = enum {
     apps_root,
     port_range,
     refresh_seconds,
+    storage_auto_prune,
+    snapshot_retention_days,
+    provider_raw_retention_days,
+    metrics_retention_days,
+    maintenance_interval_hours,
+    maintenance_batch_rows,
 };
 
 const EnvBinding = struct {
@@ -47,6 +53,12 @@ const env_bindings = [_]EnvBinding{
     .{ .key = "HAPI_API_TOKEN", .setting = .hostinger_api_token },
     .{ .key = "CLOUDIO_PLATFORM_TOKEN", .setting = .platform_token },
     .{ .key = "CLOUDIO_APPS_ROOT", .setting = .apps_root },
+    .{ .key = "CLOUDIO_STORAGE_AUTO_PRUNE", .setting = .storage_auto_prune },
+    .{ .key = "CLOUDIO_SNAPSHOT_RETENTION_DAYS", .setting = .snapshot_retention_days },
+    .{ .key = "CLOUDIO_PROVIDER_RAW_RETENTION_DAYS", .setting = .provider_raw_retention_days },
+    .{ .key = "CLOUDIO_METRICS_RETENTION_DAYS", .setting = .metrics_retention_days },
+    .{ .key = "CLOUDIO_MAINTENANCE_INTERVAL_HOURS", .setting = .maintenance_interval_hours },
+    .{ .key = "CLOUDIO_MAINTENANCE_BATCH_ROWS", .setting = .maintenance_batch_rows },
 };
 
 const config_bindings = [_]ConfigBinding{
@@ -65,6 +77,12 @@ const config_bindings = [_]ConfigBinding{
     .{ .section = "platform", .key = "apps_root", .setting = .apps_root },
     .{ .section = "platform", .key = "port_range", .setting = .port_range },
     .{ .section = "platform", .key = "refresh_seconds", .setting = .refresh_seconds },
+    .{ .section = "storage", .key = "auto_prune", .setting = .storage_auto_prune },
+    .{ .section = "storage", .key = "snapshot_retention_days", .setting = .snapshot_retention_days },
+    .{ .section = "storage", .key = "provider_raw_retention_days", .setting = .provider_raw_retention_days },
+    .{ .section = "storage", .key = "metrics_retention_days", .setting = .metrics_retention_days },
+    .{ .section = "storage", .key = "maintenance_interval_hours", .setting = .maintenance_interval_hours },
+    .{ .section = "storage", .key = "maintenance_batch_rows", .setting = .maintenance_batch_rows },
 };
 
 pub const Config = struct {
@@ -87,6 +105,12 @@ pub const Config = struct {
     port_min: u16 = 42000,
     port_max: u16 = 42999,
     refresh_seconds: u32 = 300,
+    storage_auto_prune: bool = false,
+    snapshot_retention_days: u32 = 14,
+    provider_raw_retention_days: u32 = 14,
+    metrics_retention_days: u32 = 30,
+    maintenance_interval_hours: u32 = 24,
+    maintenance_batch_rows: u32 = 5000,
 
     pub fn load(io: Io, arena: Allocator, env: *std.process.Environ.Map) !Config {
         var cfg = Config{ .domains = try parseList(arena, "plosca.ru") };
@@ -217,7 +241,25 @@ fn applySetting(arena: Allocator, cfg: *Config, setting: Setting, raw_value: []c
             cfg.port_max = std.fmt.parseInt(u16, trim(value[dash + 1 ..]), 10) catch return;
         },
         .refresh_seconds => cfg.refresh_seconds = std.fmt.parseInt(u32, value, 10) catch return,
+        .storage_auto_prune => cfg.storage_auto_prune = parseBool(value) orelse return,
+        .snapshot_retention_days => cfg.snapshot_retention_days = parsePositiveU32(value) orelse return,
+        .provider_raw_retention_days => cfg.provider_raw_retention_days = parsePositiveU32(value) orelse return,
+        .metrics_retention_days => cfg.metrics_retention_days = parsePositiveU32(value) orelse return,
+        .maintenance_interval_hours => cfg.maintenance_interval_hours = parsePositiveU32(value) orelse return,
+        .maintenance_batch_rows => cfg.maintenance_batch_rows = parsePositiveU32(value) orelse return,
     }
+}
+
+fn parseBool(value: []const u8) ?bool {
+    if (std.ascii.eqlIgnoreCase(value, "true") or std.mem.eql(u8, value, "1") or std.ascii.eqlIgnoreCase(value, "yes")) return true;
+    if (std.ascii.eqlIgnoreCase(value, "false") or std.mem.eql(u8, value, "0") or std.ascii.eqlIgnoreCase(value, "no")) return false;
+    return null;
+}
+
+fn parsePositiveU32(value: []const u8) ?u32 {
+    const parsed = std.fmt.parseInt(u32, value, 10) catch return null;
+    if (parsed == 0) return null;
+    return parsed;
 }
 
 fn parseList(arena: Allocator, value: []const u8) ![]const []const u8 {
@@ -306,6 +348,42 @@ test "config parser reads platform settings" {
     try std.testing.expectEqual(@as(u16, 43000), cfg.port_min);
     try std.testing.expectEqual(@as(u16, 43100), cfg.port_max);
     try std.testing.expectEqual(@as(u32, 60), cfg.refresh_seconds);
+}
+
+test "config parser reads storage lifecycle settings" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var cfg = Config{ .domains = try parseList(arena.allocator(), "plosca.ru") };
+    try applyConfigText(arena.allocator(), &cfg,
+        \\[storage]
+        \\auto_prune = true
+        \\snapshot_retention_days = 21
+        \\provider_raw_retention_days = 10
+        \\metrics_retention_days = 45
+        \\maintenance_interval_hours = 12
+        \\maintenance_batch_rows = 2500
+    );
+    try std.testing.expect(cfg.storage_auto_prune);
+    try std.testing.expectEqual(@as(u32, 21), cfg.snapshot_retention_days);
+    try std.testing.expectEqual(@as(u32, 10), cfg.provider_raw_retention_days);
+    try std.testing.expectEqual(@as(u32, 45), cfg.metrics_retention_days);
+    try std.testing.expectEqual(@as(u32, 12), cfg.maintenance_interval_hours);
+    try std.testing.expectEqual(@as(u32, 2500), cfg.maintenance_batch_rows);
+}
+
+test "storage lifecycle settings reject zero and malformed values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var cfg = Config{ .domains = try parseList(arena.allocator(), "plosca.ru") };
+    try applyConfigText(arena.allocator(), &cfg,
+        \\[storage]
+        \\auto_prune = maybe
+        \\snapshot_retention_days = 0
+        \\provider_raw_retention_days = nope
+    );
+    try std.testing.expect(!cfg.storage_auto_prune);
+    try std.testing.expectEqual(@as(u32, 14), cfg.snapshot_retention_days);
+    try std.testing.expectEqual(@as(u32, 14), cfg.provider_raw_retention_days);
 }
 
 test "config parser reads provider settings" {

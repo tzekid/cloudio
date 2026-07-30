@@ -1,0 +1,81 @@
+const http = @import("http");
+const types = @import("types.zig");
+const apps = @import("handlers/apps.zig");
+const caddy = @import("handlers/caddy.zig");
+const dashboard = @import("handlers/dashboard.zig");
+const events = @import("handlers/events.zig");
+const providers = @import("handlers/providers.zig");
+const refresh = @import("handlers/refresh.zig");
+const session = @import("handlers/session.zig");
+const system = @import("handlers/system.zig");
+
+pub const all = [_]types.Route{
+    route("GET", "/api/dashboard", dashboard.dashboard),
+    route("GET", "/api/topology", dashboard.topology),
+    route("GET", "/api/topology/changes", dashboard.topologyChanges),
+    route("GET", "/api/inventory", dashboard.inventory),
+    route("POST", "/api/actions/plan", dashboard.actionsPlan),
+    route("GET", "/api/audit", dashboard.audit),
+    publicRoute("POST", "/api/login", session.login),
+    stream("GET", "/api/events/ping", events.ping),
+    stream("GET", "/api/events/changes", events.changes),
+    route("GET", "/api/caddy/routes", caddy.routesGet),
+    mutation("POST", "/api/caddy/routes", caddy.routesPost, false),
+    mutation("DELETE", "/api/caddy/routes", caddy.routesDelete, true),
+    mutation("POST", "/api/caddy/routes/toggle", caddy.routesToggle, false),
+    route("GET", "/api/caddy/preview", caddy.preview),
+    mutation("POST", "/api/caddy/apply", caddy.apply, true),
+    mutation("POST", "/api/caddy/import", caddy.importRoutes, false),
+    route("GET", "/api/dns/records", providers.dnsRecordsGet),
+    mutation("POST", "/api/dns/records", providers.dnsRecordsPost, false),
+    mutation("PUT", "/api/dns/records", providers.dnsRecordsPut, false),
+    mutation("DELETE", "/api/dns/records", providers.dnsRecordsDelete, true),
+    mutation("POST", "/api/cache/purge", providers.cachePurge, true),
+    mutation("POST", "/api/zone/setting", providers.zoneSetting, false),
+    route("GET", "/api/vps", providers.vpsGet),
+    mutation("POST", "/api/vps/action", providers.vpsAction, true),
+    route("GET", "/api/firewalls", providers.firewallsGet),
+    mutation("POST", "/api/firewall/rule", providers.firewallRulePost, false),
+    mutation("PUT", "/api/firewall/rule", providers.firewallRulePut, false),
+    mutation("DELETE", "/api/firewall/rule", providers.firewallRuleDelete, true),
+    mutation("POST", "/api/firewall/sync", providers.firewallSync, true),
+    route("GET", "/api/containers", system.containersGet),
+    mutation("POST", "/api/containers/action", system.containersAction, true),
+    route("GET", "/api/containers/logs", system.containersLogs),
+    mutation("POST", "/api/refresh", refresh.now, false),
+    route("GET", "/api/apps", apps.list),
+    mutation("POST", "/api/apps", apps.register, false),
+    route("GET", "/api/apps/:name/:action", apps.details),
+    mutation("POST", "/api/apps/:name/:action", apps.action, true),
+    mutation("DELETE", "/api/apps/:name", apps.delete, true),
+    stream("GET", "/api/events/deploy/:name", events.deploy),
+};
+
+fn route(method: []const u8, pattern: []const u8, handler: types.BufferedHandler) types.Route {
+    return .{ .method = method, .pattern = pattern, .handler = .{ .buffered = handler } };
+}
+
+fn publicRoute(method: []const u8, pattern: []const u8, handler: types.BufferedHandler) types.Route {
+    return .{ .method = method, .pattern = pattern, .handler = .{ .buffered = handler }, .access = .public };
+}
+
+fn mutation(method: []const u8, pattern: []const u8, handler: types.BufferedHandler, destructive: bool) types.Route {
+    return .{
+        .method = method,
+        .pattern = pattern,
+        .handler = .{ .buffered = handler },
+        .mutation = if (destructive) .destructive else .idempotent,
+    };
+}
+
+fn stream(method: []const u8, pattern: []const u8, handler: types.StreamHandler) types.Route {
+    return .{ .method = method, .pattern = pattern, .handler = .{ .stream = handler } };
+}
+
+test "route table distinguishes match method miss and named params" {
+    const deploy_match = http.router.match(types.Route, &all, "POST", "/api/apps/cloudio/deploy").?;
+    try @import("std").testing.expectEqualStrings("cloudio", deploy_match.params.get("name").?);
+    try @import("std").testing.expectEqualStrings("deploy", deploy_match.params.get("action").?);
+    try @import("std").testing.expect(http.router.match(types.Route, &all, "PATCH", "/api/apps") == null);
+    try @import("std").testing.expect(http.router.pathExists(types.Route, &all, "/api/apps"));
+}

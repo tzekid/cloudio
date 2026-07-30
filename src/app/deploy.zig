@@ -45,6 +45,8 @@ pub const Error = error{
     DeployNotFound,
     NoRollbackTarget,
     ReleaseMissing,
+    AppBusy,
+    UnsafeCleanupPath,
 };
 
 pub const Context = struct {
@@ -52,12 +54,21 @@ pub const Context = struct {
     gpa: std.mem.Allocator,
     db: *db_store.Db,
     config: core_config.Config,
+    write_meta: app_writes.Metadata = .{},
 };
 
 pub const DeployOptions = struct {
     unit_dir: []const u8 = "/etc/systemd/system",
     run_systemd: bool = true,
     health_check: bool = true,
+    health_check_tries: usize = health_check_tries,
+    auto_rollback: bool = true,
+};
+
+pub const DeleteOptions = struct {
+    unit_dir: []const u8 = "/etc/systemd/system",
+    run_systemd: bool = true,
+    remove_files: bool = true,
 };
 
 pub const Toolchain = enum {
@@ -86,11 +97,11 @@ const AppRow = struct {
 };
 
 fn caddyCtx(ctx: Context) app_caddy_desired.Context {
-    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db };
+    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .write_meta = ctx.write_meta };
 }
 
 fn systemCtx(ctx: Context) app_system_control.Context {
-    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db };
+    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .write_meta = ctx.write_meta };
 }
 
 // --- App CRUD ---
@@ -143,32 +154,53 @@ pub fn registerApp(ctx: Context, name: []const u8, repo_url: ?[]const u8, workdi
         alias_host,
         if (repo_url) |u| u else workdir.?,
     });
-    _ = try app_writes.record(ctx.gpa, ctx.db, "app.register", name, null, .ok, detail);
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "app.register", name, null, .ok, detail);
 
     try writeAppsJson(ctx, writer);
 }
 
-/// Removes the app row and its caddy route. Files under apps_root and the
-/// systemd unit are intentionally left in place; the audit detail lists them.
-pub fn deleteApp(ctx: Context, name: []const u8, writer: anytype) !void {
+/// Stops/removes the app unit, removes its release tree, then removes all DB
+/// state. Cleanup paths are resolved and required to be strict descendants of
+/// apps_root before recursive deletion.
+pub fn deleteApp(ctx: Context, name: []const u8, opts: DeleteOptions, writer: anytype) !void {
     var arena_state = std.heap.ArenaAllocator.init(ctx.gpa);
     defer arena_state.deinit();
     const a = arena_state.allocator();
 
     const app = (try loadApp(ctx, a, name)) orelse return Error.AppNotFound;
+    try acquireAppLock(ctx, app.id, "delete");
+    defer releaseAppLock(ctx, app.id);
 
+    const unit_removed = try app_system_control.removeUnit(systemCtx(ctx), app.name, opts.unit_dir, opts.run_systemd);
+    var files_removed = false;
+    if (opts.remove_files) {
+        const app_dir = try safeAppDirectory(ctx, a, app.name);
+        if (try dirExists(ctx.io, app_dir)) {
+            try Io.Dir.cwd().deleteTree(ctx.io, app_dir);
+            files_removed = true;
+        }
+    }
     app_caddy_desired.deleteRoute(caddyCtx(ctx), app.alias_host) catch {};
+
+    {
+        const stmt = try ctx.db.prepare("DELETE FROM deploys WHERE app_id = ?");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        if (sqlite.sqlite3_bind_int64(stmt, 1, app.id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
+    }
 
     const stmt = try ctx.db.prepare("DELETE FROM apps WHERE id = ?");
     defer _ = sqlite.sqlite3_finalize(stmt);
     if (sqlite.sqlite3_bind_int64(stmt, 1, app.id) != sqlite.SQLITE_OK) return Error.SqliteBind;
     if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
 
-    const detail = try std.fmt.allocPrint(a, "app row and caddy route removed; manual cleanup remains: systemd unit cloudio-{s}.service, files under {s}/{s}", .{ name, ctx.config.apps_root, name });
-    _ = try app_writes.record(ctx.gpa, ctx.db, "app.delete", name, null, .ok, detail);
+    const detail = try std.fmt.allocPrint(a, "app, deploy history, and caddy route removed; unit_removed={}; files_removed={}", .{ unit_removed, files_removed });
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "app.delete", name, null, .ok, detail);
 
     try writer.writeAll("{\"ok\":true,");
     try core_json.writeStringField(writer, "deleted", name, true);
+    try core_json.writeBoolField(writer, "unit_removed", unit_removed, true);
+    try core_json.writeBoolField(writer, "files_removed", files_removed, true);
     try core_json.writeStringField(writer, "detail", detail, false);
     try writer.writeAll("}\n");
 }
@@ -340,6 +372,8 @@ const PipelineState = struct {
     release_label: ?[]const u8 = null,
     health_ok: ?bool = null,
     err_detail: ?[]const u8 = null,
+    release_installed: bool = false,
+    caddy_updated: bool = false,
     /// When set, runLogged flushes the accumulated log here after every step
     /// so SSE tailing sees progress while the deploy is still running.
     log_path: ?[]const u8 = null,
@@ -351,6 +385,8 @@ pub fn deploy(ctx: Context, app_name: []const u8, opts: DeployOptions, writer: a
     const a = arena_state.allocator();
 
     const app = (try loadApp(ctx, a, app_name)) orelse return Error.AppNotFound;
+    try acquireAppLock(ctx, app.id, "deploy");
+    defer releaseAppLock(ctx, app.id);
 
     const app_dir = try std.fmt.allocPrint(a, "{s}/{s}", .{ ctx.config.apps_root, app.name });
     try Io.Dir.cwd().createDirPath(ctx.io, app_dir);
@@ -364,6 +400,8 @@ pub fn deploy(ctx: Context, app_name: []const u8, opts: DeployOptions, writer: a
     var state = PipelineState{ .log_path = log_path };
     var status: []const u8 = "ok";
     var detail: []const u8 = "deployed";
+    var recovered = false;
+    var recovery_deploy_id: ?i64 = null;
 
     runPipeline(ctx, a, app, app_dir, deploy_id, opts, &log, &state) catch |err| {
         status = "error";
@@ -379,6 +417,22 @@ pub fn deploy(ctx: Context, app_name: []const u8, opts: DeployOptions, writer: a
             }
         } else {
             detail = "deployed; health check skipped";
+        }
+    }
+
+    if (opts.auto_rollback and !std.mem.eql(u8, status, "ok") and state.release_installed) {
+        if (app.current_deploy_id) |previous_id| {
+            if (restoreDeployRelease(ctx, a, app, app_dir, previous_id, opts)) |release| {
+                recovered = true;
+                recovery_deploy_id = previous_id;
+                const failed_status = status;
+                status = if (std.mem.eql(u8, failed_status, "unhealthy")) "unhealthy_rolled_back" else "error_rolled_back";
+                detail = try std.fmt.allocPrint(a, "{s}; automatically rolled back to deploy {d} ({s})", .{ detail, previous_id, release });
+                log.writer.print("== recovery: restored deploy {d} ({s})\n", .{ previous_id, release }) catch {};
+            } else |err| {
+                detail = try std.fmt.allocPrint(a, "{s}; automatic rollback failed: {s}", .{ detail, @errorName(err) });
+                log.writer.print("!! recovery failed: {s}\n", .{@errorName(err)}) catch {};
+            }
         }
     }
 
@@ -398,14 +452,24 @@ pub fn deploy(ctx: Context, app_name: []const u8, opts: DeployOptions, writer: a
         if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
     }
 
-    // Update app row: on success (or unhealthy but installed) point at this deploy.
-    const deployed = !std.mem.eql(u8, status, "error");
+    // Keep the DB pointer aligned with the atomic `current` symlink, including
+    // automatic recovery to the prior deploy.
+    const deploy_ok = std.mem.eql(u8, status, "ok");
+    const installed_current = state.release_installed and !recovered;
     {
-        const app_status: []const u8 = if (deployed) "deployed" else "deploy_failed";
-        if (deployed) {
+        const app_status: []const u8 = if (deploy_ok)
+            "deployed"
+        else if (recovered)
+            "recovered"
+        else if (std.mem.eql(u8, status, "unhealthy"))
+            "unhealthy"
+        else
+            "deploy_failed";
+        const current_id = recovery_deploy_id orelse if (installed_current) deploy_id else null;
+        if (current_id) |id| {
             const stmt = try ctx.db.prepare("UPDATE apps SET current_deploy_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
             defer _ = sqlite.sqlite3_finalize(stmt);
-            if (sqlite.sqlite3_bind_int64(stmt, 1, deploy_id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+            if (sqlite.sqlite3_bind_int64(stmt, 1, id) != sqlite.SQLITE_OK) return Error.SqliteBind;
             try bindText(stmt, 2, app_status);
             if (sqlite.sqlite3_bind_int64(stmt, 3, app.id) != sqlite.SQLITE_OK) return Error.SqliteBind;
             if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
@@ -421,7 +485,7 @@ pub fn deploy(ctx: Context, app_name: []const u8, opts: DeployOptions, writer: a
     const audit_detail = try std.fmt.allocPrint(a, "deploy {d}: {s}; sha={s}; log={s}", .{
         deploy_id, detail, state.sha orelse "none", log_path,
     });
-    _ = try app_writes.record(ctx.gpa, ctx.db, "app.deploy", app.name, null, if (deployed) .ok else .err, audit_detail);
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "app.deploy", app.name, null, if (deploy_ok) .ok else .err, audit_detail);
 
     try writer.writeByte('{');
     try core_json.writeBoolField(writer, "ok", std.mem.eql(u8, status, "ok"), true);
@@ -429,10 +493,16 @@ pub fn deploy(ctx: Context, app_name: []const u8, opts: DeployOptions, writer: a
     try core_json.writeStringField(writer, "app", app.name, true);
     try core_json.writeNullableStringField(writer, "sha", state.sha, true);
     try core_json.writeStringField(writer, "status", status, true);
+    try core_json.writeBoolField(writer, "recovered", recovered, true);
+    if (recovery_deploy_id) |id| {
+        try core_json.writeIntField(writer, "rollback_deploy_id", id, true);
+    } else {
+        try writer.writeAll("\"rollback_deploy_id\":null,");
+    }
     try core_json.writeStringField(writer, "log_path", log_path, true);
     try core_json.writeIntField(writer, "port", app.port, true);
     try core_json.writeStringField(writer, "alias_host", app.alias_host, true);
-    try core_json.writeBoolField(writer, "caddy_route_updated", deployed, false);
+    try core_json.writeBoolField(writer, "caddy_route_updated", state.caddy_updated, false);
     try writer.writeAll("}\n");
 }
 
@@ -514,6 +584,7 @@ fn runPipeline(
         // Node MVP: no artifact copy; `current` points at the source checkout.
         // Rollback is not supported for node apps (no per-deploy snapshot).
         try Io.Dir.cwd().symLinkAtomic(ctx.io, "src", current_link, .{});
+        state.release_installed = true;
         exec_binary = "";
     } else {
         const artifact = artifact_path.?;
@@ -524,6 +595,7 @@ fn runPipeline(
         try Io.Dir.cwd().copyFile(artifact, Io.Dir.cwd(), dest, ctx.io, .{});
         const rel_target = try std.fmt.allocPrint(a, "releases/{s}", .{label});
         try Io.Dir.cwd().symLinkAtomic(ctx.io, rel_target, current_link, .{});
+        state.release_installed = true;
         exec_binary = binary_name;
         try log.writer.print("== installed {s} -> {s}\n", .{ dest, rel_target });
     }
@@ -554,19 +626,20 @@ fn runPipeline(
 
     // e. Health check.
     if (opts.health_check) {
-        state.health_ok = try healthCheck(ctx, @intCast(app.port));
+        state.health_ok = try healthCheck(ctx, @intCast(app.port), opts.health_check_tries);
         try log.writer.print("== health check: {s}\n", .{if (state.health_ok.?) "ok" else "failed"});
     }
 
     // f. Caddy desired route (no apply/reload here; HTTP layer decides).
     const upstream = try std.fmt.allocPrint(a, "127.0.0.1:{d}", .{app.port});
     try app_caddy_desired.upsertRoute(caddyCtx(ctx), app.alias_host, upstream, "app", null, null, app.id);
+    state.caddy_updated = true;
     try log.writer.print("== caddy route upserted: {s} -> {s}\n", .{ app.alias_host, upstream });
 }
 
-fn healthCheck(ctx: Context, port: u16) !bool {
+fn healthCheck(ctx: Context, port: u16, max_tries: usize) !bool {
     var tries: usize = 0;
-    while (tries < health_check_tries) : (tries += 1) {
+    while (tries < @max(max_tries, 1)) : (tries += 1) {
         var address = std.Io.net.IpAddress.parse("127.0.0.1", port) catch unreachable;
         if (address.connect(ctx.io, .{ .mode = .stream })) |stream| {
             stream.close(ctx.io);
@@ -577,47 +650,23 @@ fn healthCheck(ctx: Context, port: u16) !bool {
     return false;
 }
 
-// --- Rollback ---
-
-pub fn rollback(ctx: Context, app_name: []const u8, deploy_id: ?i64, opts: DeployOptions, writer: anytype) !void {
-    var arena_state = std.heap.ArenaAllocator.init(ctx.gpa);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-
-    const app = (try loadApp(ctx, a, app_name)) orelse return Error.AppNotFound;
-    const app_dir = try std.fmt.allocPrint(a, "{s}/{s}", .{ ctx.config.apps_root, app.name });
-
-    var target_id: i64 = undefined;
-    var target_sha: ?[]const u8 = null;
-    if (deploy_id) |id| {
-        const stmt = try ctx.db.prepare("SELECT id, git_sha FROM deploys WHERE id = ? AND app_id = ?");
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        if (sqlite.sqlite3_bind_int64(stmt, 1, id) != sqlite.SQLITE_OK) return Error.SqliteBind;
-        if (sqlite.sqlite3_bind_int64(stmt, 2, app.id) != sqlite.SQLITE_OK) return Error.SqliteBind;
-        const rc = sqlite.sqlite3_step(stmt);
-        if (rc == sqlite.SQLITE_DONE) return Error.DeployNotFound;
-        if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
-        target_id = sqlite.sqlite3_column_int64(stmt, 0);
-        if (columnText(stmt, 1)) |sha| target_sha = try a.dupe(u8, sha);
-    } else {
-        const stmt = try ctx.db.prepare(
-            \\SELECT id, git_sha FROM deploys
-            \\WHERE app_id = ? AND status IN ('ok', 'unhealthy') AND (? IS NULL OR id != ?)
-            \\ORDER BY id DESC LIMIT 1
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        if (sqlite.sqlite3_bind_int64(stmt, 1, app.id) != sqlite.SQLITE_OK) return Error.SqliteBind;
-        const current = app.current_deploy_id orelse -1;
-        if (sqlite.sqlite3_bind_int64(stmt, 2, current) != sqlite.SQLITE_OK) return Error.SqliteBind;
-        if (sqlite.sqlite3_bind_int64(stmt, 3, current) != sqlite.SQLITE_OK) return Error.SqliteBind;
-        const rc = sqlite.sqlite3_step(stmt);
-        if (rc == sqlite.SQLITE_DONE) return Error.NoRollbackTarget;
-        if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
-        target_id = sqlite.sqlite3_column_int64(stmt, 0);
-        if (columnText(stmt, 1)) |sha| target_sha = try a.dupe(u8, sha);
-    }
-
-    const label = target_sha orelse try std.fmt.allocPrint(a, "deploy-{d}", .{target_id});
+fn restoreDeployRelease(
+    ctx: Context,
+    a: Allocator,
+    app: AppRow,
+    app_dir: []const u8,
+    target_id: i64,
+    opts: DeployOptions,
+) ![]const u8 {
+    const stmt = try ctx.db.prepare("SELECT git_sha FROM deploys WHERE id = ? AND app_id = ?");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    if (sqlite.sqlite3_bind_int64(stmt, 1, target_id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+    if (sqlite.sqlite3_bind_int64(stmt, 2, app.id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+    const rc = sqlite.sqlite3_step(stmt);
+    if (rc == sqlite.SQLITE_DONE) return Error.DeployNotFound;
+    if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
+    const sha = try dupeOpt(a, columnText(stmt, 0));
+    const label = sha orelse try std.fmt.allocPrint(a, "deploy-{d}", .{target_id});
     const release_dir = try std.fmt.allocPrint(a, "{s}/releases/{s}", .{ app_dir, label });
     if (!try dirExists(ctx.io, release_dir)) return Error.ReleaseMissing;
 
@@ -630,13 +679,56 @@ pub fn rollback(ctx: Context, app_name: []const u8, deploy_id: ?i64, opts: Deplo
         const service_name = try app_system_control.unitName(a, app.name);
         try app_system_control.serviceAction(systemCtx(ctx), service_name, .restart, &discard.writer);
     }
+    return label;
+}
+
+// --- Rollback ---
+
+pub fn rollback(ctx: Context, app_name: []const u8, deploy_id: ?i64, opts: DeployOptions, writer: anytype) !void {
+    var arena_state = std.heap.ArenaAllocator.init(ctx.gpa);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    const app = (try loadApp(ctx, a, app_name)) orelse return Error.AppNotFound;
+    try acquireAppLock(ctx, app.id, "rollback");
+    defer releaseAppLock(ctx, app.id);
+    const app_dir = try std.fmt.allocPrint(a, "{s}/{s}", .{ ctx.config.apps_root, app.name });
+
+    var target_id: i64 = undefined;
+    if (deploy_id) |id| {
+        const stmt = try ctx.db.prepare("SELECT id FROM deploys WHERE id = ? AND app_id = ?");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        if (sqlite.sqlite3_bind_int64(stmt, 1, id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+        if (sqlite.sqlite3_bind_int64(stmt, 2, app.id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+        const rc = sqlite.sqlite3_step(stmt);
+        if (rc == sqlite.SQLITE_DONE) return Error.DeployNotFound;
+        if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
+        target_id = sqlite.sqlite3_column_int64(stmt, 0);
+    } else {
+        const stmt = try ctx.db.prepare(
+            \\SELECT id FROM deploys
+            \\WHERE app_id = ? AND status IN ('ok', 'unhealthy') AND (? IS NULL OR id != ?)
+            \\ORDER BY id DESC LIMIT 1
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        if (sqlite.sqlite3_bind_int64(stmt, 1, app.id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+        const current = app.current_deploy_id orelse -1;
+        if (sqlite.sqlite3_bind_int64(stmt, 2, current) != sqlite.SQLITE_OK) return Error.SqliteBind;
+        if (sqlite.sqlite3_bind_int64(stmt, 3, current) != sqlite.SQLITE_OK) return Error.SqliteBind;
+        const rc = sqlite.sqlite3_step(stmt);
+        if (rc == sqlite.SQLITE_DONE) return Error.NoRollbackTarget;
+        if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
+        target_id = sqlite.sqlite3_column_int64(stmt, 0);
+    }
+
+    const label = try restoreDeployRelease(ctx, a, app, app_dir, target_id, opts);
 
     try execBindIntInt(ctx, "UPDATE apps SET current_deploy_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", target_id, app.id);
 
     const detail = try std.fmt.allocPrint(a, "rolled back to deploy {d} (release {s}); restart={s}", .{
         target_id, label, if (opts.run_systemd) "yes" else "skipped",
     });
-    _ = try app_writes.record(ctx.gpa, ctx.db, "app.rollback", app.name, null, .ok, detail);
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "app.rollback", app.name, null, .ok, detail);
 
     try writer.writeAll("{\"ok\":true,");
     try core_json.writeStringField(writer, "app", app.name, true);
@@ -715,7 +807,7 @@ pub fn readDeployLogTailFrom(ctx: Context, app_name: []const u8, offset: *usize)
 
 /// Maps a status column value to a static string so callers need no free.
 fn statusSlice(text: []const u8) []const u8 {
-    const known = [_][]const u8{ "pending", "running", "ok", "error", "unhealthy" };
+    const known = [_][]const u8{ "pending", "running", "ok", "error", "unhealthy", "error_rolled_back", "unhealthy_rolled_back", "interrupted" };
     for (known) |k| {
         if (std.mem.eql(u8, text, k)) return k;
     }
@@ -754,6 +846,57 @@ fn insertDeploy(ctx: Context, app_id: i64) !i64 {
     if (sqlite.sqlite3_bind_int64(stmt, 1, app_id) != sqlite.SQLITE_OK) return Error.SqliteBind;
     if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
     return sqlite.sqlite3_last_insert_rowid(ctx.db.handle);
+}
+
+fn acquireAppLock(ctx: Context, app_id: i64, operation: []const u8) !void {
+    // A process crash cannot run a defer. Reclaim only operations old enough
+    // that a normal build/deploy should have completed.
+    {
+        const stale = try ctx.db.prepare(
+            \\DELETE FROM app_operation_locks
+            \\WHERE app_id = ? AND acquired_at < datetime('now', '-6 hours')
+        );
+        defer _ = sqlite.sqlite3_finalize(stale);
+        if (sqlite.sqlite3_bind_int64(stale, 1, app_id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+        if (sqlite.sqlite3_step(stale) != sqlite.SQLITE_DONE) return Error.SqliteStep;
+    }
+    {
+        const interrupted = try ctx.db.prepare(
+            \\UPDATE deploys
+            \\SET status = 'interrupted', detail = 'stale running deployment recovered by operation lock',
+            \\    finished_at = CURRENT_TIMESTAMP
+            \\WHERE app_id = ? AND status = 'running' AND started_at < datetime('now', '-6 hours')
+        );
+        defer _ = sqlite.sqlite3_finalize(interrupted);
+        if (sqlite.sqlite3_bind_int64(interrupted, 1, app_id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+        if (sqlite.sqlite3_step(interrupted) != sqlite.SQLITE_DONE) return Error.SqliteStep;
+    }
+    const stmt = try ctx.db.prepare(
+        \\INSERT OR IGNORE INTO app_operation_locks(app_id, operation) VALUES (?, ?)
+    );
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    if (sqlite.sqlite3_bind_int64(stmt, 1, app_id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+    try bindText(stmt, 2, operation);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
+    if (sqlite.sqlite3_changes(ctx.db.handle) != 1) return Error.AppBusy;
+}
+
+fn releaseAppLock(ctx: Context, app_id: i64) void {
+    const stmt = ctx.db.prepare("DELETE FROM app_operation_locks WHERE app_id = ?") catch return;
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    if (sqlite.sqlite3_bind_int64(stmt, 1, app_id) != sqlite.SQLITE_OK) return;
+    _ = sqlite.sqlite3_step(stmt);
+}
+
+fn safeAppDirectory(ctx: Context, a: Allocator, app_name: []const u8) ![]const u8 {
+    if (!isValidAppName(app_name)) return Error.InvalidName;
+    const root = try std.fs.path.resolve(a, &.{ctx.config.apps_root});
+    const app_dir = try std.fs.path.resolve(a, &.{ ctx.config.apps_root, app_name });
+    if (std.mem.eql(u8, root, "/") or std.mem.eql(u8, root, ".") or root.len == 0) return Error.UnsafeCleanupPath;
+    if (app_dir.len <= root.len or !std.mem.startsWith(u8, app_dir, root) or app_dir[root.len] != std.fs.path.sep) {
+        return Error.UnsafeCleanupPath;
+    }
+    return app_dir;
 }
 
 /// Run a command (optionally in `cwd`), append command line, exit status and
@@ -1119,12 +1262,14 @@ test "full prebuilt deploy: releases, symlink, unit, deploys row, caddy route" {
     try writeDeploysJson(ctx, "demo", 10, &out.writer);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"status\":\"ok\"") != null);
 
-    // deleteApp removes the row and route, leaves files.
+    // deleteApp removes the row, route, deploy history, unit, and release tree.
     out.clearRetainingCapacity();
-    try deleteApp(ctx, "demo", &out.writer);
+    try deleteApp(ctx, "demo", .{ .unit_dir = unit_dir, .run_systemd = false }, &out.writer);
     try std.testing.expectEqual(@as(i64, 0), try testQueryInt(&env.db, "SELECT COUNT(*) FROM apps"));
+    try std.testing.expectEqual(@as(i64, 0), try testQueryInt(&env.db, "SELECT COUNT(*) FROM deploys"));
     try std.testing.expectEqual(@as(i64, 0), try testQueryInt(&env.db, "SELECT COUNT(*) FROM caddy_desired_routes"));
-    try std.testing.expect(try core_fs.fileExists(std.testing.io, release_bin));
+    try std.testing.expect(!(try core_fs.fileExists(std.testing.io, release_bin)));
+    try std.testing.expect(!(try core_fs.fileExists(std.testing.io, unit_path)));
 }
 
 test "rollback repoints current symlink and current_deploy_id" {
@@ -1180,6 +1325,98 @@ test "rollback repoints current symlink and current_deploy_id" {
 
     // Explicit rollback to a missing deploy id errors.
     try std.testing.expectError(Error.DeployNotFound, rollback(ctx, "roll", 99, opts, &out.writer));
+}
+
+test "end-to-end deploy health failure automatically restores the prior release" {
+    const allocator = std.testing.allocator;
+    var env = try TestEnv.init(allocator);
+    defer env.deinit(allocator);
+
+    var port: u16 = 45000;
+    var listener: ?std.Io.net.Server = null;
+    while (port < 45100) : (port += 1) {
+        var address = try std.Io.net.IpAddress.parse("127.0.0.1", port);
+        listener = address.listen(std.testing.io, .{ .reuse_address = true }) catch |err| switch (err) {
+            error.AddressInUse => continue,
+            else => |e| return e,
+        };
+        break;
+    }
+    if (listener == null) return error.SkipZigTest;
+    defer if (listener) |*server| server.deinit(std.testing.io);
+
+    var ctx = env.ctx();
+    ctx.config.port_min = port;
+    ctx.config.port_max = port;
+
+    const workdir = try std.fmt.allocPrint(allocator, "{s}/work", .{env.base});
+    defer allocator.free(workdir);
+    try Io.Dir.cwd().createDirPath(std.testing.io, workdir);
+    try testWriteExecutable(allocator, workdir, "recover", "#!/bin/sh\necho v1\n");
+    const unit_dir = try std.fmt.allocPrint(allocator, "{s}/units", .{env.base});
+    defer allocator.free(unit_dir);
+
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+    try registerApp(ctx, "recover", null, workdir, &out.writer);
+    try testSetToolchain(&env.db, "recover", "prebuilt");
+
+    // A real TCP listener makes the first release pass its health probe.
+    out.clearRetainingCapacity();
+    try deploy(ctx, "recover", .{
+        .unit_dir = unit_dir,
+        .run_systemd = false,
+        .health_check = true,
+        .health_check_tries = 1,
+    }, &out.writer);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"status\":\"ok\"") != null);
+    listener.?.deinit(std.testing.io);
+    listener = null;
+
+    // The next release cannot connect; Cloudio marks it failed and atomically
+    // restores deploy 1 instead of leaving the unhealthy release active.
+    try testWriteExecutable(allocator, workdir, "recover", "#!/bin/sh\necho v2\n");
+    out.clearRetainingCapacity();
+    try deploy(ctx, "recover", .{
+        .unit_dir = unit_dir,
+        .run_systemd = false,
+        .health_check = true,
+        .health_check_tries = 1,
+    }, &out.writer);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"status\":\"unhealthy_rolled_back\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"recovered\":true") != null);
+    try std.testing.expectEqual(@as(i64, 1), try testQueryInt(&env.db, "SELECT current_deploy_id FROM apps WHERE name = 'recover'"));
+    try std.testing.expectEqual(@as(i64, 1), try testQueryInt(&env.db, "SELECT COUNT(*) FROM deploys WHERE status = 'unhealthy_rolled_back'"));
+
+    const current_bin = try std.fmt.allocPrint(allocator, "{s}/recover/current/recover", .{env.apps_root});
+    defer allocator.free(current_bin);
+    const contents = try Io.Dir.cwd().readFileAlloc(std.testing.io, current_bin, allocator, .limited(1024));
+    defer allocator.free(contents);
+    try std.testing.expect(std.mem.indexOf(u8, contents, "echo v1") != null);
+}
+
+test "app operation lock rejects concurrent deployment" {
+    const allocator = std.testing.allocator;
+    var env = try TestEnv.init(allocator);
+    defer env.deinit(allocator);
+    const ctx = env.ctx();
+
+    const workdir = try std.fmt.allocPrint(allocator, "{s}/work", .{env.base});
+    defer allocator.free(workdir);
+    try Io.Dir.cwd().createDirPath(std.testing.io, workdir);
+    try testWriteExecutable(allocator, workdir, "locked", "#!/bin/sh\necho locked\n");
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+    try registerApp(ctx, "locked", null, workdir, &out.writer);
+    try testSetToolchain(&env.db, "locked", "prebuilt");
+    const app_id = try testQueryInt(&env.db, "SELECT id FROM apps WHERE name = 'locked'");
+    try acquireAppLock(ctx, app_id, "test");
+    defer releaseAppLock(ctx, app_id);
+    try std.testing.expectError(Error.AppBusy, deploy(ctx, "locked", .{
+        .unit_dir = env.base,
+        .run_systemd = false,
+        .health_check = false,
+    }, &out.writer));
 }
 
 test "deploy captures git sha from a local repo workdir" {

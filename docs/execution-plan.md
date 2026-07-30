@@ -1,5 +1,17 @@
 # Cloudio Execution Plan
 
+## Sprint milestone status
+
+- Milestone 1 — coherent frontend: complete.
+- Milestone 2 — backend boundaries and provider libraries: complete as of
+  2026-07-30. HTTP protocol code is isolated in `src/http`, Cloudio policy and
+  grouped handlers live in `src/server`, scheduling lives in `src/runtime`,
+  SQLite is split into concrete repositories, and the independently buildable
+  Cloudflare/Hostinger packages live under `packages/` with one-way public
+  mirror automation.
+- Milestone 3 — passkey-only authentication: next. Its implementation must
+  build on the single route-policy pipeline delivered by Milestone 2.
+
 Cloudio work should move in broad, reviewable slices. A slice is a coherent subsystem or provider family, not one endpoint at a time, unless the change is a narrow bug fix needed to unblock the broader goal.
 
 ## Long-Term Goal
@@ -16,7 +28,7 @@ Cloudio work should move in broad, reviewable slices. A slice is a coherent subs
    - Use generated manifests to expose upstream drift instead of relying on memory.
    - Advance by upstream tag group or Cloudio control-plane family: accounts, tokens, DNS, SSL/TLS, security, Access, tunnels, rulesets, logs, cache, Hostinger VPS, domains, DNS, hosting, billing, Docker, Reach, ecommerce, and provider security.
    - Reads may execute only when they are bodyless, credential-safe, redacted, and useful to Cloudio.
-   - Mutations remain no-execute dry-run plans until write-mode policy is explicitly designed.
+   - Generic provider-manifest mutations remain no-execute dry-run plans. The platform exposes only a small typed live-write allowlist, protected by authentication, idempotency keys, explicit destructive confirmation, actor-aware redacted audits, and per-app operation locks.
 
 3. Preserve a clean internal API for a future larger app.
    - `cloudio.zig` is the embedding facade for web or native UI work.
@@ -32,7 +44,7 @@ Cloudio work should move in broad, reviewable slices. A slice is a coherent subs
 - Provider dry-run work should usually cover all related mutation routes in the family, with shared request validation and no live writes.
 - Refactor work should remove visible duplication across several modules and add or preserve tests.
 - Database work should include migration tests and a read-model smoke path.
-- Every goal turn ends with a commit and push to `origin/main`.
+- Every goal turn ends with a commit and push to `origin/master`.
 
 ## Current Baseline
 
@@ -49,6 +61,11 @@ The POC already has:
 - Caddy, system, project, project-correlation, overview, export, log, and doctor workflows.
 - A redaction audit command, `cloudio security redaction`, that checks configured API token/key bytes against Cloudio output/storage surfaces without printing those bytes.
 - A public `cloudio.zig` facade that keeps collectors out of future embedding code.
+- A shipped local HTTP platform and browser UI over app-level JSON contracts.
+- Typed live-write adapters for Caddy, Cloudflare DNS/settings/cache, Hostinger VPS/firewall, Docker/systemd, and app deployment; generic provider mutation dispatch remains dry-run-only.
+- Request idempotency/replay, destructive confirmation headers, actor metadata, per-app deployment locks, automatic failed-health rollback, and complete app cleanup.
+- Configurable snapshot/provider-raw/metrics retention with preview, online backup, bounded prune, WAL checkpoint, and explicit compaction commands.
+- A persisted typed topology projection with added/changed/removed history after refresh.
 
 The current simplification slices added `src/app/render.zig`, migrated overview, inventory, Cloudflare, Hostinger, doctor, run-log, and provider coverage helpers away from repeated local JSON/text/shell-quoting helpers, promoted generic JSON field, nullable-field, array, and comma writer primitives into `src/core/json.zig` for app/provider/collector renderers, split Cloudflare account/zone/DNS overview read models into `src/app/cloudflare_overview.zig`, split Hostinger account/VPS overview read models into `src/app/hostinger_overview.zig`, split provider/system evidence and route evidence into `src/app/evidence.zig`, `src/app/evidence_common.zig`, and `src/app/evidence_routes.zig`, centralized coverage/evidence/UI provider-family grouping in `src/app/provider_family.zig`, aligned evidence `--limit=0` with coverage all-row semantics, moved broad Cloudflare CLI overview/filter option grammar into `src/cli/cloudflare_options.zig`, moved Cloudflare dry-run mutation command grammar into `src/cli/cloudflare_dry_run.zig`, moved provider coverage report/workplan/candidate command grammar into `src/cli/coverage_parse.zig`, moved generic provider route request parsing for `coverage plan` and `route plan/read/capture/dry-run` into `src/cli/route_request.zig`, consolidated shared provider/query/limit CLI option grammar in `src/cli/args.zig`, split provider L1 auth/result/transport ownership into `src/providers/auth.zig`, `src/providers/route_result.zig`, and `src/providers/transport.zig`, split provider-specific routes/transport/client ownership through `src/providers/typed_routes.zig`, `src/providers/cloudflare/routes.zig`, `src/providers/cloudflare/transport.zig`, `src/providers/hostinger/routes.zig`, and `src/providers/hostinger/transport.zig`, and added `src/providers/request_plan.zig` so no-execute read plans, dry-run mutation plans, and live-read URL validation share one structured planning contract. App route planning, read metadata, route capture, and dry-run rendering now import the owner modules directly instead of re-exporting those contracts through dispatch.
 
@@ -105,7 +122,7 @@ Acceptance per provider slice:
 - Use `cloudio coverage workplan <provider> --family <family> --bundle --plans --json` before implementation.
 - Add fixture tests for success, pagination, error envelopes, blocked-permission envelopes, and dry-run plans.
 - Smoke only read-safe commands with configured credentials.
-- Confirm no mutation path sends live provider writes.
+- Confirm generic route mutation paths cannot send live provider writes; exercise typed allowlisted write adapters only in isolated fixtures or an explicitly selected environment.
 
 ### Phase 3: Typed Inventory And Correlation
 
@@ -130,12 +147,12 @@ Acceptance:
 
 ### Phase 4: Dry-Run Management
 
-Goal: prepare management workflows without changing live infrastructure.
+Goal: keep generic provider management reviewable and no-execute while protecting the narrow typed platform write allowlist.
 
 Broad slices:
 
 - Desired-state tables for Caddy routes, provider DNS records, provider security settings, and Hostinger VPS metadata.
-- Caddy render/diff/validate workflow that never writes or reloads unless a future policy enables it.
+- Caddy render/diff/validate workflow, with apply/reload exposed only through the authenticated typed platform route.
 - Provider mutation plan builders grouped by family, with validation, redaction, and `will_execute:false`.
 - Audit events for every dry-run plan and render/diff action.
 - Export/import of desired state for review.
@@ -145,11 +162,11 @@ Acceptance:
 - Fixture tests for rendered configs and provider plans.
 - Diff tests that prove secrets and env values are redacted.
 - Smoke `cloudio caddy diff`, provider dry-run commands, and export commands.
-- No live Cloudflare, Hostinger, Caddy, systemd, or Docker mutation.
+- Generic provider route dispatch remains no-execute. Typed platform writes require idempotency and audit tests, and destructive writes require explicit confirmation.
 
 ### Phase 5: MVP UI Readiness
 
-Goal: make a web/native UI an adapter over existing app APIs, not a rewrite.
+Goal: keep the shipped web UI as an adapter over existing app APIs, not a parallel implementation.
 
 Broad slices:
 
@@ -158,17 +175,18 @@ Broad slices:
 - A topology read model that joins provider DNS, Caddy routes, project metadata, sockets, services, and containers into one UI/API contract.
 - Facade-level API examples that call `cloudio.app.*` directly.
 - UI/API read-only command contract docs.
-- Optional local HTTP server module only after CLI/app boundaries are stable.
+- Local HTTP server, cookie/bearer authentication, SSE refresh/deploy streams, and browser pages over shared app contracts.
 
 Acceptance:
 
 - App module tests cover JSON schemas enough for UI consumers.
 - CLI text output can evolve without breaking JSON/read-model contracts.
 - No UI code imports collectors directly.
+- Mutation integration tests prove idempotent replay, confirmation policy, actor audit metadata, deployment locking, rollback, health failure, recovery, and cleanup.
 
 ## Next Broad Slices
 
-1. Finish app presentation consolidation.
+1. Maintain app presentation consolidation.
    - Extend the app render helper pattern to any remaining repeated app-level JSON/text rendering.
    - Keep CLI rendering separate from reusable app read-model JSON.
    - Use `cloudio history --json` and `cloudio export history --json` as the first operational-history contract for UI/API consumers.
@@ -177,8 +195,10 @@ Acceptance:
    - Use `cloudio coverage typed-models --focus control-plane --json` to prove the required L3 typed-model backlog separately from optional outside-control-plane generic inventory modeling.
    - Use `cloudio routes --json` as the compact provider-route metadata contract for UI/API consumers.
    - Use `cloudio topology --json` as the operational graph contract for UI/API consumers; it joins provider DNS, Caddy routes, projects, sockets, services, and containers, then derives row status, exposure, DNS match type, capabilities, and issue arrays.
+   - Use `cloudio topology changes --json` for persisted added/changed/removed operational deltas.
+   - Keep browser API behavior in `web/assets/app.js`; page scripts must not grow independent fetch/auth/idempotency parsers.
 
-2. Clean command parsing and option handling.
+2. Maintain command parsing and option handling.
    - Consolidate repeated `--json`, `--format`, `--limit`, `--domain`, `--query`, `--path-param`, `--query-param`, and `--header-param` handling.
    - Preserve all current command behavior with smoke tests.
 
@@ -197,7 +217,7 @@ Acceptance:
    - Add or upgrade L2 capture evidence, typed projection, and dry-run plan evidence for the selected family.
 
 5. Caddy/system/project correlation.
-   - Produce a single read model that connects DNS records, Caddy sites, upstream sockets, systemd units, Docker containers, compose files, and project roots.
+   - The unified topology read model and persisted delta projection now connect DNS records, Caddy sites, upstream sockets, systemd units, Docker containers, compose files, and project roots. Continue enriching fields through typed projections rather than page-specific joins.
 
 ## Goal-Turn Checklist
 
@@ -209,4 +229,4 @@ Each future goal turn should record:
 - Files changed.
 - Test and smoke commands run.
 - Whether live infrastructure mutation was impossible by design.
-- Commit hash pushed to `origin/main`.
+- Commit hash pushed to `origin/master`.

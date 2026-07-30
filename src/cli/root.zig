@@ -6,6 +6,7 @@ const app_init = @import("app_init");
 const app_log = @import("app_log");
 const app_overview = @import("app_overview");
 const app_refresh = @import("app_refresh");
+const app_topology = @import("app_topology");
 const app_caddy = @import("app_caddy");
 const app_cloudflare = @import("app_cloudflare");
 const app_database = @import("app_database");
@@ -20,6 +21,7 @@ const cli_dashboard = @import("cli_dashboard");
 const cli_evidence = @import("cli_evidence");
 const cli_hostinger = @import("cli_hostinger");
 const cli_inventory = @import("cli_inventory");
+const cli_maintenance = @import("cli_maintenance");
 const cli_projects = @import("cli_projects");
 const cli_render = @import("cli_render");
 const cli_route = @import("cli_route");
@@ -122,6 +124,13 @@ pub fn run(init: std.process.Init) !void {
             .config = cfg,
             .db = &db,
         }, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "maintenance")) {
+        try cli_maintenance.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
+            .db = &db,
+            .config = cfg,
+        }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "cloudflare")) {
         try cli_cloudflare.run(.{
             .io = init.io,
@@ -185,6 +194,7 @@ fn usage() void {
         \\  cloudio serve [--host 127.0.0.1] [--port 9328] [--domain <domain>] [--issues] [--section domains|vps|system|caddy|projects|providers]
         \\  cloudio actions plan [--provider <provider>] [--domain <domain>] [--target <target>] --json
         \\  cloudio topology [--limit <n>] [--json|--format json]
+        \\  cloudio topology capture|changes [--limit <n>] [--json|--format json]
         \\  cloudio history|audit [--limit <n>] [--audit-limit <n>] [--snapshot-limit <n>] [--json|--format json]
         \\  cloudio evidence [events|matrix|routes|coverage|capture-summary] [all|cloudflare|hostinger|caddy|system|projects|route] [--provider <scope>] [--limit <n>] [--json|--format json]
         \\  cloudio inventory [summary|facets] [cloudflare|hostinger] [query] [--provider <provider>] [--domain <domain>] [--query <text>] [--limit <n>] [--json|--format json]
@@ -207,6 +217,8 @@ fn usage() void {
         \\  cloudio route capture-ready <cloudflare|hostinger> [all|control-plane] [tag-query] [--focus all|control-plane] [--family <family>] [--operation <id>] [--limit <n>] [--max-pages <n>] [--execute]
         \\  cloudio log [--json|--format json]
         \\  cloudio security [redaction|secrets|audit] [--json|--format json]
+        \\  cloudio maintenance [status|prune|compact|run] [--apply --backup <path>] [--json|--format json]
+        \\  cloudio maintenance backup --output <path> [--json|--format json]
         \\  cloudio cloudflare account [list]|account show <account-id>|account profile <account-id>|account organizations <account-id>
         \\  cloudio cloudflare account dns-record-usage <account-id>
         \\  cloudio cloudflare account members|roles <account-id>|account member|role <account-id> <resource-id>
@@ -441,7 +453,14 @@ fn commandRefresh(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []
             .hostinger_auth = cfg.hasHostingerAuth(),
         },
     }, refreshSelectionFromArgs(args));
+    const delta = try app_topology.captureDeltas(.{ .gpa = gpa, .db = db }, .{});
     try cli_render.writeAll(io, "refresh complete\n");
+    if (delta.totalChanges() != 0) {
+        var delta_out = std.Io.Writer.Allocating.init(gpa);
+        defer delta_out.deinit();
+        try app_topology.writeDeltaSummaryText(delta, &delta_out.writer);
+        try cli_render.writeAll(io, delta_out.written());
+    }
 }
 
 fn commandLog(io: Io, gpa: Allocator, cfg: Config, args: []const []const u8) !void {

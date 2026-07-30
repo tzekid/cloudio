@@ -31,6 +31,7 @@ pub const Context = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
     db: *db_store.Db,
+    write_meta: app_writes.Metadata = .{},
 };
 
 pub const ImportSummary = struct {
@@ -81,6 +82,9 @@ pub fn upsertRoute(ctx: Context, host: []const u8, upstream: ?[]const u8, kind: 
         if (sqlite.sqlite3_bind_null(stmt, 6) != sqlite.SQLITE_OK) return Error.SqliteBind;
     }
     if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
+    const detail = try std.fmt.allocPrint(ctx.gpa, "kind={s}; upstream={s}; enabled=true", .{ kind, upstream orelse "" });
+    defer ctx.gpa.free(detail);
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "caddy.route.upsert", host, null, .ok, detail);
 }
 
 pub fn deleteRoute(ctx: Context, host: []const u8) !void {
@@ -88,6 +92,7 @@ pub fn deleteRoute(ctx: Context, host: []const u8) !void {
     defer _ = sqlite.sqlite3_finalize(stmt);
     try bindText(stmt, 1, host);
     if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "caddy.route.delete", host, null, .ok, "desired route removed");
 }
 
 pub fn setEnabled(ctx: Context, host: []const u8, enabled: bool) !void {
@@ -96,6 +101,16 @@ pub fn setEnabled(ctx: Context, host: []const u8, enabled: bool) !void {
     if (sqlite.sqlite3_bind_int64(stmt, 1, if (enabled) 1 else 0) != sqlite.SQLITE_OK) return Error.SqliteBind;
     try bindText(stmt, 2, host);
     if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
+    _ = try app_writes.recordWithMetadata(
+        ctx.gpa,
+        ctx.db,
+        ctx.write_meta,
+        "caddy.route.toggle",
+        host,
+        null,
+        .ok,
+        if (enabled) "enabled" else "disabled",
+    );
 }
 
 pub fn writeRoutesJson(ctx: Context, writer: anytype) !void {
@@ -360,7 +375,7 @@ pub fn apply(ctx: Context, caddyfile_path: []const u8, opts: ApplyOptions) !Appl
         const result = runCommand(gpa, ctx.io, &.{ "caddy", "validate", "--config", tmp_path }, max_command_bytes) catch |err| {
             const detail = try std.fmt.allocPrint(gpa, "caddy validate could not run: {s}", .{@errorName(err)});
             defer gpa.free(detail);
-            _ = try app_writes.record(gpa, ctx.db, "caddy.apply", caddyfile_path, null, .err, detail);
+            _ = try app_writes.recordWithMetadata(gpa, ctx.db, ctx.write_meta, "caddy.apply", caddyfile_path, null, .err, detail);
             Io.Dir.cwd().deleteFile(ctx.io, tmp_path) catch {};
             return Error.ValidateFailed;
         };
@@ -368,7 +383,7 @@ pub fn apply(ctx: Context, caddyfile_path: []const u8, opts: ApplyOptions) !Appl
         if (!result.ok()) {
             const detail = try std.fmt.allocPrint(gpa, "caddy validate failed: {s}", .{result.stderr});
             defer gpa.free(detail);
-            _ = try app_writes.record(gpa, ctx.db, "caddy.apply", caddyfile_path, null, .err, detail);
+            _ = try app_writes.recordWithMetadata(gpa, ctx.db, ctx.write_meta, "caddy.apply", caddyfile_path, null, .err, detail);
             Io.Dir.cwd().deleteFile(ctx.io, tmp_path) catch {};
             return Error.ValidateFailed;
         }
@@ -412,7 +427,7 @@ pub fn apply(ctx: Context, caddyfile_path: []const u8, opts: ApplyOptions) !Appl
     });
     defer gpa.free(detail);
     const result_state: app_writes.Result = if (opts.reload and !reloaded) .err else .ok;
-    _ = try app_writes.record(gpa, ctx.db, "caddy.apply", caddyfile_path, null, result_state, detail);
+    _ = try app_writes.recordWithMetadata(gpa, ctx.db, ctx.write_meta, "caddy.apply", caddyfile_path, null, result_state, detail);
 
     return .{
         .validated = validated,

@@ -22,6 +22,7 @@ pub const Context = struct {
     gpa: Allocator,
     db: *db_store.Db,
     config: core_config.Config,
+    write_meta: app_writes.Metadata = .{},
 };
 
 pub const VpsAction = enum {
@@ -202,7 +203,7 @@ pub fn isValidJson(gpa: Allocator, input: []const u8) bool {
 /// Returns true (and writes the error result) when body_json is invalid.
 fn rejectInvalidBody(ctx: Context, call: Call, body_json: []const u8, writer: anytype) !bool {
     if (isValidJson(ctx.gpa, body_json)) return false;
-    _ = try app_writes.record(ctx.gpa, ctx.db, call.kind, call.target, body_json, .err, "invalid request json");
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, call.kind, call.target, body_json, .err, "invalid request json");
     try writeErrorResult(writer, 0, "invalid_json");
     return true;
 }
@@ -227,7 +228,7 @@ fn executeHostinger(ctx: Context, call: Call, writer: anytype) !void {
 fn recordFailure(ctx: Context, call: Call, err: anyerror, writer: anytype) !void {
     const detail = try std.fmt.allocPrint(ctx.gpa, "request failed: {s}", .{@errorName(err)});
     defer ctx.gpa.free(detail);
-    _ = try app_writes.record(ctx.gpa, ctx.db, call.kind, call.target, call.body, .err, detail);
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, call.kind, call.target, call.body, .err, detail);
     try writeErrorResult(writer, 0, @errorName(err));
 }
 
@@ -237,7 +238,7 @@ fn finish(ctx: Context, call: Call, resp: net_http.Response, writer: anytype) !v
     const ok = net_http.isOk(resp.status);
     const detail = try net_http.summary(ctx.gpa, call.kind, resp.status);
     defer ctx.gpa.free(detail);
-    _ = try app_writes.record(ctx.gpa, ctx.db, call.kind, call.target, call.body, if (ok) .ok else .err, detail);
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, call.kind, call.target, call.body, if (ok) .ok else .err, detail);
 
     const status_code: u16 = @intFromEnum(resp.status);
     try writer.print("{{\"ok\":{},\"status\":{d},\"result\":", .{ ok, status_code });

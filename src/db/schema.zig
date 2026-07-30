@@ -345,6 +345,67 @@ pub const migrations = [_]Migration{
         \\CREATE INDEX IF NOT EXISTS idx_audit_actions_kind_id ON audit_actions(kind, id DESC);
         ,
     },
+    .{
+        .version = 9,
+        .name = "storage_lifecycle_indexes",
+        .sql =
+        \\CREATE INDEX IF NOT EXISTS idx_snapshots_captured_at ON snapshots(captured_at, id);
+        \\CREATE INDEX IF NOT EXISTS idx_provider_raw_captured_at ON provider_raw(captured_at, id);
+        \\CREATE INDEX IF NOT EXISTS idx_hostinger_metrics_captured_at ON hostinger_metrics(captured_at, id);
+        \\CREATE INDEX IF NOT EXISTS idx_system_metrics_captured_at ON system_metrics(captured_at, id);
+        ,
+    },
+    .{
+        .version = 10,
+        .name = "write_safety_and_deploy_locks",
+        .sql =
+        \\ALTER TABLE audit_actions ADD COLUMN idempotency_key TEXT;
+        \\CREATE INDEX IF NOT EXISTS idx_audit_actions_idempotency_key ON audit_actions(idempotency_key);
+        \\CREATE TABLE IF NOT EXISTS mutation_requests (
+        \\  idempotency_key TEXT PRIMARY KEY,
+        \\  request_hash TEXT NOT NULL,
+        \\  method TEXT NOT NULL,
+        \\  target TEXT NOT NULL,
+        \\  actor TEXT NOT NULL,
+        \\  state TEXT NOT NULL DEFAULT 'running',
+        \\  http_status INTEGER,
+        \\  response_json TEXT,
+        \\  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \\  completed_at TEXT
+        \\);
+        \\CREATE INDEX IF NOT EXISTS idx_mutation_requests_created_at ON mutation_requests(created_at);
+        \\CREATE TABLE IF NOT EXISTS app_operation_locks (
+        \\  app_id INTEGER PRIMARY KEY,
+        \\  operation TEXT NOT NULL,
+        \\  acquired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        \\);
+        \\CREATE UNIQUE INDEX IF NOT EXISTS idx_apps_port_unique ON apps(port);
+        ,
+    },
+    .{
+        .version = 11,
+        .name = "topology_change_history",
+        .sql =
+        \\CREATE TABLE IF NOT EXISTS topology_state (
+        \\  resource_key TEXT PRIMARY KEY,
+        \\  status TEXT NOT NULL,
+        \\  fingerprint TEXT NOT NULL,
+        \\  observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        \\);
+        \\CREATE TABLE IF NOT EXISTS topology_changes (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  resource_key TEXT NOT NULL,
+        \\  change_type TEXT NOT NULL,
+        \\  previous_status TEXT,
+        \\  current_status TEXT,
+        \\  previous_fingerprint TEXT,
+        \\  current_fingerprint TEXT,
+        \\  observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        \\);
+        \\CREATE INDEX IF NOT EXISTS idx_topology_changes_observed_at ON topology_changes(observed_at, id);
+        \\CREATE INDEX IF NOT EXISTS idx_topology_changes_resource_key ON topology_changes(resource_key, id DESC);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;
@@ -440,12 +501,29 @@ test "applies migrations idempotently" {
     try std.testing.expect(try tableExists(handle.?, "deploys"));
     try std.testing.expect(try tableExists(handle.?, "caddy_desired_routes"));
     try std.testing.expect(try tableExists(handle.?, "audit_actions"));
+    try std.testing.expect(try tableExists(handle.?, "mutation_requests"));
+    try std.testing.expect(try tableExists(handle.?, "app_operation_locks"));
+    try std.testing.expect(try tableExists(handle.?, "topology_state"));
+    try std.testing.expect(try tableExists(handle.?, "topology_changes"));
+    try std.testing.expect(try indexExists(handle.?, "idx_snapshots_captured_at"));
+    try std.testing.expect(try indexExists(handle.?, "idx_provider_raw_captured_at"));
+    try std.testing.expect(try indexExists(handle.?, "idx_audit_actions_idempotency_key"));
 }
 
 fn tableExists(handle: *sqlite.sqlite3, table: []const u8) !bool {
     const stmt = try prepare(handle, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?");
     defer _ = sqlite.sqlite3_finalize(stmt);
     if (sqlite.sqlite3_bind_text(stmt, 1, @ptrCast(table.ptr), @intCast(table.len), sqlite.SQLITE_TRANSIENT) != sqlite.SQLITE_OK) return SchemaError.SqliteBind;
+    const rc = sqlite.sqlite3_step(stmt);
+    if (rc == sqlite.SQLITE_ROW) return true;
+    if (rc == sqlite.SQLITE_DONE) return false;
+    return SchemaError.SqliteStep;
+}
+
+fn indexExists(handle: *sqlite.sqlite3, index: []const u8) !bool {
+    const stmt = try prepare(handle, "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    if (sqlite.sqlite3_bind_text(stmt, 1, @ptrCast(index.ptr), @intCast(index.len), sqlite.SQLITE_TRANSIENT) != sqlite.SQLITE_OK) return SchemaError.SqliteBind;
     const rc = sqlite.sqlite3_step(stmt);
     if (rc == sqlite.SQLITE_ROW) return true;
     if (rc == sqlite.SQLITE_DONE) return false;

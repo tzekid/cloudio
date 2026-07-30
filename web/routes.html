@@ -1,184 +1,84 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Routes - cloudio</title>
-<link rel="stylesheet" href="/assets/app.css">
-<script type="module" src="/assets/datastar.js"></script>
-<script src="/assets/app.js"></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Routes · Cloudio</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/app.js"></script>
+  <script defer src="/assets/pages/routes.js"></script>
 </head>
 <body>
+  <main id="page-content">
+    <p class="page-intro">Manage Cloudio’s desired Caddy routes, review the generated configuration, and apply it deliberately.</p>
 
-<div class="panel">
-  <h2>Add Route</h2>
-  <div class="panel-body" data-signals="{host: '', upstream: '', extra: '', adding: false}">
-    <div class="form-row">
-      <div class="form-field">
-        <label>Host</label>
-        <input type="text" data-bind-host placeholder="app.example.com" style="width: 240px;">
+    <section class="panel" aria-labelledby="add-route-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="add-route-title">Add route</h2>
+          <p>Point a public hostname at a local upstream.</p>
+        </div>
       </div>
-      <div class="form-field">
-        <label>Upstream</label>
-        <input type="text" data-bind-upstream placeholder="127.0.0.1:9000" style="width: 200px;">
+      <div class="panel-body">
+        <form id="route-form" class="form-grid">
+          <div class="field span-3">
+            <label for="route-host">Host</label>
+            <input id="route-host" name="host" type="text" placeholder="app.example.com" required autocomplete="off">
+          </div>
+          <div class="field span-3">
+            <label for="route-upstream">Upstream</label>
+            <input id="route-upstream" name="upstream" type="text" placeholder="127.0.0.1:9000" required autocomplete="off">
+          </div>
+          <div class="field span-5">
+            <label for="route-extra">Extra directives</label>
+            <textarea id="route-extra" name="extra" rows="2" placeholder="encode gzip"></textarea>
+          </div>
+          <button id="add-route" class="button-primary" type="submit">Add route</button>
+        </form>
       </div>
-      <div class="form-field" style="flex: 1; min-width: 260px;">
-        <label>Extra directives (optional)</label>
-        <textarea data-bind-extra rows="2" placeholder="encode gzip"></textarea>
+    </section>
+
+    <section class="panel" aria-labelledby="routes-list-title">
+      <div class="panel-header">
+        <h2 id="routes-list-title">Caddy routes</h2>
+        <span id="routes-count" class="muted" aria-live="polite"></span>
       </div>
-      <button class="primary" data-attr-disabled="$adding"
-              data-on-click="$adding = true; window.addRoute($host, $upstream, $extra).finally(() => { $adding = false })">
-        Add Route
-      </button>
-    </div>
-  </div>
-</div>
+      <div class="table-scroll">
+        <table class="responsive-table">
+          <thead>
+            <tr>
+              <th scope="col">Enabled</th>
+              <th scope="col">Host</th>
+              <th scope="col">Upstream</th>
+              <th scope="col">Kind</th>
+              <th scope="col">Updated</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="routes-body">
+            <tr><td class="empty-state loading-state" colspan="6">Loading routes…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-<div class="panel">
-  <h2>Caddy Routes</h2>
-  <table class="data">
-    <thead>
-      <tr>
-        <th>Enabled</th>
-        <th>Host</th>
-        <th>Upstream</th>
-        <th>Kind</th>
-        <th>Updated</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody id="routes-body">
-      <tr><td class="empty" colspan="6">Loading...</td></tr>
-    </tbody>
-  </table>
-</div>
-
-<div class="panel">
-  <h2>Caddyfile</h2>
-  <div class="panel-body">
-    <div class="flex" style="margin-bottom: 10px;">
-      <button id="preview-btn">Preview Caddyfile</button>
-      <button id="apply-btn" class="primary">Apply &amp; Reload</button>
-      <span class="dim" id="apply-result"></span>
-    </div>
-    <pre class="log hidden" id="preview-pre"></pre>
-  </div>
-</div>
-
-<script>
-(function () {
-  const c = window.cloudio;
-  c.injectLayout("Routes");
-
-  async function loadRoutes() {
-    let data;
-    try {
-      data = await c.api("/api/caddy/routes");
-    } catch (err) {
-      document.getElementById("routes-body").innerHTML =
-        '<tr><td class="empty" colspan="6">Routes endpoint not available yet (' + c.esc(err.message) + ")</td></tr>";
-      return;
-    }
-    const routes = (data && data.routes) || [];
-    c.renderTable("routes-body", routes, [
-      { render: (r) => '<input type="checkbox" data-toggle-host="' + c.esc(r.host) + '"' + (r.enabled ? " checked" : "") + ">" },
-      { key: "host", cls: "mono" },
-      { key: "upstream", cls: "mono" },
-      { render: (r) => c.badge(r.kind || "manual", r.kind === "app" ? "blue" : "") },
-      { render: (r) => c.esc(c.fmtTime(r.updated_at)), cls: "dim" },
-      { render: (r) => r.kind === "app" ? "" :
-          '<button class="small danger" data-delete-host="' + c.esc(r.host) + '">Delete</button>' },
-    ], "No routes");
-  }
-
-  window.addRoute = async function (host, upstream, extra) {
-    host = (host || "").trim();
-    upstream = (upstream || "").trim();
-    if (!host || !upstream) {
-      c.toast("Host and upstream are required", "error");
-      return;
-    }
-    try {
-      await c.api("/api/caddy/routes", {
-        method: "POST",
-        body: { host: host, upstream: upstream, extra_directives: extra.trim() || null },
-      });
-      c.toast("Route " + host + " added", "success");
-      loadRoutes();
-    } catch (err) {
-      c.toast("Add route failed: " + err.message, "error");
-    }
-  };
-
-  async function fetchPreview() {
-    const pre = document.getElementById("preview-pre");
-    pre.classList.remove("hidden");
-    pre.textContent = "Loading preview...";
-    try {
-      const data = await c.api("/api/caddy/preview");
-      pre.textContent = (data && data.rendered) || "(empty)";
-      return pre.textContent;
-    } catch (err) {
-      pre.textContent = "Preview not available yet: " + err.message;
-      return null;
-    }
-  }
-
-  document.getElementById("preview-btn").addEventListener("click", fetchPreview);
-
-  document.getElementById("apply-btn").addEventListener("click", async function () {
-    const rendered = await fetchPreview();
-    if (rendered === null) return;
-    if (!confirm("Apply this Caddyfile and reload Caddy?\n\nThe preview shown below the buttons is what will be written.")) return;
-    const result = document.getElementById("apply-result");
-    result.textContent = "Applying...";
-    try {
-      const res = await c.api("/api/caddy/apply", { method: "POST" });
-      const parts = [
-        res.ok ? "applied" : "failed",
-        "validated=" + res.validated,
-        "reloaded=" + res.reloaded,
-        res.bytes != null ? res.bytes + " bytes" : "",
-        res.backup_path ? "backup: " + res.backup_path : "",
-      ].filter(Boolean);
-      result.textContent = parts.join(" | ");
-      c.toast(res.ok ? "Caddyfile applied and reloaded" : "Apply failed", res.ok ? "success" : "error");
-    } catch (err) {
-      result.textContent = "";
-      c.toast("Apply failed: " + err.message, "error");
-    }
-  });
-
-  document.getElementById("routes-body").addEventListener("click", async function (ev) {
-    const toggle = ev.target.closest("input[data-toggle-host]");
-    if (toggle) {
-      const host = toggle.dataset.toggleHost;
-      try {
-        await c.api("/api/caddy/routes/toggle", { method: "POST", body: { host: host, enabled: toggle.checked } });
-        c.toast("Route " + host + (toggle.checked ? " enabled" : " disabled"), "success");
-      } catch (err) {
-        toggle.checked = !toggle.checked;
-        c.toast("Toggle failed: " + err.message, "error");
-      }
-      return;
-    }
-    const del = ev.target.closest("button[data-delete-host]");
-    if (del) {
-      const host = del.dataset.deleteHost;
-      if (!confirm("Delete route " + host + "?")) return;
-      try {
-        await c.api("/api/caddy/routes?host=" + encodeURIComponent(host), { method: "DELETE" });
-        c.toast("Route " + host + " deleted", "success");
-        loadRoutes();
-      } catch (err) {
-        c.toast("Delete failed: " + err.message, "error");
-      }
-    }
-  });
-
-  document.addEventListener("cloudio:reload", loadRoutes);
-  loadRoutes();
-})();
-</script>
+    <section class="panel" aria-labelledby="caddyfile-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="caddyfile-title">Caddyfile</h2>
+          <p>Import existing state, preview desired state, then validate and apply.</p>
+        </div>
+      </div>
+      <div class="panel-body stack">
+        <div class="cluster cluster-mobile-stack">
+          <button id="import-btn" type="button">Import current file</button>
+          <button id="preview-btn" type="button">Preview desired file</button>
+          <button id="apply-btn" class="button-primary" type="button">Apply and reload</button>
+          <span id="caddy-result" class="status-message" aria-live="polite"></span>
+        </div>
+        <pre class="log-viewer hidden" id="preview-output"></pre>
+      </div>
+    </section>
+  </main>
 </body>
 </html>

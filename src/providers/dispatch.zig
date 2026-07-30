@@ -466,7 +466,7 @@ test "generic dispatch validates Cloudflare auth scheme compatibility before HTT
     const bearer_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "get_publicListSuppressionRouting")) orelse return error.TestExpectedRoute;
     defer bearer_route.deinit(allocator);
     try provider_auth.validateCloudflareRouteAuth(bearer_route.security, .{ .token = "test-token" });
-    try std.testing.expectError(error.UnsupportedRouteAuthScheme, provider_auth.validateCloudflareRouteAuth(bearer_route.security, .{ .email = "ops@example.test", .key = "global-key" }));
+    try provider_auth.validateCloudflareRouteAuth(bearer_route.security, .{ .email = "ops@example.test", .key = "global-key" });
 
     const bearer_plan = try planRouteJsonRequest(
         allocator,
@@ -474,7 +474,7 @@ test "generic dispatch validates Cloudflare auth scheme compatibility before HTT
         .{ .path_params = &.{.{ .name = "account_id", .value = "acct/1" }} },
     );
     defer allocator.free(bearer_plan);
-    try std.testing.expect(std.mem.indexOf(u8, bearer_plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"bearerAuth\"]]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bearer_plan, "\"security\":{\"required\":true,\"cloudio_supported\":true,\"alternatives\":[[\"api_email\",\"api_key\"],[\"api_token\"]]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, bearer_plan, "\"dispatch\":{\"live_call_supported\":true,\"diagnostic_read_supported\":false,\"dry_run_supported\":false}") != null);
 
     const assets_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;

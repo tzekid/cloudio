@@ -1,57 +1,25 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Login - cloudio</title>
-<link rel="stylesheet" href="/assets/app.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Cloudio</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/pages/login.js"></script>
 </head>
-<body>
-<div class="login-wrap">
-  <div class="login-box">
-    <h1>cloud<span>io</span></h1>
-    <form id="login-form">
-      <div class="form-field">
-        <label for="token">Platform token</label>
-        <input id="token" type="password" autocomplete="current-password" autofocus>
+<body class="login-page">
+  <main class="login-card">
+    <a class="login-brand" href="/" aria-label="Cloudio dashboard">cloud<span>io</span></a>
+    <h1>Sign in to the control plane</h1>
+    <p class="login-copy">Use the platform token configured on this Cloudio instance.</p>
+    <form id="login-form" class="login-form">
+      <div class="field">
+        <label for="platform-token">Platform token</label>
+        <input id="platform-token" name="token" type="password" autocomplete="current-password" required autofocus>
       </div>
-      <div class="login-error" id="login-error"></div>
-      <button type="submit" class="primary" id="login-btn">Sign in</button>
+      <div class="login-error" id="login-error" role="alert" aria-live="polite"></div>
+      <button id="login-button" class="button-primary" type="submit">Sign in</button>
     </form>
-  </div>
-</div>
-<script>
-document.getElementById("login-form").addEventListener("submit", async function (event) {
-  event.preventDefault();
-  const errEl = document.getElementById("login-error");
-  const btn = document.getElementById("login-btn");
-  const token = document.getElementById("token").value.trim();
-  errEl.textContent = "";
-  if (!token) {
-    errEl.textContent = "Token is required.";
-    return;
-  }
-  btn.disabled = true;
-  try {
-    const res = await fetch("/api/login", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: token }),
-    });
-    if (res.ok) {
-      window.location.href = "/";
-    } else if (res.status === 401) {
-      errEl.textContent = "Invalid token.";
-    } else {
-      errEl.textContent = "Login failed (" + res.status + ").";
-    }
-  } catch (err) {
-    errEl.textContent = "Network error: " + err.message;
-  } finally {
-    btn.disabled = false;
-  }
-});
-</script>
+  </main>
 </body>
 </html>

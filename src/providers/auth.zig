@@ -54,7 +54,7 @@ test "provider auth maps Cloudflare token legacy and unsupported schemes" {
     const bearer_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "get_publicListSuppressionRouting")) orelse return error.TestExpectedRoute;
     defer bearer_route.deinit(allocator);
     try validateCloudflareRouteAuth(bearer_route.security, .{ .token = "test-token" });
-    try std.testing.expectError(error.UnsupportedRouteAuthScheme, validateCloudflareRouteAuth(bearer_route.security, .{ .email = "ops@example.test", .key = "global-key" }));
+    try validateCloudflareRouteAuth(bearer_route.security, .{ .email = "ops@example.test", .key = "global-key" });
 
     const assets_route = (try provider_routes.findByOperationId(std.testing.io, allocator, .{}, .cloudflare, "worker-assets-upload")) orelse return error.TestExpectedRoute;
     defer assets_route.deinit(allocator);

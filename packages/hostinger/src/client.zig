@@ -1,7 +1,9 @@
 const std = @import("std");
 const net_http = @import("net_http");
-const hostinger_transport = @import("provider_hostinger_transport");
-const routes = @import("provider_hostinger_routes");
+pub const transport = @import("provider_hostinger_transport");
+pub const routes = @import("provider_hostinger_routes");
+pub const models = @import("provider_hostinger_models");
+const hostinger_transport = transport;
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -250,5 +252,10 @@ pub const Client = struct {
 
     pub fn getWithHeaders(self: Client, io: Io, gpa: Allocator, url: []const u8, route_headers: []const std.http.Header) !net_http.Response {
         return try hostinger_transport.getWithHeaders(io, gpa, self.token, url, route_headers);
+    }
+
+    /// Raw authenticated escape hatch for endpoints without a typed helper.
+    pub fn requestJson(self: Client, io: Io, gpa: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8) !net_http.Response {
+        return try hostinger_transport.requestJson(io, gpa, self.token, method, url, body);
     }
 };

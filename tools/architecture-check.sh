@@ -19,10 +19,27 @@ if [ -e src/providers/capture.zig ]; then
     fail=1
 fi
 
+if [ -e src/app/serve.zig ]; then
+    printf '%s\n' "architecture-check failed: HTTP runtime belongs under src/server, not src/app/serve.zig" >&2
+    fail=1
+fi
+
+for package in cloudflare hostinger; do
+    if [ ! -f "packages/$package/build.zig" ] || [ ! -f "packages/$package/LICENSE" ]; then
+        printf '%s\n' "architecture-check failed: packages/$package is not independently buildable and licensed" >&2
+        fail=1
+    fi
+done
+
 check_no_matches \
     "core and net modules must not import persistence, provider, collector, app, CLI, or sqlite modules" \
     '@import\("(db_[^"]+|sqlite|collector_[^"]+|provider_[^"]+|app_[^"]+|cli_[^"]+)"\)' \
     src/core src/net
+
+check_no_matches \
+    "the reusable inbound HTTP package must not import Cloudio app, persistence, provider, collector, CLI, or sqlite modules" \
+    '@import\("(db_[^"]+|sqlite|collector_[^"]+|provider_[^"]+|app_[^"]+|cli_[^"]+)"\)' \
+    src/http
 
 check_no_matches \
     "database modules must not import provider, collector, app, or CLI modules" \
@@ -33,6 +50,11 @@ check_no_matches \
     "provider modules must not import persistence, collector, app, CLI, or sqlite modules" \
     '@import\("(db_store|sqlite|collector_[^"]+|app_[^"]+|cli_[^"]+)"\)' \
     src/providers
+
+check_no_matches \
+    "standalone provider packages must not import Cloudio app, persistence, collector, CLI, or sqlite modules" \
+    '@import\("(db_[^"]+|sqlite|collector_[^"]+|app_[^"]+|cli_[^"]+)"\)' \
+    packages/cloudflare/src packages/hostinger/src
 
 check_no_matches \
     "collector modules must not import app or CLI modules" \
@@ -48,6 +70,11 @@ check_no_matches \
     "app modules must not import CLI modules" \
     '@import\("(cli_[^"]+)"\)' \
     src/app
+
+check_no_matches \
+    "HTTP handlers must delegate persistence, provider, and process work to application services" \
+    '@import\("(db_[^"]+|sqlite|provider_[^"]+|core_process)"\)|\b(SELECT|INSERT|UPDATE|DELETE FROM|CREATE TABLE)\b' \
+    src/server/handlers
 
 check_no_matches \
     "app modules must not expose collector-owned Output types" \
