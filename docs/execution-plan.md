@@ -14,8 +14,8 @@
   WebAuthn passkeys for setup and sign-in, protects authenticated mutations
   with strict-origin and CSRF checks, and provides both CLI-authorized
   bootstrap enrollment and a one-time browser setup flow. Production rollout
-  and the owner's first physical passkey ceremony are tracked by the
-  milestone runbook.
+  completed on 2026-07-30; the owner's first physical passkey ceremony remains
+  the sole operator-dependent step tracked by the milestone runbook.
 
 Cloudio work should move in broad, reviewable slices. A slice is a coherent subsystem or provider family, not one endpoint at a time, unless the change is a narrow bug fix needed to unblock the broader goal.
 

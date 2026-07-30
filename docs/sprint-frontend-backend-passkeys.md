@@ -1415,7 +1415,7 @@ End-to-end:
   reviewed login/setup allowlist.
 - [x] Security headers, exact-origin enforcement, CSRF, one-use challenges,
   rate limits, bounded parsing, and safe audit events are implemented.
-- [ ] Full integrated checks, production backup/deployment, HSTS, bootstrap,
+- [x] Full integrated checks, production backup/deployment, HSTS, bootstrap,
   and external route verification are complete.
 - [ ] A real owner passkey has been enrolled and login/logout verified by the
   operator (requires the operator's biometric/passcode interaction).
