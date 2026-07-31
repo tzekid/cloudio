@@ -353,5 +353,4 @@
   window.addEventListener("pagehide", stopLiveLog, { once: true });
 
   toggleSource();
-  loadApps();
 })();

@@ -1586,6 +1586,11 @@ pub fn build(b: *std.Build) void {
     }
     b.step("run", "Run cloudio").dependOn(&run_cmd.step);
 
+    const browser_smoke_command = b.addSystemCommand(&.{ "bash", "tests/browser-smoke.sh" });
+    browser_smoke_command.addArtifactArg(exe);
+    const browser_smoke_step = b.step("browser-smoke", "Run authenticated server-first Chromium acceptance checks");
+    browser_smoke_step.dependOn(&browser_smoke_command.step);
+
     const test_step = b.step("test", "Run unit tests");
     addModuleTest(b, test_step, cli_root_mod);
     addModuleTest(b, test_step, cli_args_mod);

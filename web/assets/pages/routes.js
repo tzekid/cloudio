@@ -192,5 +192,4 @@
   });
 
   document.addEventListener("cloudio:reload", loadRoutes);
-  loadRoutes();
 })();

@@ -18,6 +18,8 @@ const context = @import("context.zig");
 const theme = @import("theme.zig");
 
 const max_template_bytes = 512 * 1024;
+const favicon_link =
+    "<link rel=\"icon\" href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1220'/%3E%3Cpath d='M18 40V24h8v16h20v8H26a8 8 0 0 1-8-8Z' fill='%234fd1c5'/%3E%3C/svg%3E\">\n";
 
 const Page = enum {
     dashboard,
@@ -163,6 +165,7 @@ pub fn renderPublic(
 
     var head = std.Io.Writer.Allocating.init(ctx.gpa);
     defer head.deinit();
+    try head.writer.writeAll(favicon_link);
     try head.writer.writeAll("<link rel=\"stylesheet\" href=\"/assets/app.css\">\n");
     try head.writer.writeAll("<script defer src=\"/assets/passkeys.js\"></script>\n");
     try head.writer.writeAll(if (std.mem.eql(u8, path, "/login.html"))
@@ -207,6 +210,7 @@ fn pageForPath(path: []const u8) ?Page {
 fn writeDocumentStart(out: *std.Io.Writer, page: Page, preference: theme.Preference) !void {
     var head = std.Io.Writer.Allocating.init(std.heap.page_allocator);
     defer head.deinit();
+    try head.writer.writeAll(favicon_link);
     try head.writer.writeAll("<link rel=\"stylesheet\" href=\"/assets/app.css\">\n");
     try head.writer.writeAll("<script defer src=\"/assets/app.js\"></script>\n");
     if (page == .security) {
@@ -394,7 +398,14 @@ fn injectApps(ctx: context.Context, main: *[]u8) !void {
         try emptyRow(&rows.writer, 7, "No applications registered yet.");
     } else for (apps) |app| {
         try rows.writer.writeAll("<tr>");
-        try cellText(&rows.writer, strField(app, "name"), "mono");
+        const app_name = strField(app, "name");
+        try rows.writer.writeAll("<td><button type=\"button\" class=\"button-link mono\" data-open-app=\"");
+        try web_html.attribute(&rows.writer, app_name);
+        try rows.writer.writeAll("\" aria-label=\"Open details for ");
+        try web_html.attribute(&rows.writer, app_name);
+        try rows.writer.writeAll("\">");
+        try web_html.text(&rows.writer, app_name);
+        try rows.writer.writeAll("</button></td>");
         try cellStatus(&rows.writer, strField(app, "status"));
         try cellValue(&rows.writer, member(app, "port"), "mono");
         try cellText(&rows.writer, strField(app, "alias_host"), "breakable");
@@ -411,7 +422,23 @@ fn injectApps(ctx: context.Context, main: *[]u8) !void {
                 try rows.writer.writeAll("</span>");
             } else try rows.writer.writeAll("<span class=\"muted\">Never</span>");
         } else try rows.writer.writeAll("<span class=\"muted\">Never</span>");
-        try rows.writer.writeAll("</td><td class=\"muted\">Use enhanced controls to operate</td></tr>");
+        try rows.writer.writeAll("</td><td class=\"cell-actions\"><div class=\"table-actions\">");
+        const actions = [_]struct { label: []const u8, action: []const u8, kind: []const u8 }{
+            .{ .label = "Deploy", .action = "deploy", .kind = " button-primary" },
+            .{ .label = "Start", .action = "start", .kind = "" },
+            .{ .label = "Stop", .action = "stop", .kind = "" },
+            .{ .label = "Restart", .action = "restart", .kind = "" },
+            .{ .label = "Rollback", .action = "rollback", .kind = "" },
+            .{ .label = "Delete", .action = "delete", .kind = " button-danger" },
+        };
+        for (actions) |action| {
+            try rows.writer.print("<button type=\"button\" class=\"button button-small{s}\" data-action=\"{s}\" data-app=\"", .{ action.kind, action.action });
+            try web_html.attribute(&rows.writer, app_name);
+            try rows.writer.writeAll("\">");
+            try web_html.text(&rows.writer, action.label);
+            try rows.writer.writeAll("</button>");
+        }
+        try rows.writer.writeAll("</div></td></tr>");
     }
     try replaceElementInner(ctx.gpa, main, "apps-body", "tbody", rows.written());
     try replaceCountLabel(ctx.gpa, main, "apps-count", "span", apps.len, "app", "apps");
@@ -430,13 +457,24 @@ fn injectRoutes(ctx: context.Context, main: *[]u8) !void {
     if (routes.len == 0) {
         try emptyRow(&rows.writer, 6, "No desired routes.");
     } else for (routes) |route| {
-        try rows.writer.writeAll("<tr>");
-        try cellBadge(&rows.writer, if (boolField(route, "enabled")) "enabled" else "disabled");
-        try cellText(&rows.writer, strField(route, "host"), "mono breakable");
+        const host = strField(route, "host");
+        const enabled = boolField(route, "enabled");
+        try rows.writer.writeAll("<tr><td><input type=\"checkbox\" data-toggle-host=\"");
+        try web_html.attribute(&rows.writer, host);
+        try rows.writer.writeAll("\" aria-label=\"");
+        try web_html.attribute(&rows.writer, if (enabled) "Disable route" else "Enable route");
+        if (enabled) try rows.writer.writeAll("\" checked></td>") else try rows.writer.writeAll("\"></td>");
+        try cellText(&rows.writer, host, "mono breakable");
         try cellText(&rows.writer, strField(route, "upstream"), "mono breakable");
         try cellBadge(&rows.writer, strField(route, "kind"));
         try cellText(&rows.writer, strField(route, "updated_at"), "muted");
-        try rows.writer.writeAll("<td class=\"muted\">Use enhanced controls to edit</td></tr>");
+        if (std.mem.eql(u8, strField(route, "kind"), "app")) {
+            try rows.writer.writeAll("<td class=\"muted\">Managed by app</td></tr>");
+        } else {
+            try rows.writer.writeAll("<td class=\"cell-actions\"><button type=\"button\" class=\"button button-small button-danger\" data-delete-host=\"");
+            try web_html.attribute(&rows.writer, host);
+            try rows.writer.writeAll("\">Delete</button></td></tr>");
+        }
     }
     try replaceElementInner(ctx.gpa, main, "routes-body", "tbody", rows.written());
     try replaceCountLabel(ctx.gpa, main, "routes-count", "span", routes.len, "route", "routes");
@@ -478,7 +516,7 @@ fn injectDns(ctx: context.Context, request: http.Request, main: *[]u8) !void {
         try cellText(&rows.writer, strField(record, "content"), "mono breakable");
         try cellValue(&rows.writer, member(record, "ttl"), "mono");
         try cellBadge(&rows.writer, if (boolField(record, "proxied")) "proxied" else "DNS only");
-        try rows.writer.writeAll("<td class=\"muted\">Use enhanced controls to edit</td></tr>");
+        try rows.writer.writeAll("<td class=\"muted\">Refresh data to manage</td></tr>");
     }
     try replaceElementInner(ctx.gpa, main, "records-body", "tbody", rows.written());
     try replaceCountLabel(ctx.gpa, main, "record-count", "span", records.len, "record", "records");
@@ -507,7 +545,22 @@ fn injectVps(ctx: context.Context, main: *[]u8) !void {
         try definition(&cards.writer, "IPv4", strField(machine, "ipv4"));
         try definition(&cards.writer, "Plan", strField(machine, "plan"));
         try definition(&cards.writer, "ID", strField(machine, "id"));
-        try cards.writer.writeAll("</dl><div class=\"resource-card-actions muted\">Use enhanced controls to operate</div></article>");
+        const machine_id = strField(machine, "id");
+        try cards.writer.writeAll("</dl><div class=\"resource-card-actions\">");
+        const machine_actions = [_][]const u8{ "start", "stop", "restart" };
+        for (machine_actions) |action| {
+            try cards.writer.writeAll("<button type=\"button\" class=\"button button-small");
+            if (std.mem.eql(u8, action, "stop")) try cards.writer.writeAll(" button-danger");
+            try cards.writer.writeAll("\" data-machine-action=\"");
+            try web_html.attribute(&cards.writer, action);
+            try cards.writer.writeAll("\" data-machine-id=\"");
+            try web_html.attribute(&cards.writer, machine_id);
+            try cards.writer.writeAll("\">");
+            if (action.len > 0) try cards.writer.writeByte(std.ascii.toUpper(action[0]));
+            try web_html.text(&cards.writer, action[1..]);
+            try cards.writer.writeAll("</button>");
+        }
+        try cards.writer.writeAll("</div></article>");
     }
     try cards.writer.writeAll("</div>");
     try replaceExact(
@@ -592,12 +645,32 @@ fn injectDocker(ctx: context.Context, main: *[]u8) !void {
     if (containers.len == 0) {
         try emptyRow(&rows.writer, 5, "No containers found.");
     } else for (containers) |container| {
-        try rows.writer.writeAll("<tr>");
-        try cellText(&rows.writer, strField(container, "name"), "mono");
+        const container_name = strField(container, "name");
+        try rows.writer.writeAll("<tr><td><button type=\"button\" class=\"button-link mono\" data-select-container=\"");
+        try web_html.attribute(&rows.writer, container_name);
+        try rows.writer.writeAll("\" aria-label=\"View logs for container ");
+        try web_html.attribute(&rows.writer, container_name);
+        try rows.writer.writeAll("\">");
+        try web_html.text(&rows.writer, container_name);
+        try rows.writer.writeAll("</button></td>");
         try cellText(&rows.writer, strField(container, "image"), "mono breakable");
         try cellStatus(&rows.writer, strField(container, "status"));
         try cellText(&rows.writer, strField(container, "ports"), "mono breakable");
-        try rows.writer.writeAll("<td class=\"muted\">Use enhanced controls to operate</td></tr>");
+        try rows.writer.writeAll("<td class=\"cell-actions\"><div class=\"table-actions\">");
+        const container_actions = [_][]const u8{ "start", "stop", "restart" };
+        for (container_actions) |action| {
+            try rows.writer.writeAll("<button type=\"button\" class=\"button button-small");
+            if (std.mem.eql(u8, action, "stop")) try rows.writer.writeAll(" button-danger");
+            try rows.writer.writeAll("\" data-container-action=\"");
+            try web_html.attribute(&rows.writer, action);
+            try rows.writer.writeAll("\" data-container-name=\"");
+            try web_html.attribute(&rows.writer, container_name);
+            try rows.writer.writeAll("\">");
+            if (action.len > 0) try rows.writer.writeByte(std.ascii.toUpper(action[0]));
+            try web_html.text(&rows.writer, action[1..]);
+            try rows.writer.writeAll("</button>");
+        }
+        try rows.writer.writeAll("</div></td></tr>");
     }
     try replaceElementInner(ctx.gpa, main, "containers-body", "tbody", rows.written());
 }
@@ -669,7 +742,15 @@ fn injectSecurity(ctx: context.Context, main: *[]u8) !void {
         if (member(credential, "last_used_at")) |last_used| {
             if (last_used == .null) try cellText(&rows.writer, "Never", "muted") else try cellValue(&rows.writer, last_used, "mono");
         } else try cellText(&rows.writer, "Never", "muted");
-        try rows.writer.writeAll("<td class=\"muted\">Use enhanced controls to manage</td></tr>");
+        const credential_id = strField(credential, "id");
+        const credential_label = strField(credential, "label");
+        try rows.writer.writeAll("<td class=\"cell-actions\"><div class=\"table-actions\"><button type=\"button\" class=\"button button-small\" data-action=\"rename\" data-id=\"");
+        try web_html.attribute(&rows.writer, credential_id);
+        try rows.writer.writeAll("\">Rename</button><button type=\"button\" class=\"button button-small button-danger\" data-action=\"revoke\" data-id=\"");
+        try web_html.attribute(&rows.writer, credential_id);
+        try rows.writer.writeAll("\" data-label=\"");
+        try web_html.attribute(&rows.writer, credential_label);
+        try rows.writer.writeAll("\">Revoke</button></div></td></tr>");
     }
     try replaceElementInner(ctx.gpa, main, "passkeys-body", "tbody", rows.written());
     var count_buffer: [32]u8 = undefined;
@@ -1028,6 +1109,8 @@ test "every authenticated page has a useful server-rendered empty state" {
         if (std.mem.eql(u8, path, "/docker.html")) {
             try std.testing.expect(std.mem.indexOf(u8, output.written(), "&lt;script&gt;alert(1)&lt;/script&gt;") != null);
             try std.testing.expect(std.mem.indexOf(u8, output.written(), "<script>alert(1)</script>") == null);
+            try std.testing.expect(std.mem.indexOf(u8, output.written(), "data-select-container") != null);
+            try std.testing.expect(std.mem.indexOf(u8, output.written(), "data-container-action") != null);
         }
     }
 }

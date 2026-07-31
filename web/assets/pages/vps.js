@@ -389,5 +389,4 @@
   }
 
   document.addEventListener("cloudio:reload", loadAll);
-  loadAll();
 })();

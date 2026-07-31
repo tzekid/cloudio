@@ -1,6 +1,6 @@
 # Server-first reliability milestone
 
-Status: accepted for implementation
+Status: complete
 
 ## Outcome
 
@@ -27,6 +27,13 @@ first HTML response. Existing JSON clients may run only after an explicit user
 action such as refresh, filtering, opening details, or mutation. The existing
 HTMX port remains the owner of their eventual removal.
 
+Focused HTMX fragments were reconsidered during implementation. Each filter
+already has a complete, canonical GET response, while provider recollection is
+already an explicit action. Adding fragment routes in this tranche would create
+a second response representation without eliminating a request, so ordinary
+navigation is the smaller and faster implementation. HTMX remains appropriate
+when a later measured flow benefits from a local update.
+
 Do not add a client state store, hydration format, embedded JSON bootstrap,
 component framework, new database table, or new background process.
 
@@ -47,22 +54,34 @@ component framework, new database table, or new background process.
 
 ## Definition of done
 
-- [ ] Dashboard, Apps, Routes, DNS, VPS, Docker, Audit, Security, and Settings
+- [x] Dashboard, Apps, Routes, DNS, VPS, Docker, Audit, Security, and Settings
       return useful HTML before JavaScript executes.
-- [ ] No authenticated first view performs a `fetch` or XHR before an explicit
+- [x] No authenticated first view performs a `fetch` or XHR before an explicit
       user action.
-- [ ] No first view contains a loading placeholder for server-known state.
-- [ ] Server-rendered operational controls remain available after removing the
+- [x] No first view contains a loading placeholder for server-known state.
+- [x] Server-rendered operational controls remain available after removing the
       automatic reads.
-- [ ] Dashboard and Audit GET forms work with JavaScript disabled and preserve
+- [x] Dashboard and Audit GET forms work with JavaScript disabled and preserve
       their canonical query state.
-- [ ] Repeated state changes prove rendered data changes, not merely selected
+- [x] Repeated state changes prove rendered data changes, not merely selected
       control values.
-- [ ] Passkey setup/login, logout, CSP, CSRF/origin enforcement, and existing
+- [x] Passkey setup/login, logout, CSP, CSRF/origin enforcement, and existing
       mutation safeguards remain unchanged.
-- [ ] The real-browser gate fails on console errors, page errors, startup API
+- [x] The real-browser gate fails on console errors, page errors, startup API
       requests, or missing native controls.
-- [ ] Debug and ReleaseSafe checks pass.
+- [x] Debug and ReleaseSafe checks pass.
+
+## Acceptance evidence
+
+- `zig build check -Doptimize=Debug`
+- `zig build check -Doptimize=ReleaseSafe`
+- `CLOUDIO_CHROMIUM_PATH=/path/to/chromium zig build browser-smoke -Doptimize=Debug`
+
+The browser fixture uses an isolated SQLite database and loopback server. It
+enrolls a virtual passkey, exercises login and logout, visits all nine private
+pages with JavaScript enabled and disabled, rejects an unsafe request without a
+CSRF token, measures startup fetch/XHR traffic, and proves native Dashboard and
+Audit GET transitions including Audit 50 -> 100 -> 50 rendered row changes.
 
 ## Explicitly deferred
 

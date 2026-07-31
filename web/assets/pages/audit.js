@@ -7,7 +7,6 @@
   const auditBody = c.byId("audit-body");
   const limit = c.byId("audit-limit");
   const autoRefresh = c.byId("audit-auto");
-  const reloadButton = c.byId("reload-audit");
   const updated = c.byId("audit-updated");
   const count = c.byId("audit-count");
 
@@ -110,13 +109,6 @@
     if (replacement) replacement.focus();
   });
 
-  reloadButton.addEventListener("click", function () {
-    c.withBusy(reloadButton, "Loading…", load);
-  });
-  reloadButton.closest("form").addEventListener("submit", function (event) {
-    event.preventDefault();
-  });
-  limit.addEventListener("change", load);
   autoRefresh.addEventListener("change", function () {
     if (autoRefresh.checked) {
       timer = window.setInterval(load, 10000);
@@ -129,5 +121,4 @@
   window.addEventListener("pagehide", function () {
     if (timer) window.clearInterval(timer);
   }, { once: true });
-  load();
 })();

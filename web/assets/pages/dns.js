@@ -4,9 +4,7 @@
   const c = window.cloudio;
   c.mount({ title: "DNS", active: "dns" });
 
-  const domainForm = c.byId("domain-form");
   const domainInput = c.byId("domain");
-  const loadButton = c.byId("load-domain");
   const sourceNote = c.byId("source-note");
   const recordsBody = c.byId("records-body");
   const recordCount = c.byId("record-count");
@@ -380,14 +378,6 @@
   c.byId("https-off").addEventListener("click", function (event) {
     setHttps("off", event.currentTarget);
   });
-  domainForm.addEventListener("submit", function (event) {
-    event.preventDefault();
-    c.withBusy(loadButton, "Loading…", loadRecords);
-  });
   document.addEventListener("cloudio:reload", loadRecords);
-
-  (async function initialize() {
-    await loadInventoryDomains();
-    await loadRecords();
-  })();
+  setWriteAvailability(false);
 })();

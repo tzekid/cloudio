@@ -97,7 +97,7 @@
   function selectContainer(name) {
     selected = name;
     logsTarget.textContent = "Container: " + name;
-    renderContainers();
+    if (containerRows.length) renderContainers();
     loadLogs();
   }
 
@@ -178,5 +178,4 @@
     if (selected) loadLogs();
   });
   document.addEventListener("cloudio:reload", loadContainers);
-  loadContainers();
 })();

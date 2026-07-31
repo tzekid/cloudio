@@ -89,6 +89,24 @@ for (const relativePath of ["web/assets/app.js", "web/assets/passkeys.js", ...pa
   check(syntax.status === 0, `${relativePath}: JavaScript syntax check failed\n${syntax.stderr.trim()}`);
 }
 
+const prohibitedStartupReads = new Map([
+  ["dashboard.js", "load"],
+  ["apps.js", "loadApps"],
+  ["routes.js", "loadRoutes"],
+  ["vps.js", "loadAll"],
+  ["docker.js", "loadContainers"],
+  ["audit.js", "load"],
+  ["security.js", "load"],
+]);
+for (const [script, functionName] of prohibitedStartupReads) {
+  const source = read(`web/assets/pages/${script}`);
+  const escaped = functionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const startupCall = new RegExp(`\\n\\s*${escaped}\\(\\);\\s*\\n\\}\\)\\(\\);\\s*$`);
+  check(!startupCall.test(source), `${script}: automatic startup read ${functionName}() is forbidden`);
+}
+const dnsSource = read("web/assets/pages/dns.js");
+check(!/async function initialize\(\)[\s\S]*loadRecords\(\)/.test(dnsSource), "dns.js: automatic startup DNS reads are forbidden");
+
 const css = read("web/assets/app.css");
 check(css.includes(":focus-visible"), "app.css: visible keyboard focus styling is missing");
 check(css.includes("dialog::backdrop"), "app.css: confirmation dialog styling is missing");

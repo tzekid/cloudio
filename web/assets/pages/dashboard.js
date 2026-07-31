@@ -9,7 +9,6 @@
   const domainFilter = c.byId("domain-filter");
   const issuesOnly = c.byId("issues-only");
   const lastRefresh = c.byId("last-refresh");
-  const reloadButton = c.byId("dashboard-reload");
   let requestSequence = 0;
 
   function textWithDetail(primary, detail) {
@@ -130,15 +129,5 @@
     }
   }
 
-  domainFilter.addEventListener("input", c.debounce(load, 250));
-  issuesOnly.addEventListener("change", load);
-  reloadButton.addEventListener("click", function () {
-    c.withBusy(reloadButton, "Reloading…", load);
-  });
-  reloadButton.closest("form").addEventListener("submit", function (event) {
-    event.preventDefault();
-  });
   document.addEventListener("cloudio:reload", load);
-
-  load();
 })();
