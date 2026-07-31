@@ -13,6 +13,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const zbor_mod = zbor_dep.module("zbor");
+    const web_dep = b.dependency("web", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const web_html_mod = web_dep.module("web_html");
 
     const sqlite_c = b.addTranslateC(.{
         .root_source_file = b.path("c/sqlite.h"),
@@ -1137,11 +1142,6 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_refresh_cycle_mod);
 
-    const runtime_events_mod = b.createModule(.{
-        .root_source_file = b.path("src/runtime/events.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
     const runtime_scheduler_mod = b.createModule(.{
         .root_source_file = b.path("src/runtime/scheduler.zig"),
         .target = target,
@@ -1151,7 +1151,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_refresh_cycle", .module = app_refresh_cycle_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "runtime_events", .module = runtime_events_mod },
         },
     });
     linkSqlite(runtime_scheduler_mod);
@@ -1177,7 +1176,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "http", .module = http_mod },
-            .{ .name = "runtime_events", .module = runtime_events_mod },
+            .{ .name = "web_html", .module = web_html_mod },
         },
     });
     linkSqlite(app_serve_mod);
@@ -1670,6 +1669,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_refresh_mod);
     addModuleTest(b, test_step, app_refresh_cycle_mod);
     addModuleTest(b, test_step, app_web_resources_mod);
+    addModuleTest(b, test_step, app_serve_mod);
     addModuleTest(b, test_step, core_config_mod);
     addModuleTest(b, test_step, core_fs_mod);
     addModuleTest(b, test_step, core_json_mod);
@@ -1711,7 +1711,6 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, collector_system_mod);
     addModuleTest(b, test_step, collector_cloudflare_mod);
     addModuleTest(b, test_step, collector_hostinger_mod);
-    addModuleTest(b, test_step, runtime_events_mod);
 
     const architecture_check = b.addSystemCommand(&.{ "sh", "tools/architecture-check.sh" });
     b.step("architecture-check", "Check internal module boundary invariants").dependOn(&architecture_check.step);

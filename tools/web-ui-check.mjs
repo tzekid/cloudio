@@ -70,15 +70,20 @@ check(setupHtml.includes('defer src="/assets/passkeys.js"'), "setup.html: missin
 check(setupHtml.includes('defer src="/assets/pages/setup.js"'), "setup.html: missing deferred setup script");
 
 const appScript = read("web/assets/app.js");
+const pageRenderer = read("src/server/pages.zig");
 check(/href:\s*"\/"/.test(appScript), "app.js: Cloudio brand must link to /");
 check(/"aria-label":\s*"Cloudio dashboard"/.test(appScript), "app.js: Cloudio brand needs an accessible dashboard label");
 check(/function\s+confirmAction/.test(appScript), "app.js: shared confirmation dialog helper is missing");
 check(/function\s+api/.test(appScript), "app.js: shared API wrapper is missing");
+check(/id="app-shell"/.test(pageRenderer), "pages.zig: server-rendered application shell is missing");
+check(/injectPageData/.test(pageRenderer), "pages.zig: server-rendered first-view data adapter is missing");
+check(/web_html\.text/.test(pageRenderer), "pages.zig: dynamic HTML must use context-safe escaping");
 
 const pageScripts = [...authenticatedPages.values(), "login.js", "setup.js"].map((name) => `web/assets/pages/${name}`);
 for (const relativePath of ["web/assets/app.js", "web/assets/passkeys.js", ...pageScripts]) {
   const source = read(relativePath);
   check(!/\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write\s*\(/.test(source), `${relativePath}: unsafe dynamic HTML construction is forbidden`);
+  check(!/\bEventSource\b/.test(source), `${relativePath}: SSE/EventSource is outside the bounded frontend architecture`);
   const syntax = spawnSync(process.execPath, ["--check", join(root, relativePath)], { encoding: "utf8" });
   check(syntax.status === 0, `${relativePath}: JavaScript syntax check failed\n${syntax.stderr.trim()}`);
 }

@@ -17,18 +17,18 @@
         <h2 id="dashboard-filters-title">View controls</h2>
       </div>
       <div class="panel-body">
-        <div class="toolbar">
+        <form class="toolbar" method="get" action="/">
           <div class="field field-grow">
             <label for="domain-filter">Domain filter</label>
-            <input id="domain-filter" type="text" placeholder="example.com" autocomplete="off">
+            <input id="domain-filter" name="domain" type="text" placeholder="example.com" autocomplete="off">
           </div>
           <label class="field-inline" for="issues-only">
-            <input id="issues-only" type="checkbox">
+            <input id="issues-only" name="issues" value="1" type="checkbox">
             Issues only
           </label>
-          <button id="dashboard-reload" type="button">Reload view</button>
+          <button id="dashboard-reload" type="submit">Apply view</button>
           <span id="last-refresh" class="toolbar-meta" aria-live="polite"></span>
-        </div>
+        </form>
       </div>
     </section>
 

@@ -3,7 +3,6 @@ const types = @import("types.zig");
 const apps = @import("handlers/apps.zig");
 const caddy = @import("handlers/caddy.zig");
 const dashboard = @import("handlers/dashboard.zig");
-const events = @import("handlers/events.zig");
 const providers = @import("handlers/providers.zig");
 const refresh = @import("handlers/refresh.zig");
 const authentication = @import("handlers/authentication.zig");
@@ -27,8 +26,6 @@ pub const all = [_]types.Route{
     route("POST", "/api/auth/credentials/verify", authentication.credentialVerify),
     route("PATCH", "/api/auth/credentials/:id", authentication.credentialLabel),
     route("DELETE", "/api/auth/credentials/:id", authentication.credentialRevoke),
-    stream("GET", "/api/events/ping", events.ping),
-    stream("GET", "/api/events/changes", events.changes),
     route("GET", "/api/caddy/routes", caddy.routesGet),
     mutation("POST", "/api/caddy/routes", caddy.routesPost, false),
     mutation("DELETE", "/api/caddy/routes", caddy.routesDelete, true),
@@ -58,28 +55,23 @@ pub const all = [_]types.Route{
     route("GET", "/api/apps/:name/:action", apps.details),
     mutation("POST", "/api/apps/:name/:action", apps.action, true),
     mutation("DELETE", "/api/apps/:name", apps.delete, true),
-    stream("GET", "/api/events/deploy/:name", events.deploy),
 };
 
 fn route(method: []const u8, pattern: []const u8, handler: types.BufferedHandler) types.Route {
-    return .{ .method = method, .pattern = pattern, .handler = .{ .buffered = handler } };
+    return .{ .method = method, .pattern = pattern, .handler = handler };
 }
 
 fn publicRoute(method: []const u8, pattern: []const u8, handler: types.BufferedHandler) types.Route {
-    return .{ .method = method, .pattern = pattern, .handler = .{ .buffered = handler }, .access = .public };
+    return .{ .method = method, .pattern = pattern, .handler = handler, .access = .public };
 }
 
 fn mutation(method: []const u8, pattern: []const u8, handler: types.BufferedHandler, destructive: bool) types.Route {
     return .{
         .method = method,
         .pattern = pattern,
-        .handler = .{ .buffered = handler },
+        .handler = handler,
         .mutation = if (destructive) .destructive else .idempotent,
     };
-}
-
-fn stream(method: []const u8, pattern: []const u8, handler: types.StreamHandler) types.Route {
-    return .{ .method = method, .pattern = pattern, .handler = .{ .stream = handler } };
 }
 
 test "route table distinguishes match method miss and named params" {

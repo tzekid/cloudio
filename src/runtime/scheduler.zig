@@ -3,7 +3,6 @@ const app_maintenance = @import("app_maintenance");
 const app_refresh_cycle = @import("app_refresh_cycle");
 const core_config = @import("core_config");
 const db_store = @import("db_store");
-const runtime_events = @import("runtime_events");
 
 pub const Context = struct {
     io: std.Io,
@@ -31,7 +30,6 @@ fn run(ctx: Context) void {
             std.debug.print("cloudio scheduled refresh failed: {s}\n", .{@errorName(err)});
             continue;
         };
-        _ = runtime_events.publishRefresh();
         if (!ctx.config.storage_auto_prune) continue;
         const interval_seconds: u64 = @as(u64, ctx.config.maintenance_interval_hours) * 60 * 60;
         if (maintenance_elapsed_seconds < interval_seconds) continue;

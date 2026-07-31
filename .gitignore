@@ -9,4 +9,3 @@ cloudio.local.toml
 zig-cache/
 zig-out/
 .zig-cache/
-zig-pkg/

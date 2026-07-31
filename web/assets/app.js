@@ -135,9 +135,11 @@
     const title = el("h2", { id: "confirm-dialog-title", className: "dialog-title" });
     const message = el("div", { className: "dialog-body" });
     const cancel = button("Cancel", {
+      type: "submit",
       attrs: { value: "cancel", autofocus: true },
     });
     const confirm = button("Confirm", {
+      type: "submit",
       kind: "primary",
       attrs: { value: "confirm" },
     });
@@ -162,6 +164,62 @@
     const active = opts.active || (NAV_ITEMS.find(function (item) {
       return (item.paths || [item.href]).includes(path);
     }) || {}).id;
+
+    const existingShell = byId("app-shell");
+    if (existingShell) {
+      const sidebar = byId("primary-sidebar");
+      const menu = existingShell.querySelector(".menu-button");
+      const scrim = document.querySelector(".sidebar-scrim");
+      const titlebarActions = existingShell.querySelector(".titlebar-actions");
+      const refresh = byId("refresh-data-button");
+      const existingDialog = document.querySelector("dialog");
+      if (existingDialog) existingDialog.remove();
+      document.body.appendChild(createDialog());
+
+      function setExistingMenu(open) {
+        sidebar.dataset.open = String(open);
+        scrim.dataset.open = String(open);
+        menu.setAttribute("aria-expanded", String(open));
+        if (open) {
+          const current = sidebar.querySelector('[aria-current="page"]') || sidebar.querySelector("a");
+          if (current) current.focus();
+        } else {
+          menu.focus();
+        }
+      }
+
+      menu.addEventListener("click", function () {
+        setExistingMenu(sidebar.dataset.open !== "true");
+      });
+      scrim.addEventListener("click", function () {
+        setExistingMenu(false);
+      });
+      sidebar.addEventListener("click", function (event) {
+        if (event.target.closest("a") && window.matchMedia("(max-width: 720px)").matches) {
+          sidebar.dataset.open = "false";
+          scrim.dataset.open = "false";
+          menu.setAttribute("aria-expanded", "false");
+        }
+      });
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && sidebar.dataset.open === "true") setExistingMenu(false);
+      });
+
+      if (refresh) {
+        refresh.addEventListener("click", async function () {
+          await withBusy(refresh, "Refreshing…", async function () {
+            try {
+              await api("/api/refresh", { method: "POST" });
+              toast("Data refresh completed.", "success");
+              document.dispatchEvent(new CustomEvent("cloudio:reload"));
+            } catch (error) {
+              toast("Refresh failed: " + error.message, "danger");
+            }
+          });
+        });
+      }
+      return { content: content, titlebarActions: titlebarActions };
+    }
 
     const navList = el("ul");
     NAV_ITEMS.forEach(function (item) {
@@ -433,6 +491,11 @@
 
   function tableEmpty(target, colspan, message, loading) {
     const tbody = typeof target === "string" ? byId(target) : target;
+    if (loading &&
+        document.body.classList.contains("server-rendered") &&
+        !tbody.querySelector(".loading-state")) {
+      return;
+    }
     const cell = el("td", {
       className: "empty-state" + (loading ? " loading-state" : ""),
       text: message,
@@ -520,15 +583,6 @@
     };
   }
 
-  function watchChanges(callback) {
-    if (!window.EventSource) return function () {};
-    const source = new EventSource("/api/events/changes");
-    source.addEventListener("refresh", callback);
-    return function () {
-      source.close();
-    };
-  }
-
   function formatTime(value) {
     if (!value) return "";
     const date = new Date(value);
@@ -569,7 +623,6 @@
     statusTone: statusTone,
     tableEmpty: tableEmpty,
     toast: toast,
-    watchChanges: watchChanges,
     withBusy: withBusy,
   };
 })();

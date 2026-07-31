@@ -17,23 +17,23 @@
         <h2 id="audit-filters-title">View controls</h2>
       </div>
       <div class="panel-body">
-        <div class="toolbar">
+        <form class="toolbar" method="get" action="/audit.html">
           <div class="field">
             <label for="audit-limit">Limit</label>
-            <select id="audit-limit">
+            <select id="audit-limit" name="limit">
               <option>50</option>
               <option selected>100</option>
               <option>200</option>
               <option>500</option>
             </select>
           </div>
-          <button id="reload-audit" type="button">Reload entries</button>
+          <button id="reload-audit" type="submit">Reload entries</button>
           <label class="field-inline" for="audit-auto">
             <input id="audit-auto" type="checkbox">
             Auto-refresh every 10s
           </label>
           <span id="audit-updated" class="toolbar-meta" aria-live="polite"></span>
-        </div>
+        </form>
       </div>
     </section>
 

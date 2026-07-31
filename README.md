@@ -16,33 +16,38 @@ CLOUDIO_AUTH_ORIGIN=http://localhost:9331 \
 For local development, run `cloudio auth bootstrap --ttl 10m`, open the
 one-use link, and create a passkey. Production must configure its exact HTTPS
 origin and RP ID before bootstrap. Pages: dashboard, apps
-(register/deploy/rollback with live SSE logs), Caddy routes (desired state,
+(register/deploy/rollback with bounded log polling), Caddy routes (desired state,
 preview, validate + apply + reload), Cloudflare DNS, VPS/firewall, Docker,
 audit, and passkey security.
 
-The web UI is dependency-free HTML, CSS, and JavaScript. All authenticated
-pages use the same responsive shell, request wrapper, status vocabulary, and
-confirmation dialog. Run `zig build web-check` for the frontend structural and
+Authenticated pages are rendered on demand with their useful current state,
+native links, and query forms already present. The small dependency-free
+JavaScript layer preserves the same responsive shell and adds mutation
+controls, passkey browser ceremonies, polling, and feedback without owning the
+first view. Run `zig build web-check` for the frontend structural and
 JavaScript syntax gate; it is also included in `zig build check`.
 
 The backend keeps protocol, policy, and domain work separate:
 
+- `web.zig` supplies the pinned context-safe HTML writer used by the
+  server-rendered page adapter.
 - `src/http` owns bounded HTTP/1.1 parsing, routing, responses, static files,
-  SSE framing, and connection lifecycle, with no Cloudio dependencies.
+  and connection lifecycle, with no Cloudio dependencies.
 - `src/server` owns the single route table, default-deny session/CSRF/
-  idempotency policy pipeline, and grouped thin handlers.
+  idempotency policy pipeline, authenticated page rendering, and grouped thin
+  handlers.
 - `src/security/passkeys.zig` is the narrow boundary around the pinned
   WebAuthn verifier; `src/app/authentication.zig` owns ceremonies and sessions.
 - `src/runtime/scheduler.zig` owns background refresh and retention scheduling.
 - `src/db/repositories` owns concrete SQL by domain; `db/store.zig` is now a
   small compatibility facade.
 - `packages/cloudflare` and `packages/hostinger` are independently buildable
-  Zig 0.16 libraries and the canonical source for their public mirrors.
+  pinned-Zig libraries and the canonical source for their public mirrors.
 
 Run the complete integrated and standalone-package gate with:
 
 ```sh
-/usr/bin/zig build check
+zig build --system zig-pkg check
 ```
 
 Platform and passkey config lives in `cloudio.local.toml`:

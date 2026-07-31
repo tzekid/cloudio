@@ -8,13 +8,17 @@ The POC has moved the current data-gathering paths out of the original CLI-shape
 
 `src/http` is the dependency-clean inbound HTTP package. It owns bounded
 request parsing, literal/named-segment routing, 404/405 decisions, responses,
-static files, SSE framing, and socket lifecycle. `src/server` owns Cloudio's
-single direct-handler route table and fixed authentication, actor,
-idempotency, and confirmation pipeline. Grouped handlers delegate provider,
-process, and SQL work through application services. `src/runtime/scheduler.zig`
-owns background refresh and retention scheduling independently of the
-listener. The former `app/serve.zig` enum/switch/runtime god file no longer
-exists.
+static files, and socket lifecycle. `src/server` owns Cloudio's single
+direct-handler route table and fixed authentication, actor, idempotency, and
+confirmation pipeline. Its page adapter uses pinned `web.zig` context-safe
+writers to turn existing app-service JSON contracts into complete
+authenticated first views. JavaScript enhances those views with passkey
+ceremonies, mutation controls, and bounded deploy-log polling; no initial
+state, SSE, WebSocket, or client-rendered shell is required. Grouped handlers
+delegate provider, process, and SQL work through application services.
+`src/runtime/scheduler.zig` owns background refresh and retention scheduling
+independently of the listener. The former `app/serve.zig`
+enum/switch/runtime god file no longer exists.
 
 Typed platform mutations require an `Idempotency-Key`; `app/writes.zig`
 atomically claims and replays keys, rejects mismatched reuse, and records
@@ -26,7 +30,8 @@ planner.
 
 `packages/cloudflare` and `packages/hostinger` are canonical monorepo packages
 for the public `cloudflare-zig` and `hostinger-zig` mirrors. Each has an
-independent Zig 0.16 build, MIT license, changelog, CI, a small public root, raw
+independent build pinned to the repository's exact qualified Zig master
+snapshot, an MIT license, changelog, CI, a small public root, raw
 request escape hatch, typed routes/models, and provider-specific auth. Cloudio
 compiles directly against their local sources. Publishing is one-way from a
 history-preserving `git subtree split`; standalone repositories are never
@@ -81,7 +86,6 @@ src/
     response.zig           # buffered response framing and status text
     server.zig             # listener and connection lifecycle
     static.zig             # safe static files and MIME mapping
-    sse.zig                # server-sent event framing
   net/
     http.zig               # std.http wrapper, headers, status, body limits
     pagination.zig         # cursor/page handling and collection envelopes

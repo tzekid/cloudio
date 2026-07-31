@@ -135,9 +135,10 @@
   reloadButton.addEventListener("click", function () {
     c.withBusy(reloadButton, "Reloading…", load);
   });
+  reloadButton.closest("form").addEventListener("submit", function (event) {
+    event.preventDefault();
+  });
   document.addEventListener("cloudio:reload", load);
 
-  const stopWatching = c.watchChanges(load);
-  window.addEventListener("pagehide", stopWatching, { once: true });
   load();
 })();

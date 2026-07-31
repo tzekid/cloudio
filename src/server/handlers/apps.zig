@@ -3,7 +3,6 @@ const app_deploy = @import("app_deploy");
 const app_system_control = @import("app_system_control");
 const core_json = @import("core_json");
 const http = @import("http");
-const runtime_events = @import("runtime_events");
 const common = @import("../common.zig");
 const context = @import("../context.zig");
 
@@ -28,9 +27,12 @@ pub fn details(ctx: context.Context, request: http.Request, params: http.Params,
         return 200;
     }
     if (std.mem.eql(u8, operation, "log")) {
-        const raw = request.query("deploy_id") orelse return common.badRequest(writer);
-        const deploy_id = std.fmt.parseInt(i64, raw, 10) catch return common.badRequest(writer);
-        try app_deploy.readDeployLog(context.deploy(ctx), name, deploy_id, writer);
+        if (request.query("deploy_id")) |raw| {
+            const deploy_id = std.fmt.parseInt(i64, raw, 10) catch return common.badRequest(writer);
+            try app_deploy.readDeployLog(context.deploy(ctx), name, deploy_id, writer);
+        } else {
+            try app_deploy.readLatestDeployLog(context.deploy(ctx), name, writer);
+        }
         return 200;
     }
     return error.UnknownRoute;
@@ -41,7 +43,6 @@ pub fn action(ctx: context.Context, request: http.Request, params: http.Params, 
     const operation = params.get("action") orelse return common.badRequest(writer);
     if (std.mem.eql(u8, operation, "deploy")) {
         try app_deploy.deploy(context.deploy(ctx), name, .{}, writer);
-        _ = runtime_events.publishRefresh();
         return 200;
     }
     if (std.mem.eql(u8, operation, "rollback")) {

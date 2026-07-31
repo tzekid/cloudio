@@ -5,6 +5,7 @@ const http = @import("http");
 const auth = @import("auth.zig");
 const common = @import("common.zig");
 const context = @import("context.zig");
+const pages = @import("pages.zig");
 const rate_limit = @import("rate_limit.zig");
 const routes = @import("routes.zig");
 const types = @import("types.zig");
@@ -67,6 +68,27 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
                 "text/html; charset=utf-8",
                 security_headers ++ "Location: /login.html\r\n",
                 "",
+            );
+            return;
+        }
+        if (authenticated and pages.isPagePath(path)) {
+            if (!std.mem.eql(u8, request.method, "GET") and !std.mem.eql(u8, request.method, "HEAD")) {
+                try writeJson(out, 405, "{\"error\":\"method_not_allowed\"}\n");
+                return;
+            }
+            var page_body = std.Io.Writer.Allocating.init(ctx.gpa);
+            defer page_body.deinit();
+            _ = pages.render(ctx, request, path, &page_body.writer) catch |err| {
+                std.debug.print("cloudio page {s} failed: {s}\n", .{ path, @errorName(err) });
+                try writeJson(out, 500, "{\"error\":\"page_unavailable\"}\n");
+                return;
+            };
+            try http.response.write(
+                out,
+                200,
+                "text/html; charset=utf-8",
+                security_headers,
+                if (std.mem.eql(u8, request.method, "HEAD")) "" else page_body.written(),
             );
             return;
         }
@@ -199,55 +221,46 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
         }
     }
 
-    switch (route.handler) {
-        .stream => |handler| {
-            handler(request_ctx, request, matched.params, out) catch |err| {
-                std.debug.print("cloudio stream {s} failed: {s}\n", .{ route.pattern, @errorName(err) });
+    var body = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer body.deinit();
+    var extra_headers = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer extra_headers.deinit();
+    try extra_headers.writer.writeAll(security_headers);
+    const status_code = route.handler(
+        request_ctx,
+        request,
+        matched.params,
+        &body.writer,
+        &extra_headers.writer,
+    ) catch |err| {
+        const mapped = common.mapApiError(err);
+        if (mapped.status >= 500) {
+            std.debug.print("cloudio handler {s} failed: {s}\n", .{ route.pattern, @errorName(err) });
+        }
+        if (route.mutation != .none) {
+            app_writes.completeMutation(ctx.db, idempotency_key, mapped.status, mapped.body) catch |complete_err| {
+                std.debug.print("cloudio idempotency completion failed: {s}\n", .{@errorName(complete_err)});
             };
-        },
-        .buffered => |handler| {
-            var body = std.Io.Writer.Allocating.init(ctx.gpa);
-            defer body.deinit();
-            var extra_headers = std.Io.Writer.Allocating.init(ctx.gpa);
-            defer extra_headers.deinit();
-            try extra_headers.writer.writeAll(security_headers);
-            const status_code = handler(
-                request_ctx,
-                request,
-                matched.params,
-                &body.writer,
-                &extra_headers.writer,
-            ) catch |err| {
-                const mapped = common.mapApiError(err);
-                if (mapped.status >= 500) {
-                    std.debug.print("cloudio handler {s} failed: {s}\n", .{ route.pattern, @errorName(err) });
-                }
-                if (route.mutation != .none) {
-                    app_writes.completeMutation(ctx.db, idempotency_key, mapped.status, mapped.body) catch |complete_err| {
-                        std.debug.print("cloudio idempotency completion failed: {s}\n", .{@errorName(complete_err)});
-                    };
-                }
-                try http.response.write(
-                    out,
-                    mapped.status,
-                    "application/json",
-                    security_headers,
-                    mapped.body,
-                );
-                return;
-            };
-            if (route.mutation != .none) {
-                try app_writes.completeMutation(ctx.db, idempotency_key, status_code, body.written());
-            }
-            try http.response.write(
-                out,
-                status_code,
-                "application/json",
-                extra_headers.written(),
-                body.written(),
-            );
-        },
+        }
+        try http.response.write(
+            out,
+            mapped.status,
+            "application/json",
+            security_headers,
+            mapped.body,
+        );
+        return;
+    };
+    if (route.mutation != .none) {
+        try app_writes.completeMutation(ctx.db, idempotency_key, status_code, body.written());
     }
+    try http.response.write(
+        out,
+        status_code,
+        "application/json",
+        extra_headers.written(),
+        body.written(),
+    );
 }
 
 fn appAuthContext(ctx: context.Context) app_authentication.Context {

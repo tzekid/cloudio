@@ -22,7 +22,6 @@
 
   let apps = [];
   let selectedApp = null;
-  let stream = null;
   let pollTimer = null;
 
   function toggleSource() {
@@ -299,40 +298,13 @@
     stopLiveLog();
     deployLog.textContent = "";
     deployLog.dataset.state = "loading";
-    logStatus.textContent = "Live deploy";
-    if (!window.EventSource) {
-      pollLog(name);
-      return;
-    }
-    const source = new EventSource("/api/events/deploy/" + encodeURIComponent(name));
-    stream = source;
-    source.addEventListener("log", function (event) {
-      if (stream !== source) return;
-      deployLog.textContent += event.data + "\n";
-      deployLog.dataset.state = "ready";
-      deployLog.scrollTop = deployLog.scrollHeight;
-    });
-    source.addEventListener("done", function () {
-      if (stream !== source) return;
-      source.onerror = null;
-      source.close();
-      stream = null;
-      logStatus.textContent = "Finished";
-      loadApps();
-      if (selectedApp) loadDetail(selectedApp);
-    });
-    source.onerror = function () {
-      if (stream !== source) return;
-      source.close();
-      stream = null;
-      logStatus.textContent = "Live stream unavailable · polling";
-      pollLog(name);
-    };
+    logStatus.textContent = "Deploying · polling";
+    pollLog(name);
   }
 
   function pollLog(name) {
     window.clearInterval(pollTimer);
-    pollTimer = window.setInterval(async function () {
+    async function update() {
       try {
         const data = await c.api("/api/apps/" + encodeURIComponent(name) + "/log");
         if (data && data.log) {
@@ -340,18 +312,22 @@
           deployLog.dataset.state = "ready";
           deployLog.scrollTop = deployLog.scrollHeight;
         }
+        if (data && data.status && data.status !== "running" && data.status !== "pending") {
+          window.clearInterval(pollTimer);
+          pollTimer = null;
+          logStatus.textContent = "Finished · " + data.status;
+          await loadApps();
+          if (selectedApp) await loadDetail(selectedApp);
+        }
       } catch (_) {
         return;
       }
-    }, 2000);
+    }
+    update();
+    pollTimer = window.setInterval(update, 2000);
   }
 
   function stopLiveLog() {
-    if (stream) {
-      stream.onerror = null;
-      stream.close();
-      stream = null;
-    }
     if (pollTimer) {
       window.clearInterval(pollTimer);
       pollTimer = null;

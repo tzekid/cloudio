@@ -113,6 +113,9 @@
   reloadButton.addEventListener("click", function () {
     c.withBusy(reloadButton, "Loading…", load);
   });
+  reloadButton.closest("form").addEventListener("submit", function (event) {
+    event.preventDefault();
+  });
   limit.addEventListener("change", load);
   autoRefresh.addEventListener("change", function () {
     if (autoRefresh.checked) {

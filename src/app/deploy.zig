@@ -353,7 +353,7 @@ fn pickExecutable(io: Io, a: Allocator, dir_path: []const u8, app_name: []const 
     while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
         const st = dir.statFile(io, entry.name, .{}) catch continue;
-        if (@intFromEnum(st.permissions) & 0o111 == 0) continue;
+        if (@backingInt(st.permissions) & 0o111 == 0) continue;
         count += 1;
         const copy = try a.dupe(u8, entry.name);
         found = copy;
@@ -375,7 +375,7 @@ const PipelineState = struct {
     release_installed: bool = false,
     caddy_updated: bool = false,
     /// When set, runLogged flushes the accumulated log here after every step
-    /// so SSE tailing sees progress while the deploy is still running.
+    /// so bounded log polling sees progress while the deploy is still running.
     log_path: ?[]const u8 = null,
 };
 
@@ -767,6 +767,40 @@ pub fn readDeployLog(ctx: Context, app_name: []const u8, deploy_id: i64, writer:
     try writer.writeAll("}\n");
 }
 
+/// Write the current/latest deploy log and status for bounded client polling.
+pub fn readLatestDeployLog(ctx: Context, app_name: []const u8, writer: anytype) !void {
+    var arena_state = std.heap.ArenaAllocator.init(ctx.gpa);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const app = (try loadApp(ctx, a, app_name)) orelse return Error.AppNotFound;
+
+    const stmt = try ctx.db.prepare(
+        "SELECT id, status, log_path FROM deploys WHERE app_id = ? ORDER BY id DESC LIMIT 1",
+    );
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    if (sqlite.sqlite3_bind_int64(stmt, 1, app.id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+    const rc = sqlite.sqlite3_step(stmt);
+    if (rc == sqlite.SQLITE_DONE) {
+        try writer.writeAll("{\"kind\":\"deploy_log\",\"deploy_id\":null,\"status\":\"none\",\"log\":\"\"}\n");
+        return;
+    }
+    if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
+    const deploy_id = sqlite.sqlite3_column_int64(stmt, 0);
+    const status = statusSlice(columnText(stmt, 1) orelse "unknown");
+    const log_path = columnText(stmt, 2) orelse "";
+    var contents: []const u8 = "";
+    if (log_path.len > 0) {
+        contents = Io.Dir.cwd().readFileAlloc(ctx.io, log_path, a, .limited(8 * 1024 * 1024)) catch "";
+    }
+    if (contents.len > max_log_tail_bytes) contents = contents[contents.len - max_log_tail_bytes ..];
+
+    try writer.writeAll("{\"kind\":\"deploy_log\",");
+    try core_json.writeIntField(writer, "deploy_id", deploy_id, true);
+    try core_json.writeStringField(writer, "status", status, true);
+    try core_json.writeStringField(writer, "log", contents, false);
+    try writer.writeAll("}\n");
+}
+
 /// Status of the most recent deploy for an app as a static string
 /// ("running", "ok", ...); null when the app has no deploys.
 pub fn latestDeployStatus(ctx: Context, app_name: []const u8) !?[]const u8 {
@@ -1100,7 +1134,7 @@ fn testWriteExecutable(gpa: Allocator, dir: []const u8, name: []const u8, conten
     try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = path, .data = contents });
     const f = try Io.Dir.cwd().openFile(std.testing.io, path, .{});
     defer f.close(std.testing.io);
-    try f.setPermissions(std.testing.io, @enumFromInt(0o755));
+    try f.setPermissions(std.testing.io, @fromBackingInt(@intCast(0o755)));
 }
 
 fn testQueryInt(db: *Db, sql: []const u8) !i64 {
@@ -1256,6 +1290,11 @@ test "full prebuilt deploy: releases, symlink, unit, deploys row, caddy route" {
     out.clearRetainingCapacity();
     try readDeployLog(ctx, "demo", 1, &out.writer);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"kind\":\"deploy_log\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "toolchain: prebuilt") != null);
+    out.clearRetainingCapacity();
+    try readLatestDeployLog(ctx, "demo", &out.writer);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"deploy_id\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"status\":\"ok\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "toolchain: prebuilt") != null);
 
     // Deploy history endpoint sees the deploy.
