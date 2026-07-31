@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings · Cloudio</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/app.js"></script>
+  <script defer src="/assets/pages/settings.js"></script>
+</head>
+<body>
+  <main id="page-content">
+    <p class="page-intro">Choose how Cloudio looks in this browser.</p>
+
+    <section class="panel settings-panel" aria-labelledby="appearance-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="appearance-title">Appearance</h2>
+          <p>This setting applies to this browser.</p>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div id="settings-status" class="notice hidden" aria-live="polite"></div>
+        <form class="settings-form" method="post" action="/settings/theme">
+          <input id="settings-csrf" name="csrf_token" type="hidden" value="">
+          <fieldset class="theme-picker">
+            <legend>Appearance</legend>
+            <label class="theme-choice" for="theme-light">
+              <input id="theme-light" name="theme" type="radio" value="light">
+              <span><strong>Light</strong><small>Dark mode off. Cloudio's default.</small></span>
+            </label>
+            <label class="theme-choice" for="theme-dark">
+              <input id="theme-dark" name="theme" type="radio" value="dark">
+              <span><strong>Dark</strong><small>Dark mode on.</small></span>
+            </label>
+            <label class="theme-choice" for="theme-system">
+              <input id="theme-system" name="theme" type="radio" value="system">
+              <span><strong>Device</strong><small>Follow this device's light or dark appearance.</small></span>
+            </label>
+          </fieldset>
+          <button class="button-primary" type="submit">Save appearance</button>
+        </form>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

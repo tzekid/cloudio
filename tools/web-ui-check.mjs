@@ -14,6 +14,7 @@ const authenticatedPages = new Map([
   ["docker.html", "docker.js"],
   ["audit.html", "audit.js"],
   ["security.html", "security.js"],
+  ["settings.html", "settings.js"],
 ]);
 const errors = [];
 
@@ -93,6 +94,11 @@ check(css.includes(":focus-visible"), "app.css: visible keyboard focus styling i
 check(css.includes("dialog::backdrop"), "app.css: confirmation dialog styling is missing");
 check(css.includes("@media (max-width: 720px)"), "app.css: mobile navigation breakpoint is missing");
 check(css.includes("@media (prefers-reduced-motion: reduce)"), "app.css: reduced-motion handling is missing");
+check(css.includes("html.theme-light"), "app.css: explicit light palette is missing");
+check(css.includes("html.theme-dark"), "app.css: explicit dark palette is missing");
+check(css.includes("html.theme-system"), "app.css: device palette is missing");
+const componentCss = css.slice(css.indexOf("\n* {"));
+check(!/(?:#[0-9a-f]{3,8}|rgba?\()/i.test(componentCss), "app.css: component colors must use semantic palette tokens");
 check(!existsSync(join(webRoot, "assets", "datastar.js")), "web/assets/datastar.js must be removed");
 
 if (errors.length) {

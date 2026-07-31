@@ -74,6 +74,11 @@ host-only `__Host-cloudio_session` cookie with `Secure`, `HttpOnly`,
 `SameSite=Strict`, and `Path=/`. Unsafe requests additionally require exact
 `Origin` and a session-bound `X-Cloudio-CSRF` token.
 
+The separate `__Host-cloudio_theme` preference cookie is not authentication
+state. It is host-only, `Secure`, `HttpOnly`, and `SameSite=Strict`, and remains
+in the browser when the session is cleared so the login page keeps the chosen
+appearance.
+
 ## Lost-all-passkeys recovery
 
 Recovery requires shell access and a new backup path:

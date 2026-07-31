@@ -5,9 +5,11 @@ const http = @import("http");
 const auth = @import("auth.zig");
 const common = @import("common.zig");
 const context = @import("context.zig");
+const form = @import("form.zig");
 const pages = @import("pages.zig");
 const rate_limit = @import("rate_limit.zig");
 const routes = @import("routes.zig");
+const theme = @import("theme.zig");
 const types = @import("types.zig");
 
 const web_root = "web";
@@ -50,6 +52,7 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
     };
 
     const secure_origin = std.mem.startsWith(u8, ctx.config.auth_origin, "https://");
+    const preference = theme.fromRequest(request, secure_origin);
     const raw_session_token = auth.sessionToken(request, secure_origin);
     const session_value: ?app_authentication.Session = if (raw_session_token) |token|
         try app_authentication.validateSession(appAuthContext(ctx), token)
@@ -58,6 +61,12 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
     defer if (session_value) |session| session.deinit(ctx.gpa);
     const authenticated = session_value != null;
     const path = request.path();
+    var request_ctx = ctx;
+    request_ctx.response_headers = security_headers;
+    if (session_value) |session| {
+        request_ctx.auth_user_id = session.user_id;
+        request_ctx.auth_csrf_token = session.csrf_token;
+    }
 
     if (!std.mem.startsWith(u8, path, "/api/")) {
         const bootstrap_active = try ctx.db.auth().bootstrapActive(nowSeconds());
@@ -71,6 +80,35 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
             );
             return;
         }
+        if (pages.isPublicPagePath(path)) {
+            if (!std.mem.eql(u8, request.method, "GET") and !std.mem.eql(u8, request.method, "HEAD")) {
+                try writeJson(out, 405, "{\"error\":\"method_not_allowed\"}\n");
+                return;
+            }
+            var page_body = std.Io.Writer.Allocating.init(ctx.gpa);
+            defer page_body.deinit();
+            _ = pages.renderPublic(request_ctx, path, preference, &page_body.writer) catch |err| {
+                std.debug.print("cloudio public page {s} failed: {s}\n", .{ path, @errorName(err) });
+                try writeJson(out, 500, "{\"error\":\"page_unavailable\"}\n");
+                return;
+            };
+            try http.response.write(
+                out,
+                200,
+                "text/html; charset=utf-8",
+                security_headers,
+                if (std.mem.eql(u8, request.method, "HEAD")) "" else page_body.written(),
+            );
+            return;
+        }
+        if (std.mem.eql(u8, path, "/settings/theme")) {
+            if (!std.mem.eql(u8, request.method, "POST")) {
+                try writeJson(out, 405, "{\"error\":\"method_not_allowed\"}\n");
+                return;
+            }
+            try handleThemeSettings(request_ctx, request, secure_origin, preference, out);
+            return;
+        }
         if (authenticated and pages.isPagePath(path)) {
             if (!std.mem.eql(u8, request.method, "GET") and !std.mem.eql(u8, request.method, "HEAD")) {
                 try writeJson(out, 405, "{\"error\":\"method_not_allowed\"}\n");
@@ -78,7 +116,7 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
             }
             var page_body = std.Io.Writer.Allocating.init(ctx.gpa);
             defer page_body.deinit();
-            _ = pages.render(ctx, request, path, &page_body.writer) catch |err| {
+            _ = pages.render(request_ctx, request, path, preference, &page_body.writer) catch |err| {
                 std.debug.print("cloudio page {s} failed: {s}\n", .{ path, @errorName(err) });
                 try writeJson(out, 500, "{\"error\":\"page_unavailable\"}\n");
                 return;
@@ -167,12 +205,6 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
     }
 
     const idempotency_key = request.header("idempotency-key") orelse "";
-    var request_ctx = ctx;
-    request_ctx.response_headers = security_headers;
-    if (session_value) |session| {
-        request_ctx.auth_user_id = session.user_id;
-        request_ctx.auth_csrf_token = session.csrf_token;
-    }
     request_ctx.write_meta = .{
         .actor = if (authenticated) "passkey" else "public-auth",
         .idempotency_key = if (idempotency_key.len == 0) null else idempotency_key,
@@ -263,6 +295,89 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
     );
 }
 
+fn handleThemeSettings(
+    ctx: context.Context,
+    request: http.Request,
+    secure_origin: bool,
+    current: theme.Preference,
+    out: *std.Io.Writer,
+) !void {
+    if (!auth.originMatches(request, ctx.config.auth_origin)) {
+        try writeSettingsError(ctx, request, current, 403, "security", out);
+        return;
+    }
+    if (!form.hasUrlEncodedBody(request)) {
+        try writeSettingsError(ctx, request, current, 400, "request", out);
+        return;
+    }
+
+    var arena = std.heap.ArenaAllocator.init(ctx.gpa);
+    defer arena.deinit();
+    const fields = form.parse(arena.allocator(), request.body) catch {
+        try writeSettingsError(ctx, request, current, 400, "request", out);
+        return;
+    };
+    for (fields.entries) |field| {
+        if (!std.mem.eql(u8, field.name, "csrf_token") and
+            !std.mem.eql(u8, field.name, "theme"))
+        {
+            try writeSettingsError(ctx, request, current, 400, "request", out);
+            return;
+        }
+    }
+    const csrf = fields.get("csrf_token") catch {
+        try writeSettingsError(ctx, request, current, 403, "security", out);
+        return;
+    };
+    if (!auth.constantTimeEqual(csrf, ctx.auth_csrf_token orelse "")) {
+        try writeSettingsError(ctx, request, current, 403, "security", out);
+        return;
+    }
+    const raw_preference = fields.get("theme") catch {
+        try writeSettingsError(ctx, request, current, 400, "theme", out);
+        return;
+    };
+    const next = theme.parse(raw_preference) orelse {
+        try writeSettingsError(ctx, request, current, 400, "theme", out);
+        return;
+    };
+
+    var headers = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer headers.deinit();
+    try headers.writer.writeAll(security_headers);
+    try theme.writeCookie(&headers.writer, secure_origin, next);
+    try headers.writer.writeAll("Location: /settings.html?saved=1\r\n");
+    try http.response.write(out, 303, "text/html; charset=utf-8", headers.written(), "");
+}
+
+fn writeSettingsError(
+    ctx: context.Context,
+    request: http.Request,
+    preference: theme.Preference,
+    status: u16,
+    code: []const u8,
+    out: *std.Io.Writer,
+) !void {
+    var target_buffer: [64]u8 = undefined;
+    const target = try std.fmt.bufPrint(&target_buffer, "/settings.html?error={s}", .{code});
+    const page_request: http.Request = .{
+        .method = "GET",
+        .target = target,
+        .headers = request.headers,
+        .body = "",
+    };
+    var body = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer body.deinit();
+    _ = try pages.render(ctx, page_request, "/settings.html", preference, &body.writer);
+    try http.response.write(
+        out,
+        status,
+        "text/html; charset=utf-8",
+        security_headers,
+        body.written(),
+    );
+}
+
 fn appAuthContext(ctx: context.Context) app_authentication.Context {
     return .{
         .io = ctx.io,
@@ -338,7 +453,68 @@ test "anonymous surface is an explicit allowlist" {
     try std.testing.expect(staticPathIsPublic("/login.html", false));
     try std.testing.expect(!staticPathIsPublic("/assets/app.js", false));
     try std.testing.expect(!staticPathIsPublic("/setup.html", false));
+    try std.testing.expect(!staticPathIsPublic("/settings.html", true));
+    try std.testing.expect(!staticPathIsPublic("/settings/theme", true));
     try std.testing.expect(staticPathIsPublic("/setup.html", true));
     try std.testing.expect(publicApiPath("/api/auth/login/options"));
     try std.testing.expect(!publicApiPath("/api/dashboard"));
+}
+
+test "theme settings post enforces security and returns native PRG" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/tmp/{s}/pipeline-theme.db",
+        .{tmp.sub_path},
+    );
+    defer allocator.free(db_path);
+    var db = try @import("db_store").Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    const ctx: context.Context = .{
+        .io = std.testing.io,
+        .gpa = allocator,
+        .db = &db,
+        .config = .{
+            .domains = &.{},
+            .auth_origin = "https://cloudio.example.test",
+            .auth_rp_id = "cloudio.example.test",
+        },
+        .auth_user_id = "owner",
+        .auth_csrf_token = "known-csrf",
+    };
+    const request: http.Request = .{
+        .method = "POST",
+        .target = "/settings/theme",
+        .headers = &.{
+            .{ .name = "Origin", .value = "https://cloudio.example.test" },
+            .{ .name = "Content-Type", .value = "application/x-www-form-urlencoded" },
+        },
+        .body = "csrf_token=known-csrf&theme=dark",
+    };
+    var success = std.Io.Writer.Allocating.init(allocator);
+    defer success.deinit();
+    try handleThemeSettings(ctx, request, true, .light, &success.writer);
+    try std.testing.expect(std.mem.startsWith(u8, success.written(), "HTTP/1.1 303 See Other\r\n"));
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        success.written(),
+        "Set-Cookie: __Host-cloudio_theme=dark; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000; Secure\r\n",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, success.written(), "Location: /settings.html?saved=1\r\n") != null);
+
+    var denied_request = request;
+    denied_request.headers = &.{
+        .{ .name = "Origin", .value = "https://wrong.example.test" },
+        .{ .name = "Content-Type", .value = "application/x-www-form-urlencoded" },
+    };
+    var denied = std.Io.Writer.Allocating.init(allocator);
+    defer denied.deinit();
+    try handleThemeSettings(ctx, denied_request, true, .light, &denied.writer);
+    try std.testing.expect(std.mem.startsWith(u8, denied.written(), "HTTP/1.1 403 Forbidden\r\n"));
+    try std.testing.expect(std.mem.indexOf(u8, denied.written(), "Set-Cookie:") == null);
+    try std.testing.expect(std.mem.indexOf(u8, denied.written(), "class=\"theme-light\"") != null);
 }

@@ -1,6 +1,6 @@
 # Cloudio Light Theme and Appearance Settings Specification
 
-Status: proposed
+Status: implemented 2026-07-31 (native form path; HTMX enhancement remains tied to the HTMX port)
 
 Scope: all Cloudio HTML surfaces, including login and passkey setup
 

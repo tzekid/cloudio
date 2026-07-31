@@ -10,6 +10,7 @@
     { id: "docker", href: "/docker.html", label: "Docker" },
     { id: "audit", href: "/audit.html", label: "Audit" },
     { id: "security", href: "/security.html", label: "Security" },
+    { id: "settings", href: "/settings.html", label: "Settings" },
   ];
 
   const statusTimers = new WeakMap();

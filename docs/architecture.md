@@ -20,6 +20,15 @@ delegate provider, process, and SQL work through application services.
 independently of the listener. The former `app/serve.zig`
 enum/switch/runtime god file no longer exists.
 
+Appearance remains at the HTTP/rendering edge. `src/server/theme.zig` resolves
+the closed Light/Dark/Device preference from a host-only cookie before any HTML
+response, and the pinned `web.zig` document writer emits its escaped root class
+before the stylesheet. Light is the missing/invalid-state fallback; Device is
+implemented by `prefers-color-scheme`. The authenticated Settings form uses a
+small bounded URL-encoded decoder plus the existing exact-origin/session-CSRF
+policy and native Post/Redirect/Get. It does not add database, domain-service,
+JSON API, or theme-JavaScript state.
+
 Typed platform mutations require an `Idempotency-Key`; `app/writes.zig`
 atomically claims and replays keys, rejects mismatched reuse, and records
 redacted actor/idempotency metadata. Routes classified as destructive

@@ -11,8 +11,8 @@
             .hash = "zbor-0.21.2-kr-CoPF7AwAU2EqWqJzgxd1jHhpaaRBK0_c1LCgiwTbn",
         },
         .web = .{
-            .url = "git+https://github.com/tzekid/web.zig#1efd187533be1e23b5790a59236b97f0a68aef1a",
-            .hash = "web-0.1.0-dev-_XMZo6ryAABTebOdkSCrRgq4itq2Y1xA4ZHgvXV31jLX",
+            .url = "git+https://github.com/tzekid/web.zig#7c82692af48ba21f63dd8c64c2113b54244ed9c2",
+            .hash = "web-0.1.0-dev-_XMZoxn0AADNJPaF7YZ77hxV4qFxqcKkLHQ_pLFeaMbU",
         },
     },
     .minimum_zig_version = "0.17.0-dev.1509+bb296ab9b",

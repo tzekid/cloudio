@@ -18,7 +18,7 @@ one-use link, and create a passkey. Production must configure its exact HTTPS
 origin and RP ID before bootstrap. Pages: dashboard, apps
 (register/deploy/rollback with bounded log polling), Caddy routes (desired state,
 preview, validate + apply + reload), Cloudflare DNS, VPS/firewall, Docker,
-audit, and passkey security.
+audit, passkey security, and appearance settings.
 
 Authenticated pages are rendered on demand with their useful current state,
 native links, and query forms already present. The small dependency-free
@@ -26,6 +26,12 @@ JavaScript layer preserves the same responsive shell and adds mutation
 controls, passkey browser ceremonies, polling, and feedback without owning the
 first view. Run `zig build web-check` for the frontend structural and
 JavaScript syntax gate; it is also included in `zig build check`.
+
+Light is the default appearance. Authenticated users can choose Light, Dark,
+or Device from `/settings.html`. Cloudio stores the browser-scoped choice in a
+host-only `HttpOnly` preference cookie and renders the matching root class
+before CSS loads, so login, setup, and authenticated pages have no theme flash
+and remain complete without JavaScript.
 
 The backend keeps protocol, policy, and domain work separate:
 

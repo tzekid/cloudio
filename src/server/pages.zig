@@ -15,6 +15,7 @@ const http = @import("http");
 const web_html = @import("web_html");
 const common = @import("common.zig");
 const context = @import("context.zig");
+const theme = @import("theme.zig");
 
 const max_template_bytes = 512 * 1024;
 
@@ -27,6 +28,7 @@ const Page = enum {
     docker,
     audit,
     security,
+    settings,
 
     fn title(self: Page) []const u8 {
         return switch (self) {
@@ -38,6 +40,7 @@ const Page = enum {
             .docker => "Docker",
             .audit => "Audit log",
             .security => "Security",
+            .settings => "Settings",
         };
     }
 
@@ -51,6 +54,7 @@ const Page = enum {
             .docker => "docker",
             .audit => "audit",
             .security => "security",
+            .settings => "settings",
         };
     }
 
@@ -64,6 +68,7 @@ const Page = enum {
             .docker => "web/docker.html",
             .audit => "web/audit.html",
             .security => "web/security.html",
+            .settings => "web/settings.html",
         };
     }
 
@@ -77,6 +82,7 @@ const Page = enum {
             .docker => "/assets/pages/docker.js",
             .audit => "/assets/pages/audit.js",
             .security => "/assets/pages/security.js",
+            .settings => "/assets/pages/settings.js",
         };
     }
 };
@@ -94,6 +100,7 @@ const nav_items = [_]struct {
     .{ .page = .docker, .href = "/docker.html", .label = "Docker" },
     .{ .page = .audit, .href = "/audit.html", .label = "Audit" },
     .{ .page = .security, .href = "/security.html", .label = "Security" },
+    .{ .page = .settings, .href = "/settings.html", .label = "Settings" },
 };
 
 pub fn isPagePath(path: []const u8) bool {
@@ -104,6 +111,7 @@ pub fn render(
     ctx: context.Context,
     request: http.Request,
     path: []const u8,
+    preference: theme.Preference,
     out: *std.Io.Writer,
 ) !bool {
     const page = pageForPath(path) orelse return false;
@@ -115,21 +123,72 @@ pub fn render(
     );
     defer ctx.gpa.free(template);
 
-    const main_start = std.mem.indexOf(u8, template, "<main id=\"page-content\">") orelse
-        return error.InvalidPageTemplate;
-    const main_end_start = std.mem.indexOfPos(u8, template, main_start, "</main>") orelse
-        return error.InvalidPageTemplate;
-    const main_end = main_end_start + "</main>".len;
-    var main = try ctx.gpa.dupe(u8, template[main_start..main_end]);
+    var main = try extractMain(ctx.gpa, template);
     defer ctx.gpa.free(main);
 
-    try injectPageData(ctx, request, page, &main);
-    try writeDocumentStart(out, page);
+    try injectPageData(ctx, request, page, preference, &main);
+    try writeDocumentStart(out, page, preference);
     try writeShellStart(out, page);
     try out.writeAll(main);
     try writeShellEnd(out);
     try web_html.documentEnd(out);
     return true;
+}
+
+pub fn isPublicPagePath(path: []const u8) bool {
+    return std.mem.eql(u8, path, "/login.html") or std.mem.eql(u8, path, "/setup.html");
+}
+
+pub fn renderPublic(
+    ctx: context.Context,
+    path: []const u8,
+    preference: theme.Preference,
+    out: *std.Io.Writer,
+) !bool {
+    const template_path: []const u8 = if (std.mem.eql(u8, path, "/login.html"))
+        "web/login.html"
+    else if (std.mem.eql(u8, path, "/setup.html"))
+        "web/setup.html"
+    else
+        return false;
+    const template = try std.Io.Dir.cwd().readFileAlloc(
+        ctx.io,
+        template_path,
+        ctx.gpa,
+        .limited(max_template_bytes),
+    );
+    defer ctx.gpa.free(template);
+    const main = try extractMain(ctx.gpa, template);
+    defer ctx.gpa.free(main);
+
+    var head = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer head.deinit();
+    try head.writer.writeAll("<link rel=\"stylesheet\" href=\"/assets/app.css\">\n");
+    try head.writer.writeAll("<script defer src=\"/assets/passkeys.js\"></script>\n");
+    try head.writer.writeAll(if (std.mem.eql(u8, path, "/login.html"))
+        "<script defer src=\"/assets/pages/login.js\"></script>\n"
+    else
+        "<script defer src=\"/assets/pages/setup.js\"></script>\n");
+    try web_html.documentStart(out, .{
+        .title = if (std.mem.eql(u8, path, "/login.html"))
+            "Sign in · Cloudio"
+        else
+            "Set up a passkey · Cloudio",
+        .html_class = preference.rootClass(),
+        .head = web_html.TrustedHtml.audited(head.written()),
+        .body_class = "login-page",
+    });
+    try out.writeAll(main);
+    try web_html.documentEnd(out);
+    return true;
+}
+
+fn extractMain(gpa: std.mem.Allocator, template: []const u8) ![]u8 {
+    const main_start = std.mem.indexOf(u8, template, "<main") orelse
+        return error.InvalidPageTemplate;
+    const main_end_start = std.mem.indexOfPos(u8, template, main_start, "</main>") orelse
+        return error.InvalidPageTemplate;
+    return gpa.dupe(u8, template[main_start .. main_end_start + "</main>".len]);
 }
 
 fn pageForPath(path: []const u8) ?Page {
@@ -141,10 +200,11 @@ fn pageForPath(path: []const u8) ?Page {
     if (std.mem.eql(u8, path, "/docker.html")) return .docker;
     if (std.mem.eql(u8, path, "/audit.html")) return .audit;
     if (std.mem.eql(u8, path, "/security.html")) return .security;
+    if (std.mem.eql(u8, path, "/settings.html")) return .settings;
     return null;
 }
 
-fn writeDocumentStart(out: *std.Io.Writer, page: Page) !void {
+fn writeDocumentStart(out: *std.Io.Writer, page: Page, preference: theme.Preference) !void {
     var head = std.Io.Writer.Allocating.init(std.heap.page_allocator);
     defer head.deinit();
     try head.writer.writeAll("<link rel=\"stylesheet\" href=\"/assets/app.css\">\n");
@@ -159,6 +219,7 @@ fn writeDocumentStart(out: *std.Io.Writer, page: Page) !void {
     const title = try std.fmt.bufPrint(&title_buffer, "{s} · Cloudio", .{page.title()});
     try web_html.documentStart(out, .{
         .title = title,
+        .html_class = preference.rootClass(),
         .head = web_html.TrustedHtml.audited(head.written()),
         .body_class = "server-rendered",
     });
@@ -190,7 +251,7 @@ fn writeShellStart(out: *std.Io.Writer, active: Page) !void {
     );
     try web_html.text(out, active.title());
     try out.writeAll("</h1></div><div class=\"titlebar-actions\">");
-    if (active != .security) {
+    if (active != .security and active != .settings) {
         try out.writeAll(
             "<button type=\"button\" class=\"button\" id=\"refresh-data-button\" " ++
                 "title=\"Collect fresh provider and system data\">Refresh data</button>",
@@ -212,7 +273,13 @@ fn writeShellEnd(out: *std.Io.Writer) !void {
     );
 }
 
-fn injectPageData(ctx: context.Context, request: http.Request, page: Page, main: *[]u8) !void {
+fn injectPageData(
+    ctx: context.Context,
+    request: http.Request,
+    page: Page,
+    preference: theme.Preference,
+    main: *[]u8,
+) !void {
     switch (page) {
         .dashboard => try injectDashboard(ctx, request, main),
         .apps => try injectApps(ctx, main),
@@ -222,6 +289,7 @@ fn injectPageData(ctx: context.Context, request: http.Request, page: Page, main:
         .docker => try injectDocker(ctx, main),
         .audit => try injectAudit(ctx, request, main),
         .security => try injectSecurity(ctx, main),
+        .settings => try injectSettings(ctx, request, preference, main),
     }
 }
 
@@ -609,6 +677,73 @@ fn injectSecurity(ctx: context.Context, main: *[]u8) !void {
     try replaceElementInner(ctx.gpa, main, "passkey-count", "div", count);
 }
 
+fn injectSettings(
+    ctx: context.Context,
+    request: http.Request,
+    preference: theme.Preference,
+    main: *[]u8,
+) !void {
+    var csrf_input = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer csrf_input.deinit();
+    try csrf_input.writer.writeAll(
+        "<input id=\"settings-csrf\" name=\"csrf_token\" type=\"hidden\" value=\"",
+    );
+    try web_html.attribute(&csrf_input.writer, ctx.auth_csrf_token orelse "");
+    try csrf_input.writer.writeAll("\">");
+    try replaceExact(
+        ctx.gpa,
+        main,
+        "<input id=\"settings-csrf\" name=\"csrf_token\" type=\"hidden\" value=\"\">",
+        csrf_input.written(),
+    );
+
+    var selected = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer selected.deinit();
+    try selected.writer.print(
+        "<input id=\"theme-{s}\" name=\"theme\" type=\"radio\" value=\"{s}\" checked>",
+        .{ preference.value(), preference.value() },
+    );
+    var unchecked: [96]u8 = undefined;
+    const unchecked_input = try std.fmt.bufPrint(
+        &unchecked,
+        "<input id=\"theme-{s}\" name=\"theme\" type=\"radio\" value=\"{s}\">",
+        .{ preference.value(), preference.value() },
+    );
+    try replaceExact(ctx.gpa, main, unchecked_input, selected.written());
+
+    const notice: ?struct { tone: []const u8, text: []const u8 } = if (std.mem.eql(
+        u8,
+        request.query("saved") orelse "",
+        "1",
+    ))
+        .{ .tone = "success", .text = "Appearance saved for this browser." }
+    else if (request.query("error")) |code|
+        if (std.mem.eql(u8, code, "request"))
+            .{ .tone = "danger", .text = "The appearance request was invalid. Please try again." }
+        else if (std.mem.eql(u8, code, "security"))
+            .{ .tone = "danger", .text = "The security check failed. Reload the page and try again." }
+        else
+            .{ .tone = "danger", .text = "Choose Light, Dark, or Device." }
+    else
+        null;
+    if (notice) |item| {
+        var status = std.Io.Writer.Allocating.init(ctx.gpa);
+        defer status.deinit();
+        try status.writer.print(
+            "<div id=\"settings-status\" class=\"notice tone-{s}\" role=\"{s}\" aria-live=\"polite\">",
+            .{ item.tone, if (std.mem.eql(u8, item.tone, "danger")) "alert" else "status" },
+        );
+        try web_html.text(&status.writer, item.text);
+        try status.writer.writeAll("</div>");
+        try replaceExact(
+            ctx.gpa,
+            main,
+            "<div id=\"settings-status\" class=\"notice hidden\" aria-live=\"polite\"></div>",
+            status.written(),
+        );
+    }
+}
+
 fn member(value: std.json.Value, name: []const u8) ?std.json.Value {
     if (value != .object) return null;
     return value.object.get(name);
@@ -831,7 +966,9 @@ fn replaceExact(
 test "authenticated page allowlist is explicit" {
     try std.testing.expect(isPagePath("/"));
     try std.testing.expect(isPagePath("/security.html"));
+    try std.testing.expect(isPagePath("/settings.html"));
     try std.testing.expect(!isPagePath("/login.html"));
+    try std.testing.expect(isPublicPagePath("/login.html"));
     try std.testing.expect(!isPagePath("/assets/app.js"));
 }
 
@@ -865,6 +1002,7 @@ test "every authenticated page has a useful server-rendered empty state" {
         "/docker.html",
         "/audit.html",
         "/security.html",
+        "/settings.html",
     };
     for (paths) |path| {
         var output = std.Io.Writer.Allocating.init(allocator);
@@ -880,10 +1018,13 @@ test "every authenticated page has a useful server-rendered empty state" {
             .gpa = allocator,
             .db = &db,
             .config = .{ .domains = &.{} },
-        }, request, path, &output.writer));
+        }, request, path, .light, &output.writer));
         try std.testing.expect(std.mem.indexOf(u8, output.written(), "id=\"app-shell\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, output.written(), "aria-current=\"page\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, output.written(), "loading-state") == null);
+        try std.testing.expect(std.mem.indexOf(u8, output.written(), "class=\"theme-light\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output.written(), "class=\"theme-light\"") <
+            std.mem.indexOf(u8, output.written(), "/assets/app.css"));
         if (std.mem.eql(u8, path, "/docker.html")) {
             try std.testing.expect(std.mem.indexOf(u8, output.written(), "&lt;script&gt;alert(1)&lt;/script&gt;") != null);
             try std.testing.expect(std.mem.indexOf(u8, output.written(), "<script>alert(1)</script>") == null);
