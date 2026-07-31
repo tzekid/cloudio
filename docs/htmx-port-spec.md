@@ -33,7 +33,8 @@ authentication, and mutation policy remain authoritative.
 Cloudio already has the most important prerequisite:
 
 - `src/server/pages.zig` renders useful authenticated first views for
-  Dashboard, Apps, Routes, DNS, VPS, Docker, Audit, and Security.
+  Dashboard, Apps, Routes, DNS, VPS, Docker, Audit, and Security. The planned
+  appearance work adds Settings as the ninth page.
 - `src/server/pipeline.zig` applies default-deny passkey authentication before
   private pages and APIs.
 - `src/server/routes.zig` exposes a stable JSON API for reads and mutations.
@@ -588,6 +589,25 @@ form, enhanced by HTMX only to perform the final redirect.
 into faux no-JavaScript authentication. Their server-rendered instructions,
 errors, and bootstrap safety remain intact.
 
+### 8.9 Settings and appearance
+
+Full route: `/settings.html`
+
+Region: `#appearance-settings-region`
+
+The Light/Dark/Device preference and its server-owned cookie contract are
+specified in `docs/theme-settings-spec.md`. The native form posts to
+`/settings/theme` and remains authoritative.
+
+After the HTMX foundation is available, enhance the same form. A successful
+partial request sets the cookie and returns `HX-Refresh: true` because the
+theme class lives on the root document element. Do not patch CSS variables or
+theme classes with browser code. Validation and CSRF failures target only the
+appearance settings region.
+
+Settings does not expose the global provider refresh action and does not add a
+page-specific JavaScript file.
+
 ## 9. CSS and interaction states
 
 Extend the existing design system only with:
@@ -776,7 +796,8 @@ No database rollback is involved.
 
 The Cloudio port is done only when:
 
-- all eight authenticated pages return complete useful first views;
+- all nine authenticated pages, including Settings, return complete useful
+  first views;
 - top-level navigation, filters, detail panels, refreshes, and mutations use
   server-rendered HTML through HTMX when available;
 - ordinary links/forms remain the functional baseline;
