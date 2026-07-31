@@ -21,9 +21,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - id: zig-version
+        run: echo "version=$(cat .zigversion)" >> "$GITHUB_OUTPUT"
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: ${{ steps.zig-version.outputs.version }}
       - run: tools/provider-package-check.sh cloudflare
       - run: tools/publish-provider-mirror.sh cloudflare tzekid/cloudflare-zig
         env:
@@ -35,9 +37,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - id: zig-version
+        run: echo "version=$(cat .zigversion)" >> "$GITHUB_OUTPUT"
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: ${{ steps.zig-version.outputs.version }}
       - run: tools/provider-package-check.sh hostinger
       - run: tools/publish-provider-mirror.sh hostinger tzekid/hostinger-zig
         env:

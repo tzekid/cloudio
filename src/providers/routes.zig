@@ -82,8 +82,8 @@ pub const Method = enum {
     OPTIONS,
 
     pub fn parse(value: []const u8) ?Method {
-        inline for (std.meta.fields(Method)) |field| {
-            if (std.mem.eql(u8, value, field.name)) return @enumFromInt(field.value);
+        inline for (std.meta.tags(Method)) |tag| {
+            if (std.mem.eql(u8, value, @tagName(tag))) return tag;
         }
         return null;
     }
@@ -103,8 +103,8 @@ pub const Support = enum {
     not_applicable,
 
     pub fn parse(value: []const u8) ?Support {
-        inline for (std.meta.fields(Support)) |field| {
-            if (std.mem.eql(u8, value, field.name)) return @enumFromInt(field.value);
+        inline for (std.meta.tags(Support)) |tag| {
+            if (std.mem.eql(u8, value, @tagName(tag))) return tag;
         }
         return null;
     }
@@ -117,8 +117,8 @@ pub const Mode = enum {
     none,
 
     pub fn parse(value: []const u8) ?Mode {
-        inline for (std.meta.fields(Mode)) |field| {
-            if (std.mem.eql(u8, value, field.name)) return @enumFromInt(field.value);
+        inline for (std.meta.tags(Mode)) |tag| {
+            if (std.mem.eql(u8, value, @tagName(tag))) return tag;
         }
         return null;
     }

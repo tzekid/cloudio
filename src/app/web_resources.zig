@@ -79,7 +79,7 @@ pub fn writeFirewallsJson(ctx: Context, writer: *std.Io.Writer) !void {
     try writer.writeAll("{\"kind\":\"firewalls\",\"firewalls\":[");
     var first = true;
     for (rows.items) |row| {
-        if (std.ascii.indexOfIgnoreCase(row.kind, "firewall") == null) continue;
+        if (indexOfIgnoreCase(row.kind, "firewall") == null) continue;
         if (!first) try writer.writeByte(',');
         first = false;
         try writer.writeByte('{');
@@ -114,6 +114,15 @@ fn dnsNameMatchesDomain(name: []const u8, domain: []const u8) bool {
     return name.len > domain.len + 1 and
         std.mem.endsWith(u8, name, domain) and
         name[name.len - domain.len - 1] == '.';
+}
+
+fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
+    if (needle.len == 0 or haystack.len < needle.len) return null;
+    var index: usize = 0;
+    while (index + needle.len <= haystack.len) : (index += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return index;
+    }
+    return null;
 }
 
 test "DNS domain matching respects label boundaries" {

@@ -12,7 +12,7 @@ const Bucket = struct {
 
 const State = struct {
     mutex: std.atomic.Mutex = .unlocked,
-    buckets: [max_buckets]Bucket = [_]Bucket{.{}} ** max_buckets,
+    buckets: [max_buckets]Bucket = @splat(.{}),
 };
 
 var state = State{};

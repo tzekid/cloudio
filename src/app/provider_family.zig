@@ -138,9 +138,18 @@ pub fn tagFamily(provider: []const u8, tag: []const u8) ?WorkplanFamily {
 
 fn tagContainsAny(tag: []const u8, needles: []const []const u8) bool {
     for (needles) |needle| {
-        if (std.ascii.indexOfIgnoreCase(tag, needle) != null) return true;
+        if (indexOfIgnoreCase(tag, needle) != null) return true;
     }
     return false;
+}
+
+fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
+    if (needle.len == 0 or haystack.len < needle.len) return null;
+    var index: usize = 0;
+    while (index + needle.len <= haystack.len) : (index += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return index;
+    }
+    return null;
 }
 
 fn cloudflareTagIsLogsFamily(tag: []const u8) bool {

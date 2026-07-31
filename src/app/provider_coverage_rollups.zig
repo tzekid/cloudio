@@ -44,8 +44,8 @@ pub const ProviderSummary = struct {
             .name = name,
             .total = 0,
             .deprecated = 0,
-            .support_counts = [_]usize{0} ** support_names.len,
-            .mode_counts = [_]usize{0} ** mode_names.len,
+            .support_counts = @splat(0),
+            .mode_counts = @splat(0),
         };
     }
 };
@@ -64,8 +64,8 @@ pub const TagSummary = struct {
             .tag = try gpa.dupe(u8, tag),
             .total = 0,
             .deprecated = 0,
-            .support_counts = [_]usize{0} ** support_names.len,
-            .mode_counts = [_]usize{0} ** mode_names.len,
+            .support_counts = @splat(0),
+            .mode_counts = @splat(0),
         };
     }
 

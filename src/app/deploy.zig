@@ -1111,13 +1111,14 @@ fn testQueryInt(db: *Db, sql: []const u8) !i64 {
 }
 
 test "app name validation" {
+    const too_long: [33]u8 = @splat('a');
     try std.testing.expect(isValidAppName("demo"));
     try std.testing.expect(isValidAppName("my-app-2"));
     try std.testing.expect(!isValidAppName(""));
     try std.testing.expect(!isValidAppName("Upper"));
     try std.testing.expect(!isValidAppName("a_b"));
     try std.testing.expect(!isValidAppName("a b"));
-    try std.testing.expect(!isValidAppName("a" ** 33));
+    try std.testing.expect(!isValidAppName(&too_long));
 }
 
 test "registerApp assigns lowest free ports and rejects duplicates" {

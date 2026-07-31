@@ -11,7 +11,7 @@
             .hash = "zbor-0.21.2-kr-CoPF7AwAU2EqWqJzgxd1jHhpaaRBK0_c1LCgiwTbn",
         },
     },
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0-dev.1509+bb296ab9b",
     .paths = .{""},
     .fingerprint = 0x396b39ced4202bc9,
 }

@@ -195,7 +195,16 @@ fn hostingerFamily(kind: []const u8) []const u8 {
 }
 
 fn contains(haystack: []const u8, needle: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(haystack, needle) != null;
+    return indexOfIgnoreCase(haystack, needle) != null;
+}
+
+fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
+    if (needle.len == 0 or haystack.len < needle.len) return null;
+    var index: usize = 0;
+    while (index + needle.len <= haystack.len) : (index += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return index;
+    }
+    return null;
 }
 
 test "provider filter parser accepts evidence scopes" {
