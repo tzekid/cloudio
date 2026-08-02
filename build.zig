@@ -975,6 +975,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_fs", .module = core_fs_mod },
             .{ .name = "core_process", .module = core_process_mod },
             .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
         },
     });
     linkSqlite(app_doctor_mod);
