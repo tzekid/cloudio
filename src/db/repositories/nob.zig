@@ -157,6 +157,19 @@ pub const Repository = struct {
         return try projectFromStmt(allocator, stmt);
     }
 
+    pub fn getProjectByDeclaredId(self: Repository, allocator: Allocator, declared_id: []const u8) !?model.Project {
+        const stmt = try self.prepare(project_select ++ " WHERE declared_id=? ORDER BY id");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, declared_id);
+        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return null;
+        const project = try projectFromStmt(allocator, stmt);
+        errdefer project.deinit(allocator);
+        if (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
+            return error.ProjectIdConflict;
+        }
+        return project;
+    }
+
     pub fn listProjects(self: Repository, allocator: Allocator) !model.Projects {
         const stmt = try self.prepare(project_select ++ " ORDER BY display_name, root_path");
         defer _ = sqlite.sqlite3_finalize(stmt);

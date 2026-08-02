@@ -29,6 +29,8 @@ pub fn run(ctx: Context) !void {
             .caddy_admin_socket = ctx.config.caddy_admin_socket,
         },
         .projects_root = ctx.config.projects_root,
+        .nob_enabled = ctx.config.nob_enabled,
+        .nob_scan_depth = ctx.config.nob_scan_depth,
         .log = .{
             .version = "serve",
             .db_path = ctx.config.db_path,

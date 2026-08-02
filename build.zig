@@ -444,6 +444,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "collector_caddy", .module = collector_caddy_mod },
             .{ .name = "collector_cloudflare", .module = collector_cloudflare_mod },
             .{ .name = "collector_hostinger", .module = collector_hostinger_mod },
+            .{ .name = "collector_project_manifests", .module = collector_project_manifests_mod },
             .{ .name = "collector_projects", .module = collector_projects_mod },
             .{ .name = "collector_system", .module = collector_system_mod },
             .{ .name = "core_log", .module = core_log_mod },
@@ -891,6 +892,18 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(app_projects_mod);
+    const app_nob_projects_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/nob_projects.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_render", .module = app_render_mod },
+            .{ .name = "collector_project_manifests", .module = collector_project_manifests_mod },
+            .{ .name = "core_time", .module = core_time_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_nob_projects_mod);
 
     const app_system_mod = b.createModule(.{
         .root_source_file = b.path("src/app/system.zig"),
@@ -1468,6 +1481,18 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(cli_projects_mod);
+    const cli_nob_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/nob.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_database", .module = app_database_mod },
+            .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
+            .{ .name = "cli_args", .module = cli_args_mod },
+            .{ .name = "cli_render", .module = cli_render_mod },
+        },
+    });
+    linkSqlite(cli_nob_mod);
     const cli_system_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/system.zig"),
         .target = target,
@@ -1572,6 +1597,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_hostinger", .module = cli_hostinger_mod },
             .{ .name = "cli_inventory", .module = cli_inventory_mod },
             .{ .name = "cli_maintenance", .module = cli_maintenance_mod },
+            .{ .name = "cli_nob", .module = cli_nob_mod },
             .{ .name = "cli_projects", .module = cli_projects_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "cli_route", .module = cli_route_mod },
@@ -1631,6 +1657,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cli_actions_mod);
     addModuleTest(b, test_step, cli_dashboard_mod);
     addModuleTest(b, test_step, cli_projects_mod);
+    addModuleTest(b, test_step, cli_nob_mod);
     addModuleTest(b, test_step, cli_routes_mod);
     addModuleTest(b, test_step, cli_security_mod);
     addModuleTest(b, test_step, cli_auth_mod);
@@ -1653,6 +1680,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_authentication_mod);
     addModuleTest(b, test_step, app_caddy_mod);
     addModuleTest(b, test_step, app_projects_mod);
+    addModuleTest(b, test_step, app_nob_projects_mod);
     addModuleTest(b, test_step, app_system_mod);
     addModuleTest(b, test_step, app_topology_mod);
     addModuleTest(b, test_step, app_actions_mod);

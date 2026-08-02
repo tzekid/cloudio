@@ -73,6 +73,16 @@ pub const sampleConfig =
     \\[hostinger]
     \\api_token = ""
     \\
+    \\[nob]
+    \\enabled = true
+    \\scan_depth = 3
+    \\observe_seconds = 300
+    \\plan_ttl_seconds = 600
+    \\worker_count = 1
+    \\# state_root, cache_root, and toolchains_file default to XDG directories
+    \\max_operation_log_bytes = 67108864
+    \\allow_system_mutation = false
+    \\
 ;
 
 test "init creates sample config once and reports existing config later" {

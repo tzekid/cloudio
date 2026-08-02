@@ -2,6 +2,7 @@ const std = @import("std");
 const collector_caddy = @import("collector_caddy");
 const collector_cloudflare = @import("collector_cloudflare");
 const collector_hostinger = @import("collector_hostinger");
+const collector_project_manifests = @import("collector_project_manifests");
 const collector_projects = @import("collector_projects");
 const collector_system = @import("collector_system");
 const core_log = @import("core_log");
@@ -64,6 +65,8 @@ pub const Context = struct {
     hostinger_token: ?[]const u8,
     caddy_paths: collector_caddy.Paths,
     projects_root: []const u8,
+    nob_enabled: bool,
+    nob_scan_depth: u8,
     log: LogMetadata,
 };
 
@@ -85,7 +88,21 @@ pub fn run(ctx: Context, selection: Selection) !void {
     }
     if (selection.caddy) try collector_caddy.collect(ctx.io, ctx.gpa, ctx.caddy_paths, ctx.db);
     if (selection.system) try collector_system.collect(ctx.io, ctx.gpa, ctx.db);
-    if (selection.projects) try collector_projects.collect(ctx.io, ctx.gpa, ctx.projects_root, ctx.db);
+    if (selection.projects) {
+        if (ctx.nob_enabled) {
+            const scanned = try collector_project_manifests.scan(ctx.io, ctx.gpa, ctx.db, ctx.projects_root, .{
+                .scan_depth = ctx.nob_scan_depth,
+            });
+            const detail = try std.fmt.allocPrint(
+                ctx.gpa,
+                "seen={d} valid={d} invalid={d} candidates={d} conflicts={d} missing={d}",
+                .{ scanned.projects_seen, scanned.valid, scanned.invalid, scanned.candidates, scanned.conflicts, scanned.missing },
+            );
+            defer ctx.gpa.free(detail);
+            try ctx.db.insertAudit("nob.scan", "ok", detail);
+        }
+        try collector_projects.collect(ctx.io, ctx.gpa, ctx.projects_root, ctx.db);
+    }
     try ctx.db.insertAudit("refresh", "ok", "read-only refresh complete");
     try writeRefreshLog(ctx, selection, start_snapshot_id);
 }

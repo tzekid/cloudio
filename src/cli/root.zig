@@ -23,6 +23,7 @@ const cli_evidence = @import("cli_evidence");
 const cli_hostinger = @import("cli_hostinger");
 const cli_inventory = @import("cli_inventory");
 const cli_maintenance = @import("cli_maintenance");
+const cli_nob = @import("cli_nob");
 const cli_projects = @import("cli_projects");
 const cli_render = @import("cli_render");
 const cli_route = @import("cli_route");
@@ -174,6 +175,14 @@ pub fn run(init: std.process.Init) !void {
             .gpa = init.gpa,
             .projects_root = cfg.projects_root,
             .db = &db,
+        }, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "nob")) {
+        try cli_nob.run(.{
+            .io = init.io,
+            .gpa = init.gpa,
+            .db = &db,
+            .projects_root = cfg.projects_root,
+            .scan_depth = cfg.nob_scan_depth,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "serve")) {
         try cli_serve.run(.{
@@ -412,6 +421,8 @@ fn usage() void {
         \\  cloudio caddy sites|upstreams|render|diff|validate
         \\  cloudio system summary|services|ports|containers|metrics|logs [unit]
         \\  cloudio projects list|show <name>|correlate [--json|--format json]
+        \\  cloudio nob list|show <id>|scan [--json|--format json]
+        \\  cloudio nob trust <id> <manifest-sha256>|revoke <id>
         \\
     , .{version});
 }
@@ -453,6 +464,8 @@ fn commandRefresh(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []
         .hostinger_token = cfg.hostinger_api_token,
         .caddy_paths = caddyPaths(cfg),
         .projects_root = cfg.projects_root,
+        .nob_enabled = cfg.nob_enabled,
+        .nob_scan_depth = cfg.nob_scan_depth,
         .log = .{
             .version = version,
             .db_path = cfg.db_path,
