@@ -1,5 +1,6 @@
 const std = @import("std");
 const core_config = @import("core_config");
+const core_redact = @import("core_redact");
 const source = @import("nob_source");
 const subprocess = @import("nob_subprocess");
 const nob = @import("nob_sdk");
@@ -10,6 +11,8 @@ const Io = std.Io;
 pub const Options = struct {
     runtime_environment: core_config.RuntimeEnvironment,
     cloudio_version: []const u8,
+    available_secrets: []const u8 = "",
+    redaction_values: []const []const u8 = &.{},
 };
 
 pub const Planned = struct {
@@ -69,7 +72,7 @@ pub fn createPlan(
         .{ .key = "NOB_MANIFEST_SHA256", .value = manifest_sha256 },
         .{ .key = "NOB_SOURCE_FINGERPRINT", .value = source_state.fingerprint },
         .{ .key = "NOB_SOURCE_DIRTY", .value = if (source_state.dirty) "1" else "0" },
-        .{ .key = "NOB_AVAILABLE_SECRETS", .value = "" },
+        .{ .key = "NOB_AVAILABLE_SECRETS", .value = options.available_secrets },
         .{ .key = "NOB_ZIG", .value = zig_path },
         .{ .key = "NOB_CLOUDIO_VERSION", .value = options.cloudio_version },
     };
@@ -88,9 +91,13 @@ pub fn createPlan(
         null,
     );
     defer result.deinit(allocator);
-    if (result.stderr.len != 0) try diagnostics.print("plan stderr:\n{s}\n", .{result.stderr});
+    const redacted_stdout = try core_redact.sensitive(allocator, result.stdout, options.redaction_values);
+    defer allocator.free(redacted_stdout);
+    const redacted_stderr = try core_redact.sensitive(allocator, result.stderr, options.redaction_values);
+    defer allocator.free(redacted_stderr);
+    if (redacted_stderr.len != 0) try diagnostics.print("plan stderr:\n{s}\n", .{redacted_stderr});
     if (!result.term.success()) return error.RunnerPlanFailed;
-    const plan_json = try allocator.dupe(u8, result.stdout);
+    const plan_json = try allocator.dupe(u8, redacted_stdout);
     errdefer allocator.free(plan_json);
     var parsed = try std.json.parseFromSlice(nob.types.Plan, allocator, plan_json, .{
         .allocate = .alloc_always,

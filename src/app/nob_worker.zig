@@ -1,9 +1,11 @@
 const std = @import("std");
 const action_protocol = @import("nob_action_protocol");
 const app_nob_runtime = @import("app_nob_runtime");
+const app_nob_secrets = @import("app_nob_secrets");
 const bootstrap = @import("nob_bootstrap");
 const broker = @import("nob_broker");
 const core_config = @import("core_config");
+const core_redact = @import("core_redact");
 const core_time = @import("core_time");
 const db_store = @import("db_store");
 const resource_control = @import("nob_resource_control");
@@ -130,12 +132,27 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
     );
     defer parsed_plan.deinit();
     const action = findAction(manifest_document.value().actions, run.action_id) orelse return error.UnknownAction;
+    var resolved_secrets = try app_nob_secrets.resolve(secretContext(ctx), project.id, manifest_document.value());
+    defer resolved_secrets.deinit(ctx.gpa);
+    try app_nob_secrets.requireForAction(&resolved_secrets, manifest_document.value(), run.action_id);
+    const redaction_values = try resolved_secrets.redactionValues(ctx.gpa);
+    defer ctx.gpa.free(redaction_values);
     const runner_detail = project.runner_detail orelse return error.RunnerMetadataMissing;
     const zig_path = try bootstrap.zigPathFromMetadata(ctx.gpa, runner_detail);
     defer ctx.gpa.free(zig_path);
 
     var paths = try createRunPaths(ctx, run.id);
     defer paths.deinit(ctx.gpa);
+    const secret_dir = try app_nob_secrets.materialize(
+        secretContext(ctx),
+        &resolved_secrets,
+        manifest_document.value(),
+        run.action_id,
+        paths.operation_dir,
+    );
+    defer if (secret_dir) |path| ctx.gpa.free(path);
+    var secrets_removed = false;
+    defer if (!secrets_removed) app_nob_secrets.removeMaterialized(secretContext(ctx), secret_dir, paths.operation_dir);
     var broker_server: ?broker.Server = if (parsed_plan.value.broker_requests.len == 0)
         null
     else
@@ -157,7 +174,7 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
         .{ .key = "NOB_MANIFEST_SHA256", .value = manifest_sha256 },
         .{ .key = "NOB_SOURCE_FINGERPRINT", .value = source_state.fingerprint },
         .{ .key = "NOB_SOURCE_DIRTY", .value = if (source_state.dirty) "1" else "0" },
-        .{ .key = "NOB_AVAILABLE_SECRETS", .value = "" },
+        .{ .key = "NOB_AVAILABLE_SECRETS", .value = resolved_secrets.available_csv },
         .{ .key = "NOB_ZIG", .value = zig_path },
         .{ .key = "NOB_CLOUDIO_VERSION", .value = ctx.cloudio_version },
         .{ .key = "NOB_OPERATION_DIR", .value = paths.operation_dir },
@@ -166,6 +183,7 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
     var environment = try subprocess.makeEnvironment(ctx.gpa, ctx.config.runtime_environment, &extras);
     defer environment.deinit();
     if (source_state.revision) |revision| try environment.put("NOB_SOURCE_REVISION", revision);
+    if (secret_dir) |path| try environment.put("NOB_SECRET_DIR", path);
     if (broker_server) |*server| {
         try environment.put("NOB_BROKER_SOCKET", server.socketPath());
         try environment.put("NOB_BROKER_TOKEN_FILE", server.tokenPath());
@@ -201,18 +219,24 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
         .{ .context = &monitor_context, .poll = pollCancellation, .started = childStarted },
     );
     defer result.deinit(ctx.gpa);
+    app_nob_secrets.removeMaterialized(secretContext(ctx), secret_dir, paths.operation_dir);
+    secrets_removed = true;
     if (broker_server) |*server| try server.stop();
-    try writePrivateFile(ctx, paths.log_path, result.stdout);
-    try writePrivateFile(ctx, paths.stderr_path, result.stderr);
+    const redacted_stdout = try core_redact.sensitive(ctx.gpa, result.stdout, redaction_values);
+    defer ctx.gpa.free(redacted_stdout);
+    const redacted_stderr = try core_redact.sensitive(ctx.gpa, result.stderr, redaction_values);
+    defer ctx.gpa.free(redacted_stderr);
+    try writePrivateFile(ctx, paths.log_path, redacted_stdout);
+    try writePrivateFile(ctx, paths.stderr_path, redacted_stderr);
 
     if (result.timed_out) return error.RunTimedOut;
     const exit_code = termExitCode(result.term);
     if (result.canceled) {
-        if (nob.events.validateStream(ctx.gpa, result.stdout, run.action_id, exit_code)) |summary| {
-            const dropped_logs = try persistEvents(ctx, run.id, result.stdout, paths.artifact_dir);
+        if (nob.events.validateStream(ctx.gpa, redacted_stdout, run.action_id, exit_code)) |summary| {
+            const dropped_logs = try persistEvents(ctx, run.id, redacted_stdout, paths.artifact_dir);
             return .{
                 .outcome = summary.outcome,
-                .summary = try terminalSummary(ctx.gpa, result.stdout, "run canceled", dropped_logs),
+                .summary = try terminalSummary(ctx.gpa, redacted_stdout, "run canceled", dropped_logs),
                 .error_code = if (summary.outcome == .canceled) null else "cancellation_outcome_mismatch",
                 .log_path = try ctx.gpa.dupe(u8, paths.log_path),
                 .stderr_path = try ctx.gpa.dupe(u8, paths.stderr_path),
@@ -227,11 +251,11 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
             };
         }
     }
-    const stream = try nob.events.validateStream(ctx.gpa, result.stdout, run.action_id, exit_code);
-    const dropped_logs = try persistEvents(ctx, run.id, result.stdout, paths.artifact_dir);
+    const stream = try nob.events.validateStream(ctx.gpa, redacted_stdout, run.action_id, exit_code);
+    const dropped_logs = try persistEvents(ctx, run.id, redacted_stdout, paths.artifact_dir);
     return .{
         .outcome = stream.outcome,
-        .summary = try terminalSummary(ctx.gpa, result.stdout, "run completed", dropped_logs),
+        .summary = try terminalSummary(ctx.gpa, redacted_stdout, "run completed", dropped_logs),
         .error_code = if (stream.outcome == .succeeded) null else "runner_reported_failure",
         .log_path = try ctx.gpa.dupe(u8, paths.log_path),
         .stderr_path = try ctx.gpa.dupe(u8, paths.stderr_path),
@@ -513,6 +537,10 @@ fn observeAfter(ctx: Context, project_id: i64, operation_id: []const u8) void {
     }, reference) catch |err| {
         audit(ctx, "nob.run.observe", "failed", operation_id, @errorName(err)) catch {};
     };
+}
+
+fn secretContext(ctx: Context) app_nob_secrets.Context {
+    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config };
 }
 
 fn findAction(actions: []const nob.types.Action, id: []const u8) ?*const nob.types.Action {

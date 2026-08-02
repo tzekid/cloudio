@@ -1,5 +1,6 @@
 const std = @import("std");
 const core_config = @import("core_config");
+const core_redact = @import("core_redact");
 const protocol = @import("nob_protocol");
 const source = @import("nob_source");
 const subprocess = @import("nob_subprocess");
@@ -8,6 +9,8 @@ const nob = @import("nob_sdk");
 pub const Options = struct {
     runtime_environment: core_config.RuntimeEnvironment,
     cloudio_version: []const u8,
+    available_secrets: []const u8 = "",
+    redaction_values: []const []const u8 = &.{},
 };
 
 pub fn run(
@@ -49,7 +52,7 @@ pub fn run(
         .{ .key = "NOB_MANIFEST_SHA256", .value = manifest_sha256 },
         .{ .key = "NOB_SOURCE_FINGERPRINT", .value = source_state.fingerprint },
         .{ .key = "NOB_SOURCE_DIRTY", .value = if (source_state.dirty) "1" else "0" },
-        .{ .key = "NOB_AVAILABLE_SECRETS", .value = "" },
+        .{ .key = "NOB_AVAILABLE_SECRETS", .value = options.available_secrets },
         .{ .key = "NOB_ZIG", .value = zig_path },
         .{ .key = "NOB_CLOUDIO_VERSION", .value = options.cloudio_version },
     };
@@ -64,9 +67,13 @@ pub fn run(
         .timeout_seconds = 60,
     });
     defer result.deinit(allocator);
-    if (result.stderr.len != 0) try diagnostics.print("observe stderr:\n{s}\n", .{result.stderr});
+    const redacted_stdout = try core_redact.sensitive(allocator, result.stdout, options.redaction_values);
+    defer allocator.free(redacted_stdout);
+    const redacted_stderr = try core_redact.sensitive(allocator, result.stderr, options.redaction_values);
+    defer allocator.free(redacted_stderr);
+    if (redacted_stderr.len != 0) try diagnostics.print("observe stderr:\n{s}\n", .{redacted_stderr});
     if (!result.successful()) return error.RunnerObserveFailed;
-    var document = try protocol.parseObservation(allocator, result.stdout, identity);
+    var document = try protocol.parseObservation(allocator, redacted_stdout, identity);
     errdefer document.deinit();
     const value = document.value();
     if (!std.mem.eql(u8, @tagName(value.source.kind), source_state.repository_kind) or

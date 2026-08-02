@@ -2,6 +2,40 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
+pub fn sensitive(allocator: Allocator, input: []const u8, exact_values: []const []const u8) ![]u8 {
+    const exact = try exactValues(allocator, input, exact_values);
+    defer allocator.free(exact);
+    return try secrets(allocator, exact);
+}
+
+pub fn exactValues(allocator: Allocator, input: []const u8, values: []const []const u8) ![]u8 {
+    var output = std.ArrayList(u8).empty;
+    errdefer output.deinit(allocator);
+    var cursor: usize = 0;
+    while (cursor < input.len) {
+        var next_index: ?usize = null;
+        var next_length: usize = 0;
+        for (values) |value| {
+            if (value.len == 0 or value.len > input.len - cursor) continue;
+            const relative = std.mem.indexOf(u8, input[cursor..], value) orelse continue;
+            const absolute = cursor + relative;
+            if (next_index == null or absolute < next_index.? or (absolute == next_index.? and value.len > next_length)) {
+                next_index = absolute;
+                next_length = value.len;
+            }
+        }
+        const match_index = next_index orelse {
+            try output.appendSlice(allocator, input[cursor..]);
+            break;
+        };
+        try output.appendSlice(allocator, input[cursor..match_index]);
+        try output.appendSlice(allocator, "[REDACTED]");
+        cursor = match_index + next_length;
+    }
+    if (input.len == 0) return try allocator.dupe(u8, input);
+    return try output.toOwnedSlice(allocator);
+}
+
 pub fn secrets(allocator: Allocator, input: []const u8) ![]u8 {
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(allocator);
@@ -363,6 +397,19 @@ test "redaction hides secret-like values" {
     try std.testing.expect(std.mem.indexOf(u8, redacted, "Bearer abc") == null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "normal=value") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "missing Hostinger API token") != null);
+}
+
+test "exact redaction removes bound values regardless of field names" {
+    const allocator = std.testing.allocator;
+    const redacted = try sensitive(
+        allocator,
+        "ordinary message contains very-secret-material and token=pattern-secret\n",
+        &.{ "very-secret-material", "secret-material" },
+    );
+    defer allocator.free(redacted);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "very-secret-material") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "pattern-secret") == null);
+    try std.testing.expect(std.mem.indexOf(u8, redacted, "[REDACTED]") != null);
 }
 
 test "redaction hides DNS verification TXT values inside JSON" {

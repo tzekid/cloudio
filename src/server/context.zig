@@ -5,6 +5,7 @@ const app_deploy = @import("app_deploy");
 const app_nob_projects = @import("app_nob_projects");
 const app_nob_actions = @import("app_nob_actions");
 const app_nob_runtime = @import("app_nob_runtime");
+const app_nob_secrets = @import("app_nob_secrets");
 const app_provider_writes = @import("app_provider_writes");
 const app_system_control = @import("app_system_control");
 const app_writes = @import("app_writes");
@@ -62,5 +63,14 @@ pub fn nobActions(ctx: Context) app_nob_actions.Context {
         .db = ctx.db,
         .config = ctx.config,
         .cloudio_version = core_version.value,
+    };
+}
+
+pub fn nobSecrets(ctx: Context) app_nob_secrets.Context {
+    return .{
+        .io = ctx.io,
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+        .config = ctx.config,
     };
 }

@@ -13,6 +13,7 @@
   const facts = c.byId("nob-project-facts");
   const resourcesBody = c.byId("nob-resources-body");
   const actionsBody = c.byId("nob-actions-body");
+  const secretsBody = c.byId("nob-secrets-body");
   const runsBody = c.byId("nob-runs-body");
   const runsRefresh = c.byId("nob-runs-refresh");
   const runDetail = c.byId("nob-run-detail");
@@ -182,7 +183,105 @@
     ], "This project declares no actions.");
     detailPanel.classList.remove("hidden");
     detailPanel.scrollIntoView({ block: "start" });
+    loadSecrets(project.id);
     loadRuns(project.id);
+  }
+
+  function secretStatus(secret) {
+    if (!secret.bound) return c.badge("Not bound");
+    return c.status(secret.present ? "Available" : "Unavailable");
+  }
+
+  function secretControls(secret) {
+    const controls = c.el("div", { className: "table-actions" });
+    controls.appendChild(c.button(secret.bound ? "Replace" : "Bind", {
+      small: true,
+      kind: secret.bound ? "secondary" : "primary",
+      disabled: !activeProject || activeProject.trust_state !== "trusted",
+      dataset: { nobSecretBind: secret.secret_id },
+    }));
+    if (secret.bound) controls.appendChild(c.button("Remove", {
+      small: true,
+      kind: "danger",
+      disabled: !activeProject || activeProject.trust_state !== "trusted",
+      dataset: { nobSecretUnbind: secret.secret_id },
+    }));
+    return controls;
+  }
+
+  function renderSecrets(items) {
+    c.renderTable(secretsBody, items, [
+      { label: "Secret", render: function (secret) {
+        return [
+          c.el("span", { className: "mono", text: secret.secret_id }),
+          c.el("div", { className: "muted", text: secret.purpose }),
+        ];
+      } },
+      { label: "Required for", render: function (secret) { return (secret.required_for || []).join(", ") || "Optional"; } },
+      { label: "Status", render: secretStatus },
+      { label: "Source", render: function (secret) { return secret.bound ? (secret.source_kind || "Configured") : "—"; } },
+      { label: "Manage", render: secretControls, className: "cell-actions" },
+    ], "This project declares no secrets.");
+  }
+
+  async function loadSecrets(projectId) {
+    try {
+      const result = await c.api("/api/nob/projects/" + encodeURIComponent(projectId) + "/secrets");
+      renderSecrets(result.items || []);
+    } catch (error) {
+      c.tableEmpty(secretsBody, 5, "Secrets unavailable: " + error.message);
+    }
+  }
+
+  async function bindSecret(secretId) {
+    if (!activeProject) return;
+    const sourceKind = c.el("select", {
+      children: [
+        c.el("option", { value: "file", text: "Local file" }),
+        c.el("option", { value: "process-environment", text: "Cloudio process environment" }),
+      ],
+    });
+    const sourceRef = c.el("input", {
+      type: "text",
+      attrs: { required: true, autocomplete: "off", placeholder: "/run/secrets/example" },
+    });
+    sourceKind.addEventListener("change", function () {
+      sourceRef.placeholder = sourceKind.value === "file" ? "/run/secrets/example" : "EXAMPLE_TOKEN";
+    });
+    const form = c.el("div", { className: "stack compact-stack", children: [
+      c.el("p", { text: "Choose where Cloudio should read this value. The reference is stored locally but is never returned by the API or shown again." }),
+      c.el("div", { className: "field", children: [c.el("label", { text: "Source type" }), sourceKind] }),
+      c.el("div", { className: "field", children: [c.el("label", { text: "Source reference" }), sourceRef] }),
+    ] });
+    const accepted = await c.confirmAction({
+      title: "Bind " + secretId,
+      message: form,
+      confirmLabel: "Save binding",
+    });
+    if (!accepted || !sourceRef.reportValidity()) return;
+    await c.api(
+      "/api/nob/projects/" + encodeURIComponent(activeProject.id) + "/secrets/" + encodeURIComponent(secretId),
+      { method: "PUT", confirm: true, body: { source_kind: sourceKind.value, source_ref: sourceRef.value } }
+    );
+    sourceRef.value = "";
+    c.toast("Secret binding saved. Its reference and value remain hidden.", "success");
+    await loadSecrets(activeProject.id);
+  }
+
+  async function unbindSecret(secretId) {
+    if (!activeProject) return;
+    if (!await c.confirmAction({
+      title: "Remove " + secretId + " binding",
+      message: "Future runs that require this secret will remain unavailable until another source is bound.",
+      confirmLabel: "Remove binding",
+      danger: true,
+    })) return;
+    await c.api(
+      "/api/nob/projects/" + encodeURIComponent(activeProject.id) + "/secrets/" + encodeURIComponent(secretId),
+      { method: "DELETE", confirm: true, body: {} }
+    );
+    c.toast("Secret binding removed.", "success");
+    await loadSecrets(activeProject.id);
   }
 
   function resourceControls(resource) {
@@ -593,6 +692,25 @@
     if (logs) showResourceLogs(logs.dataset.nobResourceLogs).catch(function (error) {
       c.toast("Resource logs unavailable: " + error.message, "danger");
     });
+  });
+  secretsBody.addEventListener("click", function (event) {
+    const bind = event.target.closest("button[data-nob-secret-bind]");
+    if (bind) {
+      c.withBusy(bind, "Saving…", function () {
+        return bindSecret(bind.dataset.nobSecretBind).catch(function (error) {
+          c.toast("Secret binding failed: " + error.message, "danger");
+        });
+      });
+      return;
+    }
+    const unbind = event.target.closest("button[data-nob-secret-unbind]");
+    if (unbind) {
+      c.withBusy(unbind, "Removing…", function () {
+        return unbindSecret(unbind.dataset.nobSecretUnbind).catch(function (error) {
+          c.toast("Secret removal failed: " + error.message, "danger");
+        });
+      });
+    }
   });
   runsBody.addEventListener("click", function (event) {
     const view = event.target.closest("button[data-nob-run-view]");

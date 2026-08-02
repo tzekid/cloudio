@@ -178,6 +178,16 @@ pub const ManagedUnitUpdate = struct {
     updated_at: i64,
 };
 
+pub const SecretBindingUpdate = struct {
+    project_id: i64,
+    secret_id: []const u8,
+    source_kind: []const u8,
+    source_ref: []const u8,
+    present: bool,
+    bound_by: []const u8,
+    now: i64,
+};
+
 pub const DiscoveryRecord = struct {
     declared_id: ?[]const u8,
     display_name: []const u8,
@@ -981,6 +991,85 @@ pub const Repository = struct {
         try bindText(stmt, 3, authorization_id);
         try stepDone(stmt);
         return sqlite.sqlite3_changes(self.handle) == 1;
+    }
+
+    pub fn upsertSecretBinding(self: Repository, value: SecretBindingUpdate) !void {
+        const stmt = try self.prepare(
+            \\INSERT INTO project_secret_bindings(
+            \\  project_id, secret_id, source_kind, source_ref, present,
+            \\  bound_by, bound_at, checked_at
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            \\ON CONFLICT(project_id, secret_id) DO UPDATE SET
+            \\  source_kind=excluded.source_kind,
+            \\  source_ref=excluded.source_ref,
+            \\  present=excluded.present,
+            \\  bound_by=excluded.bound_by,
+            \\  bound_at=excluded.bound_at,
+            \\  checked_at=excluded.checked_at
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, value.project_id);
+        try bindText(stmt, 2, value.secret_id);
+        try bindText(stmt, 3, value.source_kind);
+        try bindText(stmt, 4, value.source_ref);
+        try bindI64(stmt, 5, @intFromBool(value.present));
+        try bindText(stmt, 6, value.bound_by);
+        try bindI64(stmt, 7, value.now);
+        try bindI64(stmt, 8, value.now);
+        try stepDone(stmt);
+    }
+
+    pub fn deleteSecretBinding(self: Repository, project_id: i64, secret_id: []const u8) !bool {
+        const stmt = try self.prepare("DELETE FROM project_secret_bindings WHERE project_id=? AND secret_id=?");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, project_id);
+        try bindText(stmt, 2, secret_id);
+        try stepDone(stmt);
+        return sqlite.sqlite3_changes(self.handle) == 1;
+    }
+
+    pub fn updateSecretPresence(self: Repository, project_id: i64, secret_id: []const u8, present: bool, checked_at: i64) !void {
+        const stmt = try self.prepare(
+            \\UPDATE project_secret_bindings SET present=?, checked_at=?
+            \\WHERE project_id=? AND secret_id=?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, @intFromBool(present));
+        try bindI64(stmt, 2, checked_at);
+        try bindI64(stmt, 3, project_id);
+        try bindText(stmt, 4, secret_id);
+        try stepDone(stmt);
+        if (sqlite.sqlite3_changes(self.handle) != 1) return error.SecretBindingNotFound;
+    }
+
+    pub fn listSecretBindings(self: Repository, allocator: Allocator, project_id: i64) !model.SecretBindings {
+        const stmt = try self.prepare(
+            \\SELECT project_id, secret_id, source_kind, source_ref, present,
+            \\       bound_by, bound_at, checked_at
+            \\FROM project_secret_bindings WHERE project_id=? ORDER BY secret_id
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, project_id);
+        var rows = std.ArrayList(model.SecretBinding).empty;
+        errdefer {
+            for (rows.items) |row| row.deinit(allocator);
+            rows.deinit(allocator);
+        }
+        while (true) switch (sqlite.sqlite3_step(stmt)) {
+            sqlite.SQLITE_ROW => try rows.append(allocator, .{
+                .project_id = sqlite.sqlite3_column_int64(stmt, 0),
+                .secret_id = try dupeRequired(allocator, stmt, 1),
+                .source_kind = try dupeRequired(allocator, stmt, 2),
+                .source_ref = try dupeRequired(allocator, stmt, 3),
+                .present = sqlite.sqlite3_column_int64(stmt, 4) != 0,
+                .bound_by = try dupeRequired(allocator, stmt, 5),
+                .bound_at = sqlite.sqlite3_column_int64(stmt, 6),
+                .checked_at = columnI64Optional(stmt, 7),
+            }),
+            sqlite.SQLITE_DONE => break,
+            else => return error.SqliteStep,
+        };
+        return .{ .items = try rows.toOwnedSlice(allocator) };
     }
 
     pub fn getProject(self: Repository, allocator: Allocator, project_id: i64) !?model.Project {

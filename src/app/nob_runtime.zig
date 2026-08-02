@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_nob_projects = @import("app_nob_projects");
+const app_nob_secrets = @import("app_nob_secrets");
 const bootstrap = @import("nob_bootstrap");
 const core_config = @import("core_config");
 const core_time = @import("core_time");
@@ -29,6 +30,12 @@ pub fn prepareAndObserve(ctx: Context, reference: []const u8) !Outcome {
     const project = (try app_nob_projects.find(projectContext(ctx), reference)) orelse return error.ProjectNotFound;
     defer project.deinit(ctx.gpa);
     const manifest_sha256 = try requireExecutableProject(project);
+    var manifest_document = try loadManifest(ctx, project.root_path, manifest_sha256);
+    defer manifest_document.deinit();
+    var resolved_secrets = try app_nob_secrets.resolve(secretContext(ctx), project.id, manifest_document.value());
+    defer resolved_secrets.deinit(ctx.gpa);
+    const redaction_values = try resolved_secrets.redactionValues(ctx.gpa);
+    defer ctx.gpa.free(redaction_values);
     const now = try nowSeconds();
     if (!try ctx.db.nob().markRunnerBuilding(project.id, manifest_sha256, now)) return error.ProjectStateChanged;
 
@@ -45,6 +52,8 @@ pub fn prepareAndObserve(ctx: Context, reference: []const u8) !Outcome {
         .toolchains_file = ctx.config.nob_toolchains_file,
         .runtime_environment = ctx.config.runtime_environment,
         .cloudio_version = ctx.cloudio_version,
+        .available_secrets = resolved_secrets.available_csv,
+        .redaction_values = redaction_values,
     }, now, &diagnostics.writer) catch |err| {
         try recordBootstrapFailure(ctx, project.id, manifest_sha256, diagnostics.written(), err, now);
         return err;
@@ -74,7 +83,7 @@ pub fn prepareAndObserve(ctx: Context, reference: []const u8) !Outcome {
     });
     try audit(ctx, "nob.bootstrap", "ok", project.id, if (built.reused) "runner cache reused" else "runner built and validated");
 
-    const status = try observeWith(ctx, project, manifest_sha256, built.runner_path, built.zig_path, source_state);
+    const status = try observeWith(ctx, project, manifest_sha256, built.runner_path, built.zig_path, source_state, &resolved_secrets, redaction_values);
     return .{ .project_id = project.id, .runner_reused = built.reused, .status = status };
 }
 
@@ -82,6 +91,12 @@ pub fn observe(ctx: Context, reference: []const u8) !Outcome {
     const project = (try app_nob_projects.find(projectContext(ctx), reference)) orelse return error.ProjectNotFound;
     defer project.deinit(ctx.gpa);
     const manifest_sha256 = try requireExecutableProject(project);
+    var manifest_document = try loadManifest(ctx, project.root_path, manifest_sha256);
+    defer manifest_document.deinit();
+    var resolved_secrets = try app_nob_secrets.resolve(secretContext(ctx), project.id, manifest_document.value());
+    defer resolved_secrets.deinit(ctx.gpa);
+    const redaction_values = try resolved_secrets.redactionValues(ctx.gpa);
+    defer ctx.gpa.free(redaction_values);
     if (project.runner_state != .ready) return error.RunnerNotReady;
     const runner_path = project.runner_path orelse return error.RunnerNotReady;
     const runner_detail = project.runner_detail orelse return error.RunnerMetadataMissing;
@@ -89,7 +104,7 @@ pub fn observe(ctx: Context, reference: []const u8) !Outcome {
     defer ctx.gpa.free(zig_path);
     const source_state = try source.inspect(ctx.io, ctx.gpa, project.root_path, manifest_sha256, ctx.config.runtime_environment);
     defer source_state.deinit(ctx.gpa);
-    const status = try observeWith(ctx, project, manifest_sha256, runner_path, zig_path, source_state);
+    const status = try observeWith(ctx, project, manifest_sha256, runner_path, zig_path, source_state, &resolved_secrets, redaction_values);
     return .{ .project_id = project.id, .runner_reused = true, .status = status };
 }
 
@@ -100,12 +115,16 @@ fn observeWith(
     runner_path: []const u8,
     zig_path: []const u8,
     source_state: source.State,
+    resolved_secrets: *const app_nob_secrets.Resolution,
+    redaction_values: []const []const u8,
 ) !nob.types.Status {
     var diagnostics = std.Io.Writer.Allocating.init(ctx.gpa);
     defer diagnostics.deinit();
     var document = observation.run(ctx.io, ctx.gpa, runner_path, zig_path, project.root_path, manifest_sha256, source_state, .{
         .runtime_environment = ctx.config.runtime_environment,
         .cloudio_version = ctx.cloudio_version,
+        .available_secrets = resolved_secrets.available_csv,
+        .redaction_values = redaction_values,
     }, &diagnostics.writer) catch |err| {
         const now = try nowSeconds();
         const detail = try failureDetail(ctx.gpa, diagnostics.written(), err);
@@ -175,6 +194,22 @@ fn requireExecutableProject(project: db_store.NobProject) ![]const u8 {
 
 fn projectContext(ctx: Context) app_nob_projects.Context {
     return .{ .gpa = ctx.gpa, .db = ctx.db };
+}
+
+fn secretContext(ctx: Context) app_nob_secrets.Context {
+    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config };
+}
+
+fn loadManifest(ctx: Context, root_path: []const u8, manifest_sha256: []const u8) !nob.ManifestDocument {
+    const path = try std.fs.path.join(ctx.gpa, &.{ root_path, "nob.json" });
+    defer ctx.gpa.free(path);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.gpa, .limited(nob.manifest.max_manifest_bytes));
+    defer ctx.gpa.free(bytes);
+    var document = try nob.parseManifest(ctx.gpa, bytes);
+    errdefer document.deinit();
+    var digest_buffer: [64]u8 = undefined;
+    if (!std.mem.eql(u8, document.sha256Hex(&digest_buffer), manifest_sha256)) return error.ManifestDigestMismatch;
+    return document;
 }
 
 fn recordBootstrapFailure(

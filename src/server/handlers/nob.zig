@@ -2,6 +2,7 @@ const std = @import("std");
 const app_nob_actions = @import("app_nob_actions");
 const app_nob_projects = @import("app_nob_projects");
 const app_nob_runtime = @import("app_nob_runtime");
+const app_nob_secrets = @import("app_nob_secrets");
 const core_json = @import("core_json");
 const http = @import("http");
 const common = @import("../common.zig");
@@ -15,6 +16,48 @@ pub fn list(ctx: context.Context, _: http.Request, _: http.Params, writer: *std.
 pub fn details(ctx: context.Context, _: http.Request, params: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
     const reference = params.get("id") orelse return common.badRequest(writer);
     try app_nob_projects.writeShowJson(context.nob(ctx), reference, writer);
+    return 200;
+}
+
+pub fn secrets(ctx: context.Context, _: http.Request, params: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
+    const reference = params.get("id") orelse return common.badRequest(writer);
+    try app_nob_secrets.writeJson(context.nobSecrets(ctx), reference, writer);
+    return 200;
+}
+
+pub fn bindSecret(ctx: context.Context, request: http.Request, params: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
+    const reference = params.get("id") orelse return common.badRequest(writer);
+    const secret_id = params.get("secret") orelse return common.badRequest(writer);
+    var parsed = common.jsonBody(ctx.gpa, request.body) orelse return common.badRequest(writer);
+    defer parsed.deinit();
+    if (!objectHasOnly(parsed.value.object, &.{ "source_kind", "source_ref" }) or parsed.value.object.count() != 2) {
+        return common.badRequest(writer);
+    }
+    const source_kind = common.strField(parsed.value, "source_kind") orelse return common.badRequest(writer);
+    const source_ref = common.strField(parsed.value, "source_ref") orelse return common.badRequest(writer);
+    try app_nob_secrets.bind(
+        context.nobSecrets(ctx),
+        reference,
+        secret_id,
+        source_kind,
+        source_ref,
+        ctx.auth_user_id orelse "authenticated-web",
+    );
+    try app_nob_secrets.writeJson(context.nobSecrets(ctx), reference, writer);
+    return 200;
+}
+
+pub fn unbindSecret(ctx: context.Context, request: http.Request, params: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
+    const reference = params.get("id") orelse return common.badRequest(writer);
+    const secret_id = params.get("secret") orelse return common.badRequest(writer);
+    if (!emptyObject(ctx.gpa, request.body)) return common.badRequest(writer);
+    try app_nob_secrets.unbind(
+        context.nobSecrets(ctx),
+        reference,
+        secret_id,
+        ctx.auth_user_id orelse "authenticated-web",
+    );
+    try app_nob_secrets.writeJson(context.nobSecrets(ctx), reference, writer);
     return 200;
 }
 

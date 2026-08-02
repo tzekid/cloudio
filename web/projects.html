@@ -80,6 +80,20 @@
         </div>
         <div>
           <div class="panel-header compact-header">
+            <div>
+              <h3 class="section-heading">Secrets</h3>
+              <p>Bind logical names to local sources. Cloudio never displays the source reference or secret value.</p>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th scope="col">Secret</th><th scope="col">Required for</th><th scope="col">Status</th><th scope="col">Source</th><th scope="col">Manage</th></tr></thead>
+              <tbody id="nob-secrets-body"><tr><td class="empty-state" colspan="5">Open an approved project to load secrets.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <div class="panel-header compact-header">
             <div><h3 class="section-heading">Recent runs</h3><p>Reviewed plans, progress, and retained results for this project.</p></div>
             <button id="nob-runs-refresh" class="button button-small" type="button">Refresh runs</button>
           </div>

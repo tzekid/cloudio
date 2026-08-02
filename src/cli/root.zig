@@ -424,6 +424,9 @@ fn usage() void {
         \\  cloudio nob trust <id> <manifest-sha256>|revoke <id>|prepare <id>|observe <id>
         \\  cloudio nob plan <id> <action> [--param name=value]|run <plan-id> --yes [--follow]
         \\  cloudio nob resource <id> <resource-id> <control> --yes [--follow]
+        \\  cloudio nob secrets <id> [--json|--format json]
+        \\  cloudio nob secret-bind <id> <secret> <file|process-environment> <source-ref> --yes
+        \\  cloudio nob secret-unbind <id> <secret> --yes
         \\
     , .{version});
 }

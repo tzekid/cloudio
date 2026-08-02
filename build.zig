@@ -232,6 +232,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "nob_protocol", .module = nob_protocol_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
             .{ .name = "nob_source", .module = nob_source_mod },
@@ -244,6 +245,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "nob_protocol", .module = nob_protocol_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
             .{ .name = "nob_source", .module = nob_source_mod },
@@ -256,6 +258,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
             .{ .name = "nob_source", .module = nob_source_mod },
             .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
@@ -1040,12 +1043,26 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(app_nob_projects_mod);
+    const app_nob_secrets_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/nob_secrets.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_time", .module = core_time_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+        },
+    });
+    linkSqlite(app_nob_secrets_mod);
     const app_nob_runtime_mod = b.createModule(.{
         .root_source_file = b.path("src/app/nob_runtime.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
+            .{ .name = "app_nob_secrets", .module = app_nob_secrets_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -1063,6 +1080,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
+            .{ .name = "app_nob_secrets", .module = app_nob_secrets_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -1082,7 +1100,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_nob_runtime", .module = app_nob_runtime_mod },
+            .{ .name = "app_nob_secrets", .module = app_nob_secrets_mod },
             .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "nob_action_protocol", .module = nob_action_protocol_mod },
@@ -1395,6 +1415,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_deploy", .module = app_deploy_mod },
             .{ .name = "app_inventory", .module = app_inventory_mod },
             .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
+            .{ .name = "app_nob_secrets", .module = app_nob_secrets_mod },
             .{ .name = "app_nob_runtime", .module = app_nob_runtime_mod },
             .{ .name = "app_provider_writes", .module = app_provider_writes_mod },
             .{ .name = "app_refresh_cycle", .module = app_refresh_cycle_mod },
@@ -1685,6 +1706,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_nob_actions", .module = app_nob_actions_mod },
             .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
+            .{ .name = "app_nob_secrets", .module = app_nob_secrets_mod },
             .{ .name = "app_nob_runtime", .module = app_nob_runtime_mod },
             .{ .name = "app_nob_worker", .module = app_nob_worker_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
@@ -1883,6 +1905,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_caddy_mod);
     addModuleTest(b, test_step, app_projects_mod);
     addModuleTest(b, test_step, app_nob_projects_mod);
+    addModuleTest(b, test_step, app_nob_secrets_mod);
     addModuleTest(b, test_step, app_nob_runtime_mod);
     addModuleTest(b, test_step, app_nob_actions_mod);
     addModuleTest(b, test_step, app_nob_worker_mod);

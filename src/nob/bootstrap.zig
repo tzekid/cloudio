@@ -1,5 +1,6 @@
 const std = @import("std");
 const core_config = @import("core_config");
+const core_redact = @import("core_redact");
 const protocol = @import("nob_protocol");
 const source = @import("nob_source");
 const subprocess = @import("nob_subprocess");
@@ -13,6 +14,8 @@ pub const Options = struct {
     toolchains_file: []const u8,
     runtime_environment: core_config.RuntimeEnvironment,
     cloudio_version: []const u8,
+    available_secrets: []const u8 = "",
+    redaction_values: []const []const u8 = &.{},
     build_timeout_seconds: u32 = 300,
 };
 
@@ -148,8 +151,12 @@ pub fn ensure(
         .timeout_seconds = options.build_timeout_seconds,
     });
     defer build_result.deinit(allocator);
-    if (build_result.stdout.len != 0) try diagnostics.print("build stdout:\n{s}\n", .{build_result.stdout});
-    if (build_result.stderr.len != 0) try diagnostics.print("build stderr:\n{s}\n", .{build_result.stderr});
+    const redacted_build_stdout = try core_redact.sensitive(allocator, build_result.stdout, options.redaction_values);
+    defer allocator.free(redacted_build_stdout);
+    const redacted_build_stderr = try core_redact.sensitive(allocator, build_result.stderr, options.redaction_values);
+    defer allocator.free(redacted_build_stderr);
+    if (redacted_build_stdout.len != 0) try diagnostics.print("build stdout:\n{s}\n", .{redacted_build_stdout});
+    if (redacted_build_stderr.len != 0) try diagnostics.print("build stderr:\n{s}\n", .{redacted_build_stderr});
     if (!build_result.successful()) return error.RunnerBuildFailed;
 
     const partial_runner = try std.fs.path.join(allocator, &.{ partial_dir, "bin", "nob" });
@@ -276,7 +283,7 @@ fn describeRunner(
         .{ .key = "NOB_MANIFEST_SHA256", .value = manifest_sha256 },
         .{ .key = "NOB_SOURCE_FINGERPRINT", .value = source_state.fingerprint },
         .{ .key = "NOB_SOURCE_DIRTY", .value = if (source_state.dirty) "1" else "0" },
-        .{ .key = "NOB_AVAILABLE_SECRETS", .value = "" },
+        .{ .key = "NOB_AVAILABLE_SECRETS", .value = options.available_secrets },
         .{ .key = "NOB_ZIG", .value = toolchain.path },
         .{ .key = "NOB_CLOUDIO_VERSION", .value = options.cloudio_version },
     };
@@ -290,9 +297,13 @@ fn describeRunner(
         .timeout_seconds = 30,
     });
     defer result.deinit(allocator);
-    if (result.stderr.len != 0) try diagnostics.print("describe stderr:\n{s}\n", .{result.stderr});
+    const redacted_stdout = try core_redact.sensitive(allocator, result.stdout, options.redaction_values);
+    defer allocator.free(redacted_stdout);
+    const redacted_stderr = try core_redact.sensitive(allocator, result.stderr, options.redaction_values);
+    defer allocator.free(redacted_stderr);
+    if (redacted_stderr.len != 0) try diagnostics.print("describe stderr:\n{s}\n", .{redacted_stderr});
     if (!result.successful()) return error.RunnerDescribeFailed;
-    return try protocol.parseDescription(allocator, result.stdout, identity);
+    return try protocol.parseDescription(allocator, redacted_stdout, identity);
 }
 
 fn resolveToolchain(

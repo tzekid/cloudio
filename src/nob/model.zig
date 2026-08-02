@@ -321,6 +321,33 @@ pub const Artifacts = struct {
     }
 };
 
+pub const SecretBinding = struct {
+    project_id: i64,
+    secret_id: []u8,
+    source_kind: []u8,
+    source_ref: []u8,
+    present: bool,
+    bound_by: []u8,
+    bound_at: i64,
+    checked_at: ?i64,
+
+    pub fn deinit(self: SecretBinding, allocator: Allocator) void {
+        allocator.free(self.secret_id);
+        allocator.free(self.source_kind);
+        allocator.free(self.source_ref);
+        allocator.free(self.bound_by);
+    }
+};
+
+pub const SecretBindings = struct {
+    items: []SecretBinding,
+
+    pub fn deinit(self: *SecretBindings, allocator: Allocator) void {
+        for (self.items) |item| item.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub fn parseDiscoveryState(text: []const u8) !DiscoveryState {
     return std.meta.stringToEnum(DiscoveryState, text) orelse error.InvalidDatabaseValue;
 }

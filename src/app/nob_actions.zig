@@ -1,5 +1,6 @@
 const std = @import("std");
 const app_nob_projects = @import("app_nob_projects");
+const app_nob_secrets = @import("app_nob_secrets");
 const action_protocol = @import("nob_action_protocol");
 const bootstrap = @import("nob_bootstrap");
 const core_config = @import("core_config");
@@ -47,7 +48,13 @@ pub fn plan(
     const zig_path = try bootstrap.zigPathFromMetadata(ctx.gpa, runner_detail);
     defer ctx.gpa.free(zig_path);
     try verifyRunner(ctx, binding.runner_path, binding.runner_sha256);
-    try requireActionAvailable(ctx, project.id, action_id);
+    var manifest_document = try loadManifest(ctx, project.root_path, binding.manifest_sha256);
+    defer manifest_document.deinit();
+    var resolved_secrets = try app_nob_secrets.resolve(secretContext(ctx), project.id, manifest_document.value());
+    defer resolved_secrets.deinit(ctx.gpa);
+    try app_nob_secrets.requireForAction(&resolved_secrets, manifest_document.value(), action_id);
+    const redaction_values = try resolved_secrets.redactionValues(ctx.gpa);
+    defer ctx.gpa.free(redaction_values);
 
     const source_state = try source.inspect(ctx.io, ctx.gpa, project.root_path, binding.manifest_sha256, ctx.config.runtime_environment);
     defer source_state.deinit(ctx.gpa);
@@ -66,7 +73,12 @@ pub fn plan(
         action_id,
         &plan_id,
         parameters,
-        .{ .runtime_environment = ctx.config.runtime_environment, .cloudio_version = ctx.cloudio_version },
+        .{
+            .runtime_environment = ctx.config.runtime_environment,
+            .cloudio_version = ctx.cloudio_version,
+            .available_secrets = resolved_secrets.available_csv,
+            .redaction_values = redaction_values,
+        },
         &diagnostics.writer,
     ) catch |err| {
         try audit(ctx, "nob.plan", "failed", project.id, action_id, @errorName(err));
@@ -414,6 +426,22 @@ fn validateIdempotencyKey(value: []const u8) !void {
 
 fn projectContext(ctx: Context) app_nob_projects.Context {
     return .{ .gpa = ctx.gpa, .db = ctx.db };
+}
+
+fn secretContext(ctx: Context) app_nob_secrets.Context {
+    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config };
+}
+
+fn loadManifest(ctx: Context, root_path: []const u8, manifest_sha256: []const u8) !nob.ManifestDocument {
+    const path = try std.fs.path.join(ctx.gpa, &.{ root_path, "nob.json" });
+    defer ctx.gpa.free(path);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.gpa, .limited(nob.manifest.max_manifest_bytes));
+    defer ctx.gpa.free(bytes);
+    var document = try nob.parseManifest(ctx.gpa, bytes);
+    errdefer document.deinit();
+    var digest_buffer: [64]u8 = undefined;
+    if (!std.mem.eql(u8, document.sha256Hex(&digest_buffer), manifest_sha256)) return error.ManifestDigestMismatch;
+    return document;
 }
 
 fn optionalEqual(left: ?[]const u8, right: ?[]const u8) bool {

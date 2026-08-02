@@ -171,9 +171,11 @@ pub const Config = struct {
     nob_toolchains_file: []const u8 = ".cloudio/nob/toolchains.json",
     nob_allow_system_mutation: bool = false,
     runtime_environment: RuntimeEnvironment = .{},
+    process_environment: ?*const std.process.Environ.Map = null,
 
     pub fn load(io: Io, arena: Allocator, env: *std.process.Environ.Map) !Config {
         var cfg = Config{ .domains = try parseList(arena, "plosca.ru") };
+        cfg.process_environment = env;
         try applyNobPathDefaults(arena, &cfg, env);
         try captureRuntimeEnvironment(arena, &cfg, env);
         if (env.get("CLOUDIO_CONFIG")) |value| cfg.config_path = try arena.dupe(u8, value);

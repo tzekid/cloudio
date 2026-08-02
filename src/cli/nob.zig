@@ -3,6 +3,7 @@ const app_nob_actions = @import("app_nob_actions");
 const app_database = @import("app_database");
 const app_nob_projects = @import("app_nob_projects");
 const app_nob_runtime = @import("app_nob_runtime");
+const app_nob_secrets = @import("app_nob_secrets");
 const app_nob_worker = @import("app_nob_worker");
 const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
@@ -47,6 +48,20 @@ const ResourceArgs = struct {
     rest: []const []const u8,
 };
 
+const SecretBindArgs = struct {
+    reference: []const u8,
+    secret_id: []const u8,
+    source_kind: []const u8,
+    source_ref: []const u8,
+    rest: []const []const u8,
+};
+
+const SecretUnbindArgs = struct {
+    reference: []const u8,
+    secret_id: []const u8,
+    rest: []const []const u8,
+};
+
 const Command = union(enum) {
     list: []const []const u8,
     show: ReferenceArgs,
@@ -58,6 +73,9 @@ const Command = union(enum) {
     plan: ActionArgs,
     execute: ValueArgs,
     resource: ResourceArgs,
+    secrets: ReferenceArgs,
+    secret_bind: SecretBindArgs,
+    secret_unbind: SecretUnbindArgs,
     runs: []const []const u8,
     operation: ValueArgs,
     cancel: []const u8,
@@ -84,6 +102,9 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .plan => |value| try commandPlan(ctx, value),
         .execute => |value| try commandExecute(ctx, value),
         .resource => |value| try commandResource(ctx, value),
+        .secrets => |value| try commandSecrets(ctx, value.reference, try parseFormat(value.rest)),
+        .secret_bind => |value| try commandSecretBind(ctx, value),
+        .secret_unbind => |value| try commandSecretUnbind(ctx, value),
         .runs => |rest| try commandRuns(ctx, rest),
         .operation => |value| try commandOperation(ctx, value.value, try parseFormat(value.rest)),
         .cancel => |operation_id| {
@@ -103,6 +124,36 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
             return error.UnknownNobCommand;
         },
     }
+}
+
+fn commandSecrets(ctx: Context, reference: []const u8, format: cli_render.RenderFormat) !void {
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    if (format == .json) {
+        try app_nob_secrets.writeJson(secretsContext(ctx), reference, &out.writer);
+    } else {
+        try app_nob_secrets.writeText(secretsContext(ctx), reference, &out.writer);
+    }
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+}
+
+fn commandSecretBind(ctx: Context, args: SecretBindArgs) !void {
+    if (args.rest.len != 1 or !std.mem.eql(u8, args.rest[0], "--yes")) return error.ConfirmationRequired;
+    try app_nob_secrets.bind(
+        secretsContext(ctx),
+        args.reference,
+        args.secret_id,
+        args.source_kind,
+        args.source_ref,
+        "local-cli",
+    );
+    try cli_render.writeAll(ctx.io, "nob secret binding saved; source reference and value are hidden\n");
+}
+
+fn commandSecretUnbind(ctx: Context, args: SecretUnbindArgs) !void {
+    if (args.rest.len != 1 or !std.mem.eql(u8, args.rest[0], "--yes")) return error.ConfirmationRequired;
+    try app_nob_secrets.unbind(secretsContext(ctx), args.reference, args.secret_id, "local-cli");
+    try cli_render.writeAll(ctx.io, "nob secret binding removed\n");
 }
 
 fn commandResource(ctx: Context, args: ResourceArgs) !void {
@@ -399,6 +450,10 @@ fn workerContext(ctx: Context) app_nob_worker.Context {
     return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config, .cloudio_version = core_version.value };
 }
 
+fn secretsContext(ctx: Context) app_nob_secrets.Context {
+    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config };
+}
+
 fn parseCommand(args: []const []const u8) Command {
     if (args.len == 0) return .{ .list = &.{} };
     if (std.mem.eql(u8, args[0], "list")) return .{ .list = args[1..] };
@@ -440,6 +495,28 @@ fn parseCommand(args: []const []const u8) Command {
             .rest = args[4..],
         } };
     }
+    if (std.mem.eql(u8, args[0], "secrets")) {
+        if (args.len < 2) return .{ .missing = "secrets" };
+        return .{ .secrets = .{ .reference = args[1], .rest = args[2..] } };
+    }
+    if (std.mem.eql(u8, args[0], "secret-bind")) {
+        if (args.len < 5) return .{ .missing = "secret-bind" };
+        return .{ .secret_bind = .{
+            .reference = args[1],
+            .secret_id = args[2],
+            .source_kind = args[3],
+            .source_ref = args[4],
+            .rest = args[5..],
+        } };
+    }
+    if (std.mem.eql(u8, args[0], "secret-unbind")) {
+        if (args.len < 3) return .{ .missing = "secret-unbind" };
+        return .{ .secret_unbind = .{
+            .reference = args[1],
+            .secret_id = args[2],
+            .rest = args[3..],
+        } };
+    }
     if (std.mem.eql(u8, args[0], "runs")) return .{ .runs = args[1..] };
     if (std.mem.eql(u8, args[0], "operation")) {
         if (args.len < 2) return .{ .missing = "operation" };
@@ -477,5 +554,26 @@ test "nob command parser requires an exact digest for trust" {
     switch (parseCommand(missing_args[0..])) {
         .missing => |name| try std.testing.expectEqualStrings("trust", name),
         else => return error.ExpectedMissing,
+    }
+}
+
+test "nob secret commands retain typed source arguments" {
+    const list_args = [_][]const u8{ "secrets", "dev.example.service", "--json" };
+    switch (parseCommand(&list_args)) {
+        .secrets => |value| {
+            try std.testing.expectEqualStrings("dev.example.service", value.reference);
+            try std.testing.expectEqual(@as(usize, 1), value.rest.len);
+        },
+        else => return error.ExpectedSecrets,
+    }
+    const bind_args = [_][]const u8{ "secret-bind", "dev.example.service", "database-token", "file", "/run/secrets/database", "--yes" };
+    switch (parseCommand(&bind_args)) {
+        .secret_bind => |value| {
+            try std.testing.expectEqualStrings("database-token", value.secret_id);
+            try std.testing.expectEqualStrings("file", value.source_kind);
+            try std.testing.expectEqualStrings("/run/secrets/database", value.source_ref);
+            try std.testing.expectEqualStrings("--yes", value.rest[0]);
+        },
+        else => return error.ExpectedSecretBind,
     }
 }
