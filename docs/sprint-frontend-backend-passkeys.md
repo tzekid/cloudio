@@ -1267,7 +1267,7 @@ Content-Security-Policy:
   form-action 'self'
 
 X-Content-Type-Options: nosniff
-Referrer-Policy: no-referrer
+Referrer-Policy: same-origin
 Cache-Control: no-store            # auth and API responses
 X-Frame-Options: DENY
 Cross-Origin-Opener-Policy: same-origin

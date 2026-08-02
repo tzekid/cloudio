@@ -18,7 +18,7 @@ pub const security_headers =
     "Cache-Control: no-store\r\n" ++
     "Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'\r\n" ++
     "X-Content-Type-Options: nosniff\r\n" ++
-    "Referrer-Policy: no-referrer\r\n" ++
+    "Referrer-Policy: same-origin\r\n" ++
     "X-Frame-Options: DENY\r\n" ++
     "Cross-Origin-Opener-Policy: same-origin\r\n" ++
     "Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), publickey-credentials-create=(self), publickey-credentials-get=(self), usb=()\r\n";

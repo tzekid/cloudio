@@ -112,6 +112,25 @@ async function enrollAndCheckEnhanced(browser) {
     await assertRendered(page, control);
   }
 
+  await page.goto(`${origin}/settings.html`, { waitUntil: "load" });
+  assert.match(
+    await page.locator("#settings-csrf").inputValue(),
+    /^[A-Za-z0-9_-]{43}$/,
+    "settings form must contain the authenticated session CSRF token",
+  );
+  await page.locator("#theme-dark").check();
+  const [themeResponse] = await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname === "/settings/theme"),
+    page.locator('.settings-form button[type="submit"]').click(),
+  ]);
+  assert.equal(await themeResponse.request().headerValue("origin"), origin);
+  assert.equal(themeResponse.status(), 303, "saving appearance must use the native redirect flow");
+  await page.waitForURL(`${origin}/settings.html?saved=1`);
+  assert.equal(await page.locator("html").evaluate((element) => element.classList.contains("theme-dark")), true);
+  assert.match(await page.locator("#settings-status").innerText(), /Appearance saved/);
+  const themeCookie = (await context.cookies()).find((cookie) => cookie.name === "cloudio_theme");
+  assert.equal(themeCookie?.value, "dark");
+
   await page.goto(`${origin}/apps.html`, { waitUntil: "load" });
   assert.ok(await page.locator('[data-action="deploy"][data-app="fixture-app"]').count());
   await page.goto(`${origin}/routes.html`, { waitUntil: "load" });
