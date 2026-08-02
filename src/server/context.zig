@@ -3,6 +3,7 @@ const app_caddy_desired = @import("app_caddy_desired");
 const app_dashboard = @import("app_dashboard");
 const app_deploy = @import("app_deploy");
 const app_nob_projects = @import("app_nob_projects");
+const app_nob_actions = @import("app_nob_actions");
 const app_nob_runtime = @import("app_nob_runtime");
 const app_provider_writes = @import("app_provider_writes");
 const app_system_control = @import("app_system_control");
@@ -45,6 +46,16 @@ pub fn nob(ctx: Context) app_nob_projects.Context {
 }
 
 pub fn nobRuntime(ctx: Context) app_nob_runtime.Context {
+    return .{
+        .io = ctx.io,
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+        .config = ctx.config,
+        .cloudio_version = core_version.value,
+    };
+}
+
+pub fn nobActions(ctx: Context) app_nob_actions.Context {
     return .{
         .io = ctx.io,
         .gpa = ctx.gpa,

@@ -181,6 +181,18 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(db_store_mod);
+    const app_writes_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/writes.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_writes_mod);
     const nob_protocol_mod = b.createModule(.{
         .root_source_file = b.path("src/nob/protocol.zig"),
         .target = target,
@@ -249,6 +261,19 @@ pub fn build(b: *std.Build) void {
             .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
         },
     });
+    const nob_broker_mod = b.createModule(.{
+        .root_source_file = b.path("src/nob/broker.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_writes", .module = app_writes_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+            .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
+        },
+    });
+    linkSqlite(nob_broker_mod);
     const nob_independent_observation_mod = b.createModule(.{
         .root_source_file = b.path("src/nob/independent_observation.zig"),
         .target = target,
@@ -1021,11 +1046,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_nob_runtime", .module = app_nob_runtime_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "nob_action_protocol", .module = nob_action_protocol_mod },
             .{ .name = "nob_bootstrap", .module = nob_bootstrap_mod },
+            .{ .name = "nob_broker", .module = nob_broker_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
             .{ .name = "nob_source", .module = nob_source_mod },
             .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
@@ -1197,19 +1224,6 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_dashboard_mod);
 
-    const app_writes_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/writes.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "sqlite", .module = sqlite_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "core_redact", .module = core_redact_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_writes_mod);
-
     const app_caddy_desired_mod = b.createModule(.{
         .root_source_file = b.path("src/app/caddy_desired.zig"),
         .target = target,
@@ -1336,6 +1350,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_nob_actions", .module = app_nob_actions_mod },
             .{ .name = "app_authentication", .module = app_authentication_mod },
             .{ .name = "app_actions", .module = app_actions_mod },
             .{ .name = "app_caddy_desired", .module = app_caddy_desired_mod },
@@ -1910,6 +1925,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, nob_independent_observation_mod);
     addModuleTest(b, test_step, nob_observation_mod);
     addModuleTest(b, test_step, nob_action_protocol_mod);
+    addModuleTest(b, test_step, nob_broker_mod);
     addModuleTest(b, test_step, provider_cloudflare_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_transport_mod);
     addModuleTest(b, test_step, provider_cloudflare_mod);

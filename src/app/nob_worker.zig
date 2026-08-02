@@ -1,6 +1,8 @@
 const std = @import("std");
 const action_protocol = @import("nob_action_protocol");
+const app_nob_runtime = @import("app_nob_runtime");
 const bootstrap = @import("nob_bootstrap");
+const broker = @import("nob_broker");
 const core_config = @import("core_config");
 const core_time = @import("core_time");
 const db_store = @import("db_store");
@@ -40,8 +42,8 @@ pub fn processNext(ctx: Context) !bool {
         const summary = try std.fmt.allocPrint(ctx.gpa, "run failed before a valid terminal event: {s}", .{@errorName(err)});
         defer ctx.gpa.free(summary);
         try ctx.db.nob().finishRun(run.id, .{
-            .state = "failed",
-            .outcome = "failed",
+            .state = failureState(err),
+            .outcome = failureState(err),
             .summary = summary,
             .error_code = @errorName(err),
             .log_path = null,
@@ -49,11 +51,12 @@ pub fn processNext(ctx: Context) !bool {
             .finished_at = try nowSeconds(),
         });
         try audit(ctx, "nob.run", "failed", run.id, @errorName(err));
+        observeAfter(ctx, run.project_id, run.id);
         return true;
     };
     defer execution.deinit(ctx.gpa);
     try ctx.db.nob().finishRun(run.id, .{
-        .state = @tagName(execution.outcome),
+        .state = stateForOutcome(execution.outcome),
         .outcome = @tagName(execution.outcome),
         .summary = execution.summary,
         .error_code = execution.error_code,
@@ -62,6 +65,7 @@ pub fn processNext(ctx: Context) !bool {
         .finished_at = try nowSeconds(),
     });
     try audit(ctx, "nob.run", @tagName(execution.outcome), run.id, execution.summary);
+    observeAfter(ctx, run.project_id, run.id);
     return true;
 }
 
@@ -116,6 +120,22 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
 
     var paths = try createRunPaths(ctx, run.id);
     defer paths.deinit(ctx.gpa);
+    var broker_server: ?broker.Server = if (parsed_plan.value.broker_requests.len == 0)
+        null
+    else
+        try broker.Server.start(.{
+            .io = ctx.io,
+            .gpa = ctx.gpa,
+            .config = ctx.config,
+            .operation_id = run.id,
+            .actor = run.requested_by,
+            .idempotency_key = run.idempotency_key,
+            .operation_dir = paths.operation_dir,
+            .artifact_dir = paths.artifact_dir,
+            .manifest = manifest_document.value(),
+            .plan = &parsed_plan.value,
+        });
+    defer if (broker_server) |*server| server.deinit();
     const extras = [_]subprocess.ExtraEnvironment{
         .{ .key = "NOB_PROJECT_ROOT", .value = project.root_path },
         .{ .key = "NOB_MANIFEST_SHA256", .value = manifest_sha256 },
@@ -130,6 +150,10 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
     var environment = try subprocess.makeEnvironment(ctx.gpa, ctx.config.runtime_environment, &extras);
     defer environment.deinit();
     if (source_state.revision) |revision| try environment.put("NOB_SOURCE_REVISION", revision);
+    if (broker_server) |*server| {
+        try environment.put("NOB_BROKER_SOCKET", server.socketPath());
+        try environment.put("NOB_BROKER_TOKEN_FILE", server.tokenPath());
+    }
     const args = [_][]const u8{
         runner_path,
         "run",
@@ -139,7 +163,12 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
         "--plan-digest",
         plan_sha256,
     };
-    var monitor_context = MonitorContext{ .db = ctx.db, .operation_id = run.id, .last_heartbeat = try nowSeconds() };
+    var monitor_context = MonitorContext{
+        .db = ctx.db,
+        .operation_id = run.id,
+        .last_heartbeat = try nowSeconds(),
+        .broker_server = if (broker_server) |*server| server else null,
+    };
     const max_stdout: usize = @intCast(@min(ctx.config.nob_max_run_log_bytes, nob.events.max_retained_stream_bytes));
     const result = try subprocess.runWithInput(
         ctx.gpa,
@@ -153,9 +182,10 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
             .stderr_bytes = 1024 * 1024,
             .timeout_seconds = action.timeout_seconds,
         },
-        .{ .context = &monitor_context, .poll = pollCancellation },
+        .{ .context = &monitor_context, .poll = pollCancellation, .started = childStarted },
     );
     defer result.deinit(ctx.gpa);
+    if (broker_server) |*server| try server.stop();
     try writePrivateFile(ctx, paths.log_path, result.stdout);
     try writePrivateFile(ctx, paths.stderr_path, result.stderr);
 
@@ -163,10 +193,10 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
     const exit_code = termExitCode(result.term);
     if (result.canceled) {
         if (nob.events.validateStream(ctx.gpa, result.stdout, run.action_id, exit_code)) |summary| {
-            try persistEvents(ctx, run.id, result.stdout);
+            const dropped_logs = try persistEvents(ctx, run.id, result.stdout);
             return .{
                 .outcome = summary.outcome,
-                .summary = try terminalSummary(ctx.gpa, result.stdout, "run canceled"),
+                .summary = try terminalSummary(ctx.gpa, result.stdout, "run canceled", dropped_logs),
                 .error_code = if (summary.outcome == .canceled) null else "cancellation_outcome_mismatch",
                 .log_path = try ctx.gpa.dupe(u8, paths.log_path),
                 .stderr_path = try ctx.gpa.dupe(u8, paths.stderr_path),
@@ -182,10 +212,10 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
         }
     }
     const stream = try nob.events.validateStream(ctx.gpa, result.stdout, run.action_id, exit_code);
-    try persistEvents(ctx, run.id, result.stdout);
+    const dropped_logs = try persistEvents(ctx, run.id, result.stdout);
     return .{
         .outcome = stream.outcome,
-        .summary = try terminalSummary(ctx.gpa, result.stdout, "run completed"),
+        .summary = try terminalSummary(ctx.gpa, result.stdout, "run completed", dropped_logs),
         .error_code = if (stream.outcome == .succeeded) null else "runner_reported_failure",
         .log_path = try ctx.gpa.dupe(u8, paths.log_path),
         .stderr_path = try ctx.gpa.dupe(u8, paths.stderr_path),
@@ -247,7 +277,13 @@ const MonitorContext = struct {
     db: *db_store.Db,
     operation_id: []const u8,
     last_heartbeat: i64,
+    broker_server: ?*broker.Server,
 };
+
+fn childStarted(context_ptr: *anyopaque, child_id: std.process.Child.Id) !void {
+    const monitor: *MonitorContext = @ptrCast(@alignCast(context_ptr));
+    if (monitor.broker_server) |server| server.childStarted(child_id);
+}
 
 fn pollCancellation(context_ptr: *anyopaque) !bool {
     const monitor: *MonitorContext = @ptrCast(@alignCast(context_ptr));
@@ -259,7 +295,9 @@ fn pollCancellation(context_ptr: *anyopaque) !bool {
     return try monitor.db.nob().runCancellationRequested(monitor.operation_id);
 }
 
-fn persistEvents(ctx: Context, operation_id: []const u8, bytes: []const u8) !void {
+fn persistEvents(ctx: Context, operation_id: []const u8, bytes: []const u8) !usize {
+    var retained_logs: usize = 0;
+    var dropped_logs: usize = 0;
     var lines = std.mem.splitScalar(u8, bytes, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;
@@ -268,6 +306,13 @@ fn persistEvents(ctx: Context, operation_id: []const u8, bytes: []const u8) !voi
         if (parsed.value != .object) return error.InvalidEvent;
         const seq = intField(parsed.value.object, "seq") orelse return error.InvalidEvent;
         const event_type = stringField(parsed.value.object, "type") orelse return error.InvalidEvent;
+        if (std.mem.eql(u8, event_type, "log")) {
+            if (retained_logs >= 1000) {
+                dropped_logs += 1;
+                continue;
+            }
+            retained_logs += 1;
+        }
         try ctx.db.nob().appendRunEvent(.{
             .operation_id = operation_id,
             .seq = seq,
@@ -277,9 +322,10 @@ fn persistEvents(ctx: Context, operation_id: []const u8, bytes: []const u8) !voi
             .received_at = try nowSeconds(),
         });
     }
+    return dropped_logs;
 }
 
-fn terminalSummary(allocator: Allocator, bytes: []const u8, fallback: []const u8) ![]u8 {
+fn terminalSummary(allocator: Allocator, bytes: []const u8, fallback: []const u8, dropped_logs: usize) ![]u8 {
     var candidate: ?[]u8 = null;
     errdefer if (candidate) |value| allocator.free(value);
     var lines = std.mem.splitScalar(u8, bytes, '\n');
@@ -294,7 +340,52 @@ fn terminalSummary(allocator: Allocator, bytes: []const u8, fallback: []const u8
         if (candidate) |old| allocator.free(old);
         candidate = try allocator.dupe(u8, summary);
     }
-    return candidate orelse try allocator.dupe(u8, fallback);
+    const summary = candidate orelse try allocator.dupe(u8, fallback);
+    if (dropped_logs == 0) return summary;
+    defer allocator.free(summary);
+    return try std.fmt.allocPrint(allocator, "{s} ({d} additional log events retained only in the NDJSON file)", .{ summary, dropped_logs });
+}
+
+fn stateForOutcome(outcome: nob.types.OperationOutcome) []const u8 {
+    return switch (outcome) {
+        .succeeded => "succeeded",
+        .canceled => "canceled",
+        .interrupted => "interrupted",
+        .failed, .@"failed-rolled-back", .@"failed-rollback-failed" => "failed",
+    };
+}
+
+fn failureState(err: anyerror) []const u8 {
+    return switch (err) {
+        error.InvalidEventStream,
+        error.EventTooLarge,
+        error.InvalidEvent,
+        error.InvalidEventSchema,
+        error.EventSequenceMismatch,
+        error.EventAfterTerminal,
+        error.InvalidEventState,
+        error.StageMismatch,
+        error.UnknownEventType,
+        error.MissingTerminalEvent,
+        error.ExitOutcomeMismatch,
+        error.StreamTooLong,
+        => "protocol-error",
+        else => "failed",
+    };
+}
+
+fn observeAfter(ctx: Context, project_id: i64, operation_id: []const u8) void {
+    const reference = std.fmt.allocPrint(ctx.gpa, "{d}", .{project_id}) catch return;
+    defer ctx.gpa.free(reference);
+    _ = app_nob_runtime.observe(.{
+        .io = ctx.io,
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+        .config = ctx.config,
+        .cloudio_version = ctx.cloudio_version,
+    }, reference) catch |err| {
+        audit(ctx, "nob.run.observe", "failed", operation_id, @errorName(err)) catch {};
+    };
 }
 
 fn findAction(actions: []const nob.types.Action, id: []const u8) ?*const nob.types.Action {

@@ -390,6 +390,10 @@ p {
   gap: 14px;
 }
 
+.compact-stack {
+  gap: 9px;
+}
+
 .cluster {
   display: flex;
   align-items: center;
@@ -462,6 +466,12 @@ p {
   margin: 2px 0 0;
   color: var(--text-subtle);
   font-size: 11px;
+}
+
+.compact-header {
+  min-height: 0;
+  padding-inline: 0;
+  border-bottom: 0;
 }
 
 .panel-body {
@@ -1161,13 +1171,55 @@ code {
 }
 
 dialog {
-  width: min(440px, calc(100vw - 32px));
+  width: min(560px, calc(100vw - 32px));
   padding: 0;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--shadow);
   color: var(--text);
+}
+
+.plan-review-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.42fr) minmax(0, 1fr);
+  gap: 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+}
+
+.plan-review-row strong {
+  color: var(--text-subtle);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.review-list,
+.run-timeline {
+  display: grid;
+  gap: 7px;
+  padding-left: 20px;
+  margin: 0;
+}
+
+.run-detail {
+  padding: 10px 12px;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+
+.run-timeline li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.danger-field input {
+  border-color: var(--danger-border);
 }
 
 dialog::backdrop {

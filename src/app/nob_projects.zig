@@ -150,6 +150,11 @@ pub fn writeShowJson(ctx: Context, reference: []const u8, writer: anytype) !void
         try app_render.writeJsonStringField(writer, "ownership", resource.ownership, true);
         try app_render.writeJsonStringField(writer, "status", resource.effective_status.text(), true);
         try app_render.writeJsonNullableStringField(writer, "summary", resource.status_summary, true);
+        try writer.writeAll("\"controls\":");
+        try writer.writeAll(resource.controls_json);
+        try writer.writeAll(",\"declaration\":");
+        try writer.writeAll(resource.declaration_json);
+        try writer.writeByte(',');
         try writer.writeAll("\"runner_evidence\":");
         try writer.writeAll(resource.runner_observation_json orelse "null");
         try writer.writeAll(",\"cloudio_evidence\":");
@@ -165,7 +170,9 @@ pub fn writeShowJson(ctx: Context, reference: []const u8, writer: anytype) !void
         try app_render.writeJsonStringField(writer, "effect", action.effect, true);
         try app_render.writeJsonStringField(writer, "confirmation", action.confirmation, true);
         try app_render.writeJsonBoolField(writer, "available", action.available, true);
-        try app_render.writeJsonNullableStringField(writer, "unavailable_reason", action.unavailable_reason, false);
+        try app_render.writeJsonNullableStringField(writer, "unavailable_reason", action.unavailable_reason, true);
+        try writer.writeAll("\"declaration\":");
+        try writer.writeAll(action.declaration_json);
         try writer.writeByte('}');
     }
     try writer.writeAll("]}\n");

@@ -456,6 +456,11 @@ pub const Repository = struct {
         var committed = false;
         defer if (!committed) self.exec("ROLLBACK") catch {};
 
+        const busy = try self.prepare("SELECT 1 FROM project_operation_locks WHERE project_id=?");
+        defer _ = sqlite.sqlite3_finalize(busy);
+        try bindI64(busy, 1, value.project_id);
+        if (sqlite.sqlite3_step(busy) == sqlite.SQLITE_ROW) return error.ProjectBusy;
+
         if (value.idempotency_key) |key| {
             const existing = try self.prepare("SELECT 1 FROM project_operations WHERE project_id=? AND idempotency_key=?");
             defer _ = sqlite.sqlite3_finalize(existing);
@@ -523,6 +528,13 @@ pub const Repository = struct {
             try stepDone(authorization);
         }
 
+        const lock = try self.prepare("INSERT INTO project_operation_locks(project_id, operation_id, acquired_at) VALUES(?,?,?)");
+        defer _ = sqlite.sqlite3_finalize(lock);
+        try bindI64(lock, 1, value.project_id);
+        try bindText(lock, 2, value.id);
+        try bindI64(lock, 3, value.queued_at);
+        try stepDone(lock);
+
         try self.exec("COMMIT");
         committed = true;
     }
@@ -533,7 +545,10 @@ pub const Repository = struct {
         defer if (!committed) self.exec("ROLLBACK") catch {};
         const select = try self.prepare(run_select ++
             \\ WHERE state='queued'
-            \\   AND NOT EXISTS(SELECT 1 FROM project_operation_locks l WHERE l.project_id=project_operations.project_id)
+            \\   AND EXISTS(
+            \\     SELECT 1 FROM project_operation_locks l
+            \\     WHERE l.project_id=project_operations.project_id AND l.operation_id=project_operations.id
+            \\   )
             \\ ORDER BY queued_at, id LIMIT 1
         );
         defer _ = sqlite.sqlite3_finalize(select);
@@ -544,12 +559,6 @@ pub const Repository = struct {
         }
         var run = try runFromStmt(allocator, select);
         errdefer run.deinit(allocator);
-        const lock = try self.prepare("INSERT INTO project_operation_locks(project_id, operation_id, acquired_at) VALUES(?,?,?)");
-        defer _ = sqlite.sqlite3_finalize(lock);
-        try bindI64(lock, 1, run.project_id);
-        try bindText(lock, 2, run.id);
-        try bindI64(lock, 3, now);
-        try stepDone(lock);
         const update = try self.prepare("UPDATE project_operations SET state='running', started_at=?, heartbeat_at=? WHERE id=? AND state='queued'");
         defer _ = sqlite.sqlite3_finalize(update);
         try bindI64(update, 1, now);
@@ -600,11 +609,21 @@ pub const Repository = struct {
         defer _ = sqlite.sqlite3_finalize(unlock);
         try bindText(unlock, 1, id);
         try stepDone(unlock);
+        const invalidate = try self.prepare(
+            \\UPDATE project_plans SET state='invalidated'
+            \\WHERE state='ready' AND project_id=(SELECT project_id FROM project_operations WHERE id=?)
+        );
+        defer _ = sqlite.sqlite3_finalize(invalidate);
+        try bindText(invalidate, 1, id);
+        try stepDone(invalidate);
         try self.exec("COMMIT");
         committed = true;
     }
 
     pub fn requestRunCancellation(self: Repository, id: []const u8, now: i64) !bool {
+        try self.exec("BEGIN IMMEDIATE");
+        var committed = false;
+        defer if (!committed) self.exec("ROLLBACK") catch {};
         const stmt = try self.prepare(
             \\UPDATE project_operations
             \\SET cancel_requested_at=?,
@@ -619,7 +638,22 @@ pub const Repository = struct {
         try bindI64(stmt, 2, now);
         try bindText(stmt, 3, id);
         try stepDone(stmt);
-        return sqlite.sqlite3_changes(self.handle) == 1;
+        const changed = sqlite.sqlite3_changes(self.handle) == 1;
+        if (changed) {
+            const unlock = try self.prepare(
+                \\DELETE FROM project_operation_locks
+                \\WHERE operation_id=? AND EXISTS(
+                \\  SELECT 1 FROM project_operations WHERE id=? AND state='canceled'
+                \\)
+            );
+            defer _ = sqlite.sqlite3_finalize(unlock);
+            try bindText(unlock, 1, id);
+            try bindText(unlock, 2, id);
+            try stepDone(unlock);
+        }
+        try self.exec("COMMIT");
+        committed = true;
+        return changed;
     }
 
     pub fn runCancellationRequested(self: Repository, id: []const u8) !bool {
@@ -704,12 +738,47 @@ pub const Repository = struct {
     }
 
     pub fn listRunEvents(self: Repository, allocator: Allocator, operation_id: []const u8) !model.RunEvents {
-        const stmt = try self.prepare(
+        return self.listRunEventsQuery(allocator,
             \\SELECT operation_id, seq, event_type, level, payload_json, received_at
             \\FROM project_operation_events WHERE operation_id=? ORDER BY seq
-        );
+        , operation_id, null, null);
+    }
+
+    pub fn listRunEventsAfter(self: Repository, allocator: Allocator, operation_id: []const u8, after_seq: i64, limit: i64) !model.RunEvents {
+        return self.listRunEventsQuery(allocator,
+            \\SELECT operation_id, seq, event_type, level, payload_json, received_at
+            \\FROM project_operation_events
+            \\WHERE operation_id=? AND seq>? ORDER BY seq LIMIT ?
+        , operation_id, after_seq, limit);
+    }
+
+    pub fn listRecentRunEvents(self: Repository, allocator: Allocator, operation_id: []const u8, limit: i64) !model.RunEvents {
+        const rows = try self.listRunEventsQuery(allocator,
+            \\SELECT operation_id, seq, event_type, level, payload_json, received_at
+            \\FROM project_operation_events
+            \\WHERE operation_id=? ORDER BY seq DESC LIMIT ?
+        , operation_id, null, limit);
+        std.mem.reverse(model.RunEvent, rows.items);
+        return rows;
+    }
+
+    fn listRunEventsQuery(
+        self: Repository,
+        allocator: Allocator,
+        sql: []const u8,
+        operation_id: []const u8,
+        after_seq: ?i64,
+        limit: ?i64,
+    ) !model.RunEvents {
+        const stmt = try self.prepare(sql);
         defer _ = sqlite.sqlite3_finalize(stmt);
         try bindText(stmt, 1, operation_id);
+        var parameter: c_int = 2;
+        if (after_seq) |value| {
+            try bindI64(stmt, parameter, value);
+            parameter += 1;
+        }
+        if (limit) |value| try bindI64(stmt, parameter, value);
         var rows = std.ArrayList(model.RunEvent).empty;
         errdefer {
             for (rows.items) |row| row.deinit(allocator);

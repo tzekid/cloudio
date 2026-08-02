@@ -15,6 +15,7 @@ pub const Plan = db_store.NobPlan;
 pub const Run = db_store.NobRun;
 pub const Runs = db_store.NobRuns;
 pub const RunEvents = db_store.NobRunEvents;
+pub const RunEvent = db_store.NobRunEvent;
 
 pub const Context = struct {
     io: std.Io,
@@ -100,12 +101,41 @@ pub fn queue(
     actor: []const u8,
     idempotency_key: ?[]const u8,
 ) !db_store.NobRun {
+    return queueBound(ctx, plan_id, approval, actor, idempotency_key, null, null);
+}
+
+pub fn queueAction(
+    ctx: Context,
+    project_reference: []const u8,
+    action_id: []const u8,
+    plan_id: []const u8,
+    approval: Approval,
+    actor: []const u8,
+    idempotency_key: ?[]const u8,
+) !db_store.NobRun {
+    const expected = (try app_nob_projects.find(projectContext(ctx), project_reference)) orelse return error.ProjectNotFound;
+    defer expected.deinit(ctx.gpa);
+    return queueBound(ctx, plan_id, approval, actor, idempotency_key, expected.id, action_id);
+}
+
+fn queueBound(
+    ctx: Context,
+    plan_id: []const u8,
+    approval: Approval,
+    actor: []const u8,
+    idempotency_key: ?[]const u8,
+    expected_project_id: ?i64,
+    expected_action_id: ?[]const u8,
+) !db_store.NobRun {
     if (idempotency_key) |key| try validateIdempotencyKey(key);
     const now = try nowSeconds();
     _ = try ctx.db.nob().expirePlans(now);
     const stored = (try ctx.db.nob().getPlan(ctx.gpa, plan_id)) orelse return error.PlanNotFound;
     defer stored.deinit(ctx.gpa);
     if (!std.mem.eql(u8, stored.state, "ready") or stored.expires_at <= now) return error.PlanUnavailable;
+    if (expected_project_id) |expected| if (stored.project_id != expected) return error.PlanRouteMismatch;
+    if (expected_action_id) |expected| if (!std.mem.eql(u8, stored.action_id, expected)) return error.PlanRouteMismatch;
+    if (!std.mem.eql(u8, stored.requested_by, actor)) return error.PlanActorMismatch;
     const project = (try ctx.db.nob().getProject(ctx.gpa, stored.project_id)) orelse return error.ProjectNotFound;
     defer project.deinit(ctx.gpa);
     const binding = try executableBinding(project);
@@ -193,6 +223,14 @@ pub fn listRuns(ctx: Context, project_id: ?i64, limit: i64) !db_store.NobRuns {
 
 pub fn listEvents(ctx: Context, operation_id: []const u8) !db_store.NobRunEvents {
     return try ctx.db.nob().listRunEvents(ctx.gpa, operation_id);
+}
+
+pub fn listEventsAfter(ctx: Context, operation_id: []const u8, after_seq: i64, limit: i64) !db_store.NobRunEvents {
+    return try ctx.db.nob().listRunEventsAfter(ctx.gpa, operation_id, @max(after_seq, 0), @min(@max(limit, 1), 501));
+}
+
+pub fn listRecentEvents(ctx: Context, operation_id: []const u8, limit: i64) !db_store.NobRunEvents {
+    return try ctx.db.nob().listRecentRunEvents(ctx.gpa, operation_id, @min(@max(limit, 1), 500));
 }
 
 const Binding = struct {

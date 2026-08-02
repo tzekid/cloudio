@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const core_config = @import("core_config");
 
 const Allocator = std.mem.Allocator;
@@ -33,6 +34,7 @@ pub const Result = struct {
 pub const Monitor = struct {
     context: *anyopaque,
     poll: *const fn (context: *anyopaque) anyerror!bool,
+    started: ?*const fn (context: *anyopaque, child_id: std.process.Child.Id) anyerror!void = null,
 };
 
 pub const InputResult = struct {
@@ -114,8 +116,12 @@ pub fn runWithInput(
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
+        .pgid = 0,
     });
     defer child.kill(io);
+    if (monitor) |present| {
+        if (present.started) |started| if (child.id) |child_id| try started(present.context, child_id);
+    }
     {
         const stdin_file = child.stdin.?;
         var buffer: [16 * 1024]u8 = undefined;
@@ -150,17 +156,19 @@ pub fn runWithInput(
         const now = Io.Clock.Timestamp.now(io, .awake);
         if (deadline.compare(.lte, now)) {
             timed_out = true;
+            signalProcessGroup(child, .KILL);
             child.kill(io);
             forcibly_killed = true;
             break :read_loop;
         }
         if (!cancel_sent and monitor != null and try monitor.?.poll(monitor.?.context)) {
             cancel_sent = true;
-            cancel_deadline = Io.Clock.Timestamp.fromNow(io, .{ .raw = .fromSeconds(5), .clock = .awake });
-            if (child.id) |id| std.posix.kill(id, .INT) catch {};
+            cancel_deadline = Io.Clock.Timestamp.fromNow(io, .{ .raw = .fromSeconds(15), .clock = .awake });
+            signalProcessGroup(child, .INT);
         }
         if (cancel_deadline) |grace| {
             if (grace.compare(.lte, now)) {
+                signalProcessGroup(child, .KILL);
                 child.kill(io);
                 forcibly_killed = true;
                 break :read_loop;
@@ -179,6 +187,14 @@ pub fn runWithInput(
         .canceled = cancel_sent,
         .timed_out = timed_out,
     };
+}
+
+fn signalProcessGroup(child: std.process.Child, signal: std.posix.SIG) void {
+    if (builtin.os.tag == .windows) return;
+    if (child.id) |id| {
+        const process_id: std.posix.pid_t = @intCast(id);
+        std.posix.kill(-process_id, signal) catch std.posix.kill(process_id, signal) catch {};
+    }
 }
 
 pub fn resolveExecutable(io: Io, allocator: Allocator, name: []const u8, path_value: []const u8) ![]u8 {

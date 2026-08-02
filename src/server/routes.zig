@@ -54,7 +54,17 @@ pub const all = [_]types.Route{
     route("GET", "/api/nob/projects", nob.list),
     route("GET", "/api/nob/projects/:id", nob.details),
     mutation("POST", "/api/nob/scan", nob.scan, false),
-    mutation("POST", "/api/nob/projects/:id/:action", nob.action, false),
+    mutation("POST", "/api/nob/projects/:id/trust", nob.trustProject, true),
+    mutation("POST", "/api/nob/projects/:id/revoke", nob.revokeProject, true),
+    mutation("POST", "/api/nob/projects/:id/prepare", nob.prepareProject, false),
+    mutation("POST", "/api/nob/projects/:id/observe", nob.observeProject, false),
+    mutation("POST", "/api/nob/projects/:id/actions/:action/plan", nob.planAction, false),
+    mutation("POST", "/api/nob/projects/:id/actions/:action/run", nob.runAction, true),
+    route("GET", "/api/nob/operations", nob.operations),
+    route("GET", "/api/nob/operations/:id", nob.operationDetails),
+    route("GET", "/api/nob/operations/:id/events", nob.operationEvents),
+    route("GET", "/api/nob/operations/:id/log", nob.operationLog),
+    mutation("POST", "/api/nob/operations/:id/cancel", nob.cancelOperation, true),
     route("GET", "/api/apps", apps.list),
     mutation("POST", "/api/apps", apps.register, false),
     route("GET", "/api/apps/:name/:action", apps.details),
@@ -85,7 +95,7 @@ test "route table distinguishes match method miss and named params" {
     try @import("std").testing.expectEqualStrings("deploy", deploy_match.params.get("action").?);
     const nob_match = http.router.match(types.Route, &all, "POST", "/api/nob/projects/42/trust").?;
     try @import("std").testing.expectEqualStrings("42", nob_match.params.get("id").?);
-    try @import("std").testing.expectEqualStrings("trust", nob_match.params.get("action").?);
+    try @import("std").testing.expectEqual(types.Mutation.destructive, nob_match.route.mutation);
     try @import("std").testing.expect(http.router.match(types.Route, &all, "PATCH", "/api/apps") == null);
     try @import("std").testing.expect(http.router.pathExists(types.Route, &all, "/api/apps"));
 }

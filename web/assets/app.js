@@ -542,7 +542,8 @@
 
     const parts = dialogElements;
     parts.title.textContent = opts.title || "Confirm action";
-    parts.message.textContent = opts.message || "Are you sure?";
+    parts.message.replaceChildren();
+    appendValue(parts.message, opts.message || "Are you sure?");
     parts.confirm.textContent = opts.confirmLabel || "Confirm";
     parts.confirm.className = "button " + (opts.danger ? "button-danger" : "button-primary");
     parts.dialog.returnValue = "cancel";
