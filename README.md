@@ -124,6 +124,92 @@ cloudio maintenance run --apply --backup .cloudio/backups/before-maintenance.db
 
 Manual pruning or compaction is refused without a new online SQLite backup path. Scheduled pruning is disabled by default and runs only when `storage.auto_prune` is enabled.
 
+## nob.zig projects
+
+Cloudio includes the control-plane side of
+[`nob.zig`](https://github.com/tzekid/nob.zig), a standardized lifecycle
+contract for Zig repositories. The design is deliberately hybrid:
+
+- `build.zig` remains the source of truth for compilation, tests, and staged
+  package installation.
+- A small project-owned `src/nob.zig` runner owns project-specific planning,
+  migration, deployment, rollback, and health logic.
+- A passive `nob.json` manifest gives Cloudio a safe discovery and review
+  surface before any project code runs.
+- Cloudio owns trust, exact-byte plans, authentication, idempotency, queued
+  operations, audit/history, secret delivery, narrow host-control brokers, and
+  independent resource observation.
+
+The SDK is pinned under `vendor/nob`. Its library and service examples are
+part of Cloudio's integrated build gate. See the
+[nob.zig adoption guide](vendor/nob/docs/adoption.md) for the repository-side
+steps and [the full v1 specification](docs/nob-zig-spec.md) for protocol and
+security details.
+
+The default host configuration is intentionally non-mutating:
+
+```toml
+[nob]
+enabled = true
+scan_depth = 3
+observe_seconds = 300
+plan_ttl_seconds = 600
+plan_retention_days = 7
+operation_retention_days = 30
+min_operations_per_project = 20
+worker_count = 1
+max_run_log_bytes = 67108864
+allow_system_mutation = false
+```
+
+State, runner cache, and optional pinned-toolchain paths default to the
+corresponding XDG directories. `cloudio doctor` reports the resolved paths,
+runner Zig, toolchain-map validity, user-systemd manager, Caddy config/service/
+admin socket, and mutation kill-switch state.
+
+A project's first enrollment is explicit:
+
+```sh
+cloudio nob scan
+cloudio nob list
+cloudio nob show dev.example.my-service
+cloudio nob trust dev.example.my-service <manifest-sha256>
+cloudio nob prepare dev.example.my-service
+cloudio nob observe dev.example.my-service
+cloudio nob plan dev.example.my-service check --json
+cloudio nob run <plan-id> --yes --follow
+```
+
+Trust binds the canonical repository and exact manifest digest. Any manifest
+change returns the project to review-required state and invalidates ready
+plans. Preparing is the first step that builds project code; runners execute
+from a content-addressed cache with a sanitized environment. Plans are
+short-lived and one-use, while operations are persisted, cancellable where
+safe, bounded in time/output/storage, and never automatically retried after an
+interrupted mutation.
+
+The authenticated Projects page at `/projects.html` exposes the same scan,
+review, prepare, observe, plan, run, resource-control, secret, event, artifact,
+cancel, revoke, and forget workflows. Cloudio separately verifies declared
+systemd state, loopback HTTP/TCP endpoints, release and data paths, executable
+artifacts, processes, and live Caddy routes; a runner cannot mark contradictory
+host evidence healthy.
+
+Logical secret bindings support restricted files and values captured from
+Cloudio's startup environment. Secret values become short-lived protected
+files for one approved action and are never returned through the API or UI.
+User-systemd and Caddy mutations remain blocked until
+`allow_system_mutation = true`; even then, the runner receives only exact,
+one-use broker capabilities already present in the reviewed plan. System-scope
+mutation, arbitrary root commands, `sudo`, and generic Compose mutation are not
+part of protocol v1.
+
+Operational history is pruned by age while preserving the newest configured
+number of runs per project and any operation that proves ownership of a managed
+unit or route. `cloudio nob forget <id> --yes` revokes trust, invalidates plans,
+removes runner cache and secret bindings, and leaves host resources plus audit
+history intact. A later exact trust review can restore the tombstoned project.
+
 ## Quick Start
 
 ```sh

@@ -1,10 +1,18 @@
 # nob.zig protocol v1: hybrid Zig build and Cloudio control plane
 
-- Status: implementation specification
+- Status: protocol/control-plane baseline implemented; real-project adoption in progress
 - Audience: Cloudio and `nob.zig` implementers
 - Protocol name: **nob.zig protocol v1**
 - Static manifest: `nob.json`
 Last updated: 2026-08-02
+
+The external SDK, fixtures, examples, passive discovery, trust/bootstrap,
+independent observation, persisted plan/run engine, CLI/API/web adapters,
+logical secrets, scoped user-systemd and Caddy brokers, tombstones, and bounded
+retention are implemented on `master`. The remaining definition-of-done items
+in section 21 concern migrating representative production repositories and
+their project-specific failure-injection suites, not unresolved control-plane
+architecture.
 
 ## 1. Decision
 
@@ -1094,11 +1102,14 @@ enabled = true
 scan_depth = 3
 observe_seconds = 300
 plan_ttl_seconds = 600
+plan_retention_days = 7
+operation_retention_days = 30
+min_operations_per_project = 20
 worker_count = 1
 state_root = "${XDG_STATE_HOME}/cloudio/nob/operations"
 cache_root = "${XDG_CACHE_HOME}/cloudio/nob/runners"
 max_run_log_bytes = 67108864
-toolchains_file = "${XDG_CONFIG_HOME}/cloudio/nob-toolchains.json"
+toolchains_file = "${XDG_CONFIG_HOME}/cloudio/nob/toolchains.json"
 allow_system_mutation = false
 ```
 
@@ -1302,7 +1313,7 @@ whenever the cached runner identity changes, not on every refresh.
 
 ## 11. Persistence
 
-Migration 13 should be named `nob_v1`. Existing `projects`,
+Migration 13 is named `nob_v1`. Existing `projects`,
 `apps`, `deploys`, `app_operation_locks`, `mutation_requests`, and
 `audit_actions` remain intact during migration. The new model separates a
 project from its resources and operations.
@@ -1514,7 +1525,8 @@ Plan `state` is `ready`, `consumed`, `expired`, or `invalidated`.
 - Full redacted NDJSON and stderr live in the operation state directory, capped
   as specified in section 6.6.
 - Default operation/event/artifact retention is 30 days, excluding the newest
-  20 operations per project and artifacts referenced by an installed release.
+  20 operations per project and operations referenced as durable ownership
+  evidence by a managed user unit or Caddy route.
 - Retention integrates with `app/maintenance.zig`; it does not run unbounded
   deletes in a refresh transaction.
 - Expired/invalidated unconsumed plans are pruned after seven days. A consumed
@@ -1594,25 +1606,28 @@ At server startup:
 All routes use the existing default-deny authentication pipeline. Mutation
 routes require `Idempotency-Key`; every execute, trust/revoke, secret-binding,
 cancel, and forget route is classified destructive at the HTTP layer and
-requires `X-Cloudio-Confirm: true`. `purge` additionally requires a body field
+requires `X-Cloudio-Confirm: confirmed`. `purge` additionally requires a body field
 `confirm_project_id` exactly equal to the declared project ID.
 
 | Method | Route | Purpose |
 |---|---|---|
-| GET | `/api/projects` | Projects/candidates with trust and effective status |
-| POST | `/api/projects/scan` | Trigger passive scan |
-| GET | `/api/projects/:id` | Manifest, resources, actions, operations, diagnostics |
-| POST | `/api/projects/:id/trust` | Trust exact `manifest_sha256` after review |
-| POST | `/api/projects/:id/revoke` | Revoke code execution/direct controls |
-| PUT | `/api/projects/:id/secrets/:secret` | Bind a logical ID to a local source reference, never a value |
-| DELETE | `/api/projects/:id/secrets/:secret` | Remove a logical secret binding |
-| POST | `/api/projects/:id/observe` | Queue trusted runner + independent observation |
-| POST | `/api/projects/:id/actions/:action/plan` | Create action plan |
-| POST | `/api/projects/:id/actions/:action/run` | Consume `plan_id`, return 202 operation |
-| POST | `/api/projects/:id/resources/:resource/:control/plan` | Create Cloudio resource-control plan |
-| POST | `/api/projects/:id/resources/:resource/:control/run` | Consume resource plan |
-| GET | `/api/projects/:id/resources/:resource/logs?tail=N` | Read bounded logs for a declared log-capable resource |
-| POST | `/api/projects/:id/forget` | Ignore/remove Cloudio registry state only |
+| GET | `/api/nob/projects` | Projects/candidates with trust and effective status |
+| POST | `/api/nob/scan` | Trigger passive scan |
+| GET | `/api/nob/projects/:id` | Manifest, resources, actions, operations, diagnostics |
+| POST | `/api/nob/projects/:id/trust` | Trust exact `manifest_sha256` after review |
+| POST | `/api/nob/projects/:id/revoke` | Revoke code execution/direct controls |
+| POST | `/api/nob/projects/:id/prepare` | Build/validate the trusted runner and observe |
+| GET | `/api/nob/projects/:id/secrets` | Logical secret requirements and presence only |
+| PUT | `/api/nob/projects/:id/secrets/:secret` | Bind a logical ID to a local source reference, never a value |
+| DELETE | `/api/nob/projects/:id/secrets/:secret` | Remove a logical secret binding |
+| POST | `/api/nob/projects/:id/observe` | Run trusted runner plus independent observation |
+| POST | `/api/nob/projects/:id/actions/:action/plan` | Create action plan |
+| POST | `/api/nob/projects/:id/actions/:action/run` | Consume `plan_id`, return 202 operation |
+| POST | `/api/nob/projects/:id/resources/:resource/:control/plan` | Create Cloudio resource-control plan |
+| POST | `/api/nob/projects/:id/resources/:resource/:control/run` | Consume resource plan |
+| GET | `/api/nob/projects/:id/resources/:resource/logs?tail=N` | Read bounded logs for a declared log-capable resource |
+| POST | `/api/nob/projects/:id/forget` | Ignore/remove Cloudio registry state only |
+| GET | `/api/nob/operations?limit=N` | Recent operations across projects |
 | GET | `/api/nob/operations/:id` | Operation summary and last structural events |
 | GET | `/api/nob/operations/:id/events?after_seq=N&limit=N` | Bounded polling feed |
 | GET | `/api/nob/operations/:id/log?tail_bytes=N` | Redacted bounded log tail |
@@ -1636,23 +1651,23 @@ Example 202 response:
 
 ```json
 {
-  "kind": "project-operation",
+  "kind": "nob_run",
   "operation": {
     "id": "01J...",
     "state": "queued",
     "project_id": 42,
     "declared_id": "dev.tzekid.plosca",
-    "action_id": "deploy",
-    "status_url": "/api/nob/operations/01J..."
-  }
+    "action_id": "deploy"
+  },
+  "status_url": "/api/nob/operations/01J..."
 }
 ```
 
 Status codes:
 
-- 200 for reads, plans, replayed completed mutation responses, and accepted
-  trust/revoke changes.
-- 202 for a newly queued operation or observation.
+- 200 for reads, plans, trusted prepare/observation, replayed completed mutation
+  responses, and accepted trust/revoke/forget changes.
+- 202 for a newly queued operation or cancellation request.
 - 400 invalid input/parameter/protocol shape.
 - 404 unknown project/action/resource/operation.
 - 409 idempotency conflict, project busy, consumed/stale plan, manifest review
@@ -1684,22 +1699,26 @@ secret ID in the current reviewed manifest and is audited.
 
 ### 14.1 CLI
 
-Extend `cloudio projects` with:
+Cloudio exposes the implemented group as `cloudio nob`:
 
 ```text
-cloudio projects scan
-cloudio projects list [--json]
-cloudio projects show <internal-id-or-declared-id> [--json]
-cloudio projects trust <id> --manifest-sha256 <sha256> --yes
-cloudio projects revoke <id> --yes
-cloudio projects secret bind <id> <secret-id> (--file <absolute-path> | --environment <name>) --yes
-cloudio projects secret unbind <id> <secret-id> --yes
-cloudio projects observe <id> [--follow]
-cloudio projects plan <id> <action> [--param name=value] [--json]
-cloudio projects run <id> <action> --plan <plan-id> --yes [--follow]
-cloudio projects resource <id> <resource-id> <control> --yes [--follow]
-cloudio projects operation <operation-id> [--follow] [--json]
-cloudio projects forget <id> --yes
+cloudio nob scan
+cloudio nob list [--json]
+cloudio nob show <internal-id-or-declared-id> [--json]
+cloudio nob trust <id> <manifest-sha256>
+cloudio nob revoke <id>
+cloudio nob prepare <id>
+cloudio nob observe <id>
+cloudio nob secrets <id> [--json]
+cloudio nob secret-bind <id> <secret-id> <file|process-environment> <source-ref> --yes
+cloudio nob secret-unbind <id> <secret-id> --yes
+cloudio nob plan <id> <action> [--param name=value] [--json]
+cloudio nob run <plan-id> --yes [--follow] [--confirm-project <declared-id>]
+cloudio nob resource <id> <resource-id> <control> --yes [--follow]
+cloudio nob runs [id] [--json]
+cloudio nob operation <operation-id> [--json]
+cloudio nob cancel <operation-id>
+cloudio nob forget <id> --yes
 ```
 
 `purge` additionally requires `--confirm-project <declared-id>`. CLI and HTTP
@@ -1966,37 +1985,40 @@ Add:
 
 ```text
 src/nob/
-  model.zig              # enums and validated domain values
-  manifest.zig           # strict passive parser/validator
-  protocol.zig           # describe/observe/plan/event parser
-  source.zig             # repository identity/fingerprint adapter
-  bootstrap.zig          # toolchain resolution and runner cache
-  subprocess.zig         # cwd/env/process-group/stream/timeout handling
-  broker.zig             # validate/serve exact per-plan control requests
-  observation.zig        # independent resource observers and merge policy
-  systemd.zig            # scoped typed controller/observer/marker parser
-  release.zig            # release.json read-only observer
+  model.zig                    # enums and validated domain values
+  protocol.zig                 # describe/observe/plan/event parser
+  action_protocol.zig          # exact plan/run subprocess boundary
+  source.zig                   # repository identity/fingerprint adapter
+  bootstrap.zig                # toolchain resolution and runner cache
+  subprocess.zig               # cwd/env/process-group/stream/timeout handling
+  broker.zig                   # exact per-plan systemd/Caddy broker
+  independent_observation.zig  # authoritative declared-resource evidence
+  resource_control.zig         # generic control plans and allowlist
+  systemd.zig                  # scoped typed controller/observer
+  managed_unit.zig             # reviewed unit ownership/install/remove
 src/db/repositories/nob.zig
-src/app/managed_projects.zig
-src/app/project_plans.zig
-src/app/project_operations.zig
-src/app/project_resources.zig
-src/collectors/project_manifests.zig
-src/runtime/project_worker.zig
-src/server/handlers/projects.zig
-src/server/handlers/project_operations.zig
-src/cli/project_operations.zig
+src/app/nob_projects.zig
+src/app/nob_runtime.zig
+src/app/nob_actions.zig
+src/app/nob_secrets.zig
+src/app/nob_worker.zig
+src/runtime/nob.zig
+src/runtime/nob_workers.zig
+src/server/handlers/nob.zig
+src/cli/nob.zig
 web/projects.html
 web/assets/pages/projects.js
 ```
 
 Modify:
 
-- `src/db/schema.zig`: migration 13 and schema tests.
+- `src/db/schema.zig`: migrations 13 through 18 (`nob_v1`, run bindings,
+  managed resources/routes, tombstones, and retention indexes) plus tests.
 - `src/db/connection.zig`, `src/db/store.zig`, `src/db/models.zig`: repository
   accessor and public row types.
-- `src/core/config.zig`: scan depth, observation interval, plan TTL, state/cache
-  roots, worker count, log limits, and toolchain-map file.
+- `src/core/config.zig`: scan depth, observation interval, plan TTL, plan/run
+  retention, per-project history floor, state/cache roots, worker count, log
+  limits, toolchain-map file, and the system-mutation kill switch.
 - `src/app/refresh.zig` and `src/app/refresh_cycle.zig`: passive scan plus due
   independent observations.
 - `src/runtime/scheduler.zig`: observation/retention scheduling.
@@ -2004,7 +2026,7 @@ Modify:
   accepting new work.
 - `src/server/context.zig`, `src/server/routes.zig`, `src/server/pages.zig`:
   application contexts, routes, Projects page, and navigation.
-- `src/cli/projects.zig` and `src/cli/root.zig`: new commands delegating to app
+- `src/cli/nob.zig` and `src/cli/root.zig`: new commands delegating to app
   services.
 - `src/app/system_control.zig`: explicit scope type; keep legacy wrappers during
   migration.
@@ -2127,7 +2149,7 @@ nob.zig protocol v1 is complete when:
 - Cloudio discovers all of them without executing code and clearly identifies
   candidates, invalid manifests, conflicts, missing roots, and review-required
   changes.
-- The same `cloudio projects` CLI and Projects web page can check, package,
+- The same `cloudio nob` CLI and Projects web page can check, package,
   deploy, roll back, restart, view logs/status/artifacts, uninstall while
   preserving data, purge with typed confirmation, and forget registry state as
   applicable.

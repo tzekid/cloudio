@@ -246,6 +246,65 @@ Cloudflare mutation routes can also contribute `generated_dry_run_policy_evidenc
 `cloudio coverage typed-models` adds the corresponding L3 planning read model: it ranks generic inventory groups that do not yet have typed SQLite projections, emits family-aware route/workplan review commands, and keeps the L3 modeling backlog visible without conflating generic raw inventory with typed control-plane models. Its `--focus control-plane` view is the required Cloudio L3 backlog; all-scope output keeps optional generic inventory modeling visible with explicit `scope`, `required_for_goal`, `control_plane_typed_gap`, and `outside_control_plane_typed_gap` fields for UI/API callers.
 Route-library tests also check that every generated `path_params` entry is required and exactly matches a placeholder in the generated path template. Route rendering rejects unknown path keys and missing required path values before generic dispatch can build an HTTP URL or dry-run plan.
 
+## nob.zig Hybrid Project Lifecycle
+
+The nob.zig subsystem standardizes project lifecycle behavior without turning
+Cloudio into a universal build-script interpreter. It has three trust layers:
+
+```mermaid
+flowchart LR
+    M["Passive nob.json manifest"] --> D["Cloudio discovery and review"]
+    B["Existing build.zig graph"] --> R["Project-owned nob runner"]
+    D -->|"trust exact manifest digest"| R
+    R --> P["Read-only exact plan"]
+    P -->|"authenticated approval"| W["Persisted Cloudio worker"]
+    W --> X["Sanitized runner process"]
+    W --> K["Exact systemd/Caddy broker"]
+    X --> E["Sequenced events and artifacts"]
+    K --> O["Independent host observation"]
+    E --> O
+```
+
+`app/nob_projects.zig` owns passive scan, canonical repository identity,
+manifest review, trust/revoke, and forget/tombstone behavior. It never builds
+or executes a candidate. `app/nob_runtime.zig` owns trusted runner bootstrap,
+describe, and observation. `app/nob_actions.zig` owns exact-byte, expiring,
+one-use plans and operation reads; `app/nob_worker.zig` owns the asynchronous
+run state machine, lock, cancellation, event/artifact persistence, and honest
+restart recovery. `app/nob_secrets.zig` resolves logical secret bindings only
+for the approved action. `runtime/nob.zig` and `runtime/nob_workers.zig` attach
+workers and due observation to the server lifecycle.
+
+The modules under `src/nob` are the protocol and privilege boundary:
+
+- `bootstrap.zig`, `source.zig`, and `subprocess.zig` resolve reviewed Zig
+  toolchains, content-address runner caches, canonical source identity, bounded
+  output/time, sanitized environments, and process-group cancellation.
+- `protocol.zig`, `action_protocol.zig`, and `model.zig` reject malformed,
+  oversized, identity-expanding, stale, or contradictory runner messages.
+- `independent_observation.zig` checks exact declared systemd, endpoint,
+  release, artifact, data, process, and live Caddy state separately from runner
+  claims and applies the conservative merge policy.
+- `resource_control.zig`, `systemd.zig`, `managed_unit.zig`, and `broker.zig`
+  limit host changes to reviewed user units, controls, and literal Caddy
+  host/upstream pairs. Broker requests are operation-bound, peer-checked,
+  token-authenticated, one-use, and globally disabled unless configured.
+
+Persistence lives behind `db/repositories/nob.zig`. Manifests, trust,
+resources, descriptions, observations, plans, operations, structural events,
+artifacts, secret bindings, broker authorizations, managed unit/route ownership,
+and tombstones are separate rows instead of being collapsed into the legacy
+`projects` or `apps` model. Retention expires ready plans, deletes only old
+terminal history beyond a per-project floor, cascades events/artifacts, removes
+validated operation directories, and preserves ownership evidence referenced
+by a managed unit or route.
+
+`cli/nob.zig`, `server/handlers/nob.zig`, and the authenticated Projects page
+are adapters over those same app services. The HTTP side stays inside the
+default-deny session/origin/CSRF/idempotency/confirmation pipeline. There is no
+second synchronous CLI deployment implementation and no runner endpoint that
+bypasses persisted plans or workers.
+
 ## Review Shape
 
 Small reviews should usually touch one layer:
