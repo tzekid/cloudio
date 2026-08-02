@@ -26,6 +26,7 @@
       invalid: "Invalid manifest",
       conflict: "ID conflict",
       missing: "Missing",
+      ignored: "Forgotten",
     }[value] || value || "Unknown";
   }
 
@@ -70,8 +71,9 @@
       small: true,
       dataset: { openNobProject: project.id },
     }));
-    if (project.discovery_state === "valid" && project.manifest_sha256 && project.trust_state !== "trusted") {
-      controls.appendChild(c.button("Approve", {
+    const restorable = project.discovery_state === "ignored" && project.last_scan_state === "valid";
+    if ((project.discovery_state === "valid" || restorable) && project.manifest_sha256 && project.trust_state !== "trusted") {
+      controls.appendChild(c.button(restorable ? "Restore approval" : "Approve", {
         small: true,
         kind: "primary",
         dataset: {
@@ -101,6 +103,13 @@
         small: true,
         kind: "danger",
         dataset: { nobAction: "revoke", projectId: project.id },
+      }));
+    }
+    if (project.discovery_state !== "ignored") {
+      controls.appendChild(c.button("Forget", {
+        small: true,
+        kind: "danger",
+        dataset: { nobAction: "forget", projectId: project.id },
       }));
     }
     return controls;
@@ -615,23 +624,30 @@
       confirmLabel: "Revoke approval",
       danger: true,
     };
+    if (action === "forget") prompt = {
+      title: "Forget this project",
+      message: "Cloudio will remove its approval, runner cache, pending plans, and secret bindings. Operation history and host resources will be retained, and future scans will leave it forgotten.",
+      confirmLabel: "Forget project",
+      danger: true,
+    };
     if (action === "prepare") prompt = {
       title: "Prepare this project",
       message: "Cloudio will build and run the project-owned nob.zig helper for the exact manifest you approved.",
       confirmLabel: "Prepare project",
     };
     if (prompt && !await c.confirmAction(prompt)) return;
-    const busy = { trust: "Approving…", revoke: "Revoking…", prepare: "Preparing…", observe: "Refreshing…" }[action] || "Working…";
+    const busy = { trust: "Approving…", revoke: "Revoking…", forget: "Forgetting…", prepare: "Preparing…", observe: "Refreshing…" }[action] || "Working…";
     await c.withBusy(button, busy, async function () {
       try {
         await c.api("/api/nob/projects/" + encodeURIComponent(projectId) + "/" + action, {
           method: "POST",
-          confirm: action === "trust" || action === "revoke",
+          confirm: action === "trust" || action === "revoke" || action === "forget",
           body: action === "trust" ? { manifest_sha256: digest, confirm_declared_id: declaredId } : {},
         });
         const message = {
           trust: "Project approved.",
           revoke: "Project approval revoked.",
+          forget: "Project forgotten. History and host resources were retained.",
           prepare: "Project prepared and status refreshed.",
           observe: "Project status refreshed.",
         }[action] || "Project updated.";

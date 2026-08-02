@@ -68,6 +68,7 @@ const Command = union(enum) {
     scan,
     trust: TrustArgs,
     revoke: []const u8,
+    forget: []const u8,
     prepare: []const u8,
     observe: []const u8,
     plan: ActionArgs,
@@ -96,6 +97,10 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .revoke => |reference| {
             try app_nob_projects.revoke(appContext(ctx), reference, "local-cli");
             try cli_render.writeAll(ctx.io, "nob project trust revoked\n");
+        },
+        .forget => |reference| {
+            try app_nob_projects.forget(appContext(ctx), ctx.io, ctx.config.nob_cache_root, reference, "local-cli");
+            try cli_render.writeAll(ctx.io, "nob project forgotten; history and host resources retained\n");
         },
         .prepare => |reference| try commandRuntime(ctx, "prepare", reference),
         .observe => |reference| try commandRuntime(ctx, "observe", reference),
@@ -470,6 +475,10 @@ fn parseCommand(args: []const []const u8) Command {
         if (args.len < 2) return .{ .missing = "revoke" };
         return .{ .revoke = args[1] };
     }
+    if (std.mem.eql(u8, args[0], "forget")) {
+        if (args.len != 3 or !std.mem.eql(u8, args[2], "--yes")) return .{ .missing = "forget" };
+        return .{ .forget = args[1] };
+    }
     if (std.mem.eql(u8, args[0], "prepare")) {
         if (args.len < 2) return .{ .missing = "prepare" };
         return .{ .prepare = args[1] };
@@ -553,6 +562,19 @@ test "nob command parser requires an exact digest for trust" {
     const missing_args = [_][]const u8{ "trust", "dev.example.service" };
     switch (parseCommand(missing_args[0..])) {
         .missing => |name| try std.testing.expectEqualStrings("trust", name),
+        else => return error.ExpectedMissing,
+    }
+}
+
+test "nob forget requires an explicit destructive confirmation" {
+    const confirmed = [_][]const u8{ "forget", "42", "--yes" };
+    switch (parseCommand(&confirmed)) {
+        .forget => |reference| try std.testing.expectEqualStrings("42", reference),
+        else => return error.ExpectedForget,
+    }
+    const unconfirmed = [_][]const u8{ "forget", "42" };
+    switch (parseCommand(&unconfirmed)) {
+        .missing => |name| try std.testing.expectEqualStrings("forget", name),
         else => return error.ExpectedMissing,
     }
 }

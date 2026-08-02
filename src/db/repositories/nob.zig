@@ -233,7 +233,7 @@ pub const Repository = struct {
             \\    updated_at=?
             \\WHERE (root_path=? OR substr(root_path, 1, length(?) + 1) = ? || '/')
             \\  AND (last_seen_scan_id IS NULL OR last_seen_scan_id != ?)
-            \\  AND discovery_state != 'missing'
+            \\  AND discovery_state NOT IN ('missing','ignored')
         );
         defer _ = sqlite.sqlite3_finalize(stmt);
         try bindI64(stmt, 1, now);
@@ -270,9 +270,14 @@ pub const Repository = struct {
     pub fn trust(self: Repository, project_id: i64, manifest_sha256: []const u8, actor: []const u8, now: i64) !bool {
         const stmt = try self.prepare(
             \\UPDATE managed_projects
-            \\SET trust_state='trusted', trusted_manifest_sha256=?, trusted_by=?, trusted_at=?,
+            \\SET discovery_state=CASE WHEN discovery_state='ignored' THEN 'valid' ELSE discovery_state END,
+            \\    trust_state='trusted', trusted_manifest_sha256=?, trusted_by=?, trusted_at=?,
+            \\    status='unknown',
+            \\    status_summary=CASE WHEN discovery_state='ignored' THEN 'approval restored; runner preparation required' ELSE status_summary END,
             \\    updated_at=?
-            \\WHERE id=? AND discovery_state='valid' AND manifest_sha256=?
+            \\WHERE id=?
+            \\  AND (discovery_state='valid' OR (discovery_state='ignored' AND last_scan_state='valid'))
+            \\  AND manifest_sha256=?
         );
         defer _ = sqlite.sqlite3_finalize(stmt);
         try bindText(stmt, 1, manifest_sha256);
@@ -299,6 +304,63 @@ pub const Repository = struct {
         try bindI64(stmt, 4, project_id);
         try stepDone(stmt);
         return sqlite.sqlite3_changes(self.handle) == 1;
+    }
+
+    /// Leave a persistent discovery tombstone while removing all credentials
+    /// and executable state owned by Cloudio. Historical operations and host
+    /// resources are deliberately retained.
+    pub fn forget(self: Repository, project_id: i64, actor: []const u8, now: i64) !bool {
+        try self.exec("BEGIN IMMEDIATE");
+        var committed = false;
+        defer if (!committed) self.exec("ROLLBACK") catch {};
+
+        const busy = try self.prepare(
+            \\SELECT 1 FROM managed_projects p
+            \\WHERE p.id=? AND (
+            \\  p.runner_state='building' OR EXISTS(
+            \\    SELECT 1 FROM project_operation_locks l WHERE l.project_id=p.id
+            \\  )
+            \\)
+        );
+        defer _ = sqlite.sqlite3_finalize(busy);
+        try bindI64(busy, 1, project_id);
+        if (sqlite.sqlite3_step(busy) == sqlite.SQLITE_ROW) return error.ProjectBusy;
+
+        const update = try self.prepare(
+            \\UPDATE managed_projects
+            \\SET discovery_state='ignored', trust_state='revoked',
+            \\    trusted_manifest_sha256=NULL, trusted_by=?, trusted_at=?,
+            \\    status='unknown', status_summary='forgotten by operator; passive scans will ignore this project',
+            \\    runner_state='not-built', runner_path=NULL, runner_sha256=NULL,
+            \\    runner_detail='project forgotten', updated_at=?
+            \\WHERE id=?
+        );
+        defer _ = sqlite.sqlite3_finalize(update);
+        try bindText(update, 1, actor);
+        try bindI64(update, 2, now);
+        try bindI64(update, 3, now);
+        try bindI64(update, 4, project_id);
+        try stepDone(update);
+        if (sqlite.sqlite3_changes(self.handle) != 1) return false;
+
+        const invalidate = try self.prepare("UPDATE project_plans SET state='invalidated' WHERE project_id=? AND state='ready'");
+        defer _ = sqlite.sqlite3_finalize(invalidate);
+        try bindI64(invalidate, 1, project_id);
+        try stepDone(invalidate);
+        const unavailable = try self.prepare(
+            "UPDATE project_actions SET available=0, unavailable_reason='project forgotten' WHERE project_id=?",
+        );
+        defer _ = sqlite.sqlite3_finalize(unavailable);
+        try bindI64(unavailable, 1, project_id);
+        try stepDone(unavailable);
+        const secrets = try self.prepare("DELETE FROM project_secret_bindings WHERE project_id=?");
+        defer _ = sqlite.sqlite3_finalize(secrets);
+        try bindI64(secrets, 1, project_id);
+        try stepDone(secrets);
+
+        try self.exec("COMMIT");
+        committed = true;
+        return true;
     }
 
     pub fn markRunnerBuilding(self: Repository, project_id: i64, manifest_sha256: []const u8, now: i64) !bool {
@@ -1089,7 +1151,7 @@ pub const Repository = struct {
     }
 
     pub fn getProjectByDeclaredId(self: Repository, allocator: Allocator, declared_id: []const u8) !?model.Project {
-        const stmt = try self.prepare(project_select ++ " WHERE declared_id=? ORDER BY id");
+        const stmt = try self.prepare(project_select ++ " WHERE declared_id=? AND discovery_state!='ignored' ORDER BY id");
         defer _ = sqlite.sqlite3_finalize(stmt);
         try bindText(stmt, 1, declared_id);
         if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return null;
@@ -1194,8 +1256,8 @@ pub const Repository = struct {
             \\INSERT INTO managed_projects(
             \\  declared_id, display_name, kind, root_path, manifest_path, manifest_sha256,
             \\  manifest_json, discovery_state, status_summary, protocol_major, protocol_minor,
-            \\  last_seen_scan_id, last_seen_at, created_at, updated_at
-            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            \\  last_seen_scan_id, last_seen_at, created_at, updated_at, last_scan_state
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             \\ON CONFLICT(root_path) DO UPDATE SET
             \\  declared_id=excluded.declared_id,
             \\  display_name=excluded.display_name,
@@ -1203,7 +1265,11 @@ pub const Repository = struct {
             \\  manifest_path=excluded.manifest_path,
             \\  manifest_sha256=excluded.manifest_sha256,
             \\  manifest_json=excluded.manifest_json,
-            \\  discovery_state=excluded.discovery_state,
+            \\  discovery_state=CASE
+            \\    WHEN managed_projects.discovery_state='ignored' THEN 'ignored'
+            \\    ELSE excluded.discovery_state
+            \\  END,
+            \\  last_scan_state=excluded.last_scan_state,
             \\  trust_state=CASE
             \\    WHEN managed_projects.trust_state='trusted' AND (
             \\      managed_projects.trusted_manifest_sha256 IS NOT excluded.manifest_sha256
@@ -1216,7 +1282,10 @@ pub const Repository = struct {
             \\      OR managed_projects.discovery_state='missing' THEN 'unknown'
             \\    ELSE managed_projects.status
             \\  END,
-            \\  status_summary=excluded.status_summary,
+            \\  status_summary=CASE
+            \\    WHEN managed_projects.discovery_state='ignored' THEN managed_projects.status_summary
+            \\    ELSE excluded.status_summary
+            \\  END,
             \\  protocol_major=excluded.protocol_major,
             \\  protocol_minor=excluded.protocol_minor,
             \\  runner_state=CASE
@@ -1255,6 +1324,7 @@ pub const Repository = struct {
         try bindI64(stmt, 13, record.seen_at);
         try bindI64(stmt, 14, record.seen_at);
         try bindI64(stmt, 15, record.seen_at);
+        try bindText(stmt, 16, record.discovery_state.text());
         try stepDone(stmt);
 
         const lookup = try self.prepare("SELECT id FROM managed_projects WHERE root_path=?");
@@ -1349,7 +1419,8 @@ const project_select =
     \\       status, status_summary, protocol_major, protocol_minor, runner_state,
     \\       runner_path, runner_sha256, runner_detail, repository_kind,
     \\       repository_identity, head_revision, source_fingerprint, source_dirty,
-    \\       last_seen_at, last_observed_at, updated_at
+    \\       last_seen_at, last_observed_at, updated_at,
+    \\       COALESCE(last_scan_state, discovery_state)
     \\FROM managed_projects
 ;
 
@@ -1432,6 +1503,7 @@ fn projectFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !model.Proj
         .manifest_sha256 = try dupeOptional(allocator, stmt, 6),
         .trusted_manifest_sha256 = try dupeOptional(allocator, stmt, 7),
         .discovery_state = try model.parseDiscoveryState(columnText(stmt, 8) orelse return error.InvalidDatabaseValue),
+        .last_scan_state = try model.parseDiscoveryState(columnText(stmt, 26) orelse return error.InvalidDatabaseValue),
         .trust_state = try model.parseTrustState(columnText(stmt, 9) orelse return error.InvalidDatabaseValue),
         .status = try model.parseProjectStatus(columnText(stmt, 10) orelse return error.InvalidDatabaseValue),
         .status_summary = try dupeOptional(allocator, stmt, 11),

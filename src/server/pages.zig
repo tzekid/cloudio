@@ -479,12 +479,14 @@ fn injectProjects(ctx: context.Context, main: *[]u8) !void {
         try rows.writer.writeAll("<button type=\"button\" class=\"button button-small\" data-open-nob-project=\"");
         try rows.writer.print("{d}", .{project.id});
         try rows.writer.writeAll("\">Details</button>");
-        if (project.discovery_state == .valid and project.manifest_sha256 != null and project.trust_state != .trusted) {
+        if ((project.discovery_state == .valid or (project.discovery_state == .ignored and project.last_scan_state == .valid)) and project.manifest_sha256 != null and project.trust_state != .trusted) {
             try rows.writer.writeAll("<button type=\"button\" class=\"button button-small button-primary\" data-nob-action=\"trust\" data-project-id=\"");
             try rows.writer.print("{d}", .{project.id});
             try rows.writer.writeAll("\" data-manifest-digest=\"");
             try web_html.attribute(&rows.writer, project.manifest_sha256.?);
-            try rows.writer.writeAll("\">Approve</button>");
+            try rows.writer.writeAll("\" data-project-declared-id=\"");
+            try web_html.attribute(&rows.writer, project.declared_id orelse "");
+            try rows.writer.writeAll(if (project.discovery_state == .ignored) "\">Restore approval</button>" else "\">Approve</button>");
         }
         if (project.discovery_state == .valid and project.trust_state == .trusted) {
             if (project.runner_state == .ready) {
@@ -502,6 +504,11 @@ fn injectProjects(ctx: context.Context, main: *[]u8) !void {
             try rows.writer.print("{d}", .{project.id});
             try rows.writer.writeAll("\">Revoke</button>");
         }
+        if (project.discovery_state != .ignored) {
+            try rows.writer.writeAll("<button type=\"button\" class=\"button button-small button-danger\" data-nob-action=\"forget\" data-project-id=\"");
+            try rows.writer.print("{d}", .{project.id});
+            try rows.writer.writeAll("\">Forget</button>");
+        }
         try rows.writer.writeAll("</div></td></tr>");
     }
     try replaceElementInner(ctx.gpa, main, "nob-projects-body", "tbody", rows.written());
@@ -515,6 +522,7 @@ fn discoveryLabel(state: db_store.NobDiscoveryState) []const u8 {
         .invalid => "Invalid manifest",
         .conflict => "ID conflict",
         .missing => "Missing",
+        .ignored => "Forgotten",
     };
 }
 

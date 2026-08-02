@@ -8,6 +8,7 @@ pub const DiscoveryState = enum {
     invalid,
     conflict,
     missing,
+    ignored,
 
     pub fn text(self: DiscoveryState) []const u8 {
         return @tagName(self);
@@ -58,6 +59,7 @@ pub const Project = struct {
     manifest_sha256: ?[]u8,
     trusted_manifest_sha256: ?[]u8,
     discovery_state: DiscoveryState,
+    last_scan_state: DiscoveryState,
     trust_state: TrustState,
     status: ProjectStatus,
     status_summary: ?[]u8,
@@ -372,4 +374,5 @@ test "database state names are protocol-stable" {
     try std.testing.expectEqualStrings("review-required", TrustState.@"review-required".text());
     try std.testing.expectEqualStrings("not-built", RunnerState.@"not-built".text());
     try std.testing.expectEqual(DiscoveryState.conflict, try parseDiscoveryState("conflict"));
+    try std.testing.expectEqual(DiscoveryState.ignored, try parseDiscoveryState("ignored"));
 }

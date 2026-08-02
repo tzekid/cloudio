@@ -58,6 +58,7 @@ pub fn mapApiError(err: anyerror) ApiErrorResponse {
         error.PlanNotFound, error.RunNotFound => .{ .status = 404, .body = "{\"error\":\"not_found\"}\n" },
         error.PlanUnavailable, error.PlanBindingChanged, error.SourceChanged, error.RunnerDigestMismatch, error.PlanDigestMismatch => .{ .status = 409, .body = "{\"error\":\"plan_no_longer_current\"}\n" },
         error.ProjectBusy => .{ .status = 409, .body = "{\"error\":\"project_busy\"}\n" },
+        error.RunnerCacheRootUnsafe, error.RunnerCachePathUnsafe => .{ .status = 409, .body = "{\"error\":\"runner_cache_unsafe\"}\n" },
         error.PlanRouteMismatch, error.PlanActorMismatch => .{ .status = 403, .body = "{\"error\":\"plan_not_authorized\"}\n" },
         error.ConfirmationRequired => .{ .status = 428, .body = "{\"error\":\"confirmation_required\"}\n" },
         error.ProjectConfirmationMismatch => .{ .status = 428, .body = "{\"error\":\"project_confirmation_mismatch\"}\n" },

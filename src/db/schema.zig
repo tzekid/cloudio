@@ -700,6 +700,14 @@ pub const migrations = [_]Migration{
         \\  ON project_managed_routes(installed_operation_id);
         ,
     },
+    .{
+        .version = 17,
+        .name = "nob_forgotten_project_tombstones",
+        .sql =
+        \\ALTER TABLE managed_projects ADD COLUMN last_scan_state TEXT;
+        \\UPDATE managed_projects SET last_scan_state=discovery_state;
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;

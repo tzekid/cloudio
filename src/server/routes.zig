@@ -59,6 +59,7 @@ pub const all = [_]types.Route{
     mutation("POST", "/api/nob/scan", nob.scan, false),
     mutation("POST", "/api/nob/projects/:id/trust", nob.trustProject, true),
     mutation("POST", "/api/nob/projects/:id/revoke", nob.revokeProject, true),
+    mutation("POST", "/api/nob/projects/:id/forget", nob.forgetProject, true),
     mutation("POST", "/api/nob/projects/:id/prepare", nob.prepareProject, false),
     mutation("POST", "/api/nob/projects/:id/observe", nob.observeProject, false),
     mutation("POST", "/api/nob/projects/:id/actions/:action/plan", nob.planAction, false),
@@ -102,6 +103,8 @@ test "route table distinguishes match method miss and named params" {
     const nob_match = http.router.match(types.Route, &all, "POST", "/api/nob/projects/42/trust").?;
     try @import("std").testing.expectEqualStrings("42", nob_match.params.get("id").?);
     try @import("std").testing.expectEqual(types.Mutation.destructive, nob_match.route.mutation);
+    const forget_match = http.router.match(types.Route, &all, "POST", "/api/nob/projects/42/forget").?;
+    try @import("std").testing.expectEqual(types.Mutation.destructive, forget_match.route.mutation);
     const secret_match = http.router.match(types.Route, &all, "PUT", "/api/nob/projects/42/secrets/database-token").?;
     try @import("std").testing.expectEqualStrings("database-token", secret_match.params.get("secret").?);
     try @import("std").testing.expectEqual(types.Mutation.destructive, secret_match.route.mutation);

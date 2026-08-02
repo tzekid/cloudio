@@ -67,6 +67,56 @@ pub fn revoke(ctx: Context, reference: []const u8, actor: []const u8) !void {
     try ctx.db.insertAudit("nob.revoke", "ok", detail);
 }
 
+pub fn forget(ctx: Context, io: std.Io, cache_root: []const u8, reference: []const u8, actor: []const u8) !void {
+    const project = (try resolve(ctx, reference)) orelse return error.ProjectNotFound;
+    defer project.deinit(ctx.gpa);
+    const cache_path = try resolveRunnerCachePath(ctx.gpa, io, cache_root, project.id);
+    defer if (cache_path) |path| ctx.gpa.free(path);
+    const now: i64 = @intCast(try core_time.currentEpochSeconds());
+    if (!try ctx.db.nob().forget(project.id, actor, now)) return error.ProjectNotFound;
+    if (cache_path) |path| {
+        const stat = std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        if (stat) |value| {
+            if (value.kind != .directory) return error.RunnerCachePathUnsafe;
+            try std.Io.Dir.cwd().deleteTree(io, path);
+        }
+    }
+    const detail = try std.fmt.allocPrint(ctx.gpa, "project={d} actor={s}; history and host resources retained", .{ project.id, actor });
+    defer ctx.gpa.free(detail);
+    try ctx.db.insertAudit("nob.forget", "ok", detail);
+}
+
+fn resolveRunnerCachePath(allocator: Allocator, io: std.Io, cache_root: []const u8, project_id: i64) !?[:0]u8 {
+    const root_stat = std.Io.Dir.cwd().statFile(io, cache_root, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    if (root_stat.kind != .directory) return error.RunnerCacheRootUnsafe;
+    const root = try std.Io.Dir.cwd().realPathFileAlloc(io, cache_root, allocator);
+    defer allocator.free(root);
+    if (std.mem.eql(u8, root, "/")) return error.RunnerCacheRootUnsafe;
+    const project_key = try std.fmt.allocPrint(allocator, "{d}", .{project_id});
+    defer allocator.free(project_key);
+    const candidate = try std.fs.path.join(allocator, &.{ root, project_key });
+    defer allocator.free(candidate);
+    const candidate_stat = std.Io.Dir.cwd().statFile(io, candidate, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    if (candidate_stat.kind != .directory) return error.RunnerCachePathUnsafe;
+    const canonical = try std.Io.Dir.cwd().realPathFileAlloc(io, candidate, allocator);
+    errdefer allocator.free(canonical);
+    if (!strictDescendant(root, canonical)) return error.RunnerCachePathUnsafe;
+    return canonical;
+}
+
+fn strictDescendant(root: []const u8, path: []const u8) bool {
+    return path.len > root.len and std.mem.startsWith(u8, path, root) and path[root.len] == std.fs.path.sep;
+}
+
 pub fn writeListText(ctx: Context, writer: anytype) !void {
     var projects = try list(ctx);
     defer projects.deinit(ctx.gpa);
@@ -195,6 +245,7 @@ fn writeProjectJson(project: db_store.NobProject, writer: anytype) !void {
     try app_render.writeJsonNullableStringField(writer, "manifest_sha256", project.manifest_sha256, true);
     try app_render.writeJsonNullableStringField(writer, "trusted_manifest_sha256", project.trusted_manifest_sha256, true);
     try app_render.writeJsonStringField(writer, "discovery_state", project.discovery_state.text(), true);
+    try app_render.writeJsonStringField(writer, "last_scan_state", project.last_scan_state.text(), true);
     try app_render.writeJsonStringField(writer, "trust_state", project.trust_state.text(), true);
     try app_render.writeJsonStringField(writer, "status", project.status.text(), true);
     try app_render.writeJsonNullableStringField(writer, "status_summary", project.status_summary, true);
@@ -262,4 +313,140 @@ test "nob project reads and trust mutations require the current digest" {
     project.deinit(allocator);
     project = (try db.nob().getProjectByDeclaredId(allocator, "dev.example.app")).?;
     try std.testing.expectEqual(db_store.NobTrustState.revoked, project.trust_state);
+}
+
+test "forget tombstones rescans and retains history and host resources" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const base_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/forget", .{tmp.sub_path});
+    defer allocator.free(base_path);
+    const db_path = try std.fs.path.join(allocator, &.{ base_path, "cloudio.db" });
+    defer allocator.free(db_path);
+    const cache_root = try std.fs.path.join(allocator, &.{ base_path, "runners" });
+    defer allocator.free(cache_root);
+    const cache_project = try std.fs.path.join(allocator, &.{ cache_root, "1" });
+    defer allocator.free(cache_project);
+    try std.Io.Dir.cwd().createDirPath(io, cache_project);
+    const cached_runner = try std.fs.path.join(allocator, &.{ cache_project, "cached-runner" });
+    defer allocator.free(cached_runner);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = cached_runner, .data = "runner" });
+
+    var db = try db_store.Db.open(io, db_path);
+    defer db.close();
+    try db.initSchema();
+    const digest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const project_id = try db.nob().recordDiscovery(.{
+        .declared_id = "dev.example.forgotten",
+        .display_name = "Forgotten service",
+        .kind = "service",
+        .root_path = "/srv/forgotten-service",
+        .manifest_path = "/srv/forgotten-service/nob.json",
+        .manifest_sha256 = digest,
+        .manifest_json = "{}",
+        .discovery_state = .valid,
+        .protocol_major = 1,
+        .protocol_minor = 0,
+        .scan_id = "scan-before-forget",
+        .seen_at = 10,
+        .replace_declarations = true,
+        .actions = &.{.{
+            .action_id = "deploy",
+            .label = "Deploy",
+            .effect = "runtime-change",
+            .confirmation = "review-plan",
+            .declaration_json = "{}",
+        }},
+    });
+    try std.testing.expectEqual(@as(i64, 1), project_id);
+    try db.nob().insertPlan(.{
+        .id = "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        .project_id = project_id,
+        .action_id = "deploy",
+        .resource_id = null,
+        .input_json = "{}",
+        .plan_json = "{}",
+        .plan_sha256 = digest,
+        .manifest_sha256 = digest,
+        .source_fingerprint = "source",
+        .effect = "runtime-change",
+        .confirmation = "review-plan",
+        .requested_by = "test",
+        .runner_sha256 = digest,
+        .source_revision = null,
+        .source_dirty = false,
+        .created_at = 11,
+        .expires_at = 100,
+    });
+    try db.nob().upsertSecretBinding(.{
+        .project_id = project_id,
+        .secret_id = "token",
+        .source_kind = "process-environment",
+        .source_ref = "FORGET_TEST_TOKEN",
+        .present = true,
+        .bound_by = "test",
+        .now = 11,
+    });
+    try db.exec(
+        \\INSERT INTO project_operations(
+        \\  id, project_id, action_id, state, outcome, effect, requested_by, queued_at, finished_at
+        \\) VALUES('01ARZ3NDEKTSV4RRFFQ69G5FAY', 1, 'deploy', 'succeeded', 'succeeded',
+        \\  'runtime-change', 'test', 11, 12);
+    );
+    try db.nob().upsertManagedUnit(.{
+        .operation_id = "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+        .resource_id = "service",
+        .scope = "user",
+        .unit = "forgotten.service",
+        .fragment_path = "/home/test/.config/systemd/user/forgotten.service",
+        .sha256 = digest,
+        .updated_at = 12,
+    });
+
+    const ctx = Context{ .gpa = allocator, .db = &db };
+    try forget(ctx, io, cache_root, "1", "test");
+    var project = (try db.nob().getProject(allocator, project_id)).?;
+    defer project.deinit(allocator);
+    try std.testing.expectEqual(db_store.NobDiscoveryState.ignored, project.discovery_state);
+    try std.testing.expectEqual(db_store.NobDiscoveryState.valid, project.last_scan_state);
+    try std.testing.expectEqual(db_store.NobTrustState.revoked, project.trust_state);
+    try std.testing.expectEqual(db_store.NobRunnerState.@"not-built", project.runner_state);
+    var plan = (try db.nob().getPlan(allocator, "01ARZ3NDEKTSV4RRFFQ69G5FAX")).?;
+    defer plan.deinit(allocator);
+    try std.testing.expectEqualStrings("invalidated", plan.state);
+    var secrets = try db.nob().listSecretBindings(allocator, project_id);
+    defer secrets.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), secrets.items.len);
+    var runs = try db.nob().listRuns(allocator, project_id, 10);
+    defer runs.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), runs.items.len);
+    var unit = (try db.nob().getManagedUnitForOperation(allocator, runs.items[0].id, "service")).?;
+    defer unit.deinit(allocator);
+    try std.testing.expectEqualStrings("forgotten.service", unit.unit);
+    try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, cache_project, .{ .follow_symlinks = false }));
+
+    _ = try db.nob().recordDiscovery(.{
+        .declared_id = "dev.example.forgotten",
+        .display_name = "Forgotten service",
+        .kind = "service",
+        .root_path = "/srv/forgotten-service",
+        .manifest_path = "/srv/forgotten-service/nob.json",
+        .manifest_sha256 = digest,
+        .manifest_json = "{}",
+        .discovery_state = .valid,
+        .protocol_major = 1,
+        .protocol_minor = 0,
+        .scan_id = "scan-after-forget",
+        .seen_at = 20,
+    });
+    project.deinit(allocator);
+    project = (try db.nob().getProject(allocator, project_id)).?;
+    try std.testing.expectEqual(db_store.NobDiscoveryState.ignored, project.discovery_state);
+    try std.testing.expect((try db.nob().getProjectByDeclaredId(allocator, "dev.example.forgotten")) == null);
+    try trust(ctx, "1", digest, "test");
+    project.deinit(allocator);
+    project = (try db.nob().getProject(allocator, project_id)).?;
+    try std.testing.expectEqual(db_store.NobDiscoveryState.valid, project.discovery_state);
+    try std.testing.expectEqual(db_store.NobTrustState.trusted, project.trust_state);
 }

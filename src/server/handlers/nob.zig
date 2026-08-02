@@ -87,6 +87,20 @@ pub fn revokeProject(ctx: context.Context, request: http.Request, params: http.P
     return projectAction(ctx, request, params, writer, "revoke");
 }
 
+pub fn forgetProject(ctx: context.Context, request: http.Request, params: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
+    const reference = params.get("id") orelse return common.badRequest(writer);
+    if (!emptyObject(ctx.gpa, request.body)) return common.badRequest(writer);
+    try app_nob_projects.forget(
+        context.nob(ctx),
+        ctx.io,
+        ctx.config.nob_cache_root,
+        reference,
+        ctx.auth_user_id orelse "authenticated-web",
+    );
+    try writer.writeAll("{\"kind\":\"nob_project_forgotten\"}\n");
+    return 200;
+}
+
 pub fn prepareProject(ctx: context.Context, request: http.Request, params: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
     return projectAction(ctx, request, params, writer, "prepare");
 }
