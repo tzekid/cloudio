@@ -56,7 +56,9 @@ const ConfigBinding = struct {
 
 const env_bindings = [_]EnvBinding{
     .{ .key = "CLOUDIO_DB", .setting = .db_path },
+    .{ .key = "CLOUDIO_DB_PATH", .setting = .db_path },
     .{ .key = "CLOUDIO_LOG", .setting = .log_path },
+    .{ .key = "CLOUDIO_LOG_PATH", .setting = .log_path },
     .{ .key = "CLOUDIO_DOMAINS", .setting = .domains },
     .{ .key = "DOMAINS", .setting = .domains },
     .{ .key = "DOMAIN", .setting = .domains },
@@ -68,6 +70,7 @@ const env_bindings = [_]EnvBinding{
     .{ .key = "CLOUDIO_AUTH_ORIGIN", .setting = .auth_origin },
     .{ .key = "CLOUDIO_AUTH_RP_ID", .setting = .auth_rp_id },
     .{ .key = "CLOUDIO_APPS_ROOT", .setting = .apps_root },
+    .{ .key = "CLOUDIO_PROJECTS_ROOT", .setting = .projects_root },
     .{ .key = "CLOUDIO_STORAGE_AUTO_PRUNE", .setting = .storage_auto_prune },
     .{ .key = "CLOUDIO_SNAPSHOT_RETENTION_DAYS", .setting = .snapshot_retention_days },
     .{ .key = "CLOUDIO_PROVIDER_RAW_RETENTION_DAYS", .setting = .provider_raw_retention_days },
@@ -664,6 +667,9 @@ test "process env parser uses shared aliases with later aliases taking precedenc
     var env = std.process.Environ.Map.init(arena.allocator());
     defer env.deinit();
     try env.put("CLOUDIO_DB", ".cloudio/env.db");
+    try env.put("CLOUDIO_DB_PATH", ".cloudio/env-path.db");
+    try env.put("CLOUDIO_LOG_PATH", ".cloudio/env-path.log");
+    try env.put("CLOUDIO_PROJECTS_ROOT", "/srv/env-projects");
     try env.put("CLOUDIO_DOMAINS", "one.example two.example");
     try env.put("CLOUDFLARE_API_TOKEN", "cf-token");
     try env.put("HOSTINGER_API_TOKEN", "hostinger-primary");
@@ -672,7 +678,9 @@ test "process env parser uses shared aliases with later aliases taking precedenc
     var cfg = Config{ .domains = try parseList(arena.allocator(), "plosca.ru") };
     try applyProcessEnv(arena.allocator(), &cfg, &env);
 
-    try std.testing.expectEqualStrings(".cloudio/env.db", cfg.db_path);
+    try std.testing.expectEqualStrings(".cloudio/env-path.db", cfg.db_path);
+    try std.testing.expectEqualStrings(".cloudio/env-path.log", cfg.log_path);
+    try std.testing.expectEqualStrings("/srv/env-projects", cfg.projects_root);
     try std.testing.expectEqual(@as(usize, 2), cfg.domains.len);
     try std.testing.expectEqualStrings("one.example", cfg.domains[0]);
     try std.testing.expectEqualStrings("cf-token", cfg.cloudflare_api_token.?);
