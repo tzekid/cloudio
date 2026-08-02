@@ -193,6 +193,21 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(app_writes_mod);
+    const app_caddy_desired_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/caddy_desired.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "app_writes", .module = app_writes_mod },
+            .{ .name = "core_fs", .module = core_fs_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_output", .module = core_output_mod },
+            .{ .name = "core_process", .module = core_process_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(app_caddy_desired_mod);
     const nob_protocol_mod = b.createModule(.{
         .root_source_file = b.path("src/nob/protocol.zig"),
         .target = target,
@@ -300,12 +315,14 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_caddy_desired", .module = app_caddy_desired_mod },
             .{ .name = "app_writes", .module = app_writes_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "nob_managed_unit", .module = nob_managed_unit_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
+            .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
             .{ .name = "nob_systemd", .module = nob_systemd_mod },
         },
     });
@@ -1280,22 +1297,6 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(app_dashboard_mod);
-
-    const app_caddy_desired_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/caddy_desired.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "sqlite", .module = sqlite_mod },
-            .{ .name = "app_writes", .module = app_writes_mod },
-            .{ .name = "core_fs", .module = core_fs_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "core_output", .module = core_output_mod },
-            .{ .name = "core_process", .module = core_process_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_caddy_desired_mod);
 
     const app_system_control_mod = b.createModule(.{
         .root_source_file = b.path("src/app/system_control.zig"),

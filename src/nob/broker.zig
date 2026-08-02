@@ -1,10 +1,12 @@
 const std = @import("std");
+const app_caddy_desired = @import("app_caddy_desired");
 const app_writes = @import("app_writes");
 const core_config = @import("core_config");
 const core_time = @import("core_time");
 const db_store = @import("db_store");
 const managed_unit = @import("nob_managed_unit");
 const systemd = @import("nob_systemd");
+const subprocess = @import("nob_subprocess");
 const nob = @import("nob_sdk");
 
 const Allocator = std.mem.Allocator;
@@ -210,12 +212,108 @@ fn handleConnection(shared: *Shared, db: *db_store.Db, stream: std.Io.net.Stream
     switch (authorization.capability) {
         .@"systemd.control" => try serveSystemdControl(shared, db, writer, request, authorization),
         .@"systemd.unit" => try serveSystemdUnit(shared, db, writer, request, authorization),
-        .@"caddy.route" => {
-            try writeDenied(writer, request.request_id, "capability_not_implemented");
-            try audit(shared, db, "denied", "capability_not_implemented");
-        },
+        .@"caddy.route" => try serveCaddyRoute(shared, db, writer, request, authorization),
     }
     try stream_writer.interface.flush();
+}
+
+fn serveCaddyRoute(
+    shared: *Shared,
+    db: *db_store.Db,
+    writer: *std.Io.Writer,
+    request: *const nob.broker.Request,
+    authorization: *const nob.types.BrokerRequest,
+) !void {
+    if (!shared.config.nob_allow_system_mutation) {
+        try writeDenied(writer, request.request_id, "system_mutation_disabled");
+        try audit(shared, db, "denied", "system_mutation_disabled");
+        return;
+    }
+    if (request.payload != .object or request.payload.object.count() != 0) {
+        try writeDenied(writer, request.request_id, "invalid_payload");
+        try audit(shared, db, "denied", "invalid_payload");
+        return;
+    }
+    const resource = findResource(shared.manifest.resources, authorization.resource_id) orelse {
+        try writeDenied(writer, request.request_id, "resource_unknown");
+        try audit(shared, db, "denied", "resource_unknown");
+        return;
+    };
+    if (resource.kind != .@"caddy.route" or resource.ownership == .observed or resource.spec != .object) {
+        try writeDenied(writer, request.request_id, "resource_invalid");
+        try audit(shared, db, "denied", "resource_invalid");
+        return;
+    }
+    const operation = std.meta.stringToEnum(app_caddy_desired.NobRouteOperation, authorization.operation) orelse {
+        try writeDenied(writer, request.request_id, "operation_denied");
+        try audit(shared, db, "denied", "operation_denied");
+        return;
+    };
+    if (operation == .remove and resource.ownership != .managed) {
+        try writeDenied(writer, request.request_id, "resource_not_managed");
+        try audit(shared, db, "denied", "resource_not_managed");
+        return;
+    }
+    const host = objectString(resource.spec.object, "host") orelse {
+        try writeDenied(writer, request.request_id, "resource_invalid");
+        try audit(shared, db, "denied", "resource_invalid");
+        return;
+    };
+    const upstream = objectString(resource.spec.object, "upstream") orelse {
+        try writeDenied(writer, request.request_id, "resource_invalid");
+        try audit(shared, db, "denied", "resource_invalid");
+        return;
+    };
+    if (!try claimAuthorization(shared, db, writer, request.request_id, authorization.id)) return;
+    const caddy_executable = subprocess.resolveExecutable(
+        shared.io,
+        shared.gpa,
+        "caddy",
+        shared.config.runtime_environment.path,
+    ) catch {
+        try writeDenied(writer, request.request_id, "caddy_unavailable");
+        try audit(shared, db, "failed", authorization.id);
+        return;
+    };
+    defer shared.gpa.free(caddy_executable);
+    const systemctl_executable = subprocess.resolveExecutable(
+        shared.io,
+        shared.gpa,
+        "systemctl",
+        shared.config.runtime_environment.path,
+    ) catch {
+        try writeDenied(writer, request.request_id, "systemctl_unavailable");
+        try audit(shared, db, "failed", authorization.id);
+        return;
+    };
+    defer shared.gpa.free(systemctl_executable);
+    const transition = app_caddy_desired.applyNobRoute(.{
+        .io = shared.io,
+        .gpa = shared.gpa,
+        .db = db,
+        .write_meta = .{ .actor = shared.actor, .idempotency_key = shared.idempotency_key },
+    }, .{
+        .operation_id = shared.operation_id,
+        .resource_id = authorization.resource_id,
+        .ownership = switch (resource.ownership) {
+            .managed => .managed,
+            .adopted => .adopted,
+            .observed => unreachable,
+        },
+        .operation = operation,
+        .host = host,
+        .upstream = upstream,
+        .caddyfile_path = shared.config.caddyfile_path,
+        .now = @intCast(try core_time.currentEpochSeconds()),
+        .caddy_executable = caddy_executable,
+        .systemctl_executable = systemctl_executable,
+    }) catch |err| {
+        try writeDenied(writer, request.request_id, @errorName(err));
+        try audit(shared, db, "failed", authorization.id);
+        return;
+    };
+    try writeCaddyAllowed(writer, request.request_id, host, upstream, transition.before_enabled, transition.after_enabled);
+    try audit(shared, db, "ok", authorization.id);
 }
 
 fn serveSystemdControl(
@@ -461,6 +559,29 @@ fn writeUnitAllowed(
     try std.json.Stringify.value(path, .{}, writer);
     try writer.writeAll(",\"sha256\":");
     try std.json.Stringify.value(after_sha256, .{}, writer);
+    try writer.writeAll("},\"error\":null}\n");
+}
+
+fn writeCaddyAllowed(
+    writer: *std.Io.Writer,
+    request_id: u64,
+    host: []const u8,
+    upstream: []const u8,
+    before_enabled: ?bool,
+    after_enabled: ?bool,
+) !void {
+    try writer.print("{{\"schema\":\"{s}\",\"request_id\":{d},\"ok\":true,\"before\":{{\"host\":", .{ nob.broker.response_schema, request_id });
+    try std.json.Stringify.value(host, .{}, writer);
+    try writer.writeAll(",\"upstream\":");
+    try std.json.Stringify.value(upstream, .{}, writer);
+    try writer.writeAll(",\"enabled\":");
+    try std.json.Stringify.value(before_enabled, .{}, writer);
+    try writer.writeAll("},\"after\":{\"host\":");
+    try std.json.Stringify.value(host, .{}, writer);
+    try writer.writeAll(",\"upstream\":");
+    try std.json.Stringify.value(upstream, .{}, writer);
+    try writer.writeAll(",\"enabled\":");
+    try std.json.Stringify.value(after_enabled, .{}, writer);
     try writer.writeAll("},\"error\":null}\n");
 }
 

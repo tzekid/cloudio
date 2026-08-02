@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+if [ -n "${XDG_STATE_HOME:-}" ]; then
+    printf '%s\n' "$*" >> "${XDG_STATE_HOME}/caddy.args"
+fi
+
+case " $* " in
+    *" validate --config "*)
+        config=${3:-}
+        test -n "$config"
+        test -f "$config"
+        ;;
+    *)
+        printf 'unexpected fake caddy invocation: %s\n' "$*" >&2
+        exit 64
+        ;;
+esac

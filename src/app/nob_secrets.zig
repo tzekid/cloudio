@@ -65,20 +65,18 @@ pub fn bind(
     if (findSecret(manifest_document.value().secrets, secret_id) == null) return error.UndeclaredSecret;
     const source_kind = std.meta.stringToEnum(SourceKind, source_kind_text) orelse return error.InvalidSecretSourceKind;
     try validateSourceRef(source_kind, source_ref);
-    const present = if (readSource(ctx, source_kind, source_ref)) |value| present: {
-        defer {
-            std.crypto.secureZero(u8, value);
-            ctx.gpa.free(value);
-        }
-        break :present true;
-    } else |_| false;
+    const value = try readSource(ctx, source_kind, source_ref);
+    defer {
+        std.crypto.secureZero(u8, value);
+        ctx.gpa.free(value);
+    }
     const now: i64 = @intCast(try core_time.currentEpochSeconds());
     try ctx.db.nob().upsertSecretBinding(.{
         .project_id = project.id,
         .secret_id = secret_id,
         .source_kind = @tagName(source_kind),
         .source_ref = source_ref,
-        .present = present,
+        .present = true,
         .bound_by = actor,
         .now = now,
     });
@@ -86,7 +84,7 @@ pub fn bind(
         project.id,
         secret_id,
         @tagName(source_kind),
-        if (present) "yes" else "no",
+        "yes",
     });
     defer ctx.gpa.free(detail);
     try ctx.db.insertAudit("nob.secret.bind", "ok", detail);
@@ -272,6 +270,19 @@ fn readSecretFile(ctx: Context, path: []const u8) ![]u8 {
     defer file.close(ctx.io);
     const stat = try file.stat(ctx.io);
     if (stat.kind != .file or stat.size == 0 or stat.size > max_secret_bytes) return error.InvalidSecretFile;
+    if (@backingInt(stat.permissions) & 0o077 != 0) return error.SecretFilePermissionsTooBroad;
+    if (comptime @import("builtin").os.tag == .linux) {
+        var metadata: std.os.linux.Statx = undefined;
+        const rc = std.os.linux.statx(
+            file.handle,
+            "",
+            std.os.linux.AT.EMPTY_PATH,
+            .{ .TYPE = true, .MODE = true, .UID = true },
+            &metadata,
+        );
+        if (std.os.linux.errno(rc) != .SUCCESS) return error.SecretSourceMetadataUnavailable;
+        if (metadata.uid != std.os.linux.geteuid()) return error.SecretFileOwnerMismatch;
+    } else return error.SecretSourceMetadataUnavailable;
     var buffer: [16 * 1024]u8 = undefined;
     var reader = file.reader(ctx.io, &buffer);
     return try reader.interface.allocRemaining(ctx.gpa, .limited(max_secret_bytes));
@@ -357,6 +368,7 @@ test "logical bindings never disclose sources and materialize only read-only act
     try std.Io.Dir.cwd().createDirPath(io, operation_dir);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = manifest_path, .data = manifest_bytes });
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = secret_relative, .data = secret_value });
+    try std.Io.Dir.cwd().setFilePermissions(io, secret_relative, @fromBackingInt(@intCast(0o600)), .{ .follow_symlinks = false });
     const secret_path = try std.Io.Dir.cwd().realPathFileAlloc(io, secret_relative, allocator);
     defer allocator.free(secret_path);
 

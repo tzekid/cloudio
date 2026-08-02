@@ -43,6 +43,8 @@ pub const ImportSummary = struct {
 pub const ApplyOptions = struct {
     validate_cmd: bool = true,
     reload: bool = true,
+    caddy_executable: []const u8 = "caddy",
+    systemctl_executable: []const u8 = "systemctl",
 };
 
 pub const ApplyResult = struct {
@@ -53,6 +55,51 @@ pub const ApplyResult = struct {
 
     pub fn deinit(self: ApplyResult, gpa: Allocator) void {
         if (self.backup_path) |p| gpa.free(p);
+    }
+};
+
+pub const NobRouteOwnership = enum { managed, adopted };
+pub const NobRouteOperation = enum { enable, disable, remove };
+
+pub const NobRouteRequest = struct {
+    operation_id: []const u8,
+    resource_id: []const u8,
+    ownership: NobRouteOwnership,
+    operation: NobRouteOperation,
+    host: []const u8,
+    upstream: []const u8,
+    caddyfile_path: []const u8,
+    now: i64,
+    caddy_executable: []const u8 = "caddy",
+    systemctl_executable: []const u8 = "systemctl",
+};
+
+pub const NobRouteTransition = struct {
+    before_enabled: ?bool,
+    after_enabled: ?bool,
+    created: bool,
+    removed: bool,
+};
+
+const DesiredRoute = struct {
+    upstream: ?[]u8,
+    kind: []u8,
+    enabled: bool,
+
+    fn deinit(self: DesiredRoute, allocator: Allocator) void {
+        if (self.upstream) |value| allocator.free(value);
+        allocator.free(self.kind);
+    }
+};
+
+const ManagedRoute = struct {
+    project_id: i64,
+    resource_id: []u8,
+    upstream: []u8,
+
+    fn deinit(self: ManagedRoute, allocator: Allocator) void {
+        allocator.free(self.resource_id);
+        allocator.free(self.upstream);
     }
 };
 
@@ -111,6 +158,165 @@ pub fn setEnabled(ctx: Context, host: []const u8, enabled: bool) !void {
         .ok,
         if (enabled) "enabled" else "disabled",
     );
+}
+
+/// Apply one exact, plan-approved nob.zig route transition. The desired-state
+/// row and its ownership record change in the same transaction. If Caddy
+/// reload rejects the new configuration, the transaction is rolled back and
+/// the previously rendered configuration is restored before returning.
+pub fn applyNobRoute(ctx: Context, request: NobRouteRequest) !NobRouteTransition {
+    if (request.host.len == 0 or request.upstream.len == 0 or request.resource_id.len == 0) return error.InvalidNobRoute;
+    try ctx.db.exec("BEGIN IMMEDIATE");
+    var transaction_open = true;
+    defer if (transaction_open) ctx.db.exec("ROLLBACK") catch {};
+
+    const project_id = try operationProjectId(ctx, request.operation_id);
+    const desired = try desiredRoute(ctx, request.host);
+    defer if (desired) |value| value.deinit(ctx.gpa);
+    const managed = try managedRoute(ctx, request.host);
+    defer if (managed) |value| value.deinit(ctx.gpa);
+    const before_enabled = if (desired) |value| value.enabled else null;
+    var created = false;
+    var removed = false;
+
+    switch (request.ownership) {
+        .managed => {
+            if (desired) |value| {
+                const owner = managed orelse return error.CaddyRouteNotOwned;
+                if (owner.project_id != project_id or
+                    !std.mem.eql(u8, owner.resource_id, request.resource_id) or
+                    !std.mem.eql(u8, owner.upstream, request.upstream) or
+                    !std.mem.eql(u8, value.kind, "nob") or
+                    value.upstream == null or
+                    !std.mem.eql(u8, value.upstream.?, request.upstream))
+                {
+                    return error.CaddyRouteNotOwned;
+                }
+            } else {
+                if (managed != null or request.operation != .enable) return error.CaddyRouteNotFound;
+                try upsertRoute(ctx, request.host, request.upstream, "nob", null, null, null);
+                try insertManagedRoute(ctx, project_id, request);
+                created = true;
+            }
+        },
+        .adopted => {
+            const value = desired orelse return error.CaddyRouteNotFound;
+            if (managed != null or value.upstream == null or !std.mem.eql(u8, value.upstream.?, request.upstream)) {
+                return error.CaddyRouteIdentityMismatch;
+            }
+            if (request.operation == .remove) return error.CaddyRouteNotOwned;
+        },
+    }
+
+    switch (request.operation) {
+        .enable => if (!created) try setEnabled(ctx, request.host, true),
+        .disable => try setEnabled(ctx, request.host, false),
+        .remove => {
+            if (request.ownership != .managed) return error.CaddyRouteNotOwned;
+            try deleteManagedRoute(ctx, project_id, request.resource_id, request.host);
+            try deleteRoute(ctx, request.host);
+            removed = true;
+        },
+    }
+
+    const applied = apply(ctx, request.caddyfile_path, .{
+        .caddy_executable = request.caddy_executable,
+        .systemctl_executable = request.systemctl_executable,
+    }) catch {
+        recoverNobRoute(ctx, request, &transaction_open) catch return error.CaddyRouteRecoveryFailed;
+        return error.CaddyRouteApplyFailed;
+    };
+    defer applied.deinit(ctx.gpa);
+    if (!applied.validated or !applied.reloaded) {
+        recoverNobRoute(ctx, request, &transaction_open) catch return error.CaddyRouteRecoveryFailed;
+        return error.CaddyRouteApplyFailed;
+    }
+
+    try ctx.db.exec("COMMIT");
+    transaction_open = false;
+    return .{
+        .before_enabled = before_enabled,
+        .after_enabled = if (removed) null else request.operation == .enable,
+        .created = created,
+        .removed = removed,
+    };
+}
+
+fn recoverNobRoute(ctx: Context, request: NobRouteRequest, transaction_open: *bool) !void {
+    try ctx.db.exec("ROLLBACK");
+    transaction_open.* = false;
+    const recovered = try apply(ctx, request.caddyfile_path, .{
+        .caddy_executable = request.caddy_executable,
+        .systemctl_executable = request.systemctl_executable,
+    });
+    defer recovered.deinit(ctx.gpa);
+    if (!recovered.validated or !recovered.reloaded) return error.CaddyRouteRecoveryFailed;
+}
+
+fn operationProjectId(ctx: Context, operation_id: []const u8) !i64 {
+    const stmt = try ctx.db.prepare("SELECT project_id FROM project_operations WHERE id=?");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindText(stmt, 1, operation_id);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return error.RunNotFound;
+    return sqlite.sqlite3_column_int64(stmt, 0);
+}
+
+fn desiredRoute(ctx: Context, host: []const u8) !?DesiredRoute {
+    const stmt = try ctx.db.prepare("SELECT upstream, kind, enabled FROM caddy_desired_routes WHERE host=?");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindText(stmt, 1, host);
+    const rc = sqlite.sqlite3_step(stmt);
+    if (rc == sqlite.SQLITE_DONE) return null;
+    if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
+    const upstream = if (columnText(stmt, 0)) |value| try ctx.gpa.dupe(u8, value) else null;
+    errdefer if (upstream) |value| ctx.gpa.free(value);
+    return .{
+        .upstream = upstream,
+        .kind = try ctx.gpa.dupe(u8, columnText(stmt, 1) orelse ""),
+        .enabled = sqlite.sqlite3_column_int64(stmt, 2) != 0,
+    };
+}
+
+fn managedRoute(ctx: Context, host: []const u8) !?ManagedRoute {
+    const stmt = try ctx.db.prepare("SELECT project_id, resource_id, upstream FROM project_managed_routes WHERE host=?");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindText(stmt, 1, host);
+    const rc = sqlite.sqlite3_step(stmt);
+    if (rc == sqlite.SQLITE_DONE) return null;
+    if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
+    const resource_id = try ctx.gpa.dupe(u8, columnText(stmt, 1) orelse return error.InvalidManagedRoute);
+    errdefer ctx.gpa.free(resource_id);
+    return .{
+        .project_id = sqlite.sqlite3_column_int64(stmt, 0),
+        .resource_id = resource_id,
+        .upstream = try ctx.gpa.dupe(u8, columnText(stmt, 2) orelse return error.InvalidManagedRoute),
+    };
+}
+
+fn insertManagedRoute(ctx: Context, project_id: i64, request: NobRouteRequest) !void {
+    const stmt = try ctx.db.prepare(
+        \\INSERT INTO project_managed_routes(
+        \\  project_id, resource_id, host, upstream, installed_operation_id, updated_at
+        \\) VALUES(?,?,?,?,?,?)
+    );
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    if (sqlite.sqlite3_bind_int64(stmt, 1, project_id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+    try bindText(stmt, 2, request.resource_id);
+    try bindText(stmt, 3, request.host);
+    try bindText(stmt, 4, request.upstream);
+    try bindText(stmt, 5, request.operation_id);
+    if (sqlite.sqlite3_bind_int64(stmt, 6, request.now) != sqlite.SQLITE_OK) return Error.SqliteBind;
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
+}
+
+fn deleteManagedRoute(ctx: Context, project_id: i64, resource_id: []const u8, host: []const u8) !void {
+    const stmt = try ctx.db.prepare("DELETE FROM project_managed_routes WHERE project_id=? AND resource_id=? AND host=?");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    if (sqlite.sqlite3_bind_int64(stmt, 1, project_id) != sqlite.SQLITE_OK) return Error.SqliteBind;
+    try bindText(stmt, 2, resource_id);
+    try bindText(stmt, 3, host);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
+    if (sqlite.sqlite3_changes(ctx.db.handle) != 1) return error.CaddyRouteNotOwned;
 }
 
 pub fn writeRoutesJson(ctx: Context, writer: anytype) !void {
@@ -367,12 +573,13 @@ pub fn apply(ctx: Context, caddyfile_path: []const u8, opts: ApplyOptions) !Appl
 
     const tmp_path = try std.fmt.allocPrint(gpa, "{s}.cloudio.tmp", .{caddyfile_path});
     defer gpa.free(tmp_path);
+    errdefer Io.Dir.cwd().deleteFile(ctx.io, tmp_path) catch {};
     try core_fs.ensureParentDir(ctx.io, caddyfile_path);
     try Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = tmp_path, .data = rendered });
 
     var validated = false;
     if (opts.validate_cmd) {
-        const result = runCommand(gpa, ctx.io, &.{ "caddy", "validate", "--config", tmp_path }, max_command_bytes) catch |err| {
+        const result = runCommand(gpa, ctx.io, &.{ opts.caddy_executable, "validate", "--config", tmp_path }, max_command_bytes) catch |err| {
             const detail = try std.fmt.allocPrint(gpa, "caddy validate could not run: {s}", .{@errorName(err)});
             defer gpa.free(detail);
             _ = try app_writes.recordWithMetadata(gpa, ctx.db, ctx.write_meta, "caddy.apply", caddyfile_path, null, .err, detail);
@@ -408,7 +615,7 @@ pub fn apply(ctx: Context, caddyfile_path: []const u8, opts: ApplyOptions) !Appl
     var reload_stderr: []u8 = &.{};
     defer if (reload_stderr.len > 0) gpa.free(reload_stderr);
     if (opts.reload) {
-        if (runCommand(gpa, ctx.io, &.{ "systemctl", "reload", "caddy" }, max_command_bytes)) |result| {
+        if (runCommand(gpa, ctx.io, &.{ opts.systemctl_executable, "--system", "--no-ask-password", "reload", "--", "caddy.service" }, max_command_bytes)) |result| {
             defer result.deinit(gpa);
             reloaded = result.ok();
             reload_status = result.statusText();
@@ -689,6 +896,146 @@ test "apply writes file, backs up, records audit; no validate or reload" {
     defer _ = sqlite.sqlite3_finalize(stmt);
     try std.testing.expect(sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW);
     try std.testing.expectEqual(@as(i64, 2), sqlite.sqlite3_column_int64(stmt, 0));
+}
+
+test "nob managed routes apply exact identity and retain ownership" {
+    const allocator = std.testing.allocator;
+    var env = try TestEnv.init(allocator);
+    defer env.deinit(allocator);
+    const ctx = env.ctx();
+    try env.db.exec(
+        \\INSERT INTO managed_projects(
+        \\  id, declared_id, display_name, kind, root_path, discovery_state,
+        \\  trust_state, last_seen_at, created_at, updated_at
+        \\) VALUES(1, 'dev.example.service', 'Service', 'service', '/tmp/service',
+        \\  'valid', 'trusted', 1, 1, 1);
+        \\INSERT INTO project_operations(
+        \\  id, project_id, action_id, state, effect, requested_by, queued_at
+        \\) VALUES('01ARZ3NDEKTSV4RRFFQ69G5FAV', 1, 'deploy', 'running',
+        \\  'runtime-change', 'test', 1);
+    );
+
+    const target = try env.subPath(allocator, "nob.Caddyfile");
+    defer allocator.free(target);
+    const fake_bin = try Io.Dir.cwd().realPathFileAlloc(std.testing.io, "test/fixtures/fake-bin", allocator);
+    defer allocator.free(fake_bin);
+    const caddy_executable = try std.fs.path.join(allocator, &.{ fake_bin, "caddy" });
+    defer allocator.free(caddy_executable);
+    const systemctl_executable = try std.fs.path.join(allocator, &.{ fake_bin, "systemctl" });
+    defer allocator.free(systemctl_executable);
+    const base_request = NobRouteRequest{
+        .operation_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        .resource_id = "route",
+        .ownership = .managed,
+        .operation = .enable,
+        .host = "service.example.com",
+        .upstream = "127.0.0.1:42100",
+        .caddyfile_path = target,
+        .now = 2,
+        .caddy_executable = caddy_executable,
+        .systemctl_executable = systemctl_executable,
+    };
+    const enabled = try applyNobRoute(ctx, base_request);
+    try std.testing.expect(enabled.created);
+    try std.testing.expectEqual(@as(?bool, null), enabled.before_enabled);
+    try std.testing.expectEqual(@as(?bool, true), enabled.after_enabled);
+
+    const rendered = try Io.Dir.cwd().readFileAlloc(std.testing.io, target, allocator, .limited(max_file_bytes));
+    defer allocator.free(rendered);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "service.example.com {") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "reverse_proxy 127.0.0.1:42100") != null);
+    const owned = try env.db.prepare(
+        "SELECT COUNT(*) FROM project_managed_routes WHERE project_id=1 AND resource_id='route' AND host='service.example.com' AND upstream='127.0.0.1:42100'",
+    );
+    defer _ = sqlite.sqlite3_finalize(owned);
+    try std.testing.expect(sqlite.sqlite3_step(owned) == sqlite.SQLITE_ROW);
+    try std.testing.expectEqual(@as(i64, 1), sqlite.sqlite3_column_int64(owned, 0));
+
+    const disabled = try applyNobRoute(ctx, withNobRouteOperation(base_request, .disable));
+    try std.testing.expectEqual(@as(?bool, true), disabled.before_enabled);
+    try std.testing.expectEqual(@as(?bool, false), disabled.after_enabled);
+    const disabled_render = try Io.Dir.cwd().readFileAlloc(std.testing.io, target, allocator, .limited(max_file_bytes));
+    defer allocator.free(disabled_render);
+    try std.testing.expect(std.mem.indexOf(u8, disabled_render, "service.example.com") == null);
+
+    const removed = try applyNobRoute(ctx, withNobRouteOperation(base_request, .remove));
+    try std.testing.expect(removed.removed);
+    try std.testing.expectEqual(@as(?bool, null), removed.after_enabled);
+    const routes = try env.db.prepare("SELECT COUNT(*) FROM caddy_desired_routes WHERE host='service.example.com'");
+    defer _ = sqlite.sqlite3_finalize(routes);
+    try std.testing.expect(sqlite.sqlite3_step(routes) == sqlite.SQLITE_ROW);
+    try std.testing.expectEqual(@as(i64, 0), sqlite.sqlite3_column_int64(routes, 0));
+}
+
+test "nob route reload failure rolls back desired state and rendered config" {
+    const allocator = std.testing.allocator;
+    var env = try TestEnv.init(allocator);
+    defer env.deinit(allocator);
+    const ctx = env.ctx();
+    try env.db.exec(
+        \\INSERT INTO managed_projects(
+        \\  id, declared_id, display_name, kind, root_path, discovery_state,
+        \\  trust_state, last_seen_at, created_at, updated_at
+        \\) VALUES(1, 'dev.example.service', 'Service', 'service', '/tmp/service',
+        \\  'valid', 'trusted', 1, 1, 1);
+        \\INSERT INTO project_operations(
+        \\  id, project_id, action_id, state, effect, requested_by, queued_at
+        \\) VALUES('01ARZ3NDEKTSV4RRFFQ69G5FAW', 1, 'deploy', 'running',
+        \\  'runtime-change', 'test', 1);
+    );
+
+    const target = try env.subPath(allocator, "rollback.Caddyfile");
+    defer allocator.free(target);
+    const fake_bin = try Io.Dir.cwd().realPathFileAlloc(std.testing.io, "test/fixtures/fake-bin", allocator);
+    defer allocator.free(fake_bin);
+    const caddy_executable = try std.fs.path.join(allocator, &.{ fake_bin, "caddy" });
+    defer allocator.free(caddy_executable);
+    const fail_once = try env.subPath(allocator, "systemctl-fail-once");
+    defer allocator.free(fail_once);
+    try Io.Dir.cwd().writeFile(std.testing.io, .{
+        .sub_path = fail_once,
+        .data =
+        \\#!/bin/sh
+        \\set -eu
+        \\marker="$0.failed"
+        \\if test -e "$marker"; then exit 0; fi
+        \\touch "$marker"
+        \\exit 1
+        \\
+        ,
+    });
+    try Io.Dir.cwd().setFilePermissions(std.testing.io, fail_once, @fromBackingInt(@intCast(0o755)), .{ .follow_symlinks = false });
+
+    const request = NobRouteRequest{
+        .operation_id = "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        .resource_id = "route",
+        .ownership = .managed,
+        .operation = .enable,
+        .host = "rollback.example.com",
+        .upstream = "127.0.0.1:42100",
+        .caddyfile_path = target,
+        .now = 2,
+        .caddy_executable = caddy_executable,
+        .systemctl_executable = fail_once,
+    };
+    try std.testing.expectError(error.CaddyRouteApplyFailed, applyNobRoute(ctx, request));
+    const desired = try env.db.prepare("SELECT COUNT(*) FROM caddy_desired_routes WHERE host='rollback.example.com'");
+    defer _ = sqlite.sqlite3_finalize(desired);
+    try std.testing.expect(sqlite.sqlite3_step(desired) == sqlite.SQLITE_ROW);
+    try std.testing.expectEqual(@as(i64, 0), sqlite.sqlite3_column_int64(desired, 0));
+    const owned = try env.db.prepare("SELECT COUNT(*) FROM project_managed_routes WHERE host='rollback.example.com'");
+    defer _ = sqlite.sqlite3_finalize(owned);
+    try std.testing.expect(sqlite.sqlite3_step(owned) == sqlite.SQLITE_ROW);
+    try std.testing.expectEqual(@as(i64, 0), sqlite.sqlite3_column_int64(owned, 0));
+    const rendered = try Io.Dir.cwd().readFileAlloc(std.testing.io, target, allocator, .limited(max_file_bytes));
+    defer allocator.free(rendered);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "rollback.example.com") == null);
+}
+
+fn withNobRouteOperation(request: NobRouteRequest, operation: NobRouteOperation) NobRouteRequest {
+    var result = request;
+    result.operation = operation;
+    return result;
 }
 
 test "round-trips real /etc/caddy/Caddyfile when readable" {
