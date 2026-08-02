@@ -1,8 +1,11 @@
 const std = @import("std");
 const app_database = @import("app_database");
 const app_nob_projects = @import("app_nob_projects");
+const app_nob_runtime = @import("app_nob_runtime");
 const cli_args = @import("cli_args");
 const cli_render = @import("cli_render");
+const core_config = @import("core_config");
+const core_version = @import("core_version");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -11,8 +14,7 @@ pub const Context = struct {
     io: Io,
     gpa: Allocator,
     db: *app_database.Db,
-    projects_root: []const u8,
-    scan_depth: u8,
+    config: core_config.Config,
 };
 
 const ReferenceArgs = struct {
@@ -31,6 +33,8 @@ const Command = union(enum) {
     scan,
     trust: TrustArgs,
     revoke: []const u8,
+    prepare: []const u8,
+    observe: []const u8,
     missing: []const u8,
     unknown: []const u8,
 };
@@ -48,6 +52,8 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
             try app_nob_projects.revoke(appContext(ctx), reference, "local-cli");
             try cli_render.writeAll(ctx.io, "nob project trust revoked\n");
         },
+        .prepare => |reference| try commandRuntime(ctx, "prepare", reference),
+        .observe => |reference| try commandRuntime(ctx, "observe", reference),
         .missing => |command| {
             std.debug.print("nob {s} is missing required arguments\n", .{command});
             return error.MissingNobArgument;
@@ -82,12 +88,34 @@ fn renderShow(ctx: Context, reference: []const u8, format: cli_render.RenderForm
 }
 
 fn commandScan(ctx: Context) !void {
-    const result = try app_nob_projects.scan(appContext(ctx), ctx.io, ctx.projects_root, ctx.scan_depth);
+    const result = try app_nob_projects.scan(appContext(ctx), ctx.io, ctx.config.projects_root, ctx.config.nob_scan_depth);
     var out = std.Io.Writer.Allocating.init(ctx.gpa);
     defer out.deinit();
     try out.writer.print(
         "nob scan complete: seen={d} valid={d} invalid={d} candidates={d} conflicts={d} missing={d}\n",
         .{ result.projects_seen, result.valid, result.invalid, result.candidates, result.conflicts, result.missing },
+    );
+    try cli_render.printOwned(ctx.io, ctx.gpa, &out);
+}
+
+fn commandRuntime(ctx: Context, operation: []const u8, reference: []const u8) !void {
+    if (!ctx.config.nob_enabled) return error.NobDisabled;
+    const runtime_ctx: app_nob_runtime.Context = .{
+        .io = ctx.io,
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+        .config = ctx.config,
+        .cloudio_version = core_version.value,
+    };
+    const outcome = if (std.mem.eql(u8, operation, "prepare"))
+        try app_nob_runtime.prepareAndObserve(runtime_ctx, reference)
+    else
+        try app_nob_runtime.observe(runtime_ctx, reference);
+    var out = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer out.deinit();
+    try out.writer.print(
+        "nob {s} complete: project={d} status={s} runner={s}\n",
+        .{ operation, outcome.project_id, @tagName(outcome.status), if (outcome.runner_reused) "reused" else "built" },
     );
     try cli_render.printOwned(ctx.io, ctx.gpa, &out);
 }
@@ -111,6 +139,14 @@ fn parseCommand(args: []const []const u8) Command {
     if (std.mem.eql(u8, args[0], "revoke")) {
         if (args.len < 2) return .{ .missing = "revoke" };
         return .{ .revoke = args[1] };
+    }
+    if (std.mem.eql(u8, args[0], "prepare")) {
+        if (args.len < 2) return .{ .missing = "prepare" };
+        return .{ .prepare = args[1] };
+    }
+    if (std.mem.eql(u8, args[0], "observe")) {
+        if (args.len < 2) return .{ .missing = "observe" };
+        return .{ .observe = args[1] };
     }
     return .{ .unknown = args[0] };
 }

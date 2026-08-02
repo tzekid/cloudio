@@ -76,6 +76,20 @@
         },
       }));
     }
+    if (project.discovery_state === "valid" && project.trust_state === "trusted") {
+      if (project.runner_state === "ready") {
+        controls.appendChild(c.button("Refresh status", {
+          small: true,
+          dataset: { nobAction: "observe", projectId: project.id },
+        }));
+      } else if (project.runner_state !== "building") {
+        controls.appendChild(c.button("Prepare", {
+          small: true,
+          kind: "primary",
+          dataset: { nobAction: "prepare", projectId: project.id },
+        }));
+      }
+    }
     if (project.trust_state === "trusted" || project.trust_state === "review-required") {
       controls.appendChild(c.button("Revoke", {
         small: true,
@@ -126,8 +140,12 @@
       fact("Declaration", discoveryLabel(project.discovery_state)),
       fact("Approval", trustLabel(project.trust_state)),
       fact("Status", project.status),
+      fact("Status detail", project.status_summary),
       fact("Runner", runnerLabel(project.runner_state)),
-      fact("Manifest fingerprint", project.manifest_sha256)
+      fact("Manifest fingerprint", project.manifest_sha256),
+      fact("Source revision", project.head_revision),
+      fact("Source fingerprint", project.source_fingerprint),
+      fact("Uncommitted changes", project.source_dirty === null ? null : (project.source_dirty ? "Yes" : "No"))
     );
     c.renderTable(resourcesBody, data.resources || [], [
       { label: "Resource", render: function (row) { return row.label || row.id; } },
@@ -154,32 +172,46 @@
     }
   }
 
-  async function runTrustAction(button) {
+  async function runProjectAction(button) {
     const action = button.dataset.nobAction;
     const projectId = button.dataset.projectId;
     const digest = button.dataset.manifestDigest;
-    const approved = await c.confirmAction(action === "trust" ? {
+    let prompt = null;
+    if (action === "trust") prompt = {
       title: "Approve this project",
       message: "Cloudio will trust this exact manifest. If it changes, project actions will pause until you review it again.",
       confirmLabel: "Approve project",
-    } : {
+    };
+    if (action === "revoke") prompt = {
       title: "Revoke project approval",
       message: "Cloudio will stop allowing this project runner to be used.",
       confirmLabel: "Revoke approval",
       danger: true,
-    });
-    if (!approved) return;
-    await c.withBusy(button, action === "trust" ? "Approving…" : "Revoking…", async function () {
+    };
+    if (action === "prepare") prompt = {
+      title: "Prepare this project",
+      message: "Cloudio will build and run the project-owned nob.zig helper for the exact manifest you approved.",
+      confirmLabel: "Prepare project",
+    };
+    if (prompt && !await c.confirmAction(prompt)) return;
+    const busy = { trust: "Approving…", revoke: "Revoking…", prepare: "Preparing…", observe: "Refreshing…" }[action] || "Working…";
+    await c.withBusy(button, busy, async function () {
       try {
         await c.api("/api/nob/projects/" + encodeURIComponent(projectId) + "/" + action, {
           method: "POST",
           body: action === "trust" ? { manifest_sha256: digest } : {},
         });
-        c.toast(action === "trust" ? "Project approved." : "Project approval revoked.", "success");
+        const message = {
+          trust: "Project approved.",
+          revoke: "Project approval revoked.",
+          prepare: "Project prepared and status refreshed.",
+          observe: "Project status refreshed.",
+        }[action] || "Project updated.";
+        c.toast(message, "success");
         await loadProjects();
         if (!detailPanel.classList.contains("hidden")) await openDetails(projectId);
       } catch (error) {
-        c.toast("Approval change failed: " + error.message, "danger");
+        c.toast("Project update failed: " + error.message, "danger");
       }
     });
   }
@@ -203,7 +235,7 @@
       return;
     }
     const action = event.target.closest("button[data-nob-action]");
-    if (action) runTrustAction(action);
+    if (action) runProjectAction(action);
   });
   c.byId("nob-project-detail-close").addEventListener("click", function () {
     detailPanel.classList.add("hidden");

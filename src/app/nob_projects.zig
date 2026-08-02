@@ -27,6 +27,10 @@ pub fn list(ctx: Context) !db_store.NobProjects {
     return try ctx.db.nob().listProjects(ctx.gpa);
 }
 
+pub fn find(ctx: Context, reference: []const u8) !?db_store.NobProject {
+    return try resolve(ctx, reference);
+}
+
 pub fn scan(ctx: Context, io: std.Io, root_path: []const u8, scan_depth: u8) !collector_project_manifests.Result {
     return try collector_project_manifests.scan(io, ctx.gpa, ctx.db, root_path, .{ .scan_depth = scan_depth });
 }
@@ -183,7 +187,17 @@ fn writeProjectJson(project: db_store.NobProject, writer: anytype) !void {
     try app_render.writeJsonStringField(writer, "trust_state", project.trust_state.text(), true);
     try app_render.writeJsonStringField(writer, "status", project.status.text(), true);
     try app_render.writeJsonNullableStringField(writer, "status_summary", project.status_summary, true);
-    try app_render.writeJsonStringField(writer, "runner_state", project.runner_state.text(), false);
+    try app_render.writeJsonStringField(writer, "runner_state", project.runner_state.text(), true);
+    try app_render.writeJsonNullableStringField(writer, "runner_sha256", project.runner_sha256, true);
+    try app_render.writeJsonNullableStringField(writer, "repository_kind", project.repository_kind, true);
+    try app_render.writeJsonNullableStringField(writer, "repository_identity", project.repository_identity, true);
+    try app_render.writeJsonNullableStringField(writer, "head_revision", project.head_revision, true);
+    try app_render.writeJsonNullableStringField(writer, "source_fingerprint", project.source_fingerprint, true);
+    if (project.source_dirty) |dirty| {
+        try app_render.writeJsonBoolField(writer, "source_dirty", dirty, false);
+    } else {
+        try writer.writeAll("\"source_dirty\":null");
+    }
     try writer.writeByte('}');
 }
 

@@ -35,7 +35,7 @@ const Setting = enum {
     nob_worker_count,
     nob_state_root,
     nob_cache_root,
-    nob_max_operation_log_bytes,
+    nob_max_run_log_bytes,
     nob_toolchains_file,
     nob_allow_system_mutation,
 };
@@ -78,7 +78,7 @@ const env_bindings = [_]EnvBinding{
     .{ .key = "CLOUDIO_NOB_WORKER_COUNT", .setting = .nob_worker_count },
     .{ .key = "CLOUDIO_NOB_STATE_ROOT", .setting = .nob_state_root },
     .{ .key = "CLOUDIO_NOB_CACHE_ROOT", .setting = .nob_cache_root },
-    .{ .key = "CLOUDIO_NOB_MAX_OPERATION_LOG_BYTES", .setting = .nob_max_operation_log_bytes },
+    .{ .key = "CLOUDIO_NOB_MAX_RUN_LOG_BYTES", .setting = .nob_max_run_log_bytes },
     .{ .key = "CLOUDIO_NOB_TOOLCHAINS_FILE", .setting = .nob_toolchains_file },
     .{ .key = "CLOUDIO_NOB_ALLOW_SYSTEM_MUTATION", .setting = .nob_allow_system_mutation },
 };
@@ -113,9 +113,24 @@ const config_bindings = [_]ConfigBinding{
     .{ .section = "nob", .key = "worker_count", .setting = .nob_worker_count },
     .{ .section = "nob", .key = "state_root", .setting = .nob_state_root },
     .{ .section = "nob", .key = "cache_root", .setting = .nob_cache_root },
-    .{ .section = "nob", .key = "max_operation_log_bytes", .setting = .nob_max_operation_log_bytes },
+    .{ .section = "nob", .key = "max_run_log_bytes", .setting = .nob_max_run_log_bytes },
     .{ .section = "nob", .key = "toolchains_file", .setting = .nob_toolchains_file },
     .{ .section = "nob", .key = "allow_system_mutation", .setting = .nob_allow_system_mutation },
+};
+
+pub const RuntimeEnvironment = struct {
+    path: []const u8 = "/usr/local/bin:/usr/bin:/bin",
+    home: ?[]const u8 = null,
+    user: ?[]const u8 = null,
+    lang: ?[]const u8 = null,
+    lc_all: ?[]const u8 = null,
+    lc_ctype: ?[]const u8 = null,
+    tz: ?[]const u8 = null,
+    xdg_config_home: ?[]const u8 = null,
+    xdg_state_home: ?[]const u8 = null,
+    xdg_cache_home: ?[]const u8 = null,
+    xdg_runtime_dir: ?[]const u8 = null,
+    dbus_session_bus_address: ?[]const u8 = null,
 };
 
 pub const Config = struct {
@@ -150,15 +165,17 @@ pub const Config = struct {
     nob_observe_seconds: u32 = 300,
     nob_plan_ttl_seconds: u32 = 600,
     nob_worker_count: u16 = 1,
-    nob_state_root: []const u8 = ".cloudio/nob/state",
-    nob_cache_root: []const u8 = ".cloudio/nob/cache",
-    nob_max_operation_log_bytes: u64 = 64 * 1024 * 1024,
-    nob_toolchains_file: []const u8 = ".cloudio/nob/toolchains.toml",
+    nob_state_root: []const u8 = ".cloudio/nob/operations",
+    nob_cache_root: []const u8 = ".cloudio/nob/runners",
+    nob_max_run_log_bytes: u64 = 64 * 1024 * 1024,
+    nob_toolchains_file: []const u8 = ".cloudio/nob/toolchains.json",
     nob_allow_system_mutation: bool = false,
+    runtime_environment: RuntimeEnvironment = .{},
 
     pub fn load(io: Io, arena: Allocator, env: *std.process.Environ.Map) !Config {
         var cfg = Config{ .domains = try parseList(arena, "plosca.ru") };
         try applyNobPathDefaults(arena, &cfg, env);
+        try captureRuntimeEnvironment(arena, &cfg, env);
         if (env.get("CLOUDIO_CONFIG")) |value| cfg.config_path = try arena.dupe(u8, value);
 
         if (try readFileMaybe(io, arena, cfg.config_path, max_config_bytes)) |text| {
@@ -303,15 +320,15 @@ fn applySetting(arena: Allocator, cfg: *Config, setting: Setting, raw_value: []c
         .nob_plan_ttl_seconds => cfg.nob_plan_ttl_seconds = parsePositiveU32(value) orelse return,
         .nob_worker_count => {
             const parsed = std.fmt.parseInt(u16, value, 10) catch return;
-            if (parsed == 0 or parsed > 32) return;
+            if (parsed == 0 or parsed > 4) return;
             cfg.nob_worker_count = parsed;
         },
         .nob_state_root => cfg.nob_state_root = try arena.dupe(u8, value),
         .nob_cache_root => cfg.nob_cache_root = try arena.dupe(u8, value),
-        .nob_max_operation_log_bytes => {
+        .nob_max_run_log_bytes => {
             const parsed = std.fmt.parseInt(u64, value, 10) catch return;
             if (parsed == 0) return;
-            cfg.nob_max_operation_log_bytes = parsed;
+            cfg.nob_max_run_log_bytes = parsed;
         },
         .nob_toolchains_file => cfg.nob_toolchains_file = try arena.dupe(u8, value),
         .nob_allow_system_mutation => cfg.nob_allow_system_mutation = parseBool(value) orelse return,
@@ -333,9 +350,34 @@ fn applyNobPathDefaults(arena: Allocator, cfg: *Config, env: *std.process.Enviro
     else
         null;
 
-    if (state_base) |path| cfg.nob_state_root = try std.fmt.allocPrint(arena, "{s}/cloudio/nob", .{path});
-    if (cache_base) |path| cfg.nob_cache_root = try std.fmt.allocPrint(arena, "{s}/cloudio/nob", .{path});
-    if (config_base) |path| cfg.nob_toolchains_file = try std.fmt.allocPrint(arena, "{s}/cloudio/nob/toolchains.toml", .{path});
+    if (state_base) |path| cfg.nob_state_root = try std.fmt.allocPrint(arena, "{s}/cloudio/nob/operations", .{path});
+    if (cache_base) |path| cfg.nob_cache_root = try std.fmt.allocPrint(arena, "{s}/cloudio/nob/runners", .{path});
+    if (config_base) |path| cfg.nob_toolchains_file = try std.fmt.allocPrint(arena, "{s}/cloudio/nob/toolchains.json", .{path});
+}
+
+fn captureRuntimeEnvironment(arena: Allocator, cfg: *Config, env: *std.process.Environ.Map) !void {
+    cfg.runtime_environment = .{
+        .path = try dupeEnvOr(arena, env, "PATH", cfg.runtime_environment.path),
+        .home = try dupeEnvOptional(arena, env, "HOME"),
+        .user = try dupeEnvOptional(arena, env, "USER"),
+        .lang = try dupeEnvOptional(arena, env, "LANG"),
+        .lc_all = try dupeEnvOptional(arena, env, "LC_ALL"),
+        .lc_ctype = try dupeEnvOptional(arena, env, "LC_CTYPE"),
+        .tz = try dupeEnvOptional(arena, env, "TZ"),
+        .xdg_config_home = try dupeEnvOptional(arena, env, "XDG_CONFIG_HOME"),
+        .xdg_state_home = try dupeEnvOptional(arena, env, "XDG_STATE_HOME"),
+        .xdg_cache_home = try dupeEnvOptional(arena, env, "XDG_CACHE_HOME"),
+        .xdg_runtime_dir = try dupeEnvOptional(arena, env, "XDG_RUNTIME_DIR"),
+        .dbus_session_bus_address = try dupeEnvOptional(arena, env, "DBUS_SESSION_BUS_ADDRESS"),
+    };
+}
+
+fn dupeEnvOptional(arena: Allocator, env: *std.process.Environ.Map, key: []const u8) !?[]const u8 {
+    return if (env.get(key)) |value| try arena.dupe(u8, value) else null;
+}
+
+fn dupeEnvOr(arena: Allocator, env: *std.process.Environ.Map, key: []const u8, fallback: []const u8) ![]const u8 {
+    return try arena.dupe(u8, env.get(key) orelse fallback);
 }
 
 fn parseBool(value: []const u8) ?bool {
@@ -475,7 +517,7 @@ test "config parser reads bounded nob control-plane settings" {
         \\worker_count = 3
         \\state_root = "/srv/cloudio/nob-state"
         \\cache_root = "/var/cache/cloudio/nob"
-        \\max_operation_log_bytes = 1048576
+        \\max_run_log_bytes = 1048576
         \\toolchains_file = "/etc/cloudio/nob-toolchains.toml"
         \\allow_system_mutation = true
     );
@@ -486,7 +528,7 @@ test "config parser reads bounded nob control-plane settings" {
     try std.testing.expectEqual(@as(u16, 3), cfg.nob_worker_count);
     try std.testing.expectEqualStrings("/srv/cloudio/nob-state", cfg.nob_state_root);
     try std.testing.expectEqualStrings("/var/cache/cloudio/nob", cfg.nob_cache_root);
-    try std.testing.expectEqual(@as(u64, 1048576), cfg.nob_max_operation_log_bytes);
+    try std.testing.expectEqual(@as(u64, 1048576), cfg.nob_max_run_log_bytes);
     try std.testing.expectEqualStrings("/etc/cloudio/nob-toolchains.toml", cfg.nob_toolchains_file);
     try std.testing.expect(cfg.nob_allow_system_mutation);
 }
@@ -502,9 +544,9 @@ test "nob storage defaults follow XDG locations" {
     try env.put("XDG_CONFIG_HOME", "/config");
     var cfg = Config{ .domains = try parseList(arena.allocator(), "plosca.ru") };
     try applyNobPathDefaults(arena.allocator(), &cfg, &env);
-    try std.testing.expectEqualStrings("/state/cloudio/nob", cfg.nob_state_root);
-    try std.testing.expectEqualStrings("/cache/cloudio/nob", cfg.nob_cache_root);
-    try std.testing.expectEqualStrings("/config/cloudio/nob/toolchains.toml", cfg.nob_toolchains_file);
+    try std.testing.expectEqualStrings("/state/cloudio/nob/operations", cfg.nob_state_root);
+    try std.testing.expectEqualStrings("/cache/cloudio/nob/runners", cfg.nob_cache_root);
+    try std.testing.expectEqualStrings("/config/cloudio/nob/toolchains.json", cfg.nob_toolchains_file);
 }
 
 test "storage lifecycle settings reject zero and malformed values" {

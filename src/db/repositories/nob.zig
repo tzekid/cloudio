@@ -28,6 +28,48 @@ pub const ActionDeclaration = struct {
     declaration_json: []const u8,
 };
 
+pub const ActionAvailability = struct {
+    action_id: []const u8,
+    available: bool,
+    reason: ?[]const u8,
+};
+
+pub const AcceptedRunner = struct {
+    project_id: i64,
+    manifest_sha256: []const u8,
+    runner_path: []const u8,
+    runner_sha256: []const u8,
+    runner_detail: []const u8,
+    repository_kind: []const u8,
+    repository_identity: []const u8,
+    head_revision: ?[]const u8,
+    source_fingerprint: []const u8,
+    source_dirty: bool,
+    actions: []const ActionAvailability,
+    now: i64,
+};
+
+pub const ResourceObservation = struct {
+    resource_id: []const u8,
+    status: []const u8,
+    summary: []const u8,
+    observation_json: []const u8,
+};
+
+pub const AcceptedObservation = struct {
+    project_id: i64,
+    manifest_sha256: []const u8,
+    project_status: []const u8,
+    project_summary: []const u8,
+    repository_kind: []const u8,
+    repository_identity: []const u8,
+    head_revision: ?[]const u8,
+    source_fingerprint: []const u8,
+    source_dirty: bool,
+    resources: []const ResourceObservation,
+    now: i64,
+};
+
 pub const DiscoveryRecord = struct {
     declared_id: ?[]const u8,
     display_name: []const u8,
@@ -139,6 +181,162 @@ pub const Repository = struct {
         try bindI64(stmt, 4, project_id);
         try stepDone(stmt);
         return sqlite.sqlite3_changes(self.handle) == 1;
+    }
+
+    pub fn markRunnerBuilding(self: Repository, project_id: i64, manifest_sha256: []const u8, now: i64) !bool {
+        const stmt = try self.prepare(
+            \\UPDATE managed_projects
+            \\SET runner_state='building', runner_detail='building trusted runner', updated_at=?
+            \\WHERE id=? AND discovery_state='valid' AND trust_state='trusted'
+            \\  AND manifest_sha256=? AND trusted_manifest_sha256=?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, now);
+        try bindI64(stmt, 2, project_id);
+        try bindText(stmt, 3, manifest_sha256);
+        try bindText(stmt, 4, manifest_sha256);
+        try stepDone(stmt);
+        return sqlite.sqlite3_changes(self.handle) == 1;
+    }
+
+    pub fn markRunnerFailed(self: Repository, project_id: i64, manifest_sha256: []const u8, detail: []const u8, now: i64) !void {
+        const stmt = try self.prepare(
+            \\UPDATE managed_projects
+            \\SET runner_state='failed', runner_path=NULL, runner_sha256=NULL,
+            \\    runner_detail=?, status='degraded', status_summary='runner bootstrap failed', updated_at=?
+            \\WHERE id=? AND manifest_sha256=?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, detail);
+        try bindI64(stmt, 2, now);
+        try bindI64(stmt, 3, project_id);
+        try bindText(stmt, 4, manifest_sha256);
+        try stepDone(stmt);
+    }
+
+    pub fn acceptRunner(self: Repository, accepted: AcceptedRunner) !void {
+        try self.exec("BEGIN IMMEDIATE");
+        var committed = false;
+        defer if (!committed) self.exec("ROLLBACK") catch {};
+
+        const stmt = try self.prepare(
+            \\UPDATE managed_projects
+            \\SET runner_state='ready', runner_path=?, runner_sha256=?, runner_detail=?,
+            \\    repository_kind=?, repository_identity=?, head_revision=?, source_fingerprint=?, source_dirty=?, updated_at=?
+            \\WHERE id=? AND discovery_state='valid' AND trust_state='trusted'
+            \\  AND manifest_sha256=? AND trusted_manifest_sha256=?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, accepted.runner_path);
+        try bindText(stmt, 2, accepted.runner_sha256);
+        try bindText(stmt, 3, accepted.runner_detail);
+        try bindText(stmt, 4, accepted.repository_kind);
+        try bindText(stmt, 5, accepted.repository_identity);
+        try bindTextOpt(stmt, 6, accepted.head_revision);
+        try bindText(stmt, 7, accepted.source_fingerprint);
+        try bindI64(stmt, 8, @intFromBool(accepted.source_dirty));
+        try bindI64(stmt, 9, accepted.now);
+        try bindI64(stmt, 10, accepted.project_id);
+        try bindText(stmt, 11, accepted.manifest_sha256);
+        try bindText(stmt, 12, accepted.manifest_sha256);
+        try stepDone(stmt);
+        if (sqlite.sqlite3_changes(self.handle) != 1) return error.ProjectStateChanged;
+
+        try self.setAllActionsUnavailable(accepted.project_id, "runner did not report this action", accepted.now);
+        const action_stmt = try self.prepare(
+            \\UPDATE project_actions SET available=?, unavailable_reason=?, described_at=?
+            \\WHERE project_id=? AND action_id=?
+        );
+        defer _ = sqlite.sqlite3_finalize(action_stmt);
+        for (accepted.actions) |action| {
+            _ = sqlite.sqlite3_reset(action_stmt);
+            _ = sqlite.sqlite3_clear_bindings(action_stmt);
+            try bindI64(action_stmt, 1, @intFromBool(action.available));
+            try bindTextOpt(action_stmt, 2, action.reason);
+            try bindI64(action_stmt, 3, accepted.now);
+            try bindI64(action_stmt, 4, accepted.project_id);
+            try bindText(action_stmt, 5, action.action_id);
+            try stepDone(action_stmt);
+            if (sqlite.sqlite3_changes(self.handle) != 1) return error.UnknownAction;
+        }
+
+        try self.exec("COMMIT");
+        committed = true;
+    }
+
+    pub fn acceptObservation(self: Repository, accepted: AcceptedObservation) !void {
+        try self.exec("BEGIN IMMEDIATE");
+        var committed = false;
+        defer if (!committed) self.exec("ROLLBACK") catch {};
+
+        const stmt = try self.prepare(
+            \\UPDATE managed_projects
+            \\SET status=?, status_summary=?, repository_kind=?, repository_identity=?, head_revision=?,
+            \\    source_fingerprint=?, source_dirty=?, last_observed_at=?, updated_at=?
+            \\WHERE id=? AND discovery_state='valid' AND trust_state='trusted'
+            \\  AND runner_state='ready' AND manifest_sha256=? AND trusted_manifest_sha256=?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, accepted.project_status);
+        try bindText(stmt, 2, accepted.project_summary);
+        try bindText(stmt, 3, accepted.repository_kind);
+        try bindText(stmt, 4, accepted.repository_identity);
+        try bindTextOpt(stmt, 5, accepted.head_revision);
+        try bindText(stmt, 6, accepted.source_fingerprint);
+        try bindI64(stmt, 7, @intFromBool(accepted.source_dirty));
+        try bindI64(stmt, 8, accepted.now);
+        try bindI64(stmt, 9, accepted.now);
+        try bindI64(stmt, 10, accepted.project_id);
+        try bindText(stmt, 11, accepted.manifest_sha256);
+        try bindText(stmt, 12, accepted.manifest_sha256);
+        try stepDone(stmt);
+        if (sqlite.sqlite3_changes(self.handle) != 1) return error.ProjectStateChanged;
+
+        const reset = try self.prepare(
+            \\UPDATE project_resources
+            \\SET runner_observation_json=NULL, effective_status='unknown',
+            \\    status_summary='runner omitted this resource', observed_at=?
+            \\WHERE project_id=?
+        );
+        defer _ = sqlite.sqlite3_finalize(reset);
+        try bindI64(reset, 1, accepted.now);
+        try bindI64(reset, 2, accepted.project_id);
+        try stepDone(reset);
+
+        const resource_stmt = try self.prepare(
+            \\UPDATE project_resources
+            \\SET runner_observation_json=?, effective_status=?, status_summary=?, observed_at=?
+            \\WHERE project_id=? AND resource_id=?
+        );
+        defer _ = sqlite.sqlite3_finalize(resource_stmt);
+        for (accepted.resources) |resource| {
+            _ = sqlite.sqlite3_reset(resource_stmt);
+            _ = sqlite.sqlite3_clear_bindings(resource_stmt);
+            try bindText(resource_stmt, 1, resource.observation_json);
+            try bindText(resource_stmt, 2, resource.status);
+            try bindText(resource_stmt, 3, resource.summary);
+            try bindI64(resource_stmt, 4, accepted.now);
+            try bindI64(resource_stmt, 5, accepted.project_id);
+            try bindText(resource_stmt, 6, resource.resource_id);
+            try stepDone(resource_stmt);
+            if (sqlite.sqlite3_changes(self.handle) != 1) return error.UnknownResource;
+        }
+
+        try self.exec("COMMIT");
+        committed = true;
+    }
+
+    pub fn markObservationFailed(self: Repository, project_id: i64, detail: []const u8, now: i64) !void {
+        const stmt = try self.prepare(
+            \\UPDATE managed_projects SET status='degraded', status_summary=?, last_observed_at=?, updated_at=?
+            \\WHERE id=?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, detail);
+        try bindI64(stmt, 2, now);
+        try bindI64(stmt, 3, now);
+        try bindI64(stmt, 4, project_id);
+        try stepDone(stmt);
     }
 
     pub fn getProject(self: Repository, allocator: Allocator, project_id: i64) !?model.Project {
@@ -377,6 +575,18 @@ pub const Repository = struct {
         }
     }
 
+    fn setAllActionsUnavailable(self: Repository, project_id: i64, reason: []const u8, now: i64) !void {
+        const stmt = try self.prepare(
+            \\UPDATE project_actions SET available=0, unavailable_reason=?, described_at=?
+            \\WHERE project_id=?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, reason);
+        try bindI64(stmt, 2, now);
+        try bindI64(stmt, 3, project_id);
+        try stepDone(stmt);
+    }
+
     fn deleteForProject(self: Repository, sql: []const u8, project_id: i64) !void {
         const stmt = try self.prepare(sql);
         defer _ = sqlite.sqlite3_finalize(stmt);
@@ -401,6 +611,8 @@ const project_select =
     \\SELECT id, declared_id, display_name, kind, root_path, manifest_path,
     \\       manifest_sha256, trusted_manifest_sha256, discovery_state, trust_state,
     \\       status, status_summary, protocol_major, protocol_minor, runner_state,
+    \\       runner_path, runner_sha256, runner_detail, repository_kind,
+    \\       repository_identity, head_revision, source_fingerprint, source_dirty,
     \\       last_seen_at, last_observed_at, updated_at
     \\FROM managed_projects
 ;
@@ -422,9 +634,17 @@ fn projectFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !model.Proj
         .protocol_major = columnI64Optional(stmt, 12),
         .protocol_minor = columnI64Optional(stmt, 13),
         .runner_state = try model.parseRunnerState(columnText(stmt, 14) orelse return error.InvalidDatabaseValue),
-        .last_seen_at = sqlite.sqlite3_column_int64(stmt, 15),
-        .last_observed_at = columnI64Optional(stmt, 16),
-        .updated_at = sqlite.sqlite3_column_int64(stmt, 17),
+        .runner_path = try dupeOptional(allocator, stmt, 15),
+        .runner_sha256 = try dupeOptional(allocator, stmt, 16),
+        .runner_detail = try dupeOptional(allocator, stmt, 17),
+        .repository_kind = try dupeOptional(allocator, stmt, 18),
+        .repository_identity = try dupeOptional(allocator, stmt, 19),
+        .head_revision = try dupeOptional(allocator, stmt, 20),
+        .source_fingerprint = try dupeOptional(allocator, stmt, 21),
+        .source_dirty = columnBoolOptional(stmt, 22),
+        .last_seen_at = sqlite.sqlite3_column_int64(stmt, 23),
+        .last_observed_at = columnI64Optional(stmt, 24),
+        .updated_at = sqlite.sqlite3_column_int64(stmt, 25),
     };
 }
 
@@ -441,4 +661,8 @@ fn dupeOptional(allocator: Allocator, stmt: *sqlite.sqlite3_stmt, index: c_int) 
 fn columnI64Optional(stmt: *sqlite.sqlite3_stmt, index: c_int) ?i64 {
     if (sqlite.sqlite3_column_type(stmt, index) == sqlite.SQLITE_NULL) return null;
     return sqlite.sqlite3_column_int64(stmt, index);
+}
+
+fn columnBoolOptional(stmt: *sqlite.sqlite3_stmt, index: c_int) ?bool {
+    return if (columnI64Optional(stmt, index)) |value| value != 0 else null;
 }

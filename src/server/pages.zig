@@ -486,6 +486,17 @@ fn injectProjects(ctx: context.Context, main: *[]u8) !void {
             try web_html.attribute(&rows.writer, project.manifest_sha256.?);
             try rows.writer.writeAll("\">Approve</button>");
         }
+        if (project.discovery_state == .valid and project.trust_state == .trusted) {
+            if (project.runner_state == .ready) {
+                try rows.writer.writeAll("<button type=\"button\" class=\"button button-small\" data-nob-action=\"observe\" data-project-id=\"");
+                try rows.writer.print("{d}", .{project.id});
+                try rows.writer.writeAll("\">Refresh status</button>");
+            } else if (project.runner_state != .building) {
+                try rows.writer.writeAll("<button type=\"button\" class=\"button button-small button-primary\" data-nob-action=\"prepare\" data-project-id=\"");
+                try rows.writer.print("{d}", .{project.id});
+                try rows.writer.writeAll("\">Prepare</button>");
+            }
+        }
         if (project.trust_state == .trusted or project.trust_state == .@"review-required") {
             try rows.writer.writeAll("<button type=\"button\" class=\"button button-small button-danger\" data-nob-action=\"revoke\" data-project-id=\"");
             try rows.writer.print("{d}", .{project.id});

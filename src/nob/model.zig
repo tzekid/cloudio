@@ -64,6 +64,14 @@ pub const Project = struct {
     protocol_major: ?i64,
     protocol_minor: ?i64,
     runner_state: RunnerState,
+    runner_path: ?[]u8,
+    runner_sha256: ?[]u8,
+    runner_detail: ?[]u8,
+    repository_kind: ?[]u8,
+    repository_identity: ?[]u8,
+    head_revision: ?[]u8,
+    source_fingerprint: ?[]u8,
+    source_dirty: ?bool,
     last_seen_at: i64,
     last_observed_at: ?i64,
     updated_at: i64,
@@ -77,6 +85,13 @@ pub const Project = struct {
         freeOptional(allocator, self.manifest_sha256);
         freeOptional(allocator, self.trusted_manifest_sha256);
         freeOptional(allocator, self.status_summary);
+        freeOptional(allocator, self.runner_path);
+        freeOptional(allocator, self.runner_sha256);
+        freeOptional(allocator, self.runner_detail);
+        freeOptional(allocator, self.repository_kind);
+        freeOptional(allocator, self.repository_identity);
+        freeOptional(allocator, self.head_revision);
+        freeOptional(allocator, self.source_fingerprint);
     }
 };
 

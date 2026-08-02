@@ -83,6 +83,10 @@ pub const NobRunnerState = nob_model.RunnerState;
 pub const NobDiscoveryRecord = nob_repository.DiscoveryRecord;
 pub const NobResourceDeclaration = nob_repository.ResourceDeclaration;
 pub const NobActionDeclaration = nob_repository.ActionDeclaration;
+pub const NobActionAvailability = nob_repository.ActionAvailability;
+pub const NobAcceptedRunner = nob_repository.AcceptedRunner;
+pub const NobResourceObservation = nob_repository.ResourceObservation;
+pub const NobAcceptedObservation = nob_repository.AcceptedObservation;
 
 test "sqlite schema initializes" {
     const allocator = std.testing.allocator;

@@ -80,7 +80,7 @@ pub const sampleConfig =
     \\plan_ttl_seconds = 600
     \\worker_count = 1
     \\# state_root, cache_root, and toolchains_file default to XDG directories
-    \\max_operation_log_bytes = 67108864
+    \\max_run_log_bytes = 67108864
     \\allow_system_mutation = false
     \\
 ;

@@ -181,8 +181,7 @@ pub fn run(init: std.process.Init) !void {
             .io = init.io,
             .gpa = init.gpa,
             .db = &db,
-            .projects_root = cfg.projects_root,
-            .scan_depth = cfg.nob_scan_depth,
+            .config = cfg,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "serve")) {
         try cli_serve.run(.{
@@ -422,7 +421,7 @@ fn usage() void {
         \\  cloudio system summary|services|ports|containers|metrics|logs [unit]
         \\  cloudio projects list|show <name>|correlate [--json|--format json]
         \\  cloudio nob list|show <id>|scan [--json|--format json]
-        \\  cloudio nob trust <id> <manifest-sha256>|revoke <id>
+        \\  cloudio nob trust <id> <manifest-sha256>|revoke <id>|prepare <id>|observe <id>
         \\
     , .{version});
 }

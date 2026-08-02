@@ -1,0 +1,70 @@
+const std = @import("std");
+const core_config = @import("core_config");
+const protocol = @import("nob_protocol");
+const source = @import("nob_source");
+const subprocess = @import("nob_subprocess");
+const nob = @import("nob_sdk");
+
+pub const Options = struct {
+    runtime_environment: core_config.RuntimeEnvironment,
+    cloudio_version: []const u8,
+};
+
+pub fn run(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    runner_path: []const u8,
+    zig_path: []const u8,
+    root_path: []const u8,
+    manifest_sha256: []const u8,
+    source_state: source.State,
+    options: Options,
+    diagnostics: *std.Io.Writer,
+) !protocol.ObservationDocument {
+    const manifest_path = try std.fs.path.join(allocator, &.{ root_path, "nob.json" });
+    defer allocator.free(manifest_path);
+    const manifest_bytes = try std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(nob.manifest.max_manifest_bytes));
+    defer allocator.free(manifest_bytes);
+    var manifest_document = try nob.parseManifest(allocator, manifest_bytes);
+    defer manifest_document.deinit();
+    var digest_buffer: [64]u8 = undefined;
+    if (!std.mem.eql(u8, manifest_document.sha256Hex(&digest_buffer), manifest_sha256)) return error.ManifestDigestMismatch;
+    const manifest = manifest_document.value();
+
+    const action_ids = try allocator.alloc([]const u8, manifest.actions.len);
+    defer allocator.free(action_ids);
+    for (manifest.actions, 0..) |action, index| action_ids[index] = action.id;
+    const resource_ids = try allocator.alloc([]const u8, manifest.resources.len);
+    defer allocator.free(resource_ids);
+    for (manifest.resources, 0..) |resource, index| resource_ids[index] = resource.id;
+    const identity = protocol.Identity{
+        .project_id = manifest.project.id,
+        .manifest_sha256 = manifest_sha256,
+        .action_ids = action_ids,
+        .resource_ids = resource_ids,
+    };
+
+    const extras = [_]subprocess.ExtraEnvironment{
+        .{ .key = "NOB_PROJECT_ROOT", .value = root_path },
+        .{ .key = "NOB_MANIFEST_SHA256", .value = manifest_sha256 },
+        .{ .key = "NOB_SOURCE_FINGERPRINT", .value = source_state.fingerprint },
+        .{ .key = "NOB_SOURCE_DIRTY", .value = if (source_state.dirty) "1" else "0" },
+        .{ .key = "NOB_AVAILABLE_SECRETS", .value = "" },
+        .{ .key = "NOB_ZIG", .value = zig_path },
+        .{ .key = "NOB_CLOUDIO_VERSION", .value = options.cloudio_version },
+    };
+    var environment = try subprocess.makeEnvironment(allocator, options.runtime_environment, &extras);
+    defer environment.deinit();
+    if (source_state.revision) |revision| try environment.put("NOB_SOURCE_REVISION", revision);
+
+    const args = [_][]const u8{ runner_path, "observe" };
+    const result = try subprocess.run(allocator, io, &args, root_path, &environment, .{
+        .stdout_bytes = protocol.max_stdout_bytes,
+        .stderr_bytes = 256 * 1024,
+        .timeout_seconds = 60,
+    });
+    defer result.deinit(allocator);
+    if (result.stderr.len != 0) try diagnostics.print("observe stderr:\n{s}\n", .{result.stderr});
+    if (!result.successful()) return error.RunnerObserveFailed;
+    return try protocol.parseObservation(allocator, result.stdout, identity);
+}
