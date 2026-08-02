@@ -7,6 +7,9 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Status = nob.types.Status;
 
+const max_caddyfile_bytes = 8 * 1024 * 1024;
+const max_caddy_runtime_bytes = 4 * 1024 * 1024;
+
 pub const Resource = struct {
     resource_id: []u8,
     status: Status,
@@ -48,7 +51,7 @@ pub fn run(
     allocator: Allocator,
     root_path: []const u8,
     manifest_sha256: []const u8,
-    runtime: core_config.RuntimeEnvironment,
+    config: core_config.Config,
     runner: *const nob.types.Observation,
 ) !Result {
     const manifest_path = try std.fs.path.join(allocator, &.{ root_path, "nob.json" });
@@ -70,7 +73,7 @@ pub fn run(
 
     var overall = runner.status;
     for (manifest.resources, 0..) |resource, index| {
-        const evidence = probeResource(io, allocator, root_path, runtime, manifest, resource) catch |err|
+        const evidence = probeResource(io, allocator, root_path, config, manifest, resource) catch |err|
             try unavailable(allocator, resource, "Cloudio could not complete this independent check", err);
         defer evidence.deinit(allocator);
         const runner_resource = findRunnerResource(runner.resources, resource.id);
@@ -108,10 +111,11 @@ fn probeResource(
     io: Io,
     allocator: Allocator,
     root_path: []const u8,
-    runtime: core_config.RuntimeEnvironment,
+    config: core_config.Config,
     manifest: *const nob.types.Manifest,
     resource: nob.types.Resource,
 ) !Evidence {
+    const runtime = config.runtime_environment;
     return switch (resource.kind) {
         .@"systemd.service" => probeSystemd(io, allocator, runtime, resource),
         .@"endpoint.http" => probeHttp(io, allocator, runtime, resource),
@@ -121,7 +125,7 @@ fn probeResource(
         .@"data.path" => probeDataPath(io, allocator, root_path, runtime, resource),
         .process => probeProcess(io, allocator, root_path, runtime, resource),
         .@"docker.compose" => inspectCompose(io, allocator, root_path, resource),
-        .@"caddy.route" => unsupported(allocator, resource, "Caddy route verification is not configured"),
+        .@"caddy.route" => probeCaddyRoute(io, allocator, config, resource),
     };
 }
 
@@ -370,6 +374,294 @@ fn inspectCompose(io: Io, allocator: Allocator, root_path: []const u8, resource:
     });
 }
 
+const CaddyfileRoute = struct {
+    host_blocks: usize = 0,
+    reverse_proxy_directives: usize = 0,
+    exact_directives: usize = 0,
+    observed_upstream: ?[]const u8 = null,
+
+    fn exact(self: CaddyfileRoute) bool {
+        return self.host_blocks == 1 and self.reverse_proxy_directives == 1 and self.exact_directives == 1;
+    }
+};
+
+const CaddyRuntimeRoute = struct {
+    host_routes: usize = 0,
+    reverse_proxy_handlers: usize = 0,
+    upstream_dials: usize = 0,
+    exact_dials: usize = 0,
+    observed_upstream: ?[]const u8 = null,
+
+    fn exact(self: CaddyRuntimeRoute) bool {
+        return self.host_routes == 1 and self.reverse_proxy_handlers == 1 and self.upstream_dials == 1 and self.exact_dials == 1;
+    }
+};
+
+fn probeCaddyRoute(io: Io, allocator: Allocator, config: core_config.Config, resource: nob.types.Resource) !Evidence {
+    const host = stringField(resource.spec.object, "host") orelse return error.InvalidResourceSpec;
+    const upstream = stringField(resource.spec.object, "upstream") orelse return error.InvalidResourceSpec;
+    const caddyfile = Io.Dir.cwd().readFileAlloc(io, config.caddyfile_path, allocator, .limited(max_caddyfile_bytes)) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => |other| return unavailable(allocator, resource, "Cloudio could not read the active Caddyfile", other),
+    };
+    defer if (caddyfile) |bytes| allocator.free(bytes);
+    const configured = if (caddyfile) |bytes| scanCaddyfileRoute(bytes, host, upstream) else CaddyfileRoute{};
+
+    const curl = subprocess.resolveExecutable(io, allocator, "curl", config.runtime_environment.path) catch |err| {
+        return makeEvidence(allocator, resource, .unknown, "Caddy runtime could not be queried because curl is unavailable", .{
+            .host = host,
+            .declared_upstream = upstream,
+            .caddyfile_path = config.caddyfile_path,
+            .caddyfile_present = caddyfile != null,
+            .configured_exactly = configured.exact(),
+            .configured_host_blocks = configured.host_blocks,
+            .configured_reverse_proxy_directives = configured.reverse_proxy_directives,
+            .configured_observed_upstream = configured.observed_upstream,
+            .admin_socket = config.caddy_admin_socket,
+            .runtime_available = false,
+            .error_name = @errorName(err),
+        });
+    };
+    defer allocator.free(curl);
+    var environment = try subprocess.makeEnvironment(allocator, config.runtime_environment, &.{});
+    defer environment.deinit();
+    const args = [_][]const u8{
+        curl,
+        "--disable",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "5",
+        "--unix-socket",
+        config.caddy_admin_socket,
+        "http://localhost/config/",
+    };
+    const command = subprocess.run(allocator, io, &args, "/", &environment, .{
+        .stdout_bytes = max_caddy_runtime_bytes,
+        .stderr_bytes = 16 * 1024,
+        .timeout_seconds = 8,
+    }) catch |err| {
+        return makeEvidence(allocator, resource, .unknown, "Caddy runtime query could not be completed", .{
+            .host = host,
+            .declared_upstream = upstream,
+            .caddyfile_path = config.caddyfile_path,
+            .caddyfile_present = caddyfile != null,
+            .configured_exactly = configured.exact(),
+            .configured_host_blocks = configured.host_blocks,
+            .configured_reverse_proxy_directives = configured.reverse_proxy_directives,
+            .configured_observed_upstream = configured.observed_upstream,
+            .admin_socket = config.caddy_admin_socket,
+            .runtime_available = false,
+            .error_name = @errorName(err),
+        });
+    };
+    defer command.deinit(allocator);
+    if (!command.successful()) {
+        return makeEvidence(allocator, resource, .unknown, "Caddy admin socket did not return its runtime configuration", .{
+            .host = host,
+            .declared_upstream = upstream,
+            .caddyfile_path = config.caddyfile_path,
+            .caddyfile_present = caddyfile != null,
+            .configured_exactly = configured.exact(),
+            .configured_host_blocks = configured.host_blocks,
+            .configured_reverse_proxy_directives = configured.reverse_proxy_directives,
+            .configured_observed_upstream = configured.observed_upstream,
+            .admin_socket = config.caddy_admin_socket,
+            .runtime_available = false,
+            .error_name = @as(?[]const u8, null),
+        });
+    }
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, command.stdout, .{
+        .allocate = .alloc_always,
+        .max_value_len = max_caddy_runtime_bytes,
+    }) catch |err| {
+        return makeEvidence(allocator, resource, .unknown, "Caddy returned an invalid runtime configuration", .{
+            .host = host,
+            .declared_upstream = upstream,
+            .caddyfile_path = config.caddyfile_path,
+            .caddyfile_present = caddyfile != null,
+            .configured_exactly = configured.exact(),
+            .configured_host_blocks = configured.host_blocks,
+            .configured_reverse_proxy_directives = configured.reverse_proxy_directives,
+            .configured_observed_upstream = configured.observed_upstream,
+            .admin_socket = config.caddy_admin_socket,
+            .runtime_available = false,
+            .error_name = @errorName(err),
+        });
+    };
+    defer parsed.deinit();
+    var live = CaddyRuntimeRoute{};
+    try scanCaddyRuntime(parsed.value, host, upstream, &live, 0);
+    const status: Status = if (live.host_routes == 0)
+        .stopped
+    else if (live.exact())
+        .healthy
+    else
+        .degraded;
+    const summary = if (live.host_routes == 0)
+        "declared Caddy route is not active"
+    else if (!live.exact())
+        "active Caddy route does not exactly match its declared upstream"
+    else if (!configured.exact())
+        "Caddy route is active, but the rendered Caddyfile differs from the declaration"
+    else
+        "Caddy route is active and exactly matches its declaration";
+    return makeEvidence(allocator, resource, if (status == .healthy and !configured.exact()) .degraded else status, summary, .{
+        .host = host,
+        .declared_upstream = upstream,
+        .caddyfile_path = config.caddyfile_path,
+        .caddyfile_present = caddyfile != null,
+        .configured_exactly = configured.exact(),
+        .configured_host_blocks = configured.host_blocks,
+        .configured_reverse_proxy_directives = configured.reverse_proxy_directives,
+        .configured_observed_upstream = configured.observed_upstream,
+        .admin_socket = config.caddy_admin_socket,
+        .runtime_available = true,
+        .runtime_exactly = live.exact(),
+        .runtime_host_routes = live.host_routes,
+        .runtime_reverse_proxy_handlers = live.reverse_proxy_handlers,
+        .runtime_upstream_dials = live.upstream_dials,
+        .runtime_observed_upstream = live.observed_upstream,
+    });
+}
+
+fn scanCaddyfileRoute(bytes: []const u8, host: []const u8, upstream: []const u8) CaddyfileRoute {
+    var result = CaddyfileRoute{};
+    var depth: i32 = 0;
+    var target_depth: ?i32 = null;
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |raw_line| {
+        const line = trimCaddyLine(raw_line);
+        if (line.len == 0) continue;
+        if (depth == 0 and std.mem.endsWith(u8, line, "{")) {
+            const label = std.mem.trim(u8, line[0 .. line.len - 1], " \t\r");
+            if (std.mem.eql(u8, label, host)) {
+                result.host_blocks += 1;
+                target_depth = depth + 1;
+            }
+        } else if (target_depth != null and depth == target_depth.?) {
+            var tokens = std.mem.tokenizeAny(u8, line, " \t\r");
+            const directive = tokens.next() orelse "";
+            if (std.mem.eql(u8, directive, "reverse_proxy")) {
+                result.reverse_proxy_directives += 1;
+                const observed = tokens.next();
+                if (result.observed_upstream == null) result.observed_upstream = observed;
+                if (observed != null and tokens.next() == null and std.mem.eql(u8, observed.?, upstream)) {
+                    result.exact_directives += 1;
+                }
+            }
+        }
+        depth += caddyBraceDelta(line);
+        if (target_depth != null and depth < target_depth.?) target_depth = null;
+        if (depth < 0) depth = 0;
+    }
+    return result;
+}
+
+fn trimCaddyLine(raw: []const u8) []const u8 {
+    var quoted = false;
+    var escaped = false;
+    var end = raw.len;
+    for (raw, 0..) |byte, index| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (byte == '\\' and quoted) {
+            escaped = true;
+            continue;
+        }
+        if (byte == '"') quoted = !quoted;
+        if (byte == '#' and !quoted) {
+            end = index;
+            break;
+        }
+    }
+    return std.mem.trim(u8, raw[0..end], " \t\r");
+}
+
+fn caddyBraceDelta(line: []const u8) i32 {
+    var delta: i32 = 0;
+    var quoted = false;
+    var escaped = false;
+    for (line) |byte| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (byte == '\\' and quoted) {
+            escaped = true;
+            continue;
+        }
+        if (byte == '"') {
+            quoted = !quoted;
+            continue;
+        }
+        if (quoted) continue;
+        if (byte == '{') delta += 1;
+        if (byte == '}') delta -= 1;
+    }
+    return delta;
+}
+
+fn scanCaddyRuntime(value: std.json.Value, host: []const u8, upstream: []const u8, result: *CaddyRuntimeRoute, depth: usize) !void {
+    if (depth > 128) return error.CaddyRuntimeTooDeep;
+    switch (value) {
+        .object => |object| {
+            if (object.get("match") != null and object.get("handle") != null and routeMatchesHost(object, host)) {
+                result.host_routes += 1;
+                try scanCaddyHandlers(object.get("handle").?, upstream, result, depth + 1);
+            }
+            var iterator = object.iterator();
+            while (iterator.next()) |entry| try scanCaddyRuntime(entry.value_ptr.*, host, upstream, result, depth + 1);
+        },
+        .array => |array| for (array.items) |item| try scanCaddyRuntime(item, host, upstream, result, depth + 1),
+        else => {},
+    }
+}
+
+fn routeMatchesHost(object: std.json.ObjectMap, host: []const u8) bool {
+    const matches = object.get("match") orelse return false;
+    if (matches != .array) return false;
+    for (matches.array.items) |matcher| {
+        if (matcher != .object) continue;
+        const hosts = matcher.object.get("host") orelse continue;
+        if (hosts != .array) continue;
+        for (hosts.array.items) |candidate| {
+            if (candidate == .string and std.mem.eql(u8, candidate.string, host)) return true;
+        }
+    }
+    return false;
+}
+
+fn scanCaddyHandlers(value: std.json.Value, upstream: []const u8, result: *CaddyRuntimeRoute, depth: usize) !void {
+    if (depth > 128) return error.CaddyRuntimeTooDeep;
+    switch (value) {
+        .object => |object| {
+            if (object.get("handler")) |handler| {
+                if (handler == .string and std.mem.eql(u8, handler.string, "reverse_proxy")) {
+                    result.reverse_proxy_handlers += 1;
+                    if (object.get("upstreams")) |upstreams| {
+                        if (upstreams == .array) for (upstreams.array.items) |candidate| {
+                            if (candidate != .object) continue;
+                            const dial = candidate.object.get("dial") orelse continue;
+                            if (dial != .string) continue;
+                            result.upstream_dials += 1;
+                            if (result.observed_upstream == null) result.observed_upstream = dial.string;
+                            if (std.mem.eql(u8, dial.string, upstream)) result.exact_dials += 1;
+                        };
+                    }
+                }
+            }
+            var iterator = object.iterator();
+            while (iterator.next()) |entry| try scanCaddyHandlers(entry.value_ptr.*, upstream, result, depth + 1);
+        },
+        .array => |array| for (array.items) |item| try scanCaddyHandlers(item, upstream, result, depth + 1),
+        else => {},
+    }
+}
+
 fn unsupported(allocator: Allocator, resource: nob.types.Resource, summary: []const u8) !Evidence {
     return makeEvidence(allocator, resource, .unknown, summary, .{ .supported = false });
 }
@@ -592,4 +884,54 @@ test "path templates expand with XDG fallbacks" {
     const project = try expandPath(std.testing.allocator, "${PROJECT_ROOT}/data", "/srv/demo", .{});
     defer std.testing.allocator.free(project);
     try std.testing.expectEqualStrings("/srv/demo/data", project);
+}
+
+test "Caddyfile route scan requires one exact host and upstream directive" {
+    const exact = scanCaddyfileRoute(
+        \\{
+        \\    admin unix//run/caddy/admin.socket
+        \\}
+        \\# another route must not leak into the result
+        \\other.example.test {
+        \\    reverse_proxy 127.0.0.1:41000
+        \\}
+        \\app.example.test {
+        \\    reverse_proxy 127.0.0.1:42000 # generated route
+        \\}
+    , "app.example.test", "127.0.0.1:42000");
+    try std.testing.expect(exact.exact());
+    try std.testing.expectEqual(@as(usize, 1), exact.host_blocks);
+    try std.testing.expectEqualStrings("127.0.0.1:42000", exact.observed_upstream.?);
+
+    const ambiguous = scanCaddyfileRoute(
+        \\app.example.test {
+        \\    reverse_proxy 127.0.0.1:42000
+        \\    reverse_proxy 127.0.0.1:42001
+        \\}
+    , "app.example.test", "127.0.0.1:42000");
+    try std.testing.expect(!ambiguous.exact());
+    try std.testing.expectEqual(@as(usize, 2), ambiguous.reverse_proxy_directives);
+}
+
+test "Caddy runtime scan associates an exact host with its own proxy" {
+    const fixture =
+        \\{
+        \\  "apps": {"http": {"servers": {"srv0": {"routes": [
+        \\    {"match":[{"host":["other.example.test"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"127.0.0.1:41000"}]}]},
+        \\    {"match":[{"host":["app.example.test"]}],"handle":[{"handler":"subroute","routes":[{"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"127.0.0.1:42000"}]}]}]}]}
+        \\  ]}}}}
+        \\}
+    ;
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, fixture, .{});
+    defer parsed.deinit();
+    var exact = CaddyRuntimeRoute{};
+    try scanCaddyRuntime(parsed.value, "app.example.test", "127.0.0.1:42000", &exact, 0);
+    try std.testing.expect(exact.exact());
+    try std.testing.expectEqual(@as(usize, 1), exact.host_routes);
+    try std.testing.expectEqualStrings("127.0.0.1:42000", exact.observed_upstream.?);
+
+    var mismatch = CaddyRuntimeRoute{};
+    try scanCaddyRuntime(parsed.value, "app.example.test", "127.0.0.1:42999", &mismatch, 0);
+    try std.testing.expect(!mismatch.exact());
+    try std.testing.expectEqual(@as(usize, 0), mismatch.exact_dials);
 }

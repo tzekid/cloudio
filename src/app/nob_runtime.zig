@@ -140,7 +140,7 @@ fn observeWith(
         ctx.gpa,
         project.root_path,
         manifest_sha256,
-        ctx.config.runtime_environment,
+        ctx.config,
         value,
     );
     defer verified.deinit(ctx.gpa);
