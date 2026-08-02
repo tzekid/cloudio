@@ -2,6 +2,7 @@ const std = @import("std");
 const app_caddy_desired = @import("app_caddy_desired");
 const app_dashboard = @import("app_dashboard");
 const app_deploy = @import("app_deploy");
+const app_nob_projects = @import("app_nob_projects");
 const app_provider_writes = @import("app_provider_writes");
 const app_system_control = @import("app_system_control");
 const app_writes = @import("app_writes");
@@ -35,4 +36,8 @@ pub fn provider(ctx: Context) app_provider_writes.Context {
 
 pub fn system(ctx: Context) app_system_control.Context {
     return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .write_meta = ctx.write_meta };
+}
+
+pub fn nob(ctx: Context) app_nob_projects.Context {
+    return .{ .gpa = ctx.gpa, .db = ctx.db };
 }

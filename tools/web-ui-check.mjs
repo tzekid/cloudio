@@ -8,6 +8,7 @@ const webRoot = join(root, "web");
 const authenticatedPages = new Map([
   ["index.html", "dashboard.js"],
   ["apps.html", "apps.js"],
+  ["projects.html", "projects.js"],
   ["routes.html", "routes.js"],
   ["dns.html", "dns.js"],
   ["vps.html", "vps.js"],

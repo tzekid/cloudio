@@ -9,8 +9,10 @@ const app_authentication = @import("app_authentication");
 const app_caddy_desired = @import("app_caddy_desired");
 const app_dashboard = @import("app_dashboard");
 const app_deploy = @import("app_deploy");
+const app_nob_projects = @import("app_nob_projects");
 const app_web_resources = @import("app_web_resources");
 const app_writes = @import("app_writes");
+const db_store = @import("db_store");
 const http = @import("http");
 const web_html = @import("web_html");
 const common = @import("common.zig");
@@ -24,6 +26,7 @@ const favicon_link =
 const Page = enum {
     dashboard,
     apps,
+    projects,
     routes,
     dns,
     vps,
@@ -36,6 +39,7 @@ const Page = enum {
         return switch (self) {
             .dashboard => "Dashboard",
             .apps => "Apps",
+            .projects => "Projects",
             .routes => "Routes",
             .dns => "DNS",
             .vps => "VPS",
@@ -50,6 +54,7 @@ const Page = enum {
         return switch (self) {
             .dashboard => "dashboard",
             .apps => "apps",
+            .projects => "projects",
             .routes => "routes",
             .dns => "dns",
             .vps => "vps",
@@ -64,6 +69,7 @@ const Page = enum {
         return switch (self) {
             .dashboard => "web/index.html",
             .apps => "web/apps.html",
+            .projects => "web/projects.html",
             .routes => "web/routes.html",
             .dns => "web/dns.html",
             .vps => "web/vps.html",
@@ -78,6 +84,7 @@ const Page = enum {
         return switch (self) {
             .dashboard => "/assets/pages/dashboard.js",
             .apps => "/assets/pages/apps.js",
+            .projects => "/assets/pages/projects.js",
             .routes => "/assets/pages/routes.js",
             .dns => "/assets/pages/dns.js",
             .vps => "/assets/pages/vps.js",
@@ -96,6 +103,7 @@ const nav_items = [_]struct {
 }{
     .{ .page = .dashboard, .href = "/", .label = "Dashboard" },
     .{ .page = .apps, .href = "/apps.html", .label = "Apps" },
+    .{ .page = .projects, .href = "/projects.html", .label = "Projects" },
     .{ .page = .routes, .href = "/routes.html", .label = "Routes" },
     .{ .page = .dns, .href = "/dns.html", .label = "DNS" },
     .{ .page = .vps, .href = "/vps.html", .label = "VPS" },
@@ -197,6 +205,7 @@ fn extractMain(gpa: std.mem.Allocator, template: []const u8) ![]u8 {
 fn pageForPath(path: []const u8) ?Page {
     if (std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/index.html")) return .dashboard;
     if (std.mem.eql(u8, path, "/apps.html")) return .apps;
+    if (std.mem.eql(u8, path, "/projects.html")) return .projects;
     if (std.mem.eql(u8, path, "/routes.html")) return .routes;
     if (std.mem.eql(u8, path, "/dns.html")) return .dns;
     if (std.mem.eql(u8, path, "/vps.html")) return .vps;
@@ -287,6 +296,7 @@ fn injectPageData(
     switch (page) {
         .dashboard => try injectDashboard(ctx, request, main),
         .apps => try injectApps(ctx, main),
+        .projects => try injectProjects(ctx, main),
         .routes => try injectRoutes(ctx, main),
         .dns => try injectDns(ctx, request, main),
         .vps => try injectVps(ctx, main),
@@ -442,6 +452,77 @@ fn injectApps(ctx: context.Context, main: *[]u8) !void {
     }
     try replaceElementInner(ctx.gpa, main, "apps-body", "tbody", rows.written());
     try replaceCountLabel(ctx.gpa, main, "apps-count", "span", apps.len, "app", "apps");
+}
+
+fn injectProjects(ctx: context.Context, main: *[]u8) !void {
+    var projects = try app_nob_projects.list(context.nob(ctx));
+    defer projects.deinit(ctx.gpa);
+
+    var rows = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer rows.deinit();
+    if (projects.items.len == 0) {
+        try emptyRow(&rows.writer, 7, "No projects discovered yet. Scan the projects folder to begin.");
+    } else for (projects.items) |project| {
+        try rows.writer.writeAll("<tr><td><button type=\"button\" class=\"button-link\" data-open-nob-project=\"");
+        try rows.writer.print("{d}", .{project.id});
+        try rows.writer.writeAll("\">");
+        try web_html.text(&rows.writer, project.display_name);
+        try rows.writer.writeAll("</button><div class=\"muted mono\">");
+        try web_html.text(&rows.writer, project.declared_id orelse "Not enrolled");
+        try rows.writer.writeAll("</div></td>");
+        try cellBadge(&rows.writer, project.kind);
+        try cellBadge(&rows.writer, discoveryLabel(project.discovery_state));
+        try cellBadge(&rows.writer, trustLabel(project.trust_state));
+        try cellStatus(&rows.writer, project.status.text());
+        try cellBadge(&rows.writer, runnerLabel(project.runner_state));
+        try rows.writer.writeAll("<td class=\"cell-actions\"><div class=\"table-actions\">");
+        try rows.writer.writeAll("<button type=\"button\" class=\"button button-small\" data-open-nob-project=\"");
+        try rows.writer.print("{d}", .{project.id});
+        try rows.writer.writeAll("\">Details</button>");
+        if (project.discovery_state == .valid and project.manifest_sha256 != null and project.trust_state != .trusted) {
+            try rows.writer.writeAll("<button type=\"button\" class=\"button button-small button-primary\" data-nob-action=\"trust\" data-project-id=\"");
+            try rows.writer.print("{d}", .{project.id});
+            try rows.writer.writeAll("\" data-manifest-digest=\"");
+            try web_html.attribute(&rows.writer, project.manifest_sha256.?);
+            try rows.writer.writeAll("\">Approve</button>");
+        }
+        if (project.trust_state == .trusted or project.trust_state == .@"review-required") {
+            try rows.writer.writeAll("<button type=\"button\" class=\"button button-small button-danger\" data-nob-action=\"revoke\" data-project-id=\"");
+            try rows.writer.print("{d}", .{project.id});
+            try rows.writer.writeAll("\">Revoke</button>");
+        }
+        try rows.writer.writeAll("</div></td></tr>");
+    }
+    try replaceElementInner(ctx.gpa, main, "nob-projects-body", "tbody", rows.written());
+    try replaceCountLabel(ctx.gpa, main, "nob-projects-count", "span", projects.items.len, "project", "projects");
+}
+
+fn discoveryLabel(state: db_store.NobDiscoveryState) []const u8 {
+    return switch (state) {
+        .candidate => "Manifest needed",
+        .valid => "Ready",
+        .invalid => "Invalid manifest",
+        .conflict => "ID conflict",
+        .missing => "Missing",
+    };
+}
+
+fn trustLabel(state: db_store.NobTrustState) []const u8 {
+    return switch (state) {
+        .discovered => "Approval needed",
+        .trusted => "Approved",
+        .@"review-required" => "Changed — review",
+        .revoked => "Revoked",
+    };
+}
+
+fn runnerLabel(state: db_store.NobRunnerState) []const u8 {
+    return switch (state) {
+        .@"not-built" => "Not prepared",
+        .building => "Preparing",
+        .ready => "Ready",
+        .failed => "Failed",
+    };
 }
 
 fn injectRoutes(ctx: context.Context, main: *[]u8) !void {
@@ -1047,6 +1128,7 @@ fn replaceExact(
 test "authenticated page allowlist is explicit" {
     try std.testing.expect(isPagePath("/"));
     try std.testing.expect(isPagePath("/security.html"));
+    try std.testing.expect(isPagePath("/projects.html"));
     try std.testing.expect(isPagePath("/settings.html"));
     try std.testing.expect(!isPagePath("/login.html"));
     try std.testing.expect(isPublicPagePath("/login.html"));
@@ -1077,6 +1159,7 @@ test "every authenticated page has a useful server-rendered empty state" {
     const paths = [_][]const u8{
         "/",
         "/apps.html",
+        "/projects.html",
         "/routes.html",
         "/dns.html",
         "/vps.html",

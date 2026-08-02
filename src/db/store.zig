@@ -79,6 +79,7 @@ pub const NobAction = nob_model.Action;
 pub const NobActions = nob_model.Actions;
 pub const NobDiscoveryState = nob_model.DiscoveryState;
 pub const NobTrustState = nob_model.TrustState;
+pub const NobRunnerState = nob_model.RunnerState;
 pub const NobDiscoveryRecord = nob_repository.DiscoveryRecord;
 pub const NobResourceDeclaration = nob_repository.ResourceDeclaration;
 pub const NobActionDeclaration = nob_repository.ActionDeclaration;

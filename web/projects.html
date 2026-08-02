@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Projects · Cloudio</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/app.js"></script>
+  <script defer src="/assets/pages/projects.js"></script>
+</head>
+<body>
+  <main id="page-content">
+    <p class="page-intro">Discover projects that speak the nob.zig protocol, review what they declare, and approve them before Cloudio runs any project-owned code.</p>
+
+    <section class="panel" aria-labelledby="project-scan-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="project-scan-title">Project discovery</h2>
+          <p>Scanning only reads manifests and project markers. It never builds or runs a project.</p>
+        </div>
+        <button id="nob-scan-button" class="button button-primary" type="button">Scan projects</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="nob-project-list-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="nob-project-list-title">Projects</h2>
+          <p>Approval is tied to the exact manifest contents. Any change requires another review.</p>
+        </div>
+        <span id="nob-projects-count" class="muted" aria-live="polite"></span>
+      </div>
+      <div class="table-scroll">
+        <table class="responsive-table">
+          <thead>
+            <tr>
+              <th scope="col">Project</th>
+              <th scope="col">Kind</th>
+              <th scope="col">Declaration</th>
+              <th scope="col">Approval</th>
+              <th scope="col">Status</th>
+              <th scope="col">Runner</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="nob-projects-body">
+            <tr><td class="empty-state loading-state" colspan="7">Loading projects…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="nob-project-detail" aria-labelledby="nob-project-detail-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="nob-project-detail-title">Project details</h2>
+          <p id="nob-project-detail-meta"></p>
+        </div>
+        <button id="nob-project-detail-close" class="button button-quiet button-small" type="button">Close</button>
+      </div>
+      <div class="panel-body stack">
+        <dl id="nob-project-facts" class="kv-list"></dl>
+        <div>
+          <h3 class="section-heading">Resources</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th scope="col">Resource</th><th scope="col">Kind</th><th scope="col">Ownership</th><th scope="col">Status</th></tr></thead>
+              <tbody id="nob-resources-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <h3 class="section-heading">Actions</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th scope="col">Action</th><th scope="col">Effect</th><th scope="col">Confirmation</th><th scope="col">Available</th></tr></thead>
+              <tbody id="nob-actions-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

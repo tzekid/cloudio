@@ -4,6 +4,7 @@
   const NAV_ITEMS = [
     { id: "dashboard", href: "/", label: "Dashboard", paths: ["/", "/index.html"] },
     { id: "apps", href: "/apps.html", label: "Apps" },
+    { id: "projects", href: "/projects.html", label: "Projects" },
     { id: "routes", href: "/routes.html", label: "Routes" },
     { id: "dns", href: "/dns.html", label: "DNS" },
     { id: "vps", href: "/vps.html", label: "VPS" },

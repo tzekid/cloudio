@@ -5,6 +5,7 @@ const caddy = @import("handlers/caddy.zig");
 const dashboard = @import("handlers/dashboard.zig");
 const providers = @import("handlers/providers.zig");
 const refresh = @import("handlers/refresh.zig");
+const nob = @import("handlers/nob.zig");
 const authentication = @import("handlers/authentication.zig");
 const system = @import("handlers/system.zig");
 
@@ -50,6 +51,10 @@ pub const all = [_]types.Route{
     mutation("POST", "/api/containers/action", system.containersAction, true),
     route("GET", "/api/containers/logs", system.containersLogs),
     mutation("POST", "/api/refresh", refresh.now, false),
+    route("GET", "/api/nob/projects", nob.list),
+    route("GET", "/api/nob/projects/:id", nob.details),
+    mutation("POST", "/api/nob/scan", nob.scan, false),
+    mutation("POST", "/api/nob/projects/:id/:action", nob.action, false),
     route("GET", "/api/apps", apps.list),
     mutation("POST", "/api/apps", apps.register, false),
     route("GET", "/api/apps/:name/:action", apps.details),
@@ -78,6 +83,9 @@ test "route table distinguishes match method miss and named params" {
     const deploy_match = http.router.match(types.Route, &all, "POST", "/api/apps/cloudio/deploy").?;
     try @import("std").testing.expectEqualStrings("cloudio", deploy_match.params.get("name").?);
     try @import("std").testing.expectEqualStrings("deploy", deploy_match.params.get("action").?);
+    const nob_match = http.router.match(types.Route, &all, "POST", "/api/nob/projects/42/trust").?;
+    try @import("std").testing.expectEqualStrings("42", nob_match.params.get("id").?);
+    try @import("std").testing.expectEqualStrings("trust", nob_match.params.get("action").?);
     try @import("std").testing.expect(http.router.match(types.Route, &all, "PATCH", "/api/apps") == null);
     try @import("std").testing.expect(http.router.pathExists(types.Route, &all, "/api/apps"));
 }

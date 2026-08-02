@@ -1201,6 +1201,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_dashboard", .module = app_dashboard_mod },
             .{ .name = "app_deploy", .module = app_deploy_mod },
             .{ .name = "app_inventory", .module = app_inventory_mod },
+            .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
             .{ .name = "app_provider_writes", .module = app_provider_writes_mod },
             .{ .name = "app_refresh_cycle", .module = app_refresh_cycle_mod },
             .{ .name = "app_system_control", .module = app_system_control_mod },
