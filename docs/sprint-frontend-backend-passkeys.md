@@ -3,7 +3,7 @@
 Status: Milestones 1 and 2 complete; Milestone 3 proposed
 Date: 2026-07-30
 Product name: Cloudio (`cloudio`)
-Current Git remote: `tzekid/claudio`
+Current Git remote: `tzekid/cloudio`
 
 ## 1. Executive decision
 
