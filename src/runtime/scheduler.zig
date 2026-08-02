@@ -33,7 +33,7 @@ fn run(ctx: Context) void {
         if (!ctx.config.storage_auto_prune) continue;
         const interval_seconds: u64 = @as(u64, ctx.config.maintenance_interval_hours) * 60 * 60;
         if (maintenance_elapsed_seconds < interval_seconds) continue;
-        app_maintenance.prune(&db, app_maintenance.Policy.fromConfig(ctx.config)) catch |err| {
+        app_maintenance.prune(.{ .io = ctx.io, .gpa = ctx.gpa, .db = &db }, app_maintenance.Policy.fromConfig(ctx.config)) catch |err| {
             std.debug.print("cloudio scheduled maintenance failed: {s}\n", .{@errorName(err)});
             continue;
         };

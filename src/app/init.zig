@@ -78,6 +78,9 @@ pub const sampleConfig =
     \\scan_depth = 3
     \\observe_seconds = 300
     \\plan_ttl_seconds = 600
+    \\plan_retention_days = 7
+    \\operation_retention_days = 30
+    \\min_operations_per_project = 20
     \\worker_count = 1
     \\# state_root, cache_root, and toolchains_file default to XDG directories
     \\max_run_log_bytes = 67108864

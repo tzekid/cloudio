@@ -708,6 +708,19 @@ pub const migrations = [_]Migration{
         \\UPDATE managed_projects SET last_scan_state=discovery_state;
         ,
     },
+    .{
+        .version = 18,
+        .name = "nob_retention_indexes",
+        .sql =
+        \\CREATE INDEX idx_project_operations_retention
+        \\  ON project_operations(finished_at, project_id, queued_at DESC)
+        \\  WHERE finished_at IS NOT NULL;
+        \\CREATE INDEX idx_project_operations_rank
+        \\  ON project_operations(project_id, queued_at DESC, id DESC);
+        \\CREATE INDEX idx_project_plans_retention
+        \\  ON project_plans(created_at, state);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;
@@ -824,6 +837,9 @@ test "applies migrations idempotently" {
     try std.testing.expect(try indexExists(handle.?, "idx_snapshots_captured_at"));
     try std.testing.expect(try indexExists(handle.?, "idx_provider_raw_captured_at"));
     try std.testing.expect(try indexExists(handle.?, "idx_audit_actions_idempotency_key"));
+    try std.testing.expect(try indexExists(handle.?, "idx_project_operations_retention"));
+    try std.testing.expect(try indexExists(handle.?, "idx_project_operations_rank"));
+    try std.testing.expect(try indexExists(handle.?, "idx_project_plans_retention"));
 }
 
 fn tableExists(handle: *sqlite.sqlite3, table: []const u8) !bool {

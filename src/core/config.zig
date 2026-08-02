@@ -32,6 +32,9 @@ const Setting = enum {
     nob_scan_depth,
     nob_observe_seconds,
     nob_plan_ttl_seconds,
+    nob_plan_retention_days,
+    nob_operation_retention_days,
+    nob_min_operations_per_project,
     nob_worker_count,
     nob_state_root,
     nob_cache_root,
@@ -75,6 +78,9 @@ const env_bindings = [_]EnvBinding{
     .{ .key = "CLOUDIO_NOB_SCAN_DEPTH", .setting = .nob_scan_depth },
     .{ .key = "CLOUDIO_NOB_OBSERVE_SECONDS", .setting = .nob_observe_seconds },
     .{ .key = "CLOUDIO_NOB_PLAN_TTL_SECONDS", .setting = .nob_plan_ttl_seconds },
+    .{ .key = "CLOUDIO_NOB_PLAN_RETENTION_DAYS", .setting = .nob_plan_retention_days },
+    .{ .key = "CLOUDIO_NOB_OPERATION_RETENTION_DAYS", .setting = .nob_operation_retention_days },
+    .{ .key = "CLOUDIO_NOB_MIN_OPERATIONS_PER_PROJECT", .setting = .nob_min_operations_per_project },
     .{ .key = "CLOUDIO_NOB_WORKER_COUNT", .setting = .nob_worker_count },
     .{ .key = "CLOUDIO_NOB_STATE_ROOT", .setting = .nob_state_root },
     .{ .key = "CLOUDIO_NOB_CACHE_ROOT", .setting = .nob_cache_root },
@@ -110,6 +116,9 @@ const config_bindings = [_]ConfigBinding{
     .{ .section = "nob", .key = "scan_depth", .setting = .nob_scan_depth },
     .{ .section = "nob", .key = "observe_seconds", .setting = .nob_observe_seconds },
     .{ .section = "nob", .key = "plan_ttl_seconds", .setting = .nob_plan_ttl_seconds },
+    .{ .section = "nob", .key = "plan_retention_days", .setting = .nob_plan_retention_days },
+    .{ .section = "nob", .key = "operation_retention_days", .setting = .nob_operation_retention_days },
+    .{ .section = "nob", .key = "min_operations_per_project", .setting = .nob_min_operations_per_project },
     .{ .section = "nob", .key = "worker_count", .setting = .nob_worker_count },
     .{ .section = "nob", .key = "state_root", .setting = .nob_state_root },
     .{ .section = "nob", .key = "cache_root", .setting = .nob_cache_root },
@@ -164,6 +173,9 @@ pub const Config = struct {
     nob_scan_depth: u8 = 3,
     nob_observe_seconds: u32 = 300,
     nob_plan_ttl_seconds: u32 = 600,
+    nob_plan_retention_days: u32 = 7,
+    nob_operation_retention_days: u32 = 30,
+    nob_min_operations_per_project: u16 = 20,
     nob_worker_count: u16 = 1,
     nob_state_root: []const u8 = ".cloudio/nob/operations",
     nob_cache_root: []const u8 = ".cloudio/nob/runners",
@@ -320,6 +332,13 @@ fn applySetting(arena: Allocator, cfg: *Config, setting: Setting, raw_value: []c
         },
         .nob_observe_seconds => cfg.nob_observe_seconds = parsePositiveU32(value) orelse return,
         .nob_plan_ttl_seconds => cfg.nob_plan_ttl_seconds = parsePositiveU32(value) orelse return,
+        .nob_plan_retention_days => cfg.nob_plan_retention_days = parsePositiveU32(value) orelse return,
+        .nob_operation_retention_days => cfg.nob_operation_retention_days = parsePositiveU32(value) orelse return,
+        .nob_min_operations_per_project => {
+            const parsed = std.fmt.parseInt(u16, value, 10) catch return;
+            if (parsed == 0) return;
+            cfg.nob_min_operations_per_project = parsed;
+        },
         .nob_worker_count => {
             const parsed = std.fmt.parseInt(u16, value, 10) catch return;
             if (parsed == 0 or parsed > 4) return;
@@ -516,6 +535,9 @@ test "config parser reads bounded nob control-plane settings" {
         \\scan_depth = 5
         \\observe_seconds = 45
         \\plan_ttl_seconds = 120
+        \\plan_retention_days = 9
+        \\operation_retention_days = 31
+        \\min_operations_per_project = 25
         \\worker_count = 3
         \\state_root = "/srv/cloudio/nob-state"
         \\cache_root = "/var/cache/cloudio/nob"
@@ -527,6 +549,9 @@ test "config parser reads bounded nob control-plane settings" {
     try std.testing.expectEqual(@as(u8, 5), cfg.nob_scan_depth);
     try std.testing.expectEqual(@as(u32, 45), cfg.nob_observe_seconds);
     try std.testing.expectEqual(@as(u32, 120), cfg.nob_plan_ttl_seconds);
+    try std.testing.expectEqual(@as(u32, 9), cfg.nob_plan_retention_days);
+    try std.testing.expectEqual(@as(u32, 31), cfg.nob_operation_retention_days);
+    try std.testing.expectEqual(@as(u16, 25), cfg.nob_min_operations_per_project);
     try std.testing.expectEqual(@as(u16, 3), cfg.nob_worker_count);
     try std.testing.expectEqualStrings("/srv/cloudio/nob-state", cfg.nob_state_root);
     try std.testing.expectEqualStrings("/var/cache/cloudio/nob", cfg.nob_cache_root);
