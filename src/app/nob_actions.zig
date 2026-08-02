@@ -6,7 +6,9 @@ const core_config = @import("core_config");
 const core_time = @import("core_time");
 const db_store = @import("db_store");
 const nob_id = @import("nob_id");
+const resource_control = @import("nob_resource_control");
 const source = @import("nob_source");
+const systemd = @import("nob_systemd");
 const nob = @import("nob_sdk");
 
 const Allocator = std.mem.Allocator;
@@ -16,6 +18,7 @@ pub const Run = db_store.NobRun;
 pub const Runs = db_store.NobRuns;
 pub const RunEvents = db_store.NobRunEvents;
 pub const RunEvent = db_store.NobRunEvent;
+pub const Artifacts = db_store.NobArtifacts;
 
 pub const Context = struct {
     io: std.Io,
@@ -94,6 +97,61 @@ pub fn plan(
     return (try ctx.db.nob().getPlan(ctx.gpa, &plan_id)) orelse error.PlanNotFound;
 }
 
+pub fn planResourceControl(
+    ctx: Context,
+    project_reference: []const u8,
+    resource_id: []const u8,
+    control_name: []const u8,
+    actor: []const u8,
+) !db_store.NobPlan {
+    const project = (try app_nob_projects.find(projectContext(ctx), project_reference)) orelse return error.ProjectNotFound;
+    defer project.deinit(ctx.gpa);
+    const binding = try executableBinding(project);
+    try verifyRunner(ctx, binding.runner_path, binding.runner_sha256);
+    const manifest_path = try std.fs.path.join(ctx.gpa, &.{ project.root_path, "nob.json" });
+    defer ctx.gpa.free(manifest_path);
+    const manifest_bytes = try std.Io.Dir.cwd().readFileAlloc(ctx.io, manifest_path, ctx.gpa, .limited(nob.manifest.max_manifest_bytes));
+    defer ctx.gpa.free(manifest_bytes);
+    var manifest_document = try nob.parseManifest(ctx.gpa, manifest_bytes);
+    defer manifest_document.deinit();
+    var digest_buffer: [64]u8 = undefined;
+    if (!std.mem.eql(u8, manifest_document.sha256Hex(&digest_buffer), binding.manifest_sha256)) return error.ManifestDigestMismatch;
+    const source_state = try source.inspect(ctx.io, ctx.gpa, project.root_path, binding.manifest_sha256, ctx.config.runtime_environment);
+    defer source_state.deinit(ctx.gpa);
+    const now = try nowSeconds();
+    const plan_id = nob_id.generate(ctx.io, @as(u64, @intCast(now)) * 1000);
+    const planned = try resource_control.create(
+        ctx.gpa,
+        manifest_document.value(),
+        binding.manifest_sha256,
+        source_state,
+        resource_id,
+        control_name,
+    );
+    defer planned.deinit(ctx.gpa);
+    try ctx.db.nob().insertPlan(.{
+        .id = &plan_id,
+        .project_id = project.id,
+        .action_id = planned.action_id,
+        .resource_id = resource_id,
+        .input_json = "{}",
+        .plan_json = planned.plan_json,
+        .plan_sha256 = planned.plan_sha256,
+        .manifest_sha256 = binding.manifest_sha256,
+        .source_fingerprint = source_state.fingerprint,
+        .effect = "runtime-change",
+        .confirmation = "review-plan",
+        .requested_by = actor,
+        .runner_sha256 = binding.runner_sha256,
+        .source_revision = source_state.revision,
+        .source_dirty = source_state.dirty,
+        .created_at = now,
+        .expires_at = now + ctx.config.nob_plan_ttl_seconds,
+    });
+    try audit(ctx, "nob.resource.plan", "ok", project.id, planned.action_id, &plan_id);
+    return (try ctx.db.nob().getPlan(ctx.gpa, &plan_id)) orelse error.PlanNotFound;
+}
+
 pub fn queue(
     ctx: Context,
     plan_id: []const u8,
@@ -101,7 +159,7 @@ pub fn queue(
     actor: []const u8,
     idempotency_key: ?[]const u8,
 ) !db_store.NobRun {
-    return queueBound(ctx, plan_id, approval, actor, idempotency_key, null, null);
+    return queueBound(ctx, plan_id, approval, actor, idempotency_key, null, null, null);
 }
 
 pub fn queueAction(
@@ -115,7 +173,24 @@ pub fn queueAction(
 ) !db_store.NobRun {
     const expected = (try app_nob_projects.find(projectContext(ctx), project_reference)) orelse return error.ProjectNotFound;
     defer expected.deinit(ctx.gpa);
-    return queueBound(ctx, plan_id, approval, actor, idempotency_key, expected.id, action_id);
+    return queueBound(ctx, plan_id, approval, actor, idempotency_key, expected.id, action_id, null);
+}
+
+pub fn queueResourceControl(
+    ctx: Context,
+    project_reference: []const u8,
+    resource_id: []const u8,
+    control_name: []const u8,
+    plan_id: []const u8,
+    approval: Approval,
+    actor: []const u8,
+    idempotency_key: ?[]const u8,
+) !db_store.NobRun {
+    const expected = (try app_nob_projects.find(projectContext(ctx), project_reference)) orelse return error.ProjectNotFound;
+    defer expected.deinit(ctx.gpa);
+    const expected_action = try resource_control.actionId(ctx.gpa, resource_id, control_name);
+    defer ctx.gpa.free(expected_action);
+    return queueBound(ctx, plan_id, approval, actor, idempotency_key, expected.id, expected_action, resource_id);
 }
 
 fn queueBound(
@@ -126,6 +201,7 @@ fn queueBound(
     idempotency_key: ?[]const u8,
     expected_project_id: ?i64,
     expected_action_id: ?[]const u8,
+    expected_resource_id: ?[]const u8,
 ) !db_store.NobRun {
     if (idempotency_key) |key| try validateIdempotencyKey(key);
     const now = try nowSeconds();
@@ -135,6 +211,9 @@ fn queueBound(
     if (!std.mem.eql(u8, stored.state, "ready") or stored.expires_at <= now) return error.PlanUnavailable;
     if (expected_project_id) |expected| if (stored.project_id != expected) return error.PlanRouteMismatch;
     if (expected_action_id) |expected| if (!std.mem.eql(u8, stored.action_id, expected)) return error.PlanRouteMismatch;
+    if (expected_resource_id) |expected| {
+        if (stored.resource_id == null or !std.mem.eql(u8, stored.resource_id.?, expected)) return error.PlanRouteMismatch;
+    }
     if (!std.mem.eql(u8, stored.requested_by, actor)) return error.PlanActorMismatch;
     const project = (try ctx.db.nob().getProject(ctx.gpa, stored.project_id)) orelse return error.ProjectNotFound;
     defer project.deinit(ctx.gpa);
@@ -161,7 +240,20 @@ fn queueBound(
     defer ctx.gpa.free(manifest_path);
     const manifest_bytes = try std.Io.Dir.cwd().readFileAlloc(ctx.io, manifest_path, ctx.gpa, .limited(nob.manifest.max_manifest_bytes));
     defer ctx.gpa.free(manifest_bytes);
-    var parsed = try action_protocol.validateStoredPlan(
+    var manifest_document = try nob.parseManifest(ctx.gpa, manifest_bytes);
+    defer manifest_document.deinit();
+    var parsed = if (stored.resource_id) |resource_id| direct: {
+        const control_name = resource_control.controlFromActionId(stored.action_id, resource_id) orelse return error.InvalidResourcePlan;
+        break :direct try resource_control.validate(
+            ctx.gpa,
+            manifest_document.value(),
+            binding.manifest_sha256,
+            source_state,
+            resource_id,
+            control_name,
+            stored.plan_json,
+        );
+    } else try action_protocol.validateStoredPlan(
         ctx.gpa,
         manifest_bytes,
         binding.manifest_sha256,
@@ -231,6 +323,38 @@ pub fn listEventsAfter(ctx: Context, operation_id: []const u8, after_seq: i64, l
 
 pub fn listRecentEvents(ctx: Context, operation_id: []const u8, limit: i64) !db_store.NobRunEvents {
     return try ctx.db.nob().listRecentRunEvents(ctx.gpa, operation_id, @min(@max(limit, 1), 500));
+}
+
+pub fn listArtifacts(ctx: Context, operation_id: []const u8) !db_store.NobArtifacts {
+    return try ctx.db.nob().listArtifacts(ctx.gpa, operation_id);
+}
+
+pub fn resourceLogs(ctx: Context, project_reference: []const u8, resource_id: []const u8, lines: u16) ![]u8 {
+    const project = (try app_nob_projects.find(projectContext(ctx), project_reference)) orelse return error.ProjectNotFound;
+    defer project.deinit(ctx.gpa);
+    const binding = try executableBinding(project);
+    const manifest_path = try std.fs.path.join(ctx.gpa, &.{ project.root_path, "nob.json" });
+    defer ctx.gpa.free(manifest_path);
+    const manifest_bytes = try std.Io.Dir.cwd().readFileAlloc(ctx.io, manifest_path, ctx.gpa, .limited(nob.manifest.max_manifest_bytes));
+    defer ctx.gpa.free(manifest_bytes);
+    var manifest_document = try nob.parseManifest(ctx.gpa, manifest_bytes);
+    defer manifest_document.deinit();
+    var digest_buffer: [64]u8 = undefined;
+    if (!std.mem.eql(u8, manifest_document.sha256Hex(&digest_buffer), binding.manifest_sha256)) return error.ManifestDigestMismatch;
+    for (manifest_document.value().resources) |*resource| {
+        if (!std.mem.eql(u8, resource.id, resource_id)) continue;
+        var allowed = false;
+        for (resource.controls) |control| if (control == .logs) {
+            allowed = true;
+            break;
+        };
+        if (!allowed) return error.UndeclaredResourceControl;
+        const unit = try systemd.Unit.fromResource(resource);
+        var controller = try systemd.Controller.init(ctx.io, ctx.gpa, ctx.config, project.root_path);
+        defer controller.deinit();
+        return try controller.logs(unit, lines);
+    }
+    return error.UnknownResource;
 }
 
 const Binding = struct {

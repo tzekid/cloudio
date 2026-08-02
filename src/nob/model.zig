@@ -288,6 +288,39 @@ pub const RunEvents = struct {
     }
 };
 
+pub const Artifact = struct {
+    id: i64,
+    operation_id: []u8,
+    project_id: i64,
+    resource_id: ?[]u8,
+    artifact_id: []u8,
+    role: []u8,
+    path: ?[]u8,
+    sha256: []u8,
+    size_bytes: ?i64,
+    metadata_json: ?[]u8,
+    created_at: i64,
+
+    pub fn deinit(self: Artifact, allocator: Allocator) void {
+        allocator.free(self.operation_id);
+        freeOptional(allocator, self.resource_id);
+        allocator.free(self.artifact_id);
+        allocator.free(self.role);
+        freeOptional(allocator, self.path);
+        allocator.free(self.sha256);
+        freeOptional(allocator, self.metadata_json);
+    }
+};
+
+pub const Artifacts = struct {
+    items: []Artifact,
+
+    pub fn deinit(self: *Artifacts, allocator: Allocator) void {
+        for (self.items) |item| item.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub fn parseDiscoveryState(text: []const u8) !DiscoveryState {
     return std.meta.stringToEnum(DiscoveryState, text) orelse error.InvalidDatabaseValue;
 }

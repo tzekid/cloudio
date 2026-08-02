@@ -40,6 +40,13 @@ const ValueArgs = struct {
     rest: []const []const u8,
 };
 
+const ResourceArgs = struct {
+    reference: []const u8,
+    resource_id: []const u8,
+    control_name: []const u8,
+    rest: []const []const u8,
+};
+
 const Command = union(enum) {
     list: []const []const u8,
     show: ReferenceArgs,
@@ -50,6 +57,7 @@ const Command = union(enum) {
     observe: []const u8,
     plan: ActionArgs,
     execute: ValueArgs,
+    resource: ResourceArgs,
     runs: []const []const u8,
     operation: ValueArgs,
     cancel: []const u8,
@@ -75,6 +83,7 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         .observe => |reference| try commandRuntime(ctx, "observe", reference),
         .plan => |value| try commandPlan(ctx, value),
         .execute => |value| try commandExecute(ctx, value),
+        .resource => |value| try commandResource(ctx, value),
         .runs => |rest| try commandRuns(ctx, rest),
         .operation => |value| try commandOperation(ctx, value.value, try parseFormat(value.rest)),
         .cancel => |operation_id| {
@@ -94,6 +103,51 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
             return error.UnknownNobCommand;
         },
     }
+}
+
+fn commandResource(ctx: Context, args: ResourceArgs) !void {
+    if (!ctx.config.nob_enabled) return error.NobDisabled;
+    var confirmed = false;
+    var follow = false;
+    var json = false;
+    for (args.rest) |argument| {
+        if (std.mem.eql(u8, argument, "--yes")) {
+            confirmed = true;
+        } else if (std.mem.eql(u8, argument, "--follow")) {
+            follow = true;
+        } else if (std.mem.eql(u8, argument, "--json") or std.mem.eql(u8, argument, "--format=json")) {
+            json = true;
+        } else return error.UnexpectedNobResourceArgument;
+    }
+    if (!confirmed) return error.ConfirmationRequired;
+    var planned = try app_nob_actions.planResourceControl(
+        actionsContext(ctx),
+        args.reference,
+        args.resource_id,
+        args.control_name,
+        "local-cli",
+    );
+    defer planned.deinit(ctx.gpa);
+    var queued = try app_nob_actions.queueResourceControl(
+        actionsContext(ctx),
+        args.reference,
+        args.resource_id,
+        args.control_name,
+        planned.id,
+        .{ .confirmed = true },
+        "local-cli",
+        null,
+    );
+    defer queued.deinit(ctx.gpa);
+    if (follow) {
+        while (std.mem.eql(u8, queued.state, "queued") or std.mem.eql(u8, queued.state, "running")) {
+            _ = try app_nob_worker.processNext(workerContext(ctx));
+            const refreshed = (try app_nob_actions.getRun(actionsContext(ctx), queued.id)) orelse return error.RunNotFound;
+            queued.deinit(ctx.gpa);
+            queued = refreshed;
+        }
+    }
+    try writeRun(ctx, queued, json);
 }
 
 fn commandPlan(ctx: Context, args: ActionArgs) !void {
@@ -376,6 +430,15 @@ fn parseCommand(args: []const []const u8) Command {
     if (std.mem.eql(u8, args[0], "run")) {
         if (args.len < 2) return .{ .missing = "run" };
         return .{ .execute = .{ .value = args[1], .rest = args[2..] } };
+    }
+    if (std.mem.eql(u8, args[0], "resource")) {
+        if (args.len < 4) return .{ .missing = "resource" };
+        return .{ .resource = .{
+            .reference = args[1],
+            .resource_id = args[2],
+            .control_name = args[3],
+            .rest = args[4..],
+        } };
     }
     if (std.mem.eql(u8, args[0], "runs")) return .{ .runs = args[1..] };
     if (std.mem.eql(u8, args[0], "operation")) {

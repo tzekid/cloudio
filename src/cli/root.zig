@@ -422,6 +422,8 @@ fn usage() void {
         \\  cloudio projects list|show <name>|correlate [--json|--format json]
         \\  cloudio nob list|show <id>|scan [--json|--format json]
         \\  cloudio nob trust <id> <manifest-sha256>|revoke <id>|prepare <id>|observe <id>
+        \\  cloudio nob plan <id> <action> [--param name=value]|run <plan-id> --yes [--follow]
+        \\  cloudio nob resource <id> <resource-id> <control> --yes [--follow]
         \\
     , .{version});
 }

@@ -6,8 +6,10 @@ const broker = @import("nob_broker");
 const core_config = @import("core_config");
 const core_time = @import("core_time");
 const db_store = @import("db_store");
+const resource_control = @import("nob_resource_control");
 const source = @import("nob_source");
 const subprocess = @import("nob_subprocess");
+const systemd = @import("nob_systemd");
 const nob = @import("nob_sdk");
 
 const Allocator = std.mem.Allocator;
@@ -102,6 +104,22 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
     defer ctx.gpa.free(manifest_path);
     const manifest_bytes = try std.Io.Dir.cwd().readFileAlloc(ctx.io, manifest_path, ctx.gpa, .limited(nob.manifest.max_manifest_bytes));
     defer ctx.gpa.free(manifest_bytes);
+    var manifest_document = try nob.parseManifest(ctx.gpa, manifest_bytes);
+    defer manifest_document.deinit();
+    if (run.resource_id) |resource_id| {
+        const control_name = resource_control.controlFromActionId(run.action_id, resource_id) orelse return error.InvalidResourcePlan;
+        var parsed_resource_plan = try resource_control.validate(
+            ctx.gpa,
+            manifest_document.value(),
+            manifest_sha256,
+            source_state,
+            resource_id,
+            control_name,
+            plan.plan_json,
+        );
+        defer parsed_resource_plan.deinit();
+        return executeResourceControl(ctx, run, manifest_document.value(), resource_id, control_name);
+    }
     var parsed_plan = try action_protocol.validateStoredPlan(
         ctx.gpa,
         manifest_bytes,
@@ -111,8 +129,6 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
         source_state,
     );
     defer parsed_plan.deinit();
-    var manifest_document = try nob.parseManifest(ctx.gpa, manifest_bytes);
-    defer manifest_document.deinit();
     const action = findAction(manifest_document.value().actions, run.action_id) orelse return error.UnknownAction;
     const runner_detail = project.runner_detail orelse return error.RunnerMetadataMissing;
     const zig_path = try bootstrap.zigPathFromMetadata(ctx.gpa, runner_detail);
@@ -193,7 +209,7 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
     const exit_code = termExitCode(result.term);
     if (result.canceled) {
         if (nob.events.validateStream(ctx.gpa, result.stdout, run.action_id, exit_code)) |summary| {
-            const dropped_logs = try persistEvents(ctx, run.id, result.stdout);
+            const dropped_logs = try persistEvents(ctx, run.id, result.stdout, paths.artifact_dir);
             return .{
                 .outcome = summary.outcome,
                 .summary = try terminalSummary(ctx.gpa, result.stdout, "run canceled", dropped_logs),
@@ -212,11 +228,80 @@ fn execute(ctx: Context, run: db_store.NobRun) !Execution {
         }
     }
     const stream = try nob.events.validateStream(ctx.gpa, result.stdout, run.action_id, exit_code);
-    const dropped_logs = try persistEvents(ctx, run.id, result.stdout);
+    const dropped_logs = try persistEvents(ctx, run.id, result.stdout, paths.artifact_dir);
     return .{
         .outcome = stream.outcome,
         .summary = try terminalSummary(ctx.gpa, result.stdout, "run completed", dropped_logs),
         .error_code = if (stream.outcome == .succeeded) null else "runner_reported_failure",
+        .log_path = try ctx.gpa.dupe(u8, paths.log_path),
+        .stderr_path = try ctx.gpa.dupe(u8, paths.stderr_path),
+    };
+}
+
+fn executeResourceControl(
+    ctx: Context,
+    run: db_store.NobRun,
+    manifest: *const nob.types.Manifest,
+    resource_id: []const u8,
+    control_name: []const u8,
+) !Execution {
+    const binding = try resource_control.resolve(manifest, resource_id, control_name);
+    const unit = try systemd.Unit.fromResource(binding.resource);
+    const operation = try systemd.operationFromControl(binding.control);
+    var paths = try createRunPaths(ctx, run.id);
+    defer paths.deinit(ctx.gpa);
+    var output = std.Io.Writer.Allocating.init(ctx.gpa);
+    defer output.deinit();
+    var events = nob.events.Writer.init(ctx.gpa, &output.writer);
+    try events.operationStarted(run.action_id);
+    try events.stageStarted("control", "Apply declared resource control");
+
+    var operation_error: ?anyerror = null;
+    control: {
+        var controller = systemd.Controller.init(ctx.io, ctx.gpa, ctx.config, paths.operation_dir) catch |err| {
+            operation_error = err;
+            break :control;
+        };
+        defer controller.deinit();
+        const transition = controller.control(unit, operation) catch |err| {
+            operation_error = err;
+            break :control;
+        };
+        defer transition.deinit(ctx.gpa);
+        const message = try std.fmt.allocPrint(ctx.gpa, "systemd user unit {s}: {s}", .{ unit.name, control_name });
+        defer ctx.gpa.free(message);
+        try events.log(.info, "control", message);
+        try events.resourceState(
+            resource_id,
+            if (std.mem.eql(u8, transition.after.active_state, "active")) .healthy else .stopped,
+            if (std.mem.eql(u8, transition.after.active_state, "active")) "unit is active" else "unit is not active",
+        );
+    }
+
+    const outcome: nob.types.OperationOutcome = if (operation_error == null) .succeeded else .failed;
+    const summary = if (operation_error) |err|
+        try std.fmt.allocPrint(ctx.gpa, "{s} {s} failed: {s}", .{ control_name, resource_id, @errorName(err) })
+    else
+        try std.fmt.allocPrint(ctx.gpa, "{s} {s} completed", .{ control_name, resource_id });
+    errdefer ctx.gpa.free(summary);
+    if (operation_error) |err| {
+        const message = try std.fmt.allocPrint(ctx.gpa, "resource control failed: {s}", .{@errorName(err)});
+        defer ctx.gpa.free(message);
+        try events.log(.@"error", "control", message);
+        try events.stageFinished("control", .failed);
+    } else {
+        try events.stageFinished("control", .succeeded);
+    }
+    try events.finish(outcome, summary);
+    const bytes = output.written();
+    _ = try nob.events.validateStream(ctx.gpa, bytes, run.action_id, nob.events.exitCode(outcome));
+    try writePrivateFile(ctx, paths.log_path, bytes);
+    try writePrivateFile(ctx, paths.stderr_path, if (operation_error) |err| @errorName(err) else "");
+    _ = try persistEvents(ctx, run.id, bytes, paths.artifact_dir);
+    return .{
+        .outcome = outcome,
+        .summary = summary,
+        .error_code = if (operation_error) |err| @errorName(err) else null,
         .log_path = try ctx.gpa.dupe(u8, paths.log_path),
         .stderr_path = try ctx.gpa.dupe(u8, paths.stderr_path),
     };
@@ -295,7 +380,7 @@ fn pollCancellation(context_ptr: *anyopaque) !bool {
     return try monitor.db.nob().runCancellationRequested(monitor.operation_id);
 }
 
-fn persistEvents(ctx: Context, operation_id: []const u8, bytes: []const u8) !usize {
+fn persistEvents(ctx: Context, operation_id: []const u8, bytes: []const u8, artifact_dir: []const u8) !usize {
     var retained_logs: usize = 0;
     var dropped_logs: usize = 0;
     var lines = std.mem.splitScalar(u8, bytes, '\n');
@@ -313,6 +398,7 @@ fn persistEvents(ctx: Context, operation_id: []const u8, bytes: []const u8) !usi
             }
             retained_logs += 1;
         }
+        if (std.mem.eql(u8, event_type, "artifact")) try persistArtifact(ctx, operation_id, artifact_dir, parsed.value.object, line);
         try ctx.db.nob().appendRunEvent(.{
             .operation_id = operation_id,
             .seq = seq,
@@ -323,6 +409,47 @@ fn persistEvents(ctx: Context, operation_id: []const u8, bytes: []const u8) !usi
         });
     }
     return dropped_logs;
+}
+
+fn persistArtifact(
+    ctx: Context,
+    operation_id: []const u8,
+    artifact_dir: []const u8,
+    object: std.json.ObjectMap,
+    metadata_json: []const u8,
+) !void {
+    const artifact_id = stringField(object, "artifact_id") orelse return error.InvalidArtifactEvent;
+    const role = stringField(object, "role") orelse return error.InvalidArtifactEvent;
+    const declared_path = stringField(object, "path") orelse return error.InvalidArtifactEvent;
+    const declared_sha256 = stringField(object, "sha256") orelse return error.InvalidArtifactEvent;
+    const declared_size = intField(object, "size_bytes") orelse return error.InvalidArtifactEvent;
+    if (declared_size < 0 or !std.fs.path.isAbsolute(declared_path)) return error.InvalidArtifactEvent;
+    const root = try std.Io.Dir.cwd().realPathFileAlloc(ctx.io, artifact_dir, ctx.gpa);
+    defer ctx.gpa.free(root);
+    const path = try std.Io.Dir.cwd().realPathFileAlloc(ctx.io, declared_path, ctx.gpa);
+    defer ctx.gpa.free(path);
+    if (!strictDescendant(root, path)) return error.ArtifactOutsideOperation;
+    const stat = try std.Io.Dir.cwd().statFile(ctx.io, path, .{ .follow_symlinks = false });
+    if (stat.kind != .file or stat.size != @as(u64, @intCast(declared_size))) return error.ArtifactMetadataMismatch;
+    const actual_sha256 = try action_protocol.hashFile(ctx.io, ctx.gpa, path);
+    defer ctx.gpa.free(actual_sha256);
+    if (!std.mem.eql(u8, actual_sha256, declared_sha256)) return error.ArtifactMetadataMismatch;
+    try ctx.db.nob().appendArtifact(.{
+        .operation_id = operation_id,
+        .resource_id = stringField(object, "resource_id"),
+        .artifact_id = artifact_id,
+        .role = role,
+        .path = path,
+        .sha256 = actual_sha256,
+        .size_bytes = declared_size,
+        .metadata_json = metadata_json,
+        .created_at = try nowSeconds(),
+    });
+}
+
+fn strictDescendant(root: []const u8, candidate: []const u8) bool {
+    if (candidate.len <= root.len or !std.mem.startsWith(u8, candidate, root)) return false;
+    return candidate[root.len] == std.fs.path.sep;
 }
 
 fn terminalSummary(allocator: Allocator, bytes: []const u8, fallback: []const u8, dropped_logs: usize) ![]u8 {

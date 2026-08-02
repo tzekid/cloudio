@@ -261,6 +261,25 @@ pub fn build(b: *std.Build) void {
             .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
         },
     });
+    const nob_systemd_mod = b.createModule(.{
+        .root_source_file = b.path("src/nob/systemd.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+            .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
+        },
+    });
+    const nob_resource_control_mod = b.createModule(.{
+        .root_source_file = b.path("src/nob/resource_control.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+            .{ .name = "nob_source", .module = nob_source_mod },
+        },
+    });
     const nob_broker_mod = b.createModule(.{
         .root_source_file = b.path("src/nob/broker.zig"),
         .target = target,
@@ -270,7 +289,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
-            .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
+            .{ .name = "nob_systemd", .module = nob_systemd_mod },
         },
     });
     linkSqlite(nob_broker_mod);
@@ -1036,8 +1055,10 @@ pub fn build(b: *std.Build) void {
             .{ .name = "nob_action_protocol", .module = nob_action_protocol_mod },
             .{ .name = "nob_bootstrap", .module = nob_bootstrap_mod },
             .{ .name = "nob_id", .module = nob_id_mod },
+            .{ .name = "nob_resource_control", .module = nob_resource_control_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
             .{ .name = "nob_source", .module = nob_source_mod },
+            .{ .name = "nob_systemd", .module = nob_systemd_mod },
         },
     });
     linkSqlite(app_nob_actions_mod);
@@ -1053,9 +1074,11 @@ pub fn build(b: *std.Build) void {
             .{ .name = "nob_action_protocol", .module = nob_action_protocol_mod },
             .{ .name = "nob_bootstrap", .module = nob_bootstrap_mod },
             .{ .name = "nob_broker", .module = nob_broker_mod },
+            .{ .name = "nob_resource_control", .module = nob_resource_control_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
             .{ .name = "nob_source", .module = nob_source_mod },
             .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
+            .{ .name = "nob_systemd", .module = nob_systemd_mod },
         },
     });
     linkSqlite(app_nob_worker_mod);
@@ -1925,6 +1948,8 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, nob_independent_observation_mod);
     addModuleTest(b, test_step, nob_observation_mod);
     addModuleTest(b, test_step, nob_action_protocol_mod);
+    addModuleTest(b, test_step, nob_systemd_mod);
+    addModuleTest(b, test_step, nob_resource_control_mod);
     addModuleTest(b, test_step, nob_broker_mod);
     addModuleTest(b, test_step, provider_cloudflare_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_transport_mod);

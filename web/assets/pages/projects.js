@@ -163,6 +163,7 @@
       { label: "Kind", render: function (row) { return c.badge(row.kind); } },
       { label: "Ownership", key: "ownership" },
       { label: "Status", render: function (row) { return c.status(row.status); } },
+      { label: "Controls", render: resourceControls, className: "cell-actions" },
     ], "This project declares no resources.");
     c.renderTable(actionsBody, data.actions || [], [
       { label: "Action", render: function (row) { return row.label || row.id; } },
@@ -182,6 +183,29 @@
     detailPanel.classList.remove("hidden");
     detailPanel.scrollIntoView({ block: "start" });
     loadRuns(project.id);
+  }
+
+  function resourceControls(resource) {
+    const controls = c.el("div", { className: "table-actions" });
+    const scope = resource.declaration && resource.declaration.spec && resource.declaration.spec.scope;
+    (resource.controls || []).forEach(function (control) {
+      if (control === "logs") {
+        controls.appendChild(c.button("Logs", {
+          small: true,
+          disabled: !activeProject || activeProject.trust_state !== "trusted",
+          dataset: { nobResourceLogs: resource.id },
+        }));
+        return;
+      }
+      controls.appendChild(c.button(control.charAt(0).toUpperCase() + control.slice(1), {
+        small: true,
+        kind: control === "stop" || control === "disable" ? "danger" : "secondary",
+        disabled: !activeProject || activeProject.trust_state !== "trusted" || activeProject.runner_state !== "ready" || scope !== "user" || resource.ownership === "observed",
+        dataset: { nobResourceControl: control, nobResourceId: resource.id },
+        title: scope !== "user" ? "System-scope mutation is intentionally unavailable" : "Review an exact resource-control plan",
+      }));
+    });
+    return controls;
   }
 
   function parameterEditor(action) {
@@ -340,6 +364,39 @@
     pollRun(queued.operation.id, activeProject.id);
   }
 
+  async function planAndRunResource(resourceId, controlName) {
+    if (!activeProject) return;
+    const base = "/api/nob/projects/" + encodeURIComponent(activeProject.id) +
+      "/resources/" + encodeURIComponent(resourceId) + "/" + encodeURIComponent(controlName);
+    const planned = await c.api(base + "/plan", { method: "POST", body: {} });
+    const review = planReview(planned);
+    const confirmed = await c.confirmAction({
+      title: "Review " + controlName + " plan",
+      message: review.node,
+      confirmLabel: "Queue " + controlName,
+      danger: controlName === "stop" || controlName === "disable",
+    });
+    if (!confirmed) return;
+    const queued = await c.api(base + "/run", {
+      method: "POST",
+      confirm: true,
+      body: { plan_id: planned.id },
+    });
+    c.toast("Resource control queued.", "success");
+    await loadRuns(activeProject.id);
+    await showRun(queued.operation.id);
+    pollRun(queued.operation.id, activeProject.id);
+  }
+
+  async function showResourceLogs(resourceId) {
+    if (!activeProject) return;
+    const result = await c.api(
+      "/api/nob/projects/" + encodeURIComponent(activeProject.id) + "/resources/" + encodeURIComponent(resourceId) + "/logs?tail=200"
+    );
+    const block = c.el("pre", { className: "log-output", text: result.text || "No journal entries." });
+    await c.confirmAction({ title: "Recent resource logs", message: block, confirmLabel: "Done" });
+  }
+
   function formatEpoch(seconds) {
     return seconds ? new Date(seconds * 1000).toLocaleString() : "—";
   }
@@ -374,6 +431,7 @@
     const result = await c.api("/api/nob/operations/" + encodeURIComponent(operationId));
     const run = result.operation;
     const events = result.events || [];
+    const artifacts = result.artifacts || [];
     const eventList = c.el("ol", { className: "run-timeline" });
     events.forEach(function (event) {
       let payload = {};
@@ -385,13 +443,26 @@
         ],
       }));
     });
-    runDetail.replaceChildren(
+    const content = [
       c.el("div", { className: "panel-header compact-header", children: [
         c.el("div", { children: [c.el("h3", { className: "section-heading", text: "Run " + run.id }), c.el("p", { text: run.summary || "In progress" })] }),
         c.status(run.state),
       ] }),
       eventList
-    );
+    ];
+    if (artifacts.length) {
+      const artifactList = c.el("ul", { className: "review-list" });
+      artifacts.forEach(function (artifact) {
+        artifactList.appendChild(c.el("li", {
+          children: [
+            c.el("strong", { text: artifact.artifact_id }),
+            " — " + artifact.role + (artifact.size_bytes == null ? "" : " (" + artifact.size_bytes + " bytes)"),
+          ],
+        }));
+      });
+      content.push(c.el("h3", { className: "section-heading", text: "Artifacts" }), artifactList);
+    }
+    runDetail.replaceChildren.apply(runDetail, content);
     runDetail.classList.remove("hidden");
     return run;
   }
@@ -504,6 +575,23 @@
       } catch (error) {
         c.toast("Action could not be queued: " + error.message, "danger");
       }
+    });
+  });
+  resourcesBody.addEventListener("click", function (event) {
+    const control = event.target.closest("button[data-nob-resource-control]");
+    if (control) {
+      c.withBusy(control, "Planning…", async function () {
+        try {
+          await planAndRunResource(control.dataset.nobResourceId, control.dataset.nobResourceControl);
+        } catch (error) {
+          c.toast("Resource control could not be queued: " + error.message, "danger");
+        }
+      });
+      return;
+    }
+    const logs = event.target.closest("button[data-nob-resource-logs]");
+    if (logs) showResourceLogs(logs.dataset.nobResourceLogs).catch(function (error) {
+      c.toast("Resource logs unavailable: " + error.message, "danger");
     });
   });
   runsBody.addEventListener("click", function (event) {

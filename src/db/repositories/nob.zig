@@ -136,6 +136,18 @@ pub const NewRunEvent = struct {
     received_at: i64,
 };
 
+pub const NewArtifact = struct {
+    operation_id: []const u8,
+    resource_id: ?[]const u8,
+    artifact_id: []const u8,
+    role: []const u8,
+    path: ?[]const u8,
+    sha256: []const u8,
+    size_bytes: ?i64,
+    metadata_json: ?[]const u8,
+    created_at: i64,
+};
+
 pub const DiscoveryRecord = struct {
     declared_id: ?[]const u8,
     display_name: []const u8,
@@ -792,6 +804,63 @@ pub const Repository = struct {
                 .level = try dupeOptional(allocator, stmt, 3),
                 .payload_json = try dupeRequired(allocator, stmt, 4),
                 .received_at = sqlite.sqlite3_column_int64(stmt, 5),
+            }),
+            sqlite.SQLITE_DONE => break,
+            else => return error.SqliteStep,
+        };
+        return .{ .items = try rows.toOwnedSlice(allocator) };
+    }
+
+    pub fn appendArtifact(self: Repository, value: NewArtifact) !void {
+        const stmt = try self.prepare(
+            \\INSERT INTO project_artifacts(
+            \\  operation_id, project_id, resource_id, artifact_id, role, path,
+            \\  sha256, size_bytes, metadata_json, created_at
+            \\)
+            \\SELECT ?, project_id, ?, ?, ?, ?, ?, ?, ?, ?
+            \\FROM project_operations WHERE id=?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, value.operation_id);
+        try bindTextOpt(stmt, 2, value.resource_id);
+        try bindText(stmt, 3, value.artifact_id);
+        try bindText(stmt, 4, value.role);
+        try bindTextOpt(stmt, 5, value.path);
+        try bindText(stmt, 6, value.sha256);
+        try bindI64Opt(stmt, 7, value.size_bytes);
+        try bindTextOpt(stmt, 8, value.metadata_json);
+        try bindI64(stmt, 9, value.created_at);
+        try bindText(stmt, 10, value.operation_id);
+        try stepDone(stmt);
+        if (sqlite.sqlite3_changes(self.handle) != 1) return error.RunNotFound;
+    }
+
+    pub fn listArtifacts(self: Repository, allocator: Allocator, operation_id: []const u8) !model.Artifacts {
+        const stmt = try self.prepare(
+            \\SELECT id, operation_id, project_id, resource_id, artifact_id, role,
+            \\       path, sha256, size_bytes, metadata_json, created_at
+            \\FROM project_artifacts WHERE operation_id=? ORDER BY id
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, operation_id);
+        var rows = std.ArrayList(model.Artifact).empty;
+        errdefer {
+            for (rows.items) |row| row.deinit(allocator);
+            rows.deinit(allocator);
+        }
+        while (true) switch (sqlite.sqlite3_step(stmt)) {
+            sqlite.SQLITE_ROW => try rows.append(allocator, .{
+                .id = sqlite.sqlite3_column_int64(stmt, 0),
+                .operation_id = try dupeRequired(allocator, stmt, 1),
+                .project_id = sqlite.sqlite3_column_int64(stmt, 2),
+                .resource_id = try dupeOptional(allocator, stmt, 3),
+                .artifact_id = try dupeRequired(allocator, stmt, 4),
+                .role = try dupeRequired(allocator, stmt, 5),
+                .path = try dupeOptional(allocator, stmt, 6),
+                .sha256 = try dupeRequired(allocator, stmt, 7),
+                .size_bytes = columnI64Optional(stmt, 8),
+                .metadata_json = try dupeOptional(allocator, stmt, 9),
+                .created_at = sqlite.sqlite3_column_int64(stmt, 10),
             }),
             sqlite.SQLITE_DONE => break,
             else => return error.SqliteStep,

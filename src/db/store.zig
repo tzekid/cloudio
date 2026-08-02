@@ -97,6 +97,9 @@ pub const NobRunEvent = nob_model.RunEvent;
 pub const NobRunEvents = nob_model.RunEvents;
 pub const NobNewRunEvent = nob_repository.NewRunEvent;
 pub const NobBrokerAuthorization = nob_repository.BrokerAuthorization;
+pub const NobArtifact = nob_model.Artifact;
+pub const NobArtifacts = nob_model.Artifacts;
+pub const NobNewArtifact = nob_repository.NewArtifact;
 
 test "sqlite schema initializes" {
     const allocator = std.testing.allocator;

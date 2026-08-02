@@ -146,6 +146,63 @@ pub fn runAction(ctx: context.Context, request: http.Request, params: http.Param
     return 202;
 }
 
+pub fn planResourceControl(ctx: context.Context, request: http.Request, params: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
+    if (!ctx.config.nob_enabled) return writeDisabled(writer);
+    const reference = params.get("id") orelse return common.badRequest(writer);
+    const resource_id = params.get("resource") orelse return common.badRequest(writer);
+    const control_name = params.get("control") orelse return common.badRequest(writer);
+    if (!emptyObject(ctx.gpa, request.body)) return common.badRequest(writer);
+    var planned = try app_nob_actions.planResourceControl(
+        context.nobActions(ctx),
+        reference,
+        resource_id,
+        control_name,
+        ctx.auth_user_id orelse "authenticated-web",
+    );
+    defer planned.deinit(ctx.gpa);
+    try writePlan(writer, ctx.gpa, planned);
+    return 200;
+}
+
+pub fn runResourceControl(ctx: context.Context, request: http.Request, params: http.Params, writer: *std.Io.Writer, headers: *std.Io.Writer) !u16 {
+    if (!ctx.config.nob_enabled) return writeDisabled(writer);
+    const reference = params.get("id") orelse return common.badRequest(writer);
+    const resource_id = params.get("resource") orelse return common.badRequest(writer);
+    const control_name = params.get("control") orelse return common.badRequest(writer);
+    var parsed = common.jsonBody(ctx.gpa, request.body) orelse return common.badRequest(writer);
+    defer parsed.deinit();
+    if (!objectHasOnly(parsed.value.object, &.{"plan_id"})) return common.badRequest(writer);
+    const plan_id = common.strField(parsed.value, "plan_id") orelse return common.badRequest(writer);
+    var queued = try app_nob_actions.queueResourceControl(
+        context.nobActions(ctx),
+        reference,
+        resource_id,
+        control_name,
+        plan_id,
+        .{ .confirmed = true },
+        ctx.auth_user_id orelse "authenticated-web",
+        ctx.write_meta.idempotency_key,
+    );
+    defer queued.deinit(ctx.gpa);
+    try headers.print("Location: /api/nob/operations/{s}\r\n", .{queued.id});
+    try writer.writeAll("{\"kind\":\"nob_run\",\"operation\":");
+    try std.json.Stringify.value(queued, .{}, writer);
+    try writer.writeAll("}\n");
+    return 202;
+}
+
+pub fn resourceLogs(ctx: context.Context, request: http.Request, params: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
+    const reference = params.get("id") orelse return common.badRequest(writer);
+    const resource_id = params.get("resource") orelse return common.badRequest(writer);
+    const lines: u16 = @intCast(@min(@max(common.intQuery(request, "tail", 200), 1), 2000));
+    const bytes = try app_nob_actions.resourceLogs(context.nobActions(ctx), reference, resource_id, lines);
+    defer ctx.gpa.free(bytes);
+    try writer.writeAll("{\"kind\":\"nob_resource_logs\",\"text\":");
+    try std.json.Stringify.value(bytes, .{}, writer);
+    try writer.writeAll("}\n");
+    return 200;
+}
+
 pub fn operations(ctx: context.Context, request: http.Request, _: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
     const limit = @min(@max(common.intQuery(request, "limit", 50), 1), 200);
     var runs = try app_nob_actions.listRuns(context.nobActions(ctx), null, limit);
@@ -162,10 +219,14 @@ pub fn operationDetails(ctx: context.Context, _: http.Request, params: http.Para
     defer run_value.deinit(ctx.gpa);
     var events = try app_nob_actions.listRecentEvents(context.nobActions(ctx), operation_id, 200);
     defer events.deinit(ctx.gpa);
+    var artifacts = try app_nob_actions.listArtifacts(context.nobActions(ctx), operation_id);
+    defer artifacts.deinit(ctx.gpa);
     try writer.writeAll("{\"kind\":\"nob_run\",\"operation\":");
     try std.json.Stringify.value(run_value, .{}, writer);
     try writer.writeAll(",\"events\":");
     try std.json.Stringify.value(events.items, .{}, writer);
+    try writer.writeAll(",\"artifacts\":");
+    try std.json.Stringify.value(artifacts.items, .{}, writer);
     try writer.writeAll("}\n");
     return 200;
 }
