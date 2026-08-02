@@ -464,6 +464,179 @@ pub const migrations = [_]Migration{
         \\);
         ,
     },
+    .{
+        .version = 13,
+        .name = "nob_v1",
+        .sql =
+        \\CREATE TABLE managed_projects (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  declared_id TEXT,
+        \\  display_name TEXT NOT NULL,
+        \\  kind TEXT NOT NULL,
+        \\  root_path TEXT NOT NULL UNIQUE,
+        \\  manifest_path TEXT,
+        \\  manifest_sha256 TEXT,
+        \\  trusted_manifest_sha256 TEXT,
+        \\  manifest_json TEXT,
+        \\  discovery_state TEXT NOT NULL,
+        \\  trust_state TEXT NOT NULL DEFAULT 'discovered',
+        \\  status TEXT NOT NULL DEFAULT 'unknown',
+        \\  status_summary TEXT,
+        \\  repository_kind TEXT,
+        \\  repository_identity TEXT,
+        \\  head_revision TEXT,
+        \\  source_fingerprint TEXT,
+        \\  source_dirty INTEGER,
+        \\  protocol_major INTEGER,
+        \\  protocol_minor INTEGER,
+        \\  runner_state TEXT NOT NULL DEFAULT 'not-built',
+        \\  runner_path TEXT,
+        \\  runner_sha256 TEXT,
+        \\  runner_detail TEXT,
+        \\  trusted_by TEXT,
+        \\  trusted_at INTEGER,
+        \\  last_seen_scan_id TEXT,
+        \\  last_seen_at INTEGER NOT NULL,
+        \\  last_observed_at INTEGER,
+        \\  created_at INTEGER NOT NULL,
+        \\  updated_at INTEGER NOT NULL
+        \\);
+        \\CREATE INDEX idx_managed_projects_declared_id
+        \\  ON managed_projects(declared_id);
+        \\CREATE INDEX idx_managed_projects_state
+        \\  ON managed_projects(trust_state, discovery_state, status);
+        \\CREATE TABLE systemd_units (
+        \\  scope TEXT NOT NULL,
+        \\  unit TEXT NOT NULL,
+        \\  load_state TEXT,
+        \\  active_state TEXT,
+        \\  sub_state TEXT,
+        \\  unit_file_state TEXT,
+        \\  description TEXT,
+        \\  fragment_path TEXT,
+        \\  main_pid INTEGER,
+        \\  raw_text TEXT,
+        \\  observed_at INTEGER NOT NULL,
+        \\  PRIMARY KEY (scope, unit)
+        \\);
+        \\CREATE INDEX idx_systemd_units_state
+        \\  ON systemd_units(scope, active_state, sub_state);
+        \\CREATE TABLE project_resources (
+        \\  project_id INTEGER NOT NULL REFERENCES managed_projects(id) ON DELETE CASCADE,
+        \\  resource_id TEXT NOT NULL,
+        \\  kind TEXT NOT NULL,
+        \\  label TEXT NOT NULL,
+        \\  ownership TEXT NOT NULL,
+        \\  controls_json TEXT NOT NULL,
+        \\  declaration_json TEXT NOT NULL,
+        \\  runner_observation_json TEXT,
+        \\  cloudio_observation_json TEXT,
+        \\  effective_status TEXT NOT NULL DEFAULT 'unknown',
+        \\  status_summary TEXT,
+        \\  observed_at INTEGER,
+        \\  PRIMARY KEY (project_id, resource_id)
+        \\);
+        \\CREATE INDEX idx_project_resources_kind_status
+        \\  ON project_resources(kind, effective_status);
+        \\CREATE TABLE project_actions (
+        \\  project_id INTEGER NOT NULL REFERENCES managed_projects(id) ON DELETE CASCADE,
+        \\  action_id TEXT NOT NULL,
+        \\  label TEXT NOT NULL,
+        \\  effect TEXT NOT NULL,
+        \\  confirmation TEXT NOT NULL,
+        \\  declaration_json TEXT NOT NULL,
+        \\  available INTEGER NOT NULL DEFAULT 0,
+        \\  unavailable_reason TEXT,
+        \\  described_at INTEGER,
+        \\  PRIMARY KEY (project_id, action_id)
+        \\);
+        \\CREATE TABLE project_secret_bindings (
+        \\  project_id INTEGER NOT NULL REFERENCES managed_projects(id) ON DELETE CASCADE,
+        \\  secret_id TEXT NOT NULL,
+        \\  source_kind TEXT NOT NULL,
+        \\  source_ref TEXT NOT NULL,
+        \\  present INTEGER NOT NULL DEFAULT 0,
+        \\  bound_by TEXT NOT NULL,
+        \\  bound_at INTEGER NOT NULL,
+        \\  checked_at INTEGER,
+        \\  PRIMARY KEY (project_id, secret_id)
+        \\);
+        \\CREATE TABLE project_plans (
+        \\  id TEXT PRIMARY KEY,
+        \\  project_id INTEGER NOT NULL REFERENCES managed_projects(id) ON DELETE CASCADE,
+        \\  action_id TEXT NOT NULL,
+        \\  resource_id TEXT,
+        \\  input_json TEXT NOT NULL,
+        \\  plan_json TEXT NOT NULL,
+        \\  plan_sha256 TEXT NOT NULL,
+        \\  manifest_sha256 TEXT NOT NULL,
+        \\  source_fingerprint TEXT,
+        \\  effect TEXT NOT NULL,
+        \\  confirmation TEXT NOT NULL,
+        \\  state TEXT NOT NULL DEFAULT 'ready',
+        \\  requested_by TEXT NOT NULL,
+        \\  created_at INTEGER NOT NULL,
+        \\  expires_at INTEGER NOT NULL,
+        \\  consumed_at INTEGER
+        \\);
+        \\CREATE INDEX idx_project_plans_expiry
+        \\  ON project_plans(state, expires_at);
+        \\CREATE TABLE project_operations (
+        \\  id TEXT PRIMARY KEY,
+        \\  project_id INTEGER NOT NULL REFERENCES managed_projects(id) ON DELETE CASCADE,
+        \\  plan_id TEXT REFERENCES project_plans(id),
+        \\  action_id TEXT NOT NULL,
+        \\  resource_id TEXT,
+        \\  state TEXT NOT NULL DEFAULT 'queued',
+        \\  outcome TEXT,
+        \\  effect TEXT NOT NULL,
+        \\  requested_by TEXT NOT NULL,
+        \\  idempotency_key TEXT,
+        \\  runner_path TEXT,
+        \\  log_path TEXT,
+        \\  stderr_path TEXT,
+        \\  summary TEXT,
+        \\  error_code TEXT,
+        \\  queued_at INTEGER NOT NULL,
+        \\  started_at INTEGER,
+        \\  finished_at INTEGER,
+        \\  cancel_requested_at INTEGER,
+        \\  heartbeat_at INTEGER
+        \\);
+        \\CREATE INDEX idx_project_operations_project_time
+        \\  ON project_operations(project_id, queued_at DESC);
+        \\CREATE INDEX idx_project_operations_queue
+        \\  ON project_operations(state, queued_at);
+        \\CREATE TABLE project_operation_events (
+        \\  operation_id TEXT NOT NULL REFERENCES project_operations(id) ON DELETE CASCADE,
+        \\  seq INTEGER NOT NULL,
+        \\  event_type TEXT NOT NULL,
+        \\  level TEXT,
+        \\  payload_json TEXT NOT NULL,
+        \\  received_at INTEGER NOT NULL,
+        \\  PRIMARY KEY (operation_id, seq)
+        \\);
+        \\CREATE TABLE project_artifacts (
+        \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  operation_id TEXT NOT NULL REFERENCES project_operations(id) ON DELETE CASCADE,
+        \\  project_id INTEGER NOT NULL REFERENCES managed_projects(id) ON DELETE CASCADE,
+        \\  resource_id TEXT,
+        \\  artifact_id TEXT NOT NULL,
+        \\  role TEXT NOT NULL,
+        \\  path TEXT,
+        \\  sha256 TEXT NOT NULL,
+        \\  size_bytes INTEGER,
+        \\  metadata_json TEXT,
+        \\  created_at INTEGER NOT NULL,
+        \\  UNIQUE (operation_id, artifact_id)
+        \\);
+        \\CREATE TABLE project_operation_locks (
+        \\  project_id INTEGER PRIMARY KEY REFERENCES managed_projects(id) ON DELETE CASCADE,
+        \\  operation_id TEXT NOT NULL UNIQUE REFERENCES project_operations(id) ON DELETE CASCADE,
+        \\  acquired_at INTEGER NOT NULL
+        \\);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;
@@ -565,6 +738,15 @@ test "applies migrations idempotently" {
     try std.testing.expect(try tableExists(handle.?, "app_operation_locks"));
     try std.testing.expect(try tableExists(handle.?, "topology_state"));
     try std.testing.expect(try tableExists(handle.?, "topology_changes"));
+    try std.testing.expect(try tableExists(handle.?, "managed_projects"));
+    try std.testing.expect(try tableExists(handle.?, "project_resources"));
+    try std.testing.expect(try tableExists(handle.?, "project_actions"));
+    try std.testing.expect(try tableExists(handle.?, "project_plans"));
+    try std.testing.expect(try tableExists(handle.?, "project_operations"));
+    try std.testing.expect(try tableExists(handle.?, "project_operation_events"));
+    try std.testing.expect(try tableExists(handle.?, "project_artifacts"));
+    try std.testing.expect(try tableExists(handle.?, "project_operation_locks"));
+    try std.testing.expect(try tableExists(handle.?, "systemd_units"));
     try std.testing.expect(try indexExists(handle.?, "idx_snapshots_captured_at"));
     try std.testing.expect(try indexExists(handle.?, "idx_provider_raw_captured_at"));
     try std.testing.expect(try indexExists(handle.?, "idx_audit_actions_idempotency_key"));

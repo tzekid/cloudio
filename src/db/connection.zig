@@ -91,6 +91,12 @@ pub const Db = struct {
         const rc = sqlite.sqlite3_open_v2(@ptrCast(&path_z), &handle, sqlite.SQLITE_OPEN_READWRITE | sqlite.SQLITE_OPEN_CREATE, null);
         if (rc != sqlite.SQLITE_OK) return DbError.SqliteOpen;
         _ = sqlite.sqlite3_busy_timeout(handle.?, 5000);
+        var foreign_key_error: [*c]u8 = null;
+        if (sqlite.sqlite3_exec(handle.?, "PRAGMA foreign_keys=ON", null, null, &foreign_key_error) != sqlite.SQLITE_OK) {
+            if (foreign_key_error != null) sqlite.sqlite3_free(foreign_key_error);
+            _ = sqlite.sqlite3_close(handle.?);
+            return DbError.SqliteExec;
+        }
         return .{ .handle = handle.? };
     }
 
