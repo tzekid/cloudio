@@ -163,6 +163,26 @@ pub const Controller = struct {
         return try self.allocator.dupe(u8, result.stdout);
     }
 
+    pub fn daemonReload(self: *Controller, scope: Scope) !void {
+        if (!self.config.nob_allow_system_mutation) return error.SystemMutationDisabled;
+        const scope_argument = try mutationScopeArgument(scope);
+        var environment = try subprocess.makeEnvironment(self.allocator, self.config.runtime_environment, &.{});
+        defer environment.deinit();
+        const args = [_][]const u8{
+            self.systemctl_path,
+            scope_argument,
+            "--no-ask-password",
+            "daemon-reload",
+        };
+        const result = try subprocess.run(self.allocator, self.io, &args, self.cwd, &environment, .{
+            .stdout_bytes = 64 * 1024,
+            .stderr_bytes = 64 * 1024,
+            .timeout_seconds = 30,
+        });
+        defer result.deinit(self.allocator);
+        if (!result.successful()) return error.SystemctlDaemonReloadFailed;
+    }
+
     fn waitForState(self: *Controller, unit: Unit, operation: Operation) !Snapshot {
         const deadline = std.Io.Clock.Timestamp.fromNow(self.io, .{ .raw = .fromSeconds(10), .clock = .awake });
         while (true) {
@@ -265,4 +285,44 @@ test "systemd snapshot parser retains exact fields" {
     try std.testing.expectEqualStrings("active", state.active_state);
     try std.testing.expectEqual(@as(?u32, 42), state.main_pid);
     try std.testing.expect(stateMatches(state, .restart));
+}
+
+test "systemd controller executes only exact scoped argv" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const base_relative = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{temporary.sub_path});
+    defer std.testing.allocator.free(base_relative);
+    const base = try std.Io.Dir.cwd().realPathFileAlloc(std.testing.io, base_relative, std.testing.allocator);
+    defer std.testing.allocator.free(base);
+    const config_home = try std.fs.path.join(std.testing.allocator, &.{ base, "config" });
+    defer std.testing.allocator.free(config_home);
+    const state_home = try std.fs.path.join(std.testing.allocator, &.{ base, "state" });
+    defer std.testing.allocator.free(state_home);
+    try std.Io.Dir.cwd().createDirPath(std.testing.io, config_home);
+    try std.Io.Dir.cwd().createDirPath(std.testing.io, state_home);
+    const fake_bin = try std.Io.Dir.cwd().realPathFileAlloc(std.testing.io, "test/fixtures/fake-bin", std.testing.allocator);
+    defer std.testing.allocator.free(fake_bin);
+    const config = core_config.Config{
+        .domains = &.{},
+        .nob_allow_system_mutation = true,
+        .runtime_environment = .{
+            .path = fake_bin,
+            .xdg_config_home = config_home,
+            .xdg_state_home = state_home,
+        },
+    };
+    var controller = try Controller.init(std.testing.io, std.testing.allocator, config, base);
+    defer controller.deinit();
+    const transition = try controller.control(.{ .scope = .user, .name = "demo.service" }, .restart);
+    defer transition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("active", transition.after.active_state);
+    try controller.daemonReload(.user);
+
+    const log_path = try std.fs.path.join(std.testing.allocator, &.{ state_home, "systemctl.args" });
+    defer std.testing.allocator.free(log_path);
+    const calls = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, log_path, std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(calls);
+    try std.testing.expect(std.mem.indexOf(u8, calls, "--user --no-ask-password restart -- demo.service\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, calls, "--user --no-ask-password daemon-reload\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, calls, "--system") == null);
 }

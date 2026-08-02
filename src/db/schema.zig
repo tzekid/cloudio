@@ -663,6 +663,26 @@ pub const migrations = [_]Migration{
         \\);
         ,
     },
+    .{
+        .version = 15,
+        .name = "nob_managed_resources",
+        .sql =
+        \\CREATE TABLE project_managed_units (
+        \\  project_id INTEGER NOT NULL REFERENCES managed_projects(id) ON DELETE CASCADE,
+        \\  resource_id TEXT NOT NULL,
+        \\  scope TEXT NOT NULL,
+        \\  unit TEXT NOT NULL,
+        \\  fragment_path TEXT NOT NULL,
+        \\  sha256 TEXT NOT NULL,
+        \\  installed_operation_id TEXT NOT NULL REFERENCES project_operations(id),
+        \\  updated_at INTEGER NOT NULL,
+        \\  PRIMARY KEY (project_id, resource_id),
+        \\  UNIQUE (scope, unit)
+        \\);
+        \\CREATE INDEX idx_project_managed_units_operation
+        \\  ON project_managed_units(installed_operation_id);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;
@@ -773,6 +793,7 @@ test "applies migrations idempotently" {
     try std.testing.expect(try tableExists(handle.?, "project_artifacts"));
     try std.testing.expect(try tableExists(handle.?, "project_operation_locks"));
     try std.testing.expect(try tableExists(handle.?, "project_broker_authorizations"));
+    try std.testing.expect(try tableExists(handle.?, "project_managed_units"));
     try std.testing.expect(try tableExists(handle.?, "systemd_units"));
     try std.testing.expect(try indexExists(handle.?, "idx_snapshots_captured_at"));
     try std.testing.expect(try indexExists(handle.?, "idx_provider_raw_captured_at"));

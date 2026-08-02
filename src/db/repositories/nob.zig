@@ -148,6 +148,36 @@ pub const NewArtifact = struct {
     created_at: i64,
 };
 
+pub const ManagedUnit = struct {
+    project_id: i64,
+    resource_id: []u8,
+    scope: []u8,
+    unit: []u8,
+    fragment_path: []u8,
+    sha256: []u8,
+    installed_operation_id: []u8,
+    updated_at: i64,
+
+    pub fn deinit(self: ManagedUnit, allocator: Allocator) void {
+        allocator.free(self.resource_id);
+        allocator.free(self.scope);
+        allocator.free(self.unit);
+        allocator.free(self.fragment_path);
+        allocator.free(self.sha256);
+        allocator.free(self.installed_operation_id);
+    }
+};
+
+pub const ManagedUnitUpdate = struct {
+    operation_id: []const u8,
+    resource_id: []const u8,
+    scope: []const u8,
+    unit: []const u8,
+    fragment_path: []const u8,
+    sha256: []const u8,
+    updated_at: i64,
+};
+
 pub const DiscoveryRecord = struct {
     declared_id: ?[]const u8,
     display_name: []const u8,
@@ -866,6 +896,91 @@ pub const Repository = struct {
             else => return error.SqliteStep,
         };
         return .{ .items = try rows.toOwnedSlice(allocator) };
+    }
+
+    pub fn getManagedUnitForOperation(
+        self: Repository,
+        allocator: Allocator,
+        operation_id: []const u8,
+        resource_id: []const u8,
+    ) !?ManagedUnit {
+        const stmt = try self.prepare(
+            \\SELECT managed.project_id, managed.resource_id, managed.scope, managed.unit,
+            \\       managed.fragment_path, managed.sha256, managed.installed_operation_id,
+            \\       managed.updated_at
+            \\FROM project_managed_units managed
+            \\JOIN project_operations operation ON operation.project_id=managed.project_id
+            \\WHERE operation.id=? AND managed.resource_id=?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, operation_id);
+        try bindText(stmt, 2, resource_id);
+        const result = sqlite.sqlite3_step(stmt);
+        if (result == sqlite.SQLITE_DONE) return null;
+        if (result != sqlite.SQLITE_ROW) return error.SqliteStep;
+        return .{
+            .project_id = sqlite.sqlite3_column_int64(stmt, 0),
+            .resource_id = try dupeRequired(allocator, stmt, 1),
+            .scope = try dupeRequired(allocator, stmt, 2),
+            .unit = try dupeRequired(allocator, stmt, 3),
+            .fragment_path = try dupeRequired(allocator, stmt, 4),
+            .sha256 = try dupeRequired(allocator, stmt, 5),
+            .installed_operation_id = try dupeRequired(allocator, stmt, 6),
+            .updated_at = sqlite.sqlite3_column_int64(stmt, 7),
+        };
+    }
+
+    pub fn upsertManagedUnit(self: Repository, value: ManagedUnitUpdate) !void {
+        const stmt = try self.prepare(
+            \\INSERT INTO project_managed_units(
+            \\  project_id, resource_id, scope, unit, fragment_path, sha256,
+            \\  installed_operation_id, updated_at
+            \\) VALUES ((SELECT project_id FROM project_operations WHERE id=?), ?, ?, ?, ?, ?, ?, ?)
+            \\ON CONFLICT(project_id, resource_id) DO UPDATE SET
+            \\  scope=excluded.scope,
+            \\  unit=excluded.unit,
+            \\  fragment_path=excluded.fragment_path,
+            \\  sha256=excluded.sha256,
+            \\  installed_operation_id=excluded.installed_operation_id,
+            \\  updated_at=excluded.updated_at
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, value.operation_id);
+        try bindText(stmt, 2, value.resource_id);
+        try bindText(stmt, 3, value.scope);
+        try bindText(stmt, 4, value.unit);
+        try bindText(stmt, 5, value.fragment_path);
+        try bindText(stmt, 6, value.sha256);
+        try bindText(stmt, 7, value.operation_id);
+        try bindI64(stmt, 8, value.updated_at);
+        try stepDone(stmt);
+        if (sqlite.sqlite3_changes(self.handle) != 1) return error.RunNotFound;
+    }
+
+    pub fn deleteManagedUnitForOperation(self: Repository, operation_id: []const u8, resource_id: []const u8) !void {
+        const stmt = try self.prepare(
+            \\DELETE FROM project_managed_units
+            \\WHERE project_id=(SELECT project_id FROM project_operations WHERE id=?)
+            \\  AND resource_id=?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, operation_id);
+        try bindText(stmt, 2, resource_id);
+        try stepDone(stmt);
+        if (sqlite.sqlite3_changes(self.handle) != 1) return error.ManagedUnitNotFound;
+    }
+
+    pub fn claimBrokerAuthorization(self: Repository, operation_id: []const u8, authorization_id: []const u8, used_at: i64) !bool {
+        const stmt = try self.prepare(
+            \\UPDATE project_broker_authorizations SET used_at=?
+            \\WHERE operation_id=? AND authorization_id=? AND used_at IS NULL
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, used_at);
+        try bindText(stmt, 2, operation_id);
+        try bindText(stmt, 3, authorization_id);
+        try stepDone(stmt);
+        return sqlite.sqlite3_changes(self.handle) == 1;
     }
 
     pub fn getProject(self: Repository, allocator: Allocator, project_id: i64) !?model.Project {

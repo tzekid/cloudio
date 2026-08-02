@@ -1,7 +1,9 @@
 const std = @import("std");
 const app_writes = @import("app_writes");
 const core_config = @import("core_config");
+const core_time = @import("core_time");
 const db_store = @import("db_store");
+const managed_unit = @import("nob_managed_unit");
 const systemd = @import("nob_systemd");
 const nob = @import("nob_sdk");
 
@@ -207,7 +209,8 @@ fn handleConnection(shared: *Shared, db: *db_store.Db, stream: std.Io.net.Stream
     };
     switch (authorization.capability) {
         .@"systemd.control" => try serveSystemdControl(shared, db, writer, request, authorization),
-        .@"systemd.unit", .@"caddy.route" => {
+        .@"systemd.unit" => try serveSystemdUnit(shared, db, writer, request, authorization),
+        .@"caddy.route" => {
             try writeDenied(writer, request.request_id, "capability_not_implemented");
             try audit(shared, db, "denied", "capability_not_implemented");
         },
@@ -247,6 +250,7 @@ fn serveSystemdControl(
         try audit(shared, db, "denied", "operation_denied");
         return;
     }
+    if (!try claimAuthorization(shared, db, writer, request.request_id, authorization.id)) return;
     var controller = systemd.Controller.init(shared.io, shared.gpa, shared.config, shared.operation_dir) catch {
         try writeDenied(writer, request.request_id, "systemctl_unavailable");
         try audit(shared, db, "failed", "systemctl_unavailable");
@@ -266,6 +270,149 @@ fn serveSystemdControl(
     defer transition.deinit(shared.gpa);
     try writeAllowed(writer, request.request_id, unit.name, transition.before.raw, transition.after.raw);
     try audit(shared, db, "ok", authorization.id);
+}
+
+fn serveSystemdUnit(
+    shared: *Shared,
+    db: *db_store.Db,
+    writer: *std.Io.Writer,
+    request: *const nob.broker.Request,
+    authorization: *const nob.types.BrokerRequest,
+) !void {
+    if (!shared.config.nob_allow_system_mutation) {
+        try writeDenied(writer, request.request_id, "system_mutation_disabled");
+        try audit(shared, db, "denied", "system_mutation_disabled");
+        return;
+    }
+    const resource = findResource(shared.manifest.resources, authorization.resource_id) orelse {
+        try writeDenied(writer, request.request_id, "resource_unknown");
+        try audit(shared, db, "denied", "resource_unknown");
+        return;
+    };
+    if (resource.ownership != .managed) {
+        try writeDenied(writer, request.request_id, "resource_not_managed");
+        try audit(shared, db, "denied", "resource_not_managed");
+        return;
+    }
+    const unit = systemd.Unit.fromResource(resource) catch {
+        try writeDenied(writer, request.request_id, "resource_invalid");
+        try audit(shared, db, "denied", "resource_invalid");
+        return;
+    };
+    if (unit.scope != .user or authorization.metadata == null or authorization.metadata.? != .object) {
+        try writeDenied(writer, request.request_id, "authorization_invalid");
+        try audit(shared, db, "denied", "authorization_invalid");
+        return;
+    }
+    var existing_record = try db.nob().getManagedUnitForOperation(shared.gpa, shared.operation_id, authorization.resource_id);
+    defer if (existing_record) |record| record.deinit(shared.gpa);
+    const context = managed_unit.Context{
+        .io = shared.io,
+        .allocator = shared.gpa,
+        .config = shared.config,
+        .operation_id = shared.operation_id,
+        .operation_dir = shared.operation_dir,
+        .artifact_dir = shared.artifact_dir,
+        .project_id = shared.manifest.project.id,
+        .resource_id = authorization.resource_id,
+        .unit = unit,
+    };
+
+    if (std.mem.eql(u8, authorization.operation, "install")) {
+        const metadata = authorization.metadata.?.object;
+        const rendered = objectString(metadata, "rendered_unit") orelse {
+            try writeDenied(writer, request.request_id, "authorization_invalid");
+            try audit(shared, db, "denied", "authorization_invalid");
+            return;
+        };
+        const approved_sha256 = objectString(metadata, "sha256") orelse {
+            try writeDenied(writer, request.request_id, "authorization_invalid");
+            try audit(shared, db, "denied", "authorization_invalid");
+            return;
+        };
+        if (request.payload != .object or request.payload.object.count() != 2) {
+            try writeDenied(writer, request.request_id, "invalid_payload");
+            try audit(shared, db, "denied", "invalid_payload");
+            return;
+        }
+        const artifact_path = objectString(request.payload.object, "path") orelse {
+            try writeDenied(writer, request.request_id, "invalid_payload");
+            try audit(shared, db, "denied", "invalid_payload");
+            return;
+        };
+        const payload_sha256 = objectString(request.payload.object, "sha256") orelse {
+            try writeDenied(writer, request.request_id, "invalid_payload");
+            try audit(shared, db, "denied", "invalid_payload");
+            return;
+        };
+        if (!std.mem.eql(u8, payload_sha256, approved_sha256) or
+            !onlyObjectKeys(request.payload.object, &.{ "path", "sha256" }))
+        {
+            try writeDenied(writer, request.request_id, "payload_not_approved");
+            try audit(shared, db, "denied", "payload_not_approved");
+            return;
+        }
+        if (!try claimAuthorization(shared, db, writer, request.request_id, authorization.id)) return;
+        const transition = managed_unit.install(context, artifact_path, rendered, approved_sha256, if (existing_record) |*record| record else null) catch |err| {
+            try writeDenied(writer, request.request_id, @errorName(err));
+            try audit(shared, db, "failed", authorization.id);
+            return;
+        };
+        defer transition.deinit(shared.gpa);
+        const now: i64 = @intCast(try core_time.currentEpochSeconds());
+        db.nob().upsertManagedUnit(.{
+            .operation_id = shared.operation_id,
+            .resource_id = authorization.resource_id,
+            .scope = "user",
+            .unit = unit.name,
+            .fragment_path = transition.fragment_path,
+            .sha256 = transition.afterDigest().?,
+            .updated_at = now,
+        }) catch |err| {
+            try writeDenied(writer, request.request_id, @errorName(err));
+            try audit(shared, db, "failed", authorization.id);
+            return;
+        };
+        try writeUnitAllowed(writer, request.request_id, unit.name, transition.fragment_path, transition.beforeDigest(), transition.afterDigest());
+        try audit(shared, db, "ok", authorization.id);
+        return;
+    }
+
+    if (std.mem.eql(u8, authorization.operation, "remove")) {
+        if (request.payload != .object or request.payload.object.count() != 0) {
+            try writeDenied(writer, request.request_id, "invalid_payload");
+            try audit(shared, db, "denied", "invalid_payload");
+            return;
+        }
+        const record = if (existing_record) |*value| value else {
+            try writeDenied(writer, request.request_id, "managed_unit_not_found");
+            try audit(shared, db, "denied", "managed_unit_not_found");
+            return;
+        };
+        const current_sha256 = objectString(authorization.metadata.?.object, "current_sha256") orelse {
+            try writeDenied(writer, request.request_id, "authorization_invalid");
+            try audit(shared, db, "denied", "authorization_invalid");
+            return;
+        };
+        if (!try claimAuthorization(shared, db, writer, request.request_id, authorization.id)) return;
+        const transition = managed_unit.remove(context, current_sha256, record) catch |err| {
+            try writeDenied(writer, request.request_id, @errorName(err));
+            try audit(shared, db, "failed", authorization.id);
+            return;
+        };
+        defer transition.deinit(shared.gpa);
+        db.nob().deleteManagedUnitForOperation(shared.operation_id, authorization.resource_id) catch |err| {
+            try writeDenied(writer, request.request_id, @errorName(err));
+            try audit(shared, db, "failed", authorization.id);
+            return;
+        };
+        try writeUnitAllowed(writer, request.request_id, unit.name, transition.fragment_path, transition.beforeDigest(), null);
+        try audit(shared, db, "ok", authorization.id);
+        return;
+    }
+
+    try writeDenied(writer, request.request_id, "operation_denied");
+    try audit(shared, db, "denied", "operation_denied");
 }
 
 fn writeAllowed(writer: *std.Io.Writer, request_id: u64, unit: []const u8, before: ?[]const u8, after: ?[]const u8) !void {
@@ -294,6 +441,29 @@ fn writeDeniedWithState(writer: *std.Io.Writer, request_id: u64, code: []const u
     try writer.writeAll("}}\n");
 }
 
+fn writeUnitAllowed(
+    writer: *std.Io.Writer,
+    request_id: u64,
+    unit: []const u8,
+    path: []const u8,
+    before_sha256: ?[]const u8,
+    after_sha256: ?[]const u8,
+) !void {
+    try writer.print("{{\"schema\":\"{s}\",\"request_id\":{d},\"ok\":true,\"before\":{{\"unit\":", .{ nob.broker.response_schema, request_id });
+    try std.json.Stringify.value(unit, .{}, writer);
+    try writer.writeAll(",\"path\":");
+    try std.json.Stringify.value(path, .{}, writer);
+    try writer.writeAll(",\"sha256\":");
+    try std.json.Stringify.value(before_sha256, .{}, writer);
+    try writer.writeAll("},\"after\":{\"unit\":");
+    try std.json.Stringify.value(unit, .{}, writer);
+    try writer.writeAll(",\"path\":");
+    try std.json.Stringify.value(path, .{}, writer);
+    try writer.writeAll(",\"sha256\":");
+    try std.json.Stringify.value(after_sha256, .{}, writer);
+    try writer.writeAll("},\"error\":null}\n");
+}
+
 fn findAuthorization(values: []const nob.types.BrokerRequest, id: []const u8) ?*const nob.types.BrokerRequest {
     for (values) |*value| if (std.mem.eql(u8, value.id, id)) return value;
     return null;
@@ -308,6 +478,34 @@ fn validSystemdOperation(controls: []const nob.types.Control, operation: []const
     const parsed = std.meta.stringToEnum(nob.types.Control, operation) orelse return false;
     if (parsed == .logs) return false;
     for (controls) |control| if (control == parsed) return true;
+    return false;
+}
+
+fn objectString(object: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const value = object.get(key) orelse return null;
+    if (value != .string) return null;
+    return value.string;
+}
+
+fn onlyObjectKeys(object: std.json.ObjectMap, allowed: []const []const u8) bool {
+    if (object.count() != allowed.len) return false;
+    var iterator = object.iterator();
+    while (iterator.next()) |entry| {
+        var found = false;
+        for (allowed) |key| if (std.mem.eql(u8, key, entry.key_ptr.*)) {
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
+    return true;
+}
+
+fn claimAuthorization(shared: *Shared, db: *db_store.Db, writer: *std.Io.Writer, request_id: u64, authorization_id: []const u8) !bool {
+    const now: i64 = @intCast(try core_time.currentEpochSeconds());
+    if (try db.nob().claimBrokerAuthorization(shared.operation_id, authorization_id, now)) return true;
+    try writeDenied(writer, request_id, "authorization_already_used");
+    try audit(shared, db, "denied", "authorization_already_used");
     return false;
 }
 

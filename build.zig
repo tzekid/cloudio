@@ -280,6 +280,18 @@ pub fn build(b: *std.Build) void {
             .{ .name = "nob_source", .module = nob_source_mod },
         },
     });
+    const nob_managed_unit_mod = b.createModule(.{
+        .root_source_file = b.path("src/nob/managed_unit.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+            .{ .name = "nob_systemd", .module = nob_systemd_mod },
+        },
+    });
+    linkSqlite(nob_managed_unit_mod);
     const nob_broker_mod = b.createModule(.{
         .root_source_file = b.path("src/nob/broker.zig"),
         .target = target,
@@ -287,7 +299,9 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "app_writes", .module = app_writes_mod },
             .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "nob_managed_unit", .module = nob_managed_unit_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
             .{ .name = "nob_systemd", .module = nob_systemd_mod },
         },
@@ -1950,6 +1964,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, nob_action_protocol_mod);
     addModuleTest(b, test_step, nob_systemd_mod);
     addModuleTest(b, test_step, nob_resource_control_mod);
+    addModuleTest(b, test_step, nob_managed_unit_mod);
     addModuleTest(b, test_step, nob_broker_mod);
     addModuleTest(b, test_step, provider_cloudflare_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_transport_mod);

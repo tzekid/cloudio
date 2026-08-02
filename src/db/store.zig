@@ -100,6 +100,8 @@ pub const NobBrokerAuthorization = nob_repository.BrokerAuthorization;
 pub const NobArtifact = nob_model.Artifact;
 pub const NobArtifacts = nob_model.Artifacts;
 pub const NobNewArtifact = nob_repository.NewArtifact;
+pub const NobManagedUnit = nob_repository.ManagedUnit;
+pub const NobManagedUnitUpdate = nob_repository.ManagedUnitUpdate;
 
 test "sqlite schema initializes" {
     const allocator = std.testing.allocator;

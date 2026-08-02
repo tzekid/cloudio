@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+if [ -n "${XDG_STATE_HOME:-}" ]; then
+    printf '%s\n' "$*" >> "${XDG_STATE_HOME}/systemctl.args"
+fi
+
+case " $* " in
+    *" show "*)
+        printf '%s\n' \
+            'LoadState=loaded' \
+            'ActiveState=active' \
+            'SubState=running' \
+            'UnitFileState=enabled' \
+            "FragmentPath=${XDG_CONFIG_HOME:-/tmp}/systemd/user/demo.service" \
+            'MainPID=42'
+        ;;
+    *" daemon-reload "*|*" start "*|*" stop "*|*" restart "*|*" reload "*|*" enable "*|*" disable "*)
+        ;;
+    *)
+        printf 'unexpected fake systemctl invocation: %s\n' "$*" >&2
+        exit 64
+        ;;
+esac
