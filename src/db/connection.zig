@@ -11,6 +11,7 @@ const hostinger_repository = @import("repositories/hostinger.zig");
 const inventory_repository = @import("repositories/inventory.zig");
 const system_repository = @import("repositories/system.zig");
 const auth_repository = @import("repositories/auth.zig");
+const nob_repository = @import("repositories/nob.zig");
 
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -78,6 +79,10 @@ pub const Db = struct {
     }
 
     pub fn auth(self: *Db) auth_repository.Repository {
+        return .{ .handle = self.handle };
+    }
+
+    pub fn nob(self: *Db) nob_repository.Repository {
         return .{ .handle = self.handle };
     }
 

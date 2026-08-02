@@ -18,6 +18,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const web_html_mod = web_dep.module("web_html");
+    const nob_dep = b.dependency("nob", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const nob_sdk_mod = nob_dep.module("nob");
 
     const sqlite_c = b.addTranslateC(.{
         .root_source_file = b.path("c/sqlite.h"),
@@ -150,6 +155,11 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
+    const nob_model_mod = b.createModule(.{
+        .root_source_file = b.path("src/nob/model.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const db_schema_mod = b.createModule(.{
         .root_source_file = b.path("src/db/schema.zig"),
         .target = target,
@@ -166,6 +176,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "core_fs", .module = core_fs_mod },
             .{ .name = "db_schema", .module = db_schema_mod },
+            .{ .name = "nob_model", .module = nob_model_mod },
             .{ .name = "sqlite", .module = sqlite_mod },
         },
     });
@@ -272,6 +283,17 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(collector_projects_mod);
+    const collector_project_manifests_mod = b.createModule(.{
+        .root_source_file = b.path("src/collectors/project_manifests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_time", .module = core_time_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+        },
+    });
+    linkSqlite(collector_project_manifests_mod);
     const provider_hostinger_routes_mod = b.createModule(.{
         .root_source_file = b.path("packages/hostinger/src/routes.zig"),
         .target = target,
@@ -1697,6 +1719,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, provider_dispatch_mod);
     addModuleTest(b, test_step, provider_routes_mod);
     addModuleTest(b, test_step, provider_typed_routes_mod);
+    addModuleTest(b, test_step, nob_model_mod);
     addModuleTest(b, test_step, provider_cloudflare_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_transport_mod);
     addModuleTest(b, test_step, provider_cloudflare_mod);
@@ -1713,6 +1736,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, collector_route_capture_mod);
     addModuleTest(b, test_step, collector_caddy_mod);
     addModuleTest(b, test_step, collector_projects_mod);
+    addModuleTest(b, test_step, collector_project_manifests_mod);
     addModuleTest(b, test_step, collector_system_mod);
     addModuleTest(b, test_step, collector_cloudflare_mod);
     addModuleTest(b, test_step, collector_hostinger_mod);

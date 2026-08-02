@@ -14,6 +14,9 @@
             .url = "git+https://github.com/tzekid/web.zig#7c82692af48ba21f63dd8c64c2113b54244ed9c2",
             .hash = "web-0.1.0-dev-_XMZoxn0AADNJPaF7YZ77hxV4qFxqcKkLHQ_pLFeaMbU",
         },
+        .nob = .{
+            .path = "vendor/nob",
+        },
     },
     .minimum_zig_version = "0.17.0-dev.1509+bb296ab9b",
     .paths = .{""},

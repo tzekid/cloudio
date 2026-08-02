@@ -1,0 +1,3 @@
+[submodule "vendor/nob"]
+	path = vendor/nob
+	url = git@github.com:tzekid/nob.zig.git

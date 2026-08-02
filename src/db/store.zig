@@ -5,6 +5,8 @@ const models = @import("models.zig");
 const helpers = @import("helpers.zig");
 const connection = @import("connection.zig");
 const auth_repository = @import("repositories/auth.zig");
+const nob_repository = @import("repositories/nob.zig");
+const nob_model = @import("nob_model");
 
 pub const Db = connection.Db;
 pub const DbError = models.DbError;
@@ -69,6 +71,17 @@ pub const AuthChallenge = auth_repository.Challenge;
 pub const AuthCredential = auth_repository.Credential;
 pub const AuthCredentials = auth_repository.Credentials;
 pub const AuthSession = auth_repository.Session;
+pub const NobProject = nob_model.Project;
+pub const NobProjects = nob_model.Projects;
+pub const NobResource = nob_model.Resource;
+pub const NobResources = nob_model.Resources;
+pub const NobAction = nob_model.Action;
+pub const NobActions = nob_model.Actions;
+pub const NobDiscoveryState = nob_model.DiscoveryState;
+pub const NobTrustState = nob_model.TrustState;
+pub const NobDiscoveryRecord = nob_repository.DiscoveryRecord;
+pub const NobResourceDeclaration = nob_repository.ResourceDeclaration;
+pub const NobActionDeclaration = nob_repository.ActionDeclaration;
 
 test "sqlite schema initializes" {
     const allocator = std.testing.allocator;
