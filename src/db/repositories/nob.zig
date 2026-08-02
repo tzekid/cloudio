@@ -53,7 +53,8 @@ pub const ResourceObservation = struct {
     resource_id: []const u8,
     status: []const u8,
     summary: []const u8,
-    observation_json: []const u8,
+    runner_observation_json: ?[]const u8,
+    cloudio_observation_json: ?[]const u8,
 };
 
 pub const AcceptedObservation = struct {
@@ -294,8 +295,8 @@ pub const Repository = struct {
 
         const reset = try self.prepare(
             \\UPDATE project_resources
-            \\SET runner_observation_json=NULL, effective_status='unknown',
-            \\    status_summary='runner omitted this resource', observed_at=?
+            \\SET runner_observation_json=NULL, cloudio_observation_json=NULL,
+            \\    effective_status='unknown', status_summary='observation omitted this resource', observed_at=?
             \\WHERE project_id=?
         );
         defer _ = sqlite.sqlite3_finalize(reset);
@@ -305,19 +306,20 @@ pub const Repository = struct {
 
         const resource_stmt = try self.prepare(
             \\UPDATE project_resources
-            \\SET runner_observation_json=?, effective_status=?, status_summary=?, observed_at=?
+            \\SET runner_observation_json=?, cloudio_observation_json=?, effective_status=?, status_summary=?, observed_at=?
             \\WHERE project_id=? AND resource_id=?
         );
         defer _ = sqlite.sqlite3_finalize(resource_stmt);
         for (accepted.resources) |resource| {
             _ = sqlite.sqlite3_reset(resource_stmt);
             _ = sqlite.sqlite3_clear_bindings(resource_stmt);
-            try bindText(resource_stmt, 1, resource.observation_json);
-            try bindText(resource_stmt, 2, resource.status);
-            try bindText(resource_stmt, 3, resource.summary);
-            try bindI64(resource_stmt, 4, accepted.now);
-            try bindI64(resource_stmt, 5, accepted.project_id);
-            try bindText(resource_stmt, 6, resource.resource_id);
+            try bindTextOpt(resource_stmt, 1, resource.runner_observation_json);
+            try bindTextOpt(resource_stmt, 2, resource.cloudio_observation_json);
+            try bindText(resource_stmt, 3, resource.status);
+            try bindText(resource_stmt, 4, resource.summary);
+            try bindI64(resource_stmt, 5, accepted.now);
+            try bindI64(resource_stmt, 6, accepted.project_id);
+            try bindText(resource_stmt, 7, resource.resource_id);
             try stepDone(resource_stmt);
             if (sqlite.sqlite3_changes(self.handle) != 1) return error.UnknownResource;
         }
@@ -390,6 +392,7 @@ pub const Repository = struct {
     pub fn listResources(self: Repository, allocator: Allocator, project_id: i64) !model.Resources {
         const stmt = try self.prepare(
             \\SELECT resource_id, kind, label, ownership, controls_json, declaration_json,
+            \\       runner_observation_json, cloudio_observation_json,
             \\       effective_status, status_summary, observed_at
             \\FROM project_resources WHERE project_id=? ORDER BY resource_id
         );
@@ -410,9 +413,11 @@ pub const Repository = struct {
                     .ownership = try dupeRequired(allocator, stmt, 3),
                     .controls_json = try dupeRequired(allocator, stmt, 4),
                     .declaration_json = try dupeRequired(allocator, stmt, 5),
-                    .effective_status = try model.parseProjectStatus(columnText(stmt, 6) orelse return error.InvalidDatabaseValue),
-                    .status_summary = try dupeOptional(allocator, stmt, 7),
-                    .observed_at = columnI64Optional(stmt, 8),
+                    .runner_observation_json = try dupeOptional(allocator, stmt, 6),
+                    .cloudio_observation_json = try dupeOptional(allocator, stmt, 7),
+                    .effective_status = try model.parseProjectStatus(columnText(stmt, 8) orelse return error.InvalidDatabaseValue),
+                    .status_summary = try dupeOptional(allocator, stmt, 9),
+                    .observed_at = columnI64Optional(stmt, 10),
                 }),
                 sqlite.SQLITE_DONE => break,
                 else => return error.SqliteStep,

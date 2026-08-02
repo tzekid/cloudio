@@ -58,7 +58,7 @@ pub fn mapApiError(err: anyerror) ApiErrorResponse {
         error.ManifestUnavailable, error.ProjectNotTrustable => .{ .status = 422, .body = "{\"error\":\"project_not_trustable\"}\n" },
         error.ProjectManifestNotValid => .{ .status = 422, .body = "{\"error\":\"project_manifest_invalid\"}\n" },
         error.RunnerBuildFailed, error.RunnerDescribeFailed, error.RunnerObserveFailed => .{ .status = 422, .body = "{\"error\":\"project_runner_failed\"}\n" },
-        error.UnsupportedProtocol, error.ManifestIdentityMismatch, error.ProjectIdentityMismatch, error.ProtocolLimitExceeded, error.ProtocolDocumentTooLarge => .{ .status = 422, .body = "{\"error\":\"project_protocol_invalid\"}\n" },
+        error.UnsupportedProtocol, error.ManifestIdentityMismatch, error.ProjectIdentityMismatch, error.SourceIdentityMismatch, error.ProtocolLimitExceeded, error.ProtocolDocumentTooLarge => .{ .status = 422, .body = "{\"error\":\"project_protocol_invalid\"}\n" },
         error.InvalidZigVersion, error.InvalidZigVersionFile, error.ZigVersionMismatch, error.ToolchainMappingMissing => .{ .status = 422, .body = "{\"error\":\"project_toolchain_unavailable\"}\n" },
         error.NoRollbackTarget => .{ .status = 409, .body = "{\"error\":\"no_rollback_target\"}\n" },
         error.ReleaseMissing => .{ .status = 422, .body = "{\"error\":\"release_missing\"}\n" },

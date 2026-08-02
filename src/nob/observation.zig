@@ -66,5 +66,20 @@ pub fn run(
     defer result.deinit(allocator);
     if (result.stderr.len != 0) try diagnostics.print("observe stderr:\n{s}\n", .{result.stderr});
     if (!result.successful()) return error.RunnerObserveFailed;
-    return try protocol.parseObservation(allocator, result.stdout, identity);
+    var document = try protocol.parseObservation(allocator, result.stdout, identity);
+    errdefer document.deinit();
+    const value = document.value();
+    if (!std.mem.eql(u8, @tagName(value.source.kind), source_state.repository_kind) or
+        value.source.dirty != source_state.dirty or
+        !std.mem.eql(u8, value.source.fingerprint, source_state.fingerprint) or
+        !optionalEqual(value.source.revision, source_state.revision))
+    {
+        return error.SourceIdentityMismatch;
+    }
+    return document;
+}
+
+fn optionalEqual(left: ?[]const u8, right: ?[]const u8) bool {
+    if (left == null or right == null) return left == null and right == null;
+    return std.mem.eql(u8, left.?, right.?);
 }

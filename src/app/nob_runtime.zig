@@ -4,6 +4,7 @@ const bootstrap = @import("nob_bootstrap");
 const core_config = @import("core_config");
 const core_time = @import("core_time");
 const db_store = @import("db_store");
+const independent_observation = @import("nob_independent_observation");
 const observation = @import("nob_observation");
 const source = @import("nob_source");
 const nob = @import("nob_sdk");
@@ -115,34 +116,52 @@ fn observeWith(
     };
     defer document.deinit();
     const value = document.value();
+    var verified = try independent_observation.run(
+        ctx.io,
+        ctx.gpa,
+        project.root_path,
+        manifest_sha256,
+        ctx.config.runtime_environment,
+        value,
+    );
+    defer verified.deinit(ctx.gpa);
 
     var resources = std.ArrayList(db_store.NobResourceObservation).empty;
     defer {
-        for (resources.items) |resource| ctx.gpa.free(resource.observation_json);
+        for (resources.items) |resource| if (resource.runner_observation_json) |bytes| ctx.gpa.free(bytes);
         resources.deinit(ctx.gpa);
     }
-    for (value.resources) |resource| try resources.append(ctx.gpa, .{
-        .resource_id = resource.id,
-        .status = @tagName(resource.status),
-        .summary = resource.summary,
-        .observation_json = try stringify(ctx.gpa, resource),
-    });
+    for (verified.resources) |resource| {
+        const runner_resource = findRunnerResource(value.resources, resource.resource_id);
+        try resources.append(ctx.gpa, .{
+            .resource_id = resource.resource_id,
+            .status = @tagName(resource.status),
+            .summary = resource.summary,
+            .runner_observation_json = if (runner_resource) |present| try stringify(ctx.gpa, present) else null,
+            .cloudio_observation_json = resource.observation_json,
+        });
+    }
     const now = try nowSeconds();
     try ctx.db.nob().acceptObservation(.{
         .project_id = project.id,
         .manifest_sha256 = manifest_sha256,
-        .project_status = @tagName(value.status),
-        .project_summary = value.summary,
-        .repository_kind = @tagName(value.source.kind),
+        .project_status = @tagName(verified.status),
+        .project_summary = verified.summary,
+        .repository_kind = source_state.repository_kind,
         .repository_identity = source_state.repository_identity,
-        .head_revision = value.source.revision,
-        .source_fingerprint = value.source.fingerprint,
-        .source_dirty = value.source.dirty,
+        .head_revision = source_state.revision,
+        .source_fingerprint = source_state.fingerprint,
+        .source_dirty = source_state.dirty,
         .resources = resources.items,
         .now = now,
     });
-    try audit(ctx, "nob.observe", "ok", project.id, @tagName(value.status));
-    return value.status;
+    try audit(ctx, "nob.observe", "ok", project.id, @tagName(verified.status));
+    return verified.status;
+}
+
+fn findRunnerResource(resources: []const nob.types.ResourceObservation, resource_id: []const u8) ?nob.types.ResourceObservation {
+    for (resources) |resource| if (std.mem.eql(u8, resource.id, resource_id)) return resource;
+    return null;
 }
 
 fn requireExecutableProject(project: db_store.NobProject) ![]const u8 {

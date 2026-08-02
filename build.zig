@@ -230,6 +230,16 @@ pub fn build(b: *std.Build) void {
             .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
         },
     });
+    const nob_independent_observation_mod = b.createModule(.{
+        .root_source_file = b.path("src/nob/independent_observation.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+            .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
+        },
+    });
     const security_passkeys_mod = b.createModule(.{
         .root_source_file = b.path("src/security/passkeys.zig"),
         .target = target,
@@ -963,6 +973,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_time", .module = core_time_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "nob_bootstrap", .module = nob_bootstrap_mod },
+            .{ .name = "nob_independent_observation", .module = nob_independent_observation_mod },
             .{ .name = "nob_observation", .module = nob_observation_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
             .{ .name = "nob_source", .module = nob_source_mod },
@@ -1824,6 +1835,7 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, nob_subprocess_mod);
     addModuleTest(b, test_step, nob_source_mod);
     addModuleTest(b, test_step, nob_bootstrap_mod);
+    addModuleTest(b, test_step, nob_independent_observation_mod);
     addModuleTest(b, test_step, nob_observation_mod);
     addModuleTest(b, test_step, provider_cloudflare_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_transport_mod);

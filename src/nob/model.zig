@@ -111,6 +111,8 @@ pub const Resource = struct {
     ownership: []u8,
     controls_json: []u8,
     declaration_json: []u8,
+    runner_observation_json: ?[]u8,
+    cloudio_observation_json: ?[]u8,
     effective_status: ProjectStatus,
     status_summary: ?[]u8,
     observed_at: ?i64,
@@ -122,6 +124,8 @@ pub const Resource = struct {
         allocator.free(self.ownership);
         allocator.free(self.controls_json);
         allocator.free(self.declaration_json);
+        freeOptional(allocator, self.runner_observation_json);
+        freeOptional(allocator, self.cloudio_observation_json);
         freeOptional(allocator, self.status_summary);
     }
 };

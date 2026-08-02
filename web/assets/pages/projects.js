@@ -148,7 +148,12 @@
       fact("Uncommitted changes", project.source_dirty === null ? null : (project.source_dirty ? "Yes" : "No"))
     );
     c.renderTable(resourcesBody, data.resources || [], [
-      { label: "Resource", render: function (row) { return row.label || row.id; } },
+      { label: "Resource", render: function (row) {
+        return [
+          c.el("span", { text: row.label || row.id }),
+          c.el("div", { className: "muted", text: row.summary || "No observation yet" }),
+        ];
+      } },
       { label: "Kind", render: function (row) { return c.badge(row.kind); } },
       { label: "Ownership", key: "ownership" },
       { label: "Status", render: function (row) { return c.status(row.status); } },

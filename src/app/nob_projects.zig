@@ -149,7 +149,11 @@ pub fn writeShowJson(ctx: Context, reference: []const u8, writer: anytype) !void
         try app_render.writeJsonStringField(writer, "label", resource.label, true);
         try app_render.writeJsonStringField(writer, "ownership", resource.ownership, true);
         try app_render.writeJsonStringField(writer, "status", resource.effective_status.text(), true);
-        try app_render.writeJsonNullableStringField(writer, "summary", resource.status_summary, false);
+        try app_render.writeJsonNullableStringField(writer, "summary", resource.status_summary, true);
+        try writer.writeAll("\"runner_evidence\":");
+        try writer.writeAll(resource.runner_observation_json orelse "null");
+        try writer.writeAll(",\"cloudio_evidence\":");
+        try writer.writeAll(resource.cloudio_observation_json orelse "null");
         try writer.writeByte('}');
     }
     try writer.writeAll("],\"actions\":[");
