@@ -189,6 +189,14 @@ pub fn build(b: *std.Build) void {
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
         },
     });
+    const nob_id_mod = b.createModule(.{
+        .root_source_file = b.path("src/nob/id.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+        },
+    });
     const nob_subprocess_mod = b.createModule(.{
         .root_source_file = b.path("src/nob/subprocess.zig"),
         .target = target,
@@ -225,6 +233,17 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "nob_protocol", .module = nob_protocol_mod },
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+            .{ .name = "nob_source", .module = nob_source_mod },
+            .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
+        },
+    });
+    const nob_action_protocol_mod = b.createModule(.{
+        .root_source_file = b.path("src/nob/action_protocol.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "nob_sdk", .module = nob_sdk_mod },
             .{ .name = "nob_source", .module = nob_source_mod },
             .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
@@ -980,6 +999,39 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(app_nob_runtime_mod);
+    const app_nob_actions_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/nob_actions.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_time", .module = core_time_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "nob_action_protocol", .module = nob_action_protocol_mod },
+            .{ .name = "nob_bootstrap", .module = nob_bootstrap_mod },
+            .{ .name = "nob_id", .module = nob_id_mod },
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+            .{ .name = "nob_source", .module = nob_source_mod },
+        },
+    });
+    linkSqlite(app_nob_actions_mod);
+    const app_nob_worker_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/nob_worker.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_time", .module = core_time_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "nob_action_protocol", .module = nob_action_protocol_mod },
+            .{ .name = "nob_bootstrap", .module = nob_bootstrap_mod },
+            .{ .name = "nob_sdk", .module = nob_sdk_mod },
+            .{ .name = "nob_source", .module = nob_source_mod },
+            .{ .name = "nob_subprocess", .module = nob_subprocess_mod },
+        },
+    });
+    linkSqlite(app_nob_worker_mod);
 
     const app_system_mod = b.createModule(.{
         .root_source_file = b.path("src/app/system.zig"),
@@ -1265,6 +1317,19 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(runtime_scheduler_mod);
+    const runtime_nob_workers_mod = b.createModule(.{
+        .root_source_file = b.path("src/runtime/nob_workers.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_nob_worker", .module = app_nob_worker_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_time", .module = core_time_mod },
+            .{ .name = "core_version", .module = core_version_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+        },
+    });
+    linkSqlite(runtime_nob_workers_mod);
 
     const app_serve_mod = b.createModule(.{
         .root_source_file = b.path("src/server/root.zig"),
@@ -1565,9 +1630,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_nob_actions", .module = app_nob_actions_mod },
             .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
             .{ .name = "app_nob_runtime", .module = app_nob_runtime_mod },
+            .{ .name = "app_nob_worker", .module = app_nob_worker_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
             .{ .name = "core_config", .module = core_config_mod },
@@ -1608,6 +1675,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_serve", .module = app_serve_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "runtime_nob_workers", .module = runtime_nob_workers_mod },
             .{ .name = "runtime_scheduler", .module = runtime_scheduler_mod },
         },
     });
@@ -1764,6 +1832,9 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_projects_mod);
     addModuleTest(b, test_step, app_nob_projects_mod);
     addModuleTest(b, test_step, app_nob_runtime_mod);
+    addModuleTest(b, test_step, app_nob_actions_mod);
+    addModuleTest(b, test_step, app_nob_worker_mod);
+    addModuleTest(b, test_step, runtime_nob_workers_mod);
     addModuleTest(b, test_step, app_system_mod);
     addModuleTest(b, test_step, app_topology_mod);
     addModuleTest(b, test_step, app_actions_mod);
@@ -1832,11 +1903,13 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, provider_typed_routes_mod);
     addModuleTest(b, test_step, nob_model_mod);
     addModuleTest(b, test_step, nob_protocol_mod);
+    addModuleTest(b, test_step, nob_id_mod);
     addModuleTest(b, test_step, nob_subprocess_mod);
     addModuleTest(b, test_step, nob_source_mod);
     addModuleTest(b, test_step, nob_bootstrap_mod);
     addModuleTest(b, test_step, nob_independent_observation_mod);
     addModuleTest(b, test_step, nob_observation_mod);
+    addModuleTest(b, test_step, nob_action_protocol_mod);
     addModuleTest(b, test_step, provider_cloudflare_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_transport_mod);
     addModuleTest(b, test_step, provider_cloudflare_mod);

@@ -637,6 +637,32 @@ pub const migrations = [_]Migration{
         \\);
         ,
     },
+    .{
+        .version = 14,
+        .name = "nob_run_bindings",
+        .sql =
+        \\ALTER TABLE project_plans ADD COLUMN runner_sha256 TEXT;
+        \\ALTER TABLE project_plans ADD COLUMN source_revision TEXT;
+        \\ALTER TABLE project_plans ADD COLUMN source_dirty INTEGER;
+        \\ALTER TABLE project_operations ADD COLUMN manifest_sha256 TEXT;
+        \\ALTER TABLE project_operations ADD COLUMN source_fingerprint TEXT;
+        \\ALTER TABLE project_operations ADD COLUMN runner_sha256 TEXT;
+        \\ALTER TABLE project_operations ADD COLUMN plan_sha256 TEXT;
+        \\CREATE UNIQUE INDEX idx_project_operations_idempotency
+        \\  ON project_operations(project_id, idempotency_key)
+        \\  WHERE idempotency_key IS NOT NULL;
+        \\CREATE TABLE project_broker_authorizations (
+        \\  operation_id TEXT NOT NULL REFERENCES project_operations(id) ON DELETE CASCADE,
+        \\  authorization_id TEXT NOT NULL,
+        \\  capability TEXT NOT NULL,
+        \\  resource_id TEXT NOT NULL,
+        \\  operation TEXT NOT NULL,
+        \\  metadata_json TEXT,
+        \\  used_at INTEGER,
+        \\  PRIMARY KEY (operation_id, authorization_id)
+        \\);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;
@@ -746,6 +772,7 @@ test "applies migrations idempotently" {
     try std.testing.expect(try tableExists(handle.?, "project_operation_events"));
     try std.testing.expect(try tableExists(handle.?, "project_artifacts"));
     try std.testing.expect(try tableExists(handle.?, "project_operation_locks"));
+    try std.testing.expect(try tableExists(handle.?, "project_broker_authorizations"));
     try std.testing.expect(try tableExists(handle.?, "systemd_units"));
     try std.testing.expect(try indexExists(handle.?, "idx_snapshots_captured_at"));
     try std.testing.expect(try indexExists(handle.?, "idx_provider_raw_captured_at"));

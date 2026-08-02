@@ -87,6 +87,16 @@ pub const NobActionAvailability = nob_repository.ActionAvailability;
 pub const NobAcceptedRunner = nob_repository.AcceptedRunner;
 pub const NobResourceObservation = nob_repository.ResourceObservation;
 pub const NobAcceptedObservation = nob_repository.AcceptedObservation;
+pub const NobPlan = nob_model.Plan;
+pub const NobNewPlan = nob_repository.NewPlan;
+pub const NobRun = nob_model.Run;
+pub const NobRuns = nob_model.Runs;
+pub const NobNewRun = nob_repository.NewRun;
+pub const NobRunFinish = nob_repository.RunFinish;
+pub const NobRunEvent = nob_model.RunEvent;
+pub const NobRunEvents = nob_model.RunEvents;
+pub const NobNewRunEvent = nob_repository.NewRunEvent;
+pub const NobBrokerAuthorization = nob_repository.BrokerAuthorization;
 
 test "sqlite schema initializes" {
     const allocator = std.testing.allocator;

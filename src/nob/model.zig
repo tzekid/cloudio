@@ -167,6 +167,127 @@ pub const Actions = struct {
     }
 };
 
+pub const Plan = struct {
+    id: []u8,
+    project_id: i64,
+    action_id: []u8,
+    resource_id: ?[]u8,
+    input_json: []u8,
+    plan_json: []u8,
+    plan_sha256: []u8,
+    manifest_sha256: []u8,
+    source_fingerprint: ?[]u8,
+    effect: []u8,
+    confirmation: []u8,
+    state: []u8,
+    requested_by: []u8,
+    runner_sha256: ?[]u8,
+    source_revision: ?[]u8,
+    source_dirty: ?bool,
+    created_at: i64,
+    expires_at: i64,
+    consumed_at: ?i64,
+
+    pub fn deinit(self: Plan, allocator: Allocator) void {
+        allocator.free(self.id);
+        allocator.free(self.action_id);
+        freeOptional(allocator, self.resource_id);
+        allocator.free(self.input_json);
+        allocator.free(self.plan_json);
+        allocator.free(self.plan_sha256);
+        allocator.free(self.manifest_sha256);
+        freeOptional(allocator, self.source_fingerprint);
+        allocator.free(self.effect);
+        allocator.free(self.confirmation);
+        allocator.free(self.state);
+        allocator.free(self.requested_by);
+        freeOptional(allocator, self.runner_sha256);
+        freeOptional(allocator, self.source_revision);
+    }
+};
+
+pub const Run = struct {
+    id: []u8,
+    project_id: i64,
+    plan_id: ?[]u8,
+    action_id: []u8,
+    resource_id: ?[]u8,
+    state: []u8,
+    outcome: ?[]u8,
+    effect: []u8,
+    requested_by: []u8,
+    idempotency_key: ?[]u8,
+    runner_path: ?[]u8,
+    log_path: ?[]u8,
+    stderr_path: ?[]u8,
+    summary: ?[]u8,
+    error_code: ?[]u8,
+    manifest_sha256: ?[]u8,
+    source_fingerprint: ?[]u8,
+    runner_sha256: ?[]u8,
+    plan_sha256: ?[]u8,
+    queued_at: i64,
+    started_at: ?i64,
+    finished_at: ?i64,
+    cancel_requested_at: ?i64,
+    heartbeat_at: ?i64,
+
+    pub fn deinit(self: Run, allocator: Allocator) void {
+        allocator.free(self.id);
+        freeOptional(allocator, self.plan_id);
+        allocator.free(self.action_id);
+        freeOptional(allocator, self.resource_id);
+        allocator.free(self.state);
+        freeOptional(allocator, self.outcome);
+        allocator.free(self.effect);
+        allocator.free(self.requested_by);
+        freeOptional(allocator, self.idempotency_key);
+        freeOptional(allocator, self.runner_path);
+        freeOptional(allocator, self.log_path);
+        freeOptional(allocator, self.stderr_path);
+        freeOptional(allocator, self.summary);
+        freeOptional(allocator, self.error_code);
+        freeOptional(allocator, self.manifest_sha256);
+        freeOptional(allocator, self.source_fingerprint);
+        freeOptional(allocator, self.runner_sha256);
+        freeOptional(allocator, self.plan_sha256);
+    }
+};
+
+pub const Runs = struct {
+    items: []Run,
+
+    pub fn deinit(self: *Runs, allocator: Allocator) void {
+        for (self.items) |item| item.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const RunEvent = struct {
+    operation_id: []u8,
+    seq: i64,
+    event_type: []u8,
+    level: ?[]u8,
+    payload_json: []u8,
+    received_at: i64,
+
+    pub fn deinit(self: RunEvent, allocator: Allocator) void {
+        allocator.free(self.operation_id);
+        allocator.free(self.event_type);
+        freeOptional(allocator, self.level);
+        allocator.free(self.payload_json);
+    }
+};
+
+pub const RunEvents = struct {
+    items: []RunEvent,
+
+    pub fn deinit(self: *RunEvents, allocator: Allocator) void {
+        for (self.items) |item| item.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
 pub fn parseDiscoveryState(text: []const u8) !DiscoveryState {
     return std.meta.stringToEnum(DiscoveryState, text) orelse error.InvalidDatabaseValue;
 }

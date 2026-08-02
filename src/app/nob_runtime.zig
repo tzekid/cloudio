@@ -85,7 +85,7 @@ pub fn observe(ctx: Context, reference: []const u8) !Outcome {
     if (project.runner_state != .ready) return error.RunnerNotReady;
     const runner_path = project.runner_path orelse return error.RunnerNotReady;
     const runner_detail = project.runner_detail orelse return error.RunnerMetadataMissing;
-    const zig_path = try zigPathFromMetadata(ctx.gpa, runner_detail);
+    const zig_path = try bootstrap.zigPathFromMetadata(ctx.gpa, runner_detail);
     defer ctx.gpa.free(zig_path);
     const source_state = try source.inspect(ctx.io, ctx.gpa, project.root_path, manifest_sha256, ctx.config.runtime_environment);
     defer source_state.deinit(ctx.gpa);
@@ -196,15 +196,6 @@ fn failureDetail(allocator: Allocator, diagnostics: []const u8, err: anyerror) !
     if (diagnostics.len == 0) return try allocator.dupe(u8, @errorName(err));
     const tail = diagnostics[diagnostics.len - @min(diagnostics.len, max) ..];
     return try std.fmt.allocPrint(allocator, "{s}: {s}", .{ @errorName(err), tail });
-}
-
-fn zigPathFromMetadata(allocator: Allocator, bytes: []const u8) ![]u8 {
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, bytes, .{});
-    defer parsed.deinit();
-    if (parsed.value != .object) return error.RunnerMetadataInvalid;
-    const value = parsed.value.object.get("zig_path") orelse return error.RunnerMetadataInvalid;
-    if (value != .string or !std.fs.path.isAbsolute(value.string)) return error.RunnerMetadataInvalid;
-    return try allocator.dupe(u8, value.string);
 }
 
 fn stringify(allocator: Allocator, value: anytype) ![]u8 {

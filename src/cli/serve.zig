@@ -4,6 +4,7 @@ const app_dashboard = @import("app_dashboard");
 const app_serve = @import("app_serve");
 const cli_args = @import("cli_args");
 const core_config = @import("core_config");
+const runtime_nob_workers = @import("runtime_nob_workers");
 const runtime_scheduler = @import("runtime_scheduler");
 
 const Allocator = std.mem.Allocator;
@@ -25,6 +26,11 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
     if (!options.once and ctx.config.refresh_seconds > 0) {
         runtime_scheduler.start(.{ .io = ctx.io, .gpa = ctx.gpa, .config = ctx.config }) catch |err| {
             std.debug.print("cloudio scheduler spawn failed: {s}\n", .{@errorName(err)});
+        };
+    }
+    if (!options.once) {
+        runtime_nob_workers.start(.{ .io = ctx.io, .gpa = ctx.gpa, .config = ctx.config }) catch |err| {
+            std.debug.print("cloudio nob worker spawn failed: {s}\n", .{@errorName(err)});
         };
     }
     try app_serve.run(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }, options);

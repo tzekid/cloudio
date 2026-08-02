@@ -64,6 +64,13 @@ const RunnerMetadata = struct {
     built_at: i64,
 };
 
+pub fn zigPathFromMetadata(allocator: Allocator, bytes: []const u8) ![]u8 {
+    var parsed = try std.json.parseFromSlice(RunnerMetadata, allocator, bytes, .{ .allocate = .alloc_always });
+    defer parsed.deinit();
+    if (!std.fs.path.isAbsolute(parsed.value.zig_path)) return error.RunnerMetadataInvalid;
+    return try allocator.dupe(u8, parsed.value.zig_path);
+}
+
 pub fn ensure(
     io: Io,
     allocator: Allocator,

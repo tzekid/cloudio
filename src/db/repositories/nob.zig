@@ -71,6 +71,71 @@ pub const AcceptedObservation = struct {
     now: i64,
 };
 
+pub const NewPlan = struct {
+    id: []const u8,
+    project_id: i64,
+    action_id: []const u8,
+    resource_id: ?[]const u8,
+    input_json: []const u8,
+    plan_json: []const u8,
+    plan_sha256: []const u8,
+    manifest_sha256: []const u8,
+    source_fingerprint: []const u8,
+    effect: []const u8,
+    confirmation: []const u8,
+    requested_by: []const u8,
+    runner_sha256: []const u8,
+    source_revision: ?[]const u8,
+    source_dirty: bool,
+    created_at: i64,
+    expires_at: i64,
+};
+
+pub const BrokerAuthorization = struct {
+    authorization_id: []const u8,
+    capability: []const u8,
+    resource_id: []const u8,
+    operation: []const u8,
+    metadata_json: ?[]const u8,
+};
+
+pub const NewRun = struct {
+    id: []const u8,
+    plan_id: []const u8,
+    project_id: i64,
+    action_id: []const u8,
+    resource_id: ?[]const u8,
+    effect: []const u8,
+    requested_by: []const u8,
+    idempotency_key: ?[]const u8,
+    runner_path: []const u8,
+    manifest_sha256: []const u8,
+    source_fingerprint: []const u8,
+    runner_sha256: []const u8,
+    plan_sha256: []const u8,
+    authorizations: []const BrokerAuthorization,
+    queued_at: i64,
+};
+
+pub const RunFinish = struct {
+    state: []const u8,
+    outcome: []const u8,
+    summary: []const u8,
+    error_code: ?[]const u8,
+    log_path: ?[]const u8,
+    stderr_path: ?[]const u8,
+    finished_at: i64,
+};
+
+pub const NewRunEvent = struct {
+    operation_id: []const u8,
+    seq: i64,
+    event_type: []const u8,
+    level: ?[]const u8,
+    payload_json: []const u8,
+    received_at: i64,
+};
+
 pub const DiscoveryRecord = struct {
     declared_id: ?[]const u8,
     display_name: []const u8,
@@ -339,6 +404,330 @@ pub const Repository = struct {
         try bindI64(stmt, 3, now);
         try bindI64(stmt, 4, project_id);
         try stepDone(stmt);
+    }
+
+    pub fn insertPlan(self: Repository, value: NewPlan) !void {
+        const stmt = try self.prepare(
+            \\INSERT INTO project_plans(
+            \\  id, project_id, action_id, resource_id, input_json, plan_json, plan_sha256,
+            \\  manifest_sha256, source_fingerprint, effect, confirmation, state, requested_by,
+            \\  created_at, expires_at, runner_sha256, source_revision, source_dirty
+            \\) VALUES(?,?,?,?,?,?,?,?,?,?,?,'ready',?,?,?,?,?,?)
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, value.id);
+        try bindI64(stmt, 2, value.project_id);
+        try bindText(stmt, 3, value.action_id);
+        try bindTextOpt(stmt, 4, value.resource_id);
+        try bindText(stmt, 5, value.input_json);
+        try bindText(stmt, 6, value.plan_json);
+        try bindText(stmt, 7, value.plan_sha256);
+        try bindText(stmt, 8, value.manifest_sha256);
+        try bindText(stmt, 9, value.source_fingerprint);
+        try bindText(stmt, 10, value.effect);
+        try bindText(stmt, 11, value.confirmation);
+        try bindText(stmt, 12, value.requested_by);
+        try bindI64(stmt, 13, value.created_at);
+        try bindI64(stmt, 14, value.expires_at);
+        try bindText(stmt, 15, value.runner_sha256);
+        try bindTextOpt(stmt, 16, value.source_revision);
+        try bindI64(stmt, 17, @intFromBool(value.source_dirty));
+        try stepDone(stmt);
+    }
+
+    pub fn getPlan(self: Repository, allocator: Allocator, id: []const u8) !?model.Plan {
+        const stmt = try self.prepare(plan_select ++ " WHERE id=?");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, id);
+        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return null;
+        return try planFromStmt(allocator, stmt);
+    }
+
+    pub fn expirePlans(self: Repository, now: i64) !usize {
+        const stmt = try self.prepare("UPDATE project_plans SET state='expired' WHERE state='ready' AND expires_at<=?");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, now);
+        try stepDone(stmt);
+        return @intCast(sqlite.sqlite3_changes(self.handle));
+    }
+
+    pub fn queueRun(self: Repository, value: NewRun) !void {
+        try self.exec("BEGIN IMMEDIATE");
+        var committed = false;
+        defer if (!committed) self.exec("ROLLBACK") catch {};
+
+        if (value.idempotency_key) |key| {
+            const existing = try self.prepare("SELECT 1 FROM project_operations WHERE project_id=? AND idempotency_key=?");
+            defer _ = sqlite.sqlite3_finalize(existing);
+            try bindI64(existing, 1, value.project_id);
+            try bindText(existing, 2, key);
+            if (sqlite.sqlite3_step(existing) == sqlite.SQLITE_ROW) return error.DuplicateRunRequest;
+        }
+
+        const consume = try self.prepare(
+            \\UPDATE project_plans SET state='consumed', consumed_at=?
+            \\WHERE id=? AND project_id=? AND state='ready' AND expires_at>?
+            \\  AND manifest_sha256=? AND source_fingerprint=? AND runner_sha256=? AND plan_sha256=?
+        );
+        defer _ = sqlite.sqlite3_finalize(consume);
+        try bindI64(consume, 1, value.queued_at);
+        try bindText(consume, 2, value.plan_id);
+        try bindI64(consume, 3, value.project_id);
+        try bindI64(consume, 4, value.queued_at);
+        try bindText(consume, 5, value.manifest_sha256);
+        try bindText(consume, 6, value.source_fingerprint);
+        try bindText(consume, 7, value.runner_sha256);
+        try bindText(consume, 8, value.plan_sha256);
+        try stepDone(consume);
+        if (sqlite.sqlite3_changes(self.handle) != 1) return error.PlanUnavailable;
+
+        const insert = try self.prepare(
+            \\INSERT INTO project_operations(
+            \\  id, project_id, plan_id, action_id, resource_id, state, effect, requested_by,
+            \\  idempotency_key, runner_path, queued_at, manifest_sha256, source_fingerprint,
+            \\  runner_sha256, plan_sha256
+            \\) VALUES(?,?,?,?,?,'queued',?,?,?,?,?,?,?,?,?)
+        );
+        defer _ = sqlite.sqlite3_finalize(insert);
+        try bindText(insert, 1, value.id);
+        try bindI64(insert, 2, value.project_id);
+        try bindText(insert, 3, value.plan_id);
+        try bindText(insert, 4, value.action_id);
+        try bindTextOpt(insert, 5, value.resource_id);
+        try bindText(insert, 6, value.effect);
+        try bindText(insert, 7, value.requested_by);
+        try bindTextOpt(insert, 8, value.idempotency_key);
+        try bindText(insert, 9, value.runner_path);
+        try bindI64(insert, 10, value.queued_at);
+        try bindText(insert, 11, value.manifest_sha256);
+        try bindText(insert, 12, value.source_fingerprint);
+        try bindText(insert, 13, value.runner_sha256);
+        try bindText(insert, 14, value.plan_sha256);
+        try stepDone(insert);
+
+        const authorization = try self.prepare(
+            \\INSERT INTO project_broker_authorizations(
+            \\  operation_id, authorization_id, capability, resource_id, operation, metadata_json
+            \\) VALUES(?,?,?,?,?,?)
+        );
+        defer _ = sqlite.sqlite3_finalize(authorization);
+        for (value.authorizations) |item| {
+            _ = sqlite.sqlite3_reset(authorization);
+            _ = sqlite.sqlite3_clear_bindings(authorization);
+            try bindText(authorization, 1, value.id);
+            try bindText(authorization, 2, item.authorization_id);
+            try bindText(authorization, 3, item.capability);
+            try bindText(authorization, 4, item.resource_id);
+            try bindText(authorization, 5, item.operation);
+            try bindTextOpt(authorization, 6, item.metadata_json);
+            try stepDone(authorization);
+        }
+
+        try self.exec("COMMIT");
+        committed = true;
+    }
+
+    pub fn claimNextRun(self: Repository, allocator: Allocator, now: i64) !?model.Run {
+        try self.exec("BEGIN IMMEDIATE");
+        var committed = false;
+        defer if (!committed) self.exec("ROLLBACK") catch {};
+        const select = try self.prepare(run_select ++
+            \\ WHERE state='queued'
+            \\   AND NOT EXISTS(SELECT 1 FROM project_operation_locks l WHERE l.project_id=project_operations.project_id)
+            \\ ORDER BY queued_at, id LIMIT 1
+        );
+        defer _ = sqlite.sqlite3_finalize(select);
+        if (sqlite.sqlite3_step(select) != sqlite.SQLITE_ROW) {
+            try self.exec("COMMIT");
+            committed = true;
+            return null;
+        }
+        var run = try runFromStmt(allocator, select);
+        errdefer run.deinit(allocator);
+        const lock = try self.prepare("INSERT INTO project_operation_locks(project_id, operation_id, acquired_at) VALUES(?,?,?)");
+        defer _ = sqlite.sqlite3_finalize(lock);
+        try bindI64(lock, 1, run.project_id);
+        try bindText(lock, 2, run.id);
+        try bindI64(lock, 3, now);
+        try stepDone(lock);
+        const update = try self.prepare("UPDATE project_operations SET state='running', started_at=?, heartbeat_at=? WHERE id=? AND state='queued'");
+        defer _ = sqlite.sqlite3_finalize(update);
+        try bindI64(update, 1, now);
+        try bindI64(update, 2, now);
+        try bindText(update, 3, run.id);
+        try stepDone(update);
+        if (sqlite.sqlite3_changes(self.handle) != 1) return error.RunStateChanged;
+        allocator.free(run.state);
+        run.state = try allocator.dupe(u8, "running");
+        run.started_at = now;
+        run.heartbeat_at = now;
+        try self.exec("COMMIT");
+        committed = true;
+        return run;
+    }
+
+    pub fn heartbeatRun(self: Repository, id: []const u8, now: i64) !void {
+        const stmt = try self.prepare("UPDATE project_operations SET heartbeat_at=? WHERE id=? AND state='running'");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, now);
+        try bindText(stmt, 2, id);
+        try stepDone(stmt);
+    }
+
+    pub fn finishRun(self: Repository, id: []const u8, finish: RunFinish) !void {
+        try self.exec("BEGIN IMMEDIATE");
+        var committed = false;
+        defer if (!committed) self.exec("ROLLBACK") catch {};
+        const stmt = try self.prepare(
+            \\UPDATE project_operations
+            \\SET state=?, outcome=?, summary=?, error_code=?, log_path=?, stderr_path=?,
+            \\    finished_at=?, heartbeat_at=?
+            \\WHERE id=? AND state='running'
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, finish.state);
+        try bindText(stmt, 2, finish.outcome);
+        try bindText(stmt, 3, finish.summary);
+        try bindTextOpt(stmt, 4, finish.error_code);
+        try bindTextOpt(stmt, 5, finish.log_path);
+        try bindTextOpt(stmt, 6, finish.stderr_path);
+        try bindI64(stmt, 7, finish.finished_at);
+        try bindI64(stmt, 8, finish.finished_at);
+        try bindText(stmt, 9, id);
+        try stepDone(stmt);
+        if (sqlite.sqlite3_changes(self.handle) != 1) return error.RunStateChanged;
+        const unlock = try self.prepare("DELETE FROM project_operation_locks WHERE operation_id=?");
+        defer _ = sqlite.sqlite3_finalize(unlock);
+        try bindText(unlock, 1, id);
+        try stepDone(unlock);
+        try self.exec("COMMIT");
+        committed = true;
+    }
+
+    pub fn requestRunCancellation(self: Repository, id: []const u8, now: i64) !bool {
+        const stmt = try self.prepare(
+            \\UPDATE project_operations
+            \\SET cancel_requested_at=?,
+            \\    state=CASE WHEN state='queued' THEN 'canceled' ELSE state END,
+            \\    outcome=CASE WHEN state='queued' THEN 'canceled' ELSE outcome END,
+            \\    summary=CASE WHEN state='queued' THEN 'run canceled before it started' ELSE summary END,
+            \\    finished_at=CASE WHEN state='queued' THEN ? ELSE finished_at END
+            \\WHERE id=? AND state IN ('queued','running')
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindI64(stmt, 1, now);
+        try bindI64(stmt, 2, now);
+        try bindText(stmt, 3, id);
+        try stepDone(stmt);
+        return sqlite.sqlite3_changes(self.handle) == 1;
+    }
+
+    pub fn runCancellationRequested(self: Repository, id: []const u8) !bool {
+        const stmt = try self.prepare("SELECT cancel_requested_at IS NOT NULL FROM project_operations WHERE id=?");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, id);
+        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return false;
+        return sqlite.sqlite3_column_int64(stmt, 0) != 0;
+    }
+
+    pub fn recoverStaleRuns(self: Repository, stale_before: i64, now: i64) !usize {
+        try self.exec("BEGIN IMMEDIATE");
+        var committed = false;
+        defer if (!committed) self.exec("ROLLBACK") catch {};
+        const update = try self.prepare(
+            \\UPDATE project_operations
+            \\SET state='interrupted', outcome='interrupted', summary='worker heartbeat expired',
+            \\    error_code='stale_worker', finished_at=?
+            \\WHERE state='running' AND (heartbeat_at IS NULL OR heartbeat_at<?)
+        );
+        defer _ = sqlite.sqlite3_finalize(update);
+        try bindI64(update, 1, now);
+        try bindI64(update, 2, stale_before);
+        try stepDone(update);
+        const count: usize = @intCast(sqlite.sqlite3_changes(self.handle));
+        const unlock = try self.prepare(
+            \\DELETE FROM project_operation_locks
+            \\WHERE operation_id IN (SELECT id FROM project_operations WHERE state='interrupted' AND error_code='stale_worker')
+        );
+        defer _ = sqlite.sqlite3_finalize(unlock);
+        try stepDone(unlock);
+        try self.exec("COMMIT");
+        committed = true;
+        return count;
+    }
+
+    pub fn appendRunEvent(self: Repository, value: NewRunEvent) !void {
+        const stmt = try self.prepare(
+            \\INSERT INTO project_operation_events(operation_id, seq, event_type, level, payload_json, received_at)
+            \\VALUES(?,?,?,?,?,?)
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, value.operation_id);
+        try bindI64(stmt, 2, value.seq);
+        try bindText(stmt, 3, value.event_type);
+        try bindTextOpt(stmt, 4, value.level);
+        try bindText(stmt, 5, value.payload_json);
+        try bindI64(stmt, 6, value.received_at);
+        try stepDone(stmt);
+    }
+
+    pub fn getRun(self: Repository, allocator: Allocator, id: []const u8) !?model.Run {
+        const stmt = try self.prepare(run_select ++ " WHERE id=?");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, id);
+        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return null;
+        return try runFromStmt(allocator, stmt);
+    }
+
+    pub fn listRuns(self: Repository, allocator: Allocator, project_id: ?i64, limit: i64) !model.Runs {
+        const sql = if (project_id == null)
+            run_select ++ " ORDER BY queued_at DESC LIMIT ?"
+        else
+            run_select ++ " WHERE project_id=? ORDER BY queued_at DESC LIMIT ?";
+        const stmt = try self.prepare(sql);
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        if (project_id) |id| {
+            try bindI64(stmt, 1, id);
+            try bindI64(stmt, 2, limit);
+        } else try bindI64(stmt, 1, limit);
+        var rows = std.ArrayList(model.Run).empty;
+        errdefer {
+            for (rows.items) |row| row.deinit(allocator);
+            rows.deinit(allocator);
+        }
+        while (true) switch (sqlite.sqlite3_step(stmt)) {
+            sqlite.SQLITE_ROW => try rows.append(allocator, try runFromStmt(allocator, stmt)),
+            sqlite.SQLITE_DONE => break,
+            else => return error.SqliteStep,
+        };
+        return .{ .items = try rows.toOwnedSlice(allocator) };
+    }
+
+    pub fn listRunEvents(self: Repository, allocator: Allocator, operation_id: []const u8) !model.RunEvents {
+        const stmt = try self.prepare(
+            \\SELECT operation_id, seq, event_type, level, payload_json, received_at
+            \\FROM project_operation_events WHERE operation_id=? ORDER BY seq
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, operation_id);
+        var rows = std.ArrayList(model.RunEvent).empty;
+        errdefer {
+            for (rows.items) |row| row.deinit(allocator);
+            rows.deinit(allocator);
+        }
+        while (true) switch (sqlite.sqlite3_step(stmt)) {
+            sqlite.SQLITE_ROW => try rows.append(allocator, .{
+                .operation_id = try dupeRequired(allocator, stmt, 0),
+                .seq = sqlite.sqlite3_column_int64(stmt, 1),
+                .event_type = try dupeRequired(allocator, stmt, 2),
+                .level = try dupeOptional(allocator, stmt, 3),
+                .payload_json = try dupeRequired(allocator, stmt, 4),
+                .received_at = sqlite.sqlite3_column_int64(stmt, 5),
+            }),
+            sqlite.SQLITE_DONE => break,
+            else => return error.SqliteStep,
+        };
+        return .{ .items = try rows.toOwnedSlice(allocator) };
     }
 
     pub fn getProject(self: Repository, allocator: Allocator, project_id: i64) !?model.Project {
@@ -621,6 +1010,74 @@ const project_select =
     \\       last_seen_at, last_observed_at, updated_at
     \\FROM managed_projects
 ;
+
+const plan_select =
+    \\SELECT id, project_id, action_id, resource_id, input_json, plan_json, plan_sha256,
+    \\       manifest_sha256, source_fingerprint, effect, confirmation, state, requested_by,
+    \\       runner_sha256, source_revision, source_dirty, created_at, expires_at, consumed_at
+    \\FROM project_plans
+;
+
+const run_select =
+    \\SELECT id, project_id, plan_id, action_id, resource_id, state, outcome, effect,
+    \\       requested_by, idempotency_key, runner_path, log_path, stderr_path, summary,
+    \\       error_code, manifest_sha256, source_fingerprint, runner_sha256, plan_sha256,
+    \\       queued_at, started_at, finished_at, cancel_requested_at, heartbeat_at
+    \\FROM project_operations
+;
+
+fn planFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !model.Plan {
+    return .{
+        .id = try dupeRequired(allocator, stmt, 0),
+        .project_id = sqlite.sqlite3_column_int64(stmt, 1),
+        .action_id = try dupeRequired(allocator, stmt, 2),
+        .resource_id = try dupeOptional(allocator, stmt, 3),
+        .input_json = try dupeRequired(allocator, stmt, 4),
+        .plan_json = try dupeRequired(allocator, stmt, 5),
+        .plan_sha256 = try dupeRequired(allocator, stmt, 6),
+        .manifest_sha256 = try dupeRequired(allocator, stmt, 7),
+        .source_fingerprint = try dupeOptional(allocator, stmt, 8),
+        .effect = try dupeRequired(allocator, stmt, 9),
+        .confirmation = try dupeRequired(allocator, stmt, 10),
+        .state = try dupeRequired(allocator, stmt, 11),
+        .requested_by = try dupeRequired(allocator, stmt, 12),
+        .runner_sha256 = try dupeOptional(allocator, stmt, 13),
+        .source_revision = try dupeOptional(allocator, stmt, 14),
+        .source_dirty = columnBoolOptional(stmt, 15),
+        .created_at = sqlite.sqlite3_column_int64(stmt, 16),
+        .expires_at = sqlite.sqlite3_column_int64(stmt, 17),
+        .consumed_at = columnI64Optional(stmt, 18),
+    };
+}
+
+fn runFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !model.Run {
+    return .{
+        .id = try dupeRequired(allocator, stmt, 0),
+        .project_id = sqlite.sqlite3_column_int64(stmt, 1),
+        .plan_id = try dupeOptional(allocator, stmt, 2),
+        .action_id = try dupeRequired(allocator, stmt, 3),
+        .resource_id = try dupeOptional(allocator, stmt, 4),
+        .state = try dupeRequired(allocator, stmt, 5),
+        .outcome = try dupeOptional(allocator, stmt, 6),
+        .effect = try dupeRequired(allocator, stmt, 7),
+        .requested_by = try dupeRequired(allocator, stmt, 8),
+        .idempotency_key = try dupeOptional(allocator, stmt, 9),
+        .runner_path = try dupeOptional(allocator, stmt, 10),
+        .log_path = try dupeOptional(allocator, stmt, 11),
+        .stderr_path = try dupeOptional(allocator, stmt, 12),
+        .summary = try dupeOptional(allocator, stmt, 13),
+        .error_code = try dupeOptional(allocator, stmt, 14),
+        .manifest_sha256 = try dupeOptional(allocator, stmt, 15),
+        .source_fingerprint = try dupeOptional(allocator, stmt, 16),
+        .runner_sha256 = try dupeOptional(allocator, stmt, 17),
+        .plan_sha256 = try dupeOptional(allocator, stmt, 18),
+        .queued_at = sqlite.sqlite3_column_int64(stmt, 19),
+        .started_at = columnI64Optional(stmt, 20),
+        .finished_at = columnI64Optional(stmt, 21),
+        .cancel_requested_at = columnI64Optional(stmt, 22),
+        .heartbeat_at = columnI64Optional(stmt, 23),
+    };
+}
 
 fn projectFromStmt(allocator: Allocator, stmt: *sqlite.sqlite3_stmt) !model.Project {
     return .{
