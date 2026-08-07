@@ -161,6 +161,7 @@ pub fn run(init: std.process.Init) !void {
             .io = init.io,
             .gpa = init.gpa,
             .paths = caddyPaths(cfg),
+            .config = cfg,
             .db = &db,
         }, args[2..]);
     } else if (std.mem.eql(u8, cmd, "system")) {
@@ -418,6 +419,9 @@ fn usage() void {
         \\  cloudio hostinger data-centers|firewalls|public-keys|templates|post-install-scripts
         \\  cloudio hostinger firewall <id>|template <id>|post-install-script <id>
         \\  cloudio caddy sites|upstreams|render|diff|validate
+        \\  cloudio caddy owned-status|owned-refresh|owned-preview
+        \\  cloudio caddy owned-create <host> <loopback:port>|owned-delete <host> --confirm <host>|owned-adopt <host>
+        \\  cloudio caddy owned-enable <host>|owned-disable <host>|owned-apply --confirm APPLY
         \\  cloudio system summary|services|ports|containers|metrics|logs [unit]
         \\  cloudio projects list|show <name>|correlate [--json|--format json]
         \\  cloudio nob list|show <id>|scan [--json|--format json]
@@ -459,13 +463,14 @@ fn commandDoctor(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []c
 }
 
 fn commandRefresh(io: Io, gpa: Allocator, cfg: Config, db: *Db, args: []const []const u8) !void {
-    try app_refresh.run(.{
+    _ = try app_refresh.run(.{
         .io = io,
         .gpa = gpa,
         .db = db,
         .domains = cfg.domains,
         .cloudflare_auth = cloudflareAuth(cfg),
         .hostinger_token = cfg.hostinger_api_token,
+        .hostinger_api_base = cfg.hostinger_api_base,
         .caddy_paths = caddyPaths(cfg),
         .projects_root = cfg.projects_root,
         .nob_enabled = cfg.nob_enabled,
@@ -635,6 +640,7 @@ fn cloudflareAuth(cfg: Config) app_cloudflare.Auth {
         .token = cfg.cloudflare_api_token,
         .email = cfg.cloudflare_email,
         .key = cfg.cloudflare_api_key,
+        .base_url = cfg.cloudflare_api_base,
     };
 }
 
@@ -642,6 +648,7 @@ fn caddyPaths(cfg: Config) app_caddy.Paths {
     return .{
         .caddyfile_path = cfg.caddyfile_path,
         .caddy_sites_path = cfg.caddy_sites_path,
+        .caddy_owned_path = cfg.caddy_owned_path,
         .caddy_admin_socket = cfg.caddy_admin_socket,
     };
 }

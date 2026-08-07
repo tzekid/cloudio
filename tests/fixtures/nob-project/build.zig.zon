@@ -1,0 +1,10 @@
+.{
+    .name = .cloudio_acceptance_project,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.17.0-dev.1509+bb296ab9b",
+    .dependencies = .{
+        .nob = .{ .path = "../../vendor/nob" },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "nob.json", "src" },
+    .fingerprint = 0x9f0f43cb01af073d,
+}

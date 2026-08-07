@@ -1,18 +1,16 @@
 # nob.zig protocol v1: hybrid Zig build and Cloudio control plane
 
-- Status: protocol/control-plane baseline implemented; real-project adoption in progress
+- Status: protocol/control-plane baseline implemented; adoption is project-owned
 - Audience: Cloudio and `nob.zig` implementers
 - Protocol name: **nob.zig protocol v1**
 - Static manifest: `nob.json`
-Last updated: 2026-08-02
+Last updated: 2026-08-03
 
 The external SDK, fixtures, examples, passive discovery, trust/bootstrap,
 independent observation, persisted plan/run engine, CLI/API/web adapters,
 logical secrets, scoped user-systemd and Caddy brokers, tombstones, and bounded
-retention are implemented on `master`. The remaining definition-of-done items
-in section 21 concern migrating representative production repositories and
-their project-specific failure-injection suites, not unresolved control-plane
-architecture.
+retention are implemented. This document defines the shared protocol and
+Cloudio trust boundary; it is not a cross-repository adoption roadmap.
 
 ## 1. Decision
 
@@ -447,7 +445,7 @@ Cloudio v1 understands these resource kinds:
 | `artifact.executable` | `release_resource`, `path` | existence, mode, digest where affordable |
 | `data.path` | `path`, `classification`, `backup_policy`, `purge` | existence and metadata, never contents |
 | `caddy.route` | `host`, `upstream` | desired route plus captured runtime route |
-| `docker.compose` | `file`, `project_name`, optional `services` | compose/container state; read-only in the first Cloudio milestone |
+| `docker.compose` | `file`, `project_name`, optional `services` | compose/container state; read-only in protocol v1 |
 | `process` | `match`, optional `pid_file` | process/socket correlation; observed only |
 
 Unknown kinds are retained and displayed as generic resources, but Cloudio
@@ -465,14 +463,14 @@ For `systemd.service`:
 - `desired` contains at least one of boolean `enabled` and `active`. It is an
   observation/reconciliation target, not permission to mutate by itself.
 - Each `environment_files` entry is an absolute path template. Prefix `-` and
-  other systemd optional-file syntax are forbidden; optionality is represented
-  explicitly in a future schema instead of overloaded string syntax.
+  other systemd optional-file syntax are forbidden; optional files are not
+  represented in protocol v1.
 - Valid controls are `start`, `stop`, `restart`, `reload`, `enable`, `disable`,
   and `logs`.
 - A control is allowed only when declared. `logs` is read-only; the others are
   mutations and go through the same plan/operation machinery as actions.
 - System-scope resources can be observed in v1. Their mutating controls report
-  `unsupported-privilege` until the privilege broker in section 15.6 exists.
+  `unsupported-privilege`; system-scope mutation is out of scope for v1.
 
 HTTP health URLs MUST be loopback HTTP or HTTPS in v1. They may not contain
 userinfo, fragments, or credentials. Redirects are disabled. Response bodies
@@ -500,7 +498,7 @@ The remaining v1 kind-specific validation is fixed:
   `upstream` is a loopback `host:port`. Raw Caddy directives are not accepted.
 - `docker.compose.file` is a safe relative path below the project root and
   `project_name` follows Compose project-name syntax. This kind is observed
-  only in the first milestone even if controls are mistakenly declared.
+  only in protocol v1 even if controls are mistakenly declared.
 - `process.match` is an informational exact executable basename, not a regular
   expression or command. `process` ownership MUST be `observed`, with no
   controls. A PID file is supporting evidence, never ownership proof by itself.
@@ -1113,8 +1111,7 @@ toolchains_file = "${XDG_CONFIG_HOME}/cloudio/nob/toolchains.json"
 allow_system_mutation = false
 ```
 
-`projects_root` remains the sole scan root in the first milestone. A later
-`scan_roots` list can generalize it without changing the manifest/protocol.
+`projects_root` is the sole scan root in protocol v1.
 Environment overrides use the existing naming convention, for example
 `CLOUDIO_NOB_ENABLED`, `CLOUDIO_NOB_STATE_ROOT`, and
 `CLOUDIO_NOB_TOOLCHAINS_FILE`. `worker_count` is accepted from 1 through
@@ -1678,8 +1675,9 @@ Status codes:
 
 Operation event polling is the first implementation; SSE/WebSocket is not
 required. `after_seq` defaults to 0, limit defaults to 200 and caps at 500. The
-response includes `next_seq`, `terminal`, and `truncated` so the existing Apps
-page's bounded polling pattern can be reused safely.
+response includes `next_seq`, `terminal`, and `truncated` for bounded API
+clients. The shipped Projects page remains server-rendered and uses explicit
+reload/navigation rather than adding a second browser-owned operation model.
 
 `forget` creates an audit-preserving tombstone: it revokes trust, invalidates
 plans, removes cached runners and secret bindings, and sets discovery state to
@@ -1727,9 +1725,10 @@ CLI must not implement a second synchronous deploy path.
 
 ### 14.2 Web UI
 
-Add a Projects page and retain Apps as “Legacy Apps” during migration. The first
-server-rendered view shows project ID/name, kind, trust state, effective health,
-source revision/dirty state, resource summary, current operation, and last
+Projects is the sole operator-facing lifecycle page; the overlapping legacy
+Apps UI/API and generic deployer are retired. The first server-rendered view
+shows project ID/name, kind, trust state, effective health, source
+revision/dirty state, resource summary, current operation, and last
 observation.
 
 The project detail view contains:
@@ -1916,12 +1915,13 @@ The design deliberately reuses current strengths:
 - `mutation_requests` remains the HTTP idempotency store.
 - `app/maintenance.zig` gains operation-file/event retention policies.
 - `runtime/scheduler.zig` triggers passive scans and due observations.
-- The current page architecture and Apps bounded log polling are reused for
-  Projects operations.
+- The current server-rendered page and native-form architecture owns Projects
+  operations; JSON remains a programmatic contract rather than a page renderer.
 - `app/topology.zig` joins exact declared resources and retains legacy inferred
   correlations for candidates.
-- `app/deploy.zig` remains a legacy generic adapter while projects migrate; it
-  is not called from a nob.zig runner.
+- The legacy `app/deploy.zig` adapter and its HTTP surface are removed; the
+  empty `apps`/`deploys` tables remain schema-compatible until a separately
+  backed-up migration is justified.
 
 Current weaknesses this work corrects:
 
@@ -1936,11 +1936,11 @@ Current weaknesses this work corrects:
   preserved in typed Zig code rather than flattened into a generic pipeline.
 - Long-running actions leave HTTP handlers and become persisted operations.
 
-## 18. Implementation map
+## 18. Implementation ownership
 
 ### 18.1 External `nob.zig` repository
 
-Create:
+The SDK layout is:
 
 ```text
 README.md
@@ -1974,14 +1974,14 @@ examples/service/
 examples/library/
 ```
 
-The first SDK milestone implements dispatch, strict protocol writing/parsing,
-source fingerprinting, planning/events, Zig build-step invocation, bundle
-validation, health probes, cancellation, and user-systemd helpers. It ships
-golden fixtures before Cloudio execution code.
+The SDK owns dispatch, strict protocol writing/parsing, source fingerprinting,
+planning/events, Zig build-step invocation, bundle validation, health probes,
+cancellation, and user-systemd helpers. Golden fixtures remain the
+cross-version contract.
 
 ### 18.2 Cloudio modules
 
-Add:
+Implemented:
 
 ```text
 src/nob/
@@ -2007,10 +2007,9 @@ src/runtime/nob_workers.zig
 src/server/handlers/nob.zig
 src/cli/nob.zig
 web/projects.html
-web/assets/pages/projects.js
 ```
 
-Modify:
+Cloudio integration owners:
 
 - `src/db/schema.zig`: migrations 13 through 18 (`nob_v1`, run bindings,
   managed resources/routes, tombstones, and retention indexes) plus tests.
@@ -2028,8 +2027,7 @@ Modify:
   application contexts, routes, Projects page, and navigation.
 - `src/cli/nob.zig` and `src/cli/root.zig`: new commands delegating to app
   services.
-- `src/app/system_control.zig`: explicit scope type; keep legacy wrappers during
-  migration.
+- `src/app/system_control.zig`: explicit scope and observed-identity controls.
 - `src/collectors/system.zig`: persist user/system unit identity without scope
   collisions.
 - `src/app/topology.zig`: exact resource joins first, legacy inference second.
@@ -2043,130 +2041,33 @@ process-group, stdin, sanitized-environment, timeout, and cancellation needs are
 special enough to begin in `src/nob/subprocess.zig`; generalize later
 only if another Cloudio domain needs them.
 
-## 19. Delivery milestones and acceptance tests
+## 19. Conformance and definition of done
 
-### Milestone 0: protocol and fixtures
+An implementation conforms to protocol v1 when:
 
-- Publish the manifest JSON Schema and protocol fixture corpus.
-- Build the example runners with every supported Zig compiler line.
-- Make Cloudio parse all valid fixtures and reject malformed/duplicate/oversize
-  variants without importing project code.
-- Prove plans hash exact bytes and event sequence/final/exit mismatches fail.
+- passive discovery validates size, schema, duplicate keys, identifiers, and
+  path rules without importing or executing project code;
+- trust binds canonical source identity and the exact manifest digest;
+- describe, observe, plan, and event parsing reject identity expansion,
+  malformed messages, oversize output, invalid sequencing, and contradictory
+  terminal state;
+- the approved plan bytes are exactly the bytes supplied to `run`, and plans
+  expire and are single-use;
+- operations are persisted, idempotent, audited, bounded, cancelable where
+  safe, and recovered truthfully without automatic mutation retry;
+- secret values stay outside plans, APIs, UI, events, artifacts, and logs;
+- user/system service scope cannot collide, and host mutation requires a
+  reviewed one-use capability plus independent observation; and
+- the SDK fixtures, example runners, Cloudio module tests, and Projects product
+  acceptance workflow pass with the pinned toolchain.
 
-Exit criterion: protocol conformance tests pass in both repositories.
+Adopting another repository is a project decision. It must define only the
+resources and actions that repository currently needs and supply its own
+failure and rollback evidence; adoption count is not protocol conformance.
 
-### Milestone 1: passive Cloudio discovery
+## 20. Out of scope
 
-- Apply migration 13.
-- Discover valid manifests, invalid manifests, legacy candidates, duplicate
-  IDs, moves, and missing roots.
-- Add read-only CLI/API/Projects page.
-- No toolchain or runner process may appear in scanner tests.
-
-Exit criterion: all representative repositories are listed accurately and
-stale/temp paths become missing rather than live.
-
-### Milestone 2: trust, bootstrap, describe, observe
-
-- Implement manifest fingerprint review and revoke/re-review.
-- Resolve pinned Zig tools without download.
-- Build cached runners only after trust; validate identity and static subset.
-- Merge runner/Cloudio observations and show discrepancies.
-- Add output/time/path/cache corruption tests.
-
-Exit criterion: a trusted library and a trusted user service can be described
-and observed; changing one manifest byte disables execution pending review.
-
-### Milestone 3: persisted plan/run engine
-
-- Implement exact-byte plans, TTL/one-use invalidation, operation queue/worker,
-  locks, streaming events, cancellation, restart recovery, bounded logs, audit,
-  and idempotent HTTP replay.
-- Start with `check`, `test`, and `package` actions.
-- Verify concurrent requests create at most one operation and never block HTTP
-  until build completion.
-
-Exit criterion: kill Cloudio and runner at every operation stage; restart
-produces an honest interrupted state, no duplicate action, and a fresh
-observation.
-
-### Milestone 4: scoped resource controls
-
-- Migrate service persistence to `(scope, unit)` identity.
-- Implement user-systemd controls, the per-operation broker, marker/adoption
-  checks, logs, and doctor diagnostics.
-- Implement loopback health, release, data metadata, and Caddy observation.
-- Keep system-scope mutations disabled.
-
-Exit criterion: one click can plan/restart/observe a declared user service, and
-the same-named system unit cannot be touched accidentally.
-
-### Milestone 5: deploy/rollback/uninstall
-
-- Implement release bundles, immutable install, promotion, retention,
-  user-systemd activation, health deadline, and automatic recovery.
-- Port one simple service, then Analytico's hardened unit workflow.
-- Prove uninstall preserves every `data.path`; prove purge cannot target an
-  undeclared/symlink-escaped path.
-
-Exit criterion: deployment succeeds and every injected failure point either
-leaves the old version live or reports an explicit rollback failure.
-
-### Milestone 6: complex migration and legacy retirement
-
-- Port Sparkdate's backup, migration, health, and rollback logic into its
-  project runner and replace nohup/PID-file management with a user unit.
-- Add manifests to Cloudio, Plosca, CLI/benchmark, and library projects.
-- Keep `apps`/`deploys` read-only for history, remove new registrations, then
-  remove the legacy UI only after all managed apps migrate.
-
-Exit criterion: no participating project relies on Cloudio guessing an output
-binary or on a project-specific shell/nohup control path.
-
-## 20. Representative project mappings
-
-| Project shape | Resources | Actions | Notes |
-|---|---|---|---|
-| Cloudio / Plosca web daemon | user service, loopback HTTP/TCP endpoint, release directory, executable, route, data path | check, test, package, deploy, rollback, uninstall, purge | add unauthenticated loopback-only `/healthz` where needed |
-| Analytico | adopted then managed hardened user service, immutable release tree, endpoint/data as applicable | check, package, deploy, rollback, uninstall | preserve its current strong systemd hardening and `~/.local/opt/.../current` layout |
-| Sparkdate | user service, endpoint, release directory, database, backups, route | check, test, deploy, rollback, backup-database, uninstall, purge | port existing backup/migration/health/recovery order; remove nohup/PID ownership |
-| `web.zig` / `turso.zig` library | optional package artifact only | check, test, package | no daemon controls or deployment UI |
-| `gh-analysis` / benchmark | executable/report artifacts | check, build, run-benchmark | benchmark declares workspace/artifact effects and longer timeout |
-| Compose project | `docker.compose`, endpoints/routes/data | initially observe only; later project runner actions | no generic destructive Compose control until ownership semantics are implemented |
-
-The first real runner should be a small library or check-only project, followed
-by Plosca as the simplest service. Analytico validates hardened unit adoption.
-Sparkdate should come after failure injection and release recovery are proven,
-because it exercises the most important domain-specific value of the hybrid
-approach.
-
-## 21. Definition of done for v1
-
-nob.zig protocol v1 is complete when:
-
-- At least one library, one ordinary user service, one hardened user service,
-  and the complex Sparkdate service use the same manifest/protocol.
-- Cloudio discovers all of them without executing code and clearly identifies
-  candidates, invalid manifests, conflicts, missing roots, and review-required
-  changes.
-- The same `cloudio nob` CLI and Projects web page can check, package,
-  deploy, roll back, restart, view logs/status/artifacts, uninstall while
-  preserving data, purge with typed confirmation, and forget registry state as
-  applicable.
-- Operations are asynchronous, idempotent, audited, cancelable where safe,
-  bounded in time/output/storage, and crash-recoverable without automatic
-  mutation retries.
-- Build/test/package remain ordinary Zig build graphs and work without Cloudio.
-- Different project Zig versions interoperate through protocol v1.
-- No code path runs an untrusted runner, executes a manifest command, guesses a
-  deployable binary, conflates user/system units, pulls source during deploy,
-  or performs system-scope mutation as arbitrary root code.
-- Failure-injection tests cover every deploy stage and demonstrate truthful
-  terminal/recovery state plus independent post-operation observation.
-
-## 22. Deferred without blocking v1
-
-These are explicit later extensions, not unresolved v1 choices:
+These are not part of protocol v1:
 
 - system-scope privilege broker;
 - remote-host agents;
@@ -2176,9 +2077,10 @@ These are explicit later extensions, not unresolved v1 choices:
 - SSE/WebSocket event streaming;
 - parallel non-conflicting operations within one project;
 - automatic source synchronization;
-- generic third-party resource-kind plugins.
+- generic third-party resource-kind plugins; and
+- a cross-repository migration schedule or mandatory set of adopters.
 
-## 23. Reference rationale
+## 21. Reference rationale
 
 - Tsoding's `nob.h` demonstrates the appeal of a project-owned executable build
   workflow, including self-rebuild and direct control in a systems language:

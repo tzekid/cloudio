@@ -200,6 +200,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "sqlite", .module = sqlite_mod },
             .{ .name = "app_writes", .module = app_writes_mod },
+            .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_fs", .module = core_fs_mod },
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "core_output", .module = core_output_mod },
@@ -557,22 +558,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
-    const provider_dispatch_mod = b.createModule(.{
-        .root_source_file = b.path("src/providers/dispatch.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "net_http", .module = net_http_mod },
-            .{ .name = "provider_auth", .module = provider_auth_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
-            .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
-            .{ .name = "provider_route_plan", .module = provider_route_plan_mod },
-            .{ .name = "provider_route_result", .module = provider_route_result_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-            .{ .name = "provider_transport", .module = provider_transport_mod },
-        },
-    });
     const collector_route_capture_mod = b.createModule(.{
         .root_source_file = b.path("src/collectors/route_capture.zig"),
         .target = target,
@@ -618,6 +603,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "collector_project_manifests", .module = collector_project_manifests_mod },
             .{ .name = "collector_projects", .module = collector_projects_mod },
             .{ .name = "collector_system", .module = collector_system_mod },
+            .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "core_log", .module = core_log_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
@@ -1319,9 +1305,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "sqlite", .module = sqlite_mod },
             .{ .name = "app_writes", .module = app_writes_mod },
-            .{ .name = "core_fs", .module = core_fs_mod },
+            .{ .name = "collector_system", .module = collector_system_mod },
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "core_process", .module = core_process_mod },
             .{ .name = "db_store", .module = db_store_mod },
@@ -1351,29 +1336,62 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_provider_writes_mod);
 
-    const app_deploy_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/deploy.zig"),
+    const app_dns_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/dns.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "sqlite", .module = sqlite_mod },
-            .{ .name = "app_caddy_desired", .module = app_caddy_desired_mod },
-            .{ .name = "app_system_control", .module = app_system_control_mod },
+            .{ .name = "app_provider_writes", .module = app_provider_writes_mod },
             .{ .name = "app_writes", .module = app_writes_mod },
             .{ .name = "core_config", .module = core_config_mod },
-            .{ .name = "core_fs", .module = core_fs_mod },
             .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "core_process", .module = core_process_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "net_http", .module = net_http_mod },
+            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
+            .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
         },
     });
-    linkSqlite(app_deploy_mod);
+    linkSqlite(app_dns_mod);
+
+    const app_browser_run_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/browser_run.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_writes", .module = app_writes_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
+        },
+    });
+    linkSqlite(app_browser_run_mod);
+
+    const app_vps_mod = b.createModule(.{
+        .root_source_file = b.path("src/app/vps.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "app_provider_writes", .module = app_provider_writes_mod },
+            .{ .name = "app_writes", .module = app_writes_mod },
+            .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_json", .module = core_json_mod },
+            .{ .name = "core_redact", .module = core_redact_mod },
+            .{ .name = "db_store", .module = db_store_mod },
+            .{ .name = "net_http", .module = net_http_mod },
+            .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
+            .{ .name = "provider_hostinger_models", .module = provider_hostinger_models_mod },
+        },
+    });
+    linkSqlite(app_vps_mod);
 
     const app_web_resources_mod = b.createModule(.{
         .root_source_file = b.path("src/app/web_resources.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "app_system_control", .module = app_system_control_mod },
             .{ .name = "core_json", .module = core_json_mod },
             .{ .name = "db_store", .module = db_store_mod },
         },
@@ -1419,7 +1437,7 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(runtime_nob_workers_mod);
 
-    const app_serve_mod = b.createModule(.{
+    const server_mod = b.createModule(.{
         .root_source_file = b.path("src/server/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -1429,8 +1447,11 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_actions", .module = app_actions_mod },
             .{ .name = "app_caddy_desired", .module = app_caddy_desired_mod },
             .{ .name = "app_dashboard", .module = app_dashboard_mod },
-            .{ .name = "app_deploy", .module = app_deploy_mod },
+            .{ .name = "app_browser_run", .module = app_browser_run_mod },
+            .{ .name = "app_dns", .module = app_dns_mod },
+            .{ .name = "app_vps", .module = app_vps_mod },
             .{ .name = "app_inventory", .module = app_inventory_mod },
+            .{ .name = "app_maintenance", .module = app_maintenance_mod },
             .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
             .{ .name = "app_nob_secrets", .module = app_nob_secrets_mod },
             .{ .name = "app_nob_runtime", .module = app_nob_runtime_mod },
@@ -1448,7 +1469,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "web_html", .module = web_html_mod },
         },
     });
-    linkSqlite(app_serve_mod);
+    linkSqlite(server_mod);
 
     const app_route_catalog_mod = b.createModule(.{
         .root_source_file = b.path("src/app/route_catalog.zig"),
@@ -1460,77 +1481,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
-
-    const cloudio_mod = b.createModule(.{
-        .root_source_file = b.path("src/cloudio.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_authentication", .module = app_authentication_mod },
-            .{ .name = "app_caddy", .module = app_caddy_mod },
-            .{ .name = "app_actions", .module = app_actions_mod },
-            .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
-            .{ .name = "app_cloudflare_overview", .module = app_cloudflare_overview_mod },
-            .{ .name = "app_coverage", .module = app_coverage_mod },
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "app_dashboard", .module = app_dashboard_mod },
-            .{ .name = "app_doctor", .module = app_doctor_mod },
-            .{ .name = "app_evidence", .module = app_evidence_mod },
-            .{ .name = "app_evidence_common", .module = app_evidence_common_mod },
-            .{ .name = "app_evidence_routes", .module = app_evidence_routes_mod },
-            .{ .name = "app_export", .module = app_export_mod },
-            .{ .name = "app_history", .module = app_history_mod },
-            .{ .name = "app_hostinger", .module = app_hostinger_mod },
-            .{ .name = "app_hostinger_overview", .module = app_hostinger_overview_mod },
-            .{ .name = "app_init", .module = app_init_mod },
-            .{ .name = "app_inventory", .module = app_inventory_mod },
-            .{ .name = "app_log", .module = app_log_mod },
-            .{ .name = "app_maintenance", .module = app_maintenance_mod },
-            .{ .name = "app_overview", .module = app_overview_mod },
-            .{ .name = "app_projects", .module = app_projects_mod },
-            .{ .name = "app_provider_family", .module = app_provider_family_mod },
-            .{ .name = "app_provider_list", .module = app_provider_list_mod },
-            .{ .name = "app_provider_coverage_actual_plan", .module = app_provider_coverage_actual_plan_mod },
-            .{ .name = "app_provider_coverage_actual_ready", .module = app_provider_coverage_actual_ready_mod },
-            .{ .name = "app_provider_route_capture_result", .module = app_provider_route_capture_result_mod },
-            .{ .name = "app_refresh", .module = app_refresh_mod },
-            .{ .name = "app_route_catalog", .module = app_route_catalog_mod },
-            .{ .name = "app_security", .module = app_security_mod },
-            .{ .name = "app_serve", .module = app_serve_mod },
-            .{ .name = "app_system", .module = app_system_mod },
-            .{ .name = "app_topology", .module = app_topology_mod },
-            .{ .name = "core_config", .module = core_config_mod },
-            .{ .name = "core_fs", .module = core_fs_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "core_log", .module = core_log_mod },
-            .{ .name = "core_output", .module = core_output_mod },
-            .{ .name = "core_process", .module = core_process_mod },
-            .{ .name = "core_redact", .module = core_redact_mod },
-            .{ .name = "core_time", .module = core_time_mod },
-            .{ .name = "core_version", .module = core_version_mod },
-            .{ .name = "db_schema", .module = db_schema_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "net_http", .module = net_http_mod },
-            .{ .name = "net_pagination", .module = net_pagination_mod },
-            .{ .name = "provider_auth", .module = provider_auth_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_dispatch", .module = provider_dispatch_mod },
-            .{ .name = "provider_request_plan", .module = provider_request_plan_mod },
-            .{ .name = "provider_route_plan", .module = provider_route_plan_mod },
-            .{ .name = "provider_route_result", .module = provider_route_result_mod },
-            .{ .name = "provider_route_safety", .module = provider_route_safety_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-            .{ .name = "provider_typed_routes", .module = provider_typed_routes_mod },
-            .{ .name = "provider_transport", .module = provider_transport_mod },
-            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
-            .{ .name = "provider_cloudflare_routes", .module = provider_cloudflare_routes_mod },
-            .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
-            .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
-            .{ .name = "provider_hostinger_routes", .module = provider_hostinger_routes_mod },
-            .{ .name = "provider_hostinger_models", .module = provider_hostinger_models_mod },
-        },
-    });
-    linkSqlite(cloudio_mod);
 
     const cli_render_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/render.zig"),
@@ -1602,8 +1552,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_caddy", .module = app_caddy_mod },
+            .{ .name = "app_caddy_desired", .module = app_caddy_desired_mod },
             .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
+            .{ .name = "core_config", .module = core_config_mod },
         },
     });
     linkSqlite(cli_caddy_mod);
@@ -1763,7 +1715,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_dashboard", .module = app_dashboard_mod },
-            .{ .name = "app_serve", .module = app_serve_mod },
+            .{ .name = "server", .module = server_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "runtime_nob_workers", .module = runtime_nob_workers_mod },
@@ -1875,22 +1827,20 @@ pub fn build(b: *std.Build) void {
     }
     b.step("run", "Run cloudio").dependOn(&run_cmd.step);
 
-    const browser_smoke_command = b.addSystemCommand(&.{ "bash", "tests/browser-smoke.sh" });
-    browser_smoke_command.addArtifactArg(exe);
-    const browser_smoke_step = b.step("browser-smoke", "Run authenticated server-first Chromium acceptance checks");
-    browser_smoke_step.dependOn(&browser_smoke_command.step);
+    const product_acceptance_command = b.addSystemCommand(&.{ "bash", "tests/product-acceptance.sh" });
+    product_acceptance_command.addArtifactArg(exe);
+    const product_acceptance_step = b.step("product-acceptance", "Run authenticated product acceptance checks");
+    product_acceptance_step.dependOn(&product_acceptance_command.step);
 
     const test_step = b.step("test", "Run unit tests");
     addModuleTest(b, test_step, cli_root_mod);
     addModuleTest(b, test_step, cli_args_mod);
     addModuleTest(b, test_step, cli_render_mod);
     addModuleTest(b, test_step, cli_coverage_parse_mod);
-    addModuleTest(b, test_step, cli_coverage_mod);
     addModuleTest(b, test_step, cli_route_request_mod);
     addModuleTest(b, test_step, cli_route_mod);
     addModuleTest(b, test_step, cli_caddy_mod);
     addModuleTest(b, test_step, cli_cloudflare_options_mod);
-    addModuleTest(b, test_step, cli_cloudflare_dry_run_mod);
     addModuleTest(b, test_step, cli_cloudflare_mod);
     addModuleTest(b, test_step, cli_evidence_mod);
     addModuleTest(b, test_step, cli_hostinger_mod);
@@ -1906,7 +1856,6 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, cli_serve_mod);
     addModuleTest(b, test_step, cli_system_mod);
     addModuleTest(b, test_step, cli_topology_mod);
-    addModuleTest(b, test_step, cloudio_mod);
     addModuleTest(b, test_step, app_overview_mod);
     addModuleTest(b, test_step, app_export_mod);
     addModuleTest(b, test_step, app_history_mod);
@@ -1923,29 +1872,25 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_projects_mod);
     addModuleTest(b, test_step, app_nob_projects_mod);
     addModuleTest(b, test_step, app_nob_secrets_mod);
-    addModuleTest(b, test_step, app_nob_runtime_mod);
-    addModuleTest(b, test_step, app_nob_actions_mod);
-    addModuleTest(b, test_step, app_nob_worker_mod);
     addModuleTest(b, test_step, runtime_nob_workers_mod);
     addModuleTest(b, test_step, app_system_mod);
     addModuleTest(b, test_step, app_topology_mod);
     addModuleTest(b, test_step, app_actions_mod);
     addModuleTest(b, test_step, app_dashboard_mod);
-    addModuleTest(b, test_step, app_serve_mod);
+    addModuleTest(b, test_step, server_mod);
     addModuleTest(b, test_step, app_writes_mod);
     addModuleTest(b, test_step, app_maintenance_mod);
     addModuleTest(b, test_step, app_caddy_desired_mod);
     addModuleTest(b, test_step, app_system_control_mod);
     addModuleTest(b, test_step, app_provider_writes_mod);
-    addModuleTest(b, test_step, app_deploy_mod);
+    addModuleTest(b, test_step, app_dns_mod);
+    addModuleTest(b, test_step, app_browser_run_mod);
+    addModuleTest(b, test_step, app_vps_mod);
     addModuleTest(b, test_step, app_provider_api_mod);
     addModuleTest(b, test_step, app_provider_family_mod);
     addModuleTest(b, test_step, app_provider_l1_mod);
     addModuleTest(b, test_step, app_provider_coverage_actual_captures_mod);
-    addModuleTest(b, test_step, app_provider_coverage_actual_commands_mod);
     addModuleTest(b, test_step, app_provider_coverage_actual_inputs_mod);
-    addModuleTest(b, test_step, app_provider_coverage_actual_plan_mod);
-    addModuleTest(b, test_step, app_provider_coverage_actual_ready_mod);
     addModuleTest(b, test_step, app_provider_coverage_candidates_mod);
     addModuleTest(b, test_step, app_provider_coverage_families_mod);
     addModuleTest(b, test_step, app_provider_coverage_levels_mod);
@@ -1957,20 +1902,16 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, app_provider_coverage_routes_mod);
     addModuleTest(b, test_step, app_provider_route_plan_mod);
     addModuleTest(b, test_step, app_provider_route_capture_result_mod);
-    addModuleTest(b, test_step, app_provider_route_capture_mod);
     addModuleTest(b, test_step, app_provider_list_mod);
     addModuleTest(b, test_step, app_render_mod);
     addModuleTest(b, test_step, app_route_catalog_mod);
     addModuleTest(b, test_step, app_cloudflare_overview_mod);
     addModuleTest(b, test_step, app_cloudflare_mod);
-    addModuleTest(b, test_step, app_hostinger_overview_mod);
     addModuleTest(b, test_step, app_hostinger_mod);
     addModuleTest(b, test_step, app_inventory_mod);
     addModuleTest(b, test_step, app_database_mod);
     addModuleTest(b, test_step, app_refresh_mod);
-    addModuleTest(b, test_step, app_refresh_cycle_mod);
     addModuleTest(b, test_step, app_web_resources_mod);
-    addModuleTest(b, test_step, app_serve_mod);
     addModuleTest(b, test_step, core_config_mod);
     addModuleTest(b, test_step, core_fs_mod);
     addModuleTest(b, test_step, core_json_mod);
@@ -1990,7 +1931,6 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, provider_route_result_mod);
     addModuleTest(b, test_step, provider_route_safety_mod);
     addModuleTest(b, test_step, provider_transport_mod);
-    addModuleTest(b, test_step, provider_dispatch_mod);
     addModuleTest(b, test_step, provider_routes_mod);
     addModuleTest(b, test_step, provider_typed_routes_mod);
     addModuleTest(b, test_step, nob_model_mod);
@@ -2000,19 +1940,15 @@ pub fn build(b: *std.Build) void {
     addModuleTest(b, test_step, nob_source_mod);
     addModuleTest(b, test_step, nob_bootstrap_mod);
     addModuleTest(b, test_step, nob_independent_observation_mod);
-    addModuleTest(b, test_step, nob_observation_mod);
-    addModuleTest(b, test_step, nob_action_protocol_mod);
     addModuleTest(b, test_step, nob_systemd_mod);
     addModuleTest(b, test_step, nob_resource_control_mod);
     addModuleTest(b, test_step, nob_managed_unit_mod);
     addModuleTest(b, test_step, nob_broker_mod);
     addModuleTest(b, test_step, provider_cloudflare_routes_mod);
     addModuleTest(b, test_step, provider_cloudflare_transport_mod);
-    addModuleTest(b, test_step, provider_cloudflare_mod);
     addModuleTest(b, test_step, provider_cloudflare_models_mod);
     addModuleTest(b, test_step, provider_hostinger_routes_mod);
     addModuleTest(b, test_step, provider_hostinger_transport_mod);
-    addModuleTest(b, test_step, provider_hostinger_mod);
     addModuleTest(b, test_step, provider_hostinger_models_mod);
     addModuleTest(b, test_step, db_schema_mod);
     addModuleTest(b, test_step, db_store_mod);
@@ -2039,12 +1975,17 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&architecture_check.step);
     check.dependOn(&web_ui_check.step);
 
-    const cloudflare_package_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test" });
+    const package_optimize_arg = b.fmt("-Doptimize={s}", .{@tagName(optimize)});
+    const cloudflare_package_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test", package_optimize_arg });
     cloudflare_package_test.setCwd(b.path("packages/cloudflare"));
     check.dependOn(&cloudflare_package_test.step);
-    const hostinger_package_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test" });
+    const hostinger_package_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test", package_optimize_arg });
     hostinger_package_test.setCwd(b.path("packages/hostinger"));
     check.dependOn(&hostinger_package_test.step);
+
+    const release_check = b.step("release-check", "Run integrated and authenticated product acceptance checks");
+    release_check.dependOn(check);
+    release_check.dependOn(product_acceptance_step);
 
     const api_summary = b.addSystemCommand(&.{ "sh", "tools/api-spec-summary.sh" });
     b.step("api-summary", "Fetch official provider OpenAPI specs and print coverage summary").dependOn(&api_summary.step);

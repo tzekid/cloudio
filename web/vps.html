@@ -6,85 +6,64 @@
   <title>VPS · Cloudio</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script defer src="/assets/app.js"></script>
-  <script defer src="/assets/pages/vps.js"></script>
 </head>
 <body>
   <main id="page-content">
-    <p class="page-intro">Operate Hostinger machines and review the firewall state captured by Cloudio.</p>
+    <p class="page-intro">Observe and control existing Hostinger machines through verified provider identities.</p>
 
     <div id="vps-notice" class="notice hidden" aria-live="polite"></div>
+
+    <section class="panel" aria-labelledby="vps-observation-title">
+      <div class="panel-header cluster cluster-spread">
+        <div>
+          <h2 id="vps-observation-title">Machine observation</h2>
+          <p>Last-good Hostinger inventory and the latest collection attempt.</p>
+        </div>
+        <form id="vps-refresh-form" method="post" action="/vps/refresh">
+          <input id="vps-refresh-csrf" name="csrf_token" type="hidden" value="">
+          <input id="vps-refresh-idempotency" name="idempotency_key" type="hidden" value="">
+          <button class="button-primary" type="submit" disabled>Refresh machines</button>
+        </form>
+      </div>
+      <div class="panel-body stack">
+        <dl class="detail-grid">
+          <div><dt>Freshness</dt><dd id="vps-freshness">Unavailable</dd></div>
+          <div><dt>Last successful observation</dt><dd id="vps-observed-at">Never</dd></div>
+          <div><dt>Latest attempt</dt><dd id="vps-attempt">Unavailable</dd></div>
+        </dl>
+        <p id="vps-capability" class="muted">Refresh successfully before controlling a machine.</p>
+      </div>
+    </section>
+
     <section aria-labelledby="machines-title">
-      <h2 id="machines-title" class="section-heading">Machines</h2>
+      <div class="section-header cluster cluster-spread">
+        <h2 id="machines-title" class="section-heading">Machines</h2>
+        <p id="machine-count" class="muted">0 machines</p>
+      </div>
       <div id="machines" class="resource-grid">
         <div class="resource-card empty-state loading-state">Loading machines…</div>
       </div>
-      <div id="machine-status" class="status-message" aria-live="polite"></div>
+    </section>
+
+    <section id="vps-confirmation" class="panel hidden" aria-labelledby="vps-confirmation-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="vps-confirmation-title">Confirm machine action</h2>
+          <p id="vps-confirmation-summary">Choose a valid action from an observed machine.</p>
+        </div>
+      </div>
+      <div id="vps-confirmation-body" class="panel-body"></div>
     </section>
 
     <section class="panel" aria-labelledby="metrics-title">
       <div class="panel-header">
-        <h2 id="metrics-title">Metrics</h2>
+        <div>
+          <h2 id="metrics-title">Metrics</h2>
+          <p>Stored Hostinger metric capture summaries. Lifecycle actions do not depend on these rows.</p>
+        </div>
       </div>
       <div id="metrics" class="table-scroll">
         <div class="empty-state loading-state">Loading metrics…</div>
-      </div>
-    </section>
-
-    <section class="panel" aria-labelledby="firewalls-title">
-      <div class="panel-header">
-        <div>
-          <h2 id="firewalls-title">Firewalls</h2>
-          <p>Review rules, edit existing entries, and sync a firewall to a machine.</p>
-        </div>
-      </div>
-      <div class="panel-body">
-        <div id="firewall-notice" class="notice hidden" aria-live="polite"></div>
-        <div id="firewalls" class="stack">
-          <div class="empty-state loading-state">Loading firewalls…</div>
-        </div>
-
-        <div class="subsection">
-          <h3 class="section-heading">Add or update rule</h3>
-          <form id="rule-form" class="form-grid">
-            <div class="field span-2">
-              <label for="rule-firewall">Firewall ID</label>
-              <input id="rule-firewall" name="firewall_id" type="text" required autocomplete="off">
-            </div>
-            <div class="field span-2">
-              <label for="rule-protocol">Protocol</label>
-              <select id="rule-protocol" name="protocol">
-                <option>TCP</option>
-                <option>UDP</option>
-                <option>ICMP</option>
-                <option>any</option>
-              </select>
-            </div>
-            <div class="field span-2">
-              <label for="rule-port">Port</label>
-              <input id="rule-port" name="port" type="text" placeholder="443" autocomplete="off">
-            </div>
-            <div class="field span-3">
-              <label for="rule-source">Source</label>
-              <input id="rule-source" name="source" type="text" placeholder="any or 192.0.2.1" autocomplete="off">
-            </div>
-            <div class="field span-2">
-              <label for="rule-action">Action</label>
-              <select id="rule-action" name="action">
-                <option>accept</option>
-                <option>drop</option>
-              </select>
-            </div>
-            <div class="field span-2">
-              <label for="rule-id">Rule ID for update</label>
-              <input id="rule-id" name="rule_id" type="text" autocomplete="off">
-            </div>
-            <div class="span-12 cluster">
-              <button id="add-rule" class="button-primary" type="submit">Add rule</button>
-              <button id="update-rule" type="button">Update rule</button>
-              <span id="rule-status" class="status-message" aria-live="polite"></span>
-            </div>
-          </form>
-        </div>
       </div>
     </section>
   </main>

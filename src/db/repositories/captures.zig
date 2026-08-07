@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const DbError = models.DbError;
 const SnapshotSummary = models.SnapshotSummary;
 const SnapshotSummaries = models.SnapshotSummaries;
+const Observation = models.Observation;
 const NameValueRow = models.NameValueRow;
 const NameValueRows = models.NameValueRows;
 const InventoryFilter = models.InventoryFilter;
@@ -196,6 +197,133 @@ pub const Repository = struct {
         return try self.snapshotRowsFromStmt(gpa, stmt);
     }
 
+    pub fn latestObservation(self: Repository, gpa: Allocator, source: []const u8, kind: []const u8) !?Observation {
+        const stmt = try self.prepare(
+            \\SELECT latest.source,
+            \\       latest.kind,
+            \\       latest.status,
+            \\       COALESCE(latest.summary, ''),
+            \\       latest.captured_at,
+            \\       COALESCE((
+            \\         SELECT successful.captured_at
+            \\         FROM snapshots AS successful
+            \\         WHERE successful.source = latest.source
+            \\           AND successful.kind = latest.kind
+            \\           AND successful.status = 'ok'
+            \\         ORDER BY successful.id DESC
+            \\         LIMIT 1
+            \\       ), ''),
+            \\       COALESCE(
+            \\         CAST(strftime('%s','now') AS INTEGER) - CAST(strftime('%s', (
+            \\           SELECT successful.captured_at
+            \\           FROM snapshots AS successful
+            \\           WHERE successful.source = latest.source
+            \\             AND successful.kind = latest.kind
+            \\             AND successful.status = 'ok'
+            \\           ORDER BY successful.id DESC
+            \\           LIMIT 1
+            \\         )) AS INTEGER),
+            \\         -1
+            \\       )
+            \\FROM snapshots AS latest
+            \\WHERE latest.source = ? AND latest.kind = ?
+            \\ORDER BY latest.id DESC
+            \\LIMIT 1
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, source);
+        try bindText(stmt, 2, kind);
+        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return null;
+
+        const source_copy = try dupeColumn(gpa, stmt, 0);
+        errdefer gpa.free(source_copy);
+        const kind_copy = try dupeColumn(gpa, stmt, 1);
+        errdefer gpa.free(kind_copy);
+        const attempt_status = try dupeColumn(gpa, stmt, 2);
+        errdefer gpa.free(attempt_status);
+        const attempt_summary = try dupeColumn(gpa, stmt, 3);
+        errdefer gpa.free(attempt_summary);
+        const attempted_at = try dupeColumn(gpa, stmt, 4);
+        errdefer gpa.free(attempted_at);
+        const observed_at = try dupeColumn(gpa, stmt, 5);
+        errdefer gpa.free(observed_at);
+        return .{
+            .source = source_copy,
+            .kind = kind_copy,
+            .attempt_status = attempt_status,
+            .attempt_summary = attempt_summary,
+            .attempted_at = attempted_at,
+            .observed_at = observed_at,
+            .age_seconds = sqlite.sqlite3_column_int64(stmt, 6),
+        };
+    }
+
+    pub fn latestObservationForTarget(
+        self: Repository,
+        gpa: Allocator,
+        source: []const u8,
+        kind: []const u8,
+        target: []const u8,
+    ) !?Observation {
+        const stmt = try self.prepare(
+            \\SELECT latest.source,
+            \\       latest.kind,
+            \\       latest.status,
+            \\       COALESCE(latest.summary, ''),
+            \\       latest.captured_at,
+            \\       COALESCE((
+            \\         SELECT successful.captured_at
+            \\         FROM snapshots AS successful
+            \\         WHERE successful.source = latest.source
+            \\           AND successful.kind = latest.kind
+            \\           AND COALESCE(successful.target, '') = COALESCE(latest.target, '')
+            \\           AND successful.status = 'ok'
+            \\         ORDER BY successful.id DESC LIMIT 1
+            \\       ), ''),
+            \\       COALESCE(
+            \\         CAST(strftime('%s','now') AS INTEGER) - CAST(strftime('%s', (
+            \\           SELECT successful.captured_at
+            \\           FROM snapshots AS successful
+            \\           WHERE successful.source = latest.source
+            \\             AND successful.kind = latest.kind
+            \\             AND COALESCE(successful.target, '') = COALESCE(latest.target, '')
+            \\             AND successful.status = 'ok'
+            \\           ORDER BY successful.id DESC LIMIT 1
+            \\         )) AS INTEGER), -1
+            \\       )
+            \\FROM snapshots AS latest
+            \\WHERE latest.source = ? AND latest.kind = ? AND COALESCE(latest.target, '') = ?
+            \\ORDER BY latest.id DESC LIMIT 1
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, source);
+        try bindText(stmt, 2, kind);
+        try bindText(stmt, 3, target);
+        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return null;
+
+        const source_copy = try dupeColumn(gpa, stmt, 0);
+        errdefer gpa.free(source_copy);
+        const kind_copy = try dupeColumn(gpa, stmt, 1);
+        errdefer gpa.free(kind_copy);
+        const attempt_status = try dupeColumn(gpa, stmt, 2);
+        errdefer gpa.free(attempt_status);
+        const attempt_summary = try dupeColumn(gpa, stmt, 3);
+        errdefer gpa.free(attempt_summary);
+        const attempted_at = try dupeColumn(gpa, stmt, 4);
+        errdefer gpa.free(attempted_at);
+        const observed_at = try dupeColumn(gpa, stmt, 5);
+        errdefer gpa.free(observed_at);
+        return .{
+            .source = source_copy,
+            .kind = kind_copy,
+            .attempt_status = attempt_status,
+            .attempt_summary = attempt_summary,
+            .attempted_at = attempted_at,
+            .observed_at = observed_at,
+            .age_seconds = sqlite.sqlite3_column_int64(stmt, 6),
+        };
+    }
+
     fn snapshotRowsFromStmt(self: Repository, gpa: Allocator, stmt: *sqlite.sqlite3_stmt) !SnapshotSummaries {
         _ = self;
         var rows = std.ArrayList(SnapshotSummary).empty;
@@ -228,5 +356,4 @@ pub const Repository = struct {
             });
         }
     }
-
 };

@@ -6,7 +6,13 @@ const common = @import("../common.zig");
 const context = @import("../context.zig");
 
 pub fn containersGet(ctx: context.Context, _: http.Request, _: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
-    try app_web_resources.writeContainersJson(.{ .gpa = ctx.gpa, .db = ctx.db }, writer);
+    try writeContainers(ctx, writer);
+    return 200;
+}
+
+pub fn containersRefresh(ctx: context.Context, _: http.Request, _: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
+    try app_system_control.refreshContainers(context.system(ctx));
+    try writeContainers(ctx, writer);
     return 200;
 }
 
@@ -22,6 +28,19 @@ pub fn containersAction(ctx: context.Context, request: http.Request, _: http.Par
 
 pub fn containersLogs(ctx: context.Context, request: http.Request, _: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
     const name = request.query("name") orelse return common.badRequest(writer);
-    try app_system_control.containerLogs(context.system(ctx), name, common.intQuery(request, "tail", 100), writer);
+    const tail = if (request.query("tail")) |raw|
+        std.fmt.parseInt(i64, raw, 10) catch return common.badRequest(writer)
+    else
+        100;
+    try app_system_control.containerLogs(context.system(ctx), name, tail, writer);
     return 200;
+}
+
+fn writeContainers(ctx: context.Context, writer: *std.Io.Writer) !void {
+    const refresh_seconds: i64 = @intCast(ctx.config.refresh_seconds);
+    try app_web_resources.writeContainersJson(.{
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+        .fresh_after_seconds = @max(refresh_seconds * 2, 60),
+    }, writer);
 }

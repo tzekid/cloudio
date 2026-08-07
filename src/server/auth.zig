@@ -113,7 +113,7 @@ test "session cookie is host-only secure and never readable by script" {
 test "authentication helpers validate metadata fingerprints and origins" {
     const request = http.Request{
         .method = "POST",
-        .target = "/api/apps",
+        .target = "/api/containers/refresh",
         .headers = &.{
             .{ .name = "Origin", .value = "https://cloudio.example.test" },
             .{ .name = "Cookie", .value = "__Host-cloudio_session=secret" },

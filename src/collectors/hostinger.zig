@@ -165,9 +165,14 @@ pub fn collectDashboard(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db) !vo
 }
 
 pub fn collectVps(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, capture_output: bool) !Output {
-    const client = clientFromToken(token) catch {
+    return try collectVpsAt(io, gpa, token, provider_hostinger.base_url, db, capture_output);
+}
+
+pub fn collectVpsAt(io: Io, gpa: Allocator, token: ?[]const u8, base_url: []const u8, db: *Db, capture_output: bool) !Output {
+    var client = clientFromToken(token) catch {
         return try collector_capture.skipped(gpa, db, "hostinger", "vps", null, "missing Hostinger API token", "Hostinger token missing", capture_output);
     };
+    client.base_url_override = base_url;
     const body = try client.getVirtualMachines(io, gpa);
     defer body.deinit(gpa);
     const redacted = try collector_capture.storeResponse(gpa, db, .{
@@ -178,13 +183,15 @@ pub fn collectVps(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, capture_o
         .status = body.status,
         .body = body.body,
     });
-    defer if (!capture_output) gpa.free(redacted);
-    if (net_http.isOk(body.status)) {
-        try db.clear("hostinger_vps");
-        try persistVpsRows(gpa, db, redacted);
-        try persistResourceRows(gpa, db, "vps", null, redacted);
+    errdefer gpa.free(redacted);
+    if (!net_http.isOk(body.status)) return error.HostingerVpsReadRejected;
+    if (!try replaceVpsCollection(gpa, db, redacted)) {
+        _ = try db.insertSnapshot("hostinger", "vps", null, "error", "Hostinger returned an invalid virtual-machine collection.", redacted, null);
+        return error.InvalidHostingerVpsCollection;
     }
-    return .{ .text = if (capture_output) redacted else null };
+    if (capture_output) return .{ .text = redacted };
+    gpa.free(redacted);
+    return .{};
 }
 
 pub fn collectVpsDetails(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, vm_id: []const u8, capture_output: bool) !Output {
@@ -505,6 +512,76 @@ pub fn persistVpsRows(gpa: Allocator, db: *Db, body: []const u8) !void {
     for (rows.items) |row| {
         try db.upsertHostingerVps(row.id, row.name, row.status, row.ipv4, row.plan, row.raw_json);
     }
+}
+
+fn replaceVpsRows(gpa: Allocator, db: *Db, rows: []const provider_hostinger_models.VpsRow, raw: []const u8) !void {
+    try db.exec("BEGIN IMMEDIATE");
+    var committed = false;
+    defer if (!committed) db.exec("ROLLBACK") catch {};
+    try db.exec("DELETE FROM hostinger_vps");
+    for (rows) |row| {
+        try db.upsertHostingerVps(row.id, row.name, row.status, row.ipv4, row.plan, row.raw_json);
+        _ = try db.insertSnapshot("hostinger", "vps-detail", row.id, "ok", "Machine was present in the successful inventory refresh.", null, null);
+    }
+    try persistResourceRows(gpa, db, "vps", null, raw);
+    try db.exec("COMMIT");
+    committed = true;
+}
+
+fn replaceVpsCollection(gpa: Allocator, db: *Db, body: []const u8) !bool {
+    if (!validVpsCollection(gpa, body)) return false;
+    var rows = try provider_hostinger_models.parseVpsRows(gpa, body);
+    defer rows.deinit(gpa);
+    replaceVpsRows(gpa, db, rows.items, body) catch |err| {
+        _ = db.insertSnapshot("hostinger", "vps", null, "error", "Could not atomically replace the Hostinger machine observation.", null, null) catch 0;
+        return err;
+    };
+    return true;
+}
+
+fn validVpsCollection(gpa: Allocator, body: []const u8) bool {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return false;
+    defer parsed.deinit();
+    const items = switch (parsed.value) {
+        .array => |array| array.items,
+        .object => |object| blk: {
+            const data = object.get("data") orelse return false;
+            if (data != .array) return false;
+            break :blk data.array.items;
+        },
+        else => return false,
+    };
+    for (items) |item| {
+        if (item != .object or item.object.get("id") == null or item.object.get("hostname") == null or item.object.get("state") == null) return false;
+    }
+    return true;
+}
+
+test "VPS collection replacement is atomic and invalid input retains last-good rows" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/hostinger-vps-replace.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+    try db.upsertHostingerVps("old", "old.example", "running", null, null, "{}");
+
+    try std.testing.expect(!try replaceVpsCollection(allocator, &db, "{\"data\":[{\"id\":\"partial\"}]}"));
+    var retained = try db.hostingerVpsRows(allocator, 10);
+    defer retained.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), retained.items.len);
+    try std.testing.expectEqualStrings("old", retained.items[0].id);
+
+    try std.testing.expect(try replaceVpsCollection(allocator, &db,
+        \\{"data":[{"id":"new","hostname":"new.example","state":"stopped","ipv4":[],"plan":"KVM"}]}
+    ));
+    var replaced = try db.hostingerVpsRows(allocator, 10);
+    defer replaced.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), replaced.items.len);
+    try std.testing.expectEqualStrings("new", replaced.items[0].id);
+    try std.testing.expectEqualStrings("stopped", replaced.items[0].status);
 }
 
 pub fn persistResourceRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[]const u8, body: []const u8) !void {

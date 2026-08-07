@@ -38,6 +38,31 @@ pub const SnapshotSummaries = struct {
     }
 };
 
+/// Latest collection attempt plus the most recent successful observation for
+/// one source/kind pair. A failed attempt never erases the last-good timestamp.
+pub const Observation = struct {
+    source: []u8,
+    kind: []u8,
+    attempt_status: []u8,
+    attempt_summary: []u8,
+    attempted_at: []u8,
+    observed_at: []u8,
+    age_seconds: i64,
+
+    pub fn deinit(self: Observation, allocator: Allocator) void {
+        allocator.free(self.source);
+        allocator.free(self.kind);
+        allocator.free(self.attempt_status);
+        allocator.free(self.attempt_summary);
+        allocator.free(self.attempted_at);
+        allocator.free(self.observed_at);
+    }
+
+    pub fn hasSuccessfulObservation(self: Observation) bool {
+        return self.observed_at.len != 0;
+    }
+};
+
 pub const NameValueRow = struct {
     name: []u8,
     value: []u8,

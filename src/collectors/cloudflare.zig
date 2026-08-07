@@ -1980,6 +1980,10 @@ pub fn collectDnsRecordEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, dom
     };
     const zone_body = try client.getZones(io, gpa, domain);
     defer zone_body.deinit(gpa);
+    if (!net_http.isOk(zone_body.status) or !hasSuccessfulArrayResult(gpa, zone_body.body)) {
+        _ = try db.insertSnapshot("cloudflare", endpoint.label(), domain, "error", "Cloudflare rejected the DNS zone lookup", zone_body.body, null);
+        return error.CloudflareDnsReadRejected;
+    }
     if (try provider_cloudflare_models.zoneIdFromResponse(gpa, zone_body.body)) |zone_id| {
         defer gpa.free(zone_id);
         const body = try client.getDnsRecordEndpoint(io, gpa, zone_id, endpoint, dns_record_id);
@@ -1998,6 +2002,12 @@ pub fn collectDnsRecordEndpoint(io: Io, gpa: Allocator, auth: Auth, db: *Db, dom
             .body = body.body,
         });
         defer if (!capture_output) gpa.free(redacted);
+        if (!net_http.isOk(body.status) or (endpoint == .list and !hasSuccessfulArrayResult(gpa, redacted))) {
+            if (net_http.isOk(body.status)) {
+                _ = try db.insertSnapshot("cloudflare", endpoint.label(), target, "error", "Cloudflare returned an invalid DNS record response", redacted, null);
+            }
+            return error.CloudflareDnsReadRejected;
+        }
         if (endpoint == .list) try persistDnsRecordRows(gpa, db, zone_id, redacted);
         return .{ .text = if (capture_output) redacted else null };
     }
@@ -4330,11 +4340,28 @@ pub fn persistZoneRows(gpa: Allocator, db: *Db, body: []const u8) !void {
 }
 
 pub fn persistDnsRecordRows(gpa: Allocator, db: *Db, zone_id: []const u8, body: []const u8) !void {
+    if (!hasSuccessfulArrayResult(gpa, body)) return error.InvalidCloudflareDnsResponse;
     var rows = try provider_cloudflare_models.parseDnsRecordRows(gpa, zone_id, body);
     defer rows.deinit(gpa);
+    try db.exec("BEGIN IMMEDIATE");
+    var committed = false;
+    defer if (!committed) db.exec("ROLLBACK") catch {};
+    try db.cloudflare().deleteDnsRecordsForZone(zone_id);
     for (rows.items) |row| {
         try db.upsertDnsRecord(row.id, row.zone_id, row.name, row.typ, row.content, row.ttl, row.proxied, row.raw_json);
     }
+    try db.exec("COMMIT");
+    committed = true;
+}
+
+fn hasSuccessfulArrayResult(gpa: Allocator, body: []const u8) bool {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return false;
+    defer parsed.deinit();
+    if (parsed.value != .object) return false;
+    const success = parsed.value.object.get("success") orelse return false;
+    if (success != .bool or !success.bool) return false;
+    const result = parsed.value.object.get("result") orelse return false;
+    return result == .array;
 }
 
 fn storeCloudflareResponse(gpa: Allocator, db: *Db, input: collector_capture.ResponseCapture) ![]u8 {
@@ -4808,12 +4835,27 @@ test "persists Cloudflare account, zone, and DNS rows" {
         \\{"result":[{"id":"zone-1","name":"plosca.ru","account":{"id":"acct-1"},"status":"active","paused":false,"type":"full","name_servers":["a.ns.cloudflare.com"]}]}
     );
     try persistDnsRecordRows(allocator, &db, "zone-1",
-        \\{"result":[{"id":"dns-1","name":"plosca.ru","type":"A","content":"76.13.130.170","ttl":1,"proxied":true}]}
+        \\{"success":true,"result":[{"id":"dns-1","name":"plosca.ru","type":"A","content":"76.13.130.170","ttl":1,"proxied":true}]}
     );
 
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_accounts"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_zones"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_dns_records"));
+
+    try persistDnsRecordRows(allocator, &db, "zone-1",
+        \\{"success":true,"result":[{"id":"dns-2","name":"www.plosca.ru","type":"A","content":"192.0.2.2","ttl":60,"proxied":false}]}
+    );
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("cloudflare_dns_records"));
+    try std.testing.expectError(error.InvalidCloudflareDnsResponse, persistDnsRecordRows(
+        allocator,
+        &db,
+        "zone-1",
+        "{\"success\":false,\"result\":[]}",
+    ));
+    const dns_stmt = try db.prepare("SELECT id FROM cloudflare_dns_records WHERE zone_id = 'zone-1'");
+    defer _ = sqlite.sqlite3_finalize(dns_stmt);
+    try std.testing.expectEqual(@as(c_int, sqlite.SQLITE_ROW), sqlite.sqlite3_step(dns_stmt));
+    try std.testing.expectEqualStrings("dns-2", columnText(dns_stmt, 0) orelse "");
 
     const stmt = try db.prepare("SELECT name, account_id, status, paused FROM cloudflare_zones WHERE id = 'zone-1'");
     defer _ = sqlite.sqlite3_finalize(stmt);

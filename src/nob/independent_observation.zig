@@ -400,7 +400,7 @@ const CaddyRuntimeRoute = struct {
 fn probeCaddyRoute(io: Io, allocator: Allocator, config: core_config.Config, resource: nob.types.Resource) !Evidence {
     const host = stringField(resource.spec.object, "host") orelse return error.InvalidResourceSpec;
     const upstream = stringField(resource.spec.object, "upstream") orelse return error.InvalidResourceSpec;
-    const caddyfile = Io.Dir.cwd().readFileAlloc(io, config.caddyfile_path, allocator, .limited(max_caddyfile_bytes)) catch |err| switch (err) {
+    const caddyfile = Io.Dir.cwd().readFileAlloc(io, config.caddy_owned_path, allocator, .limited(max_caddyfile_bytes)) catch |err| switch (err) {
         error.FileNotFound => null,
         else => |other| return unavailable(allocator, resource, "Cloudio could not read the active Caddyfile", other),
     };
@@ -411,7 +411,7 @@ fn probeCaddyRoute(io: Io, allocator: Allocator, config: core_config.Config, res
         return makeEvidence(allocator, resource, .unknown, "Caddy runtime could not be queried because curl is unavailable", .{
             .host = host,
             .declared_upstream = upstream,
-            .caddyfile_path = config.caddyfile_path,
+            .caddyfile_path = config.caddy_owned_path,
             .caddyfile_present = caddyfile != null,
             .configured_exactly = configured.exact(),
             .configured_host_blocks = configured.host_blocks,
@@ -444,7 +444,7 @@ fn probeCaddyRoute(io: Io, allocator: Allocator, config: core_config.Config, res
         return makeEvidence(allocator, resource, .unknown, "Caddy runtime query could not be completed", .{
             .host = host,
             .declared_upstream = upstream,
-            .caddyfile_path = config.caddyfile_path,
+            .caddyfile_path = config.caddy_owned_path,
             .caddyfile_present = caddyfile != null,
             .configured_exactly = configured.exact(),
             .configured_host_blocks = configured.host_blocks,
@@ -460,7 +460,7 @@ fn probeCaddyRoute(io: Io, allocator: Allocator, config: core_config.Config, res
         return makeEvidence(allocator, resource, .unknown, "Caddy admin socket did not return its runtime configuration", .{
             .host = host,
             .declared_upstream = upstream,
-            .caddyfile_path = config.caddyfile_path,
+            .caddyfile_path = config.caddy_owned_path,
             .caddyfile_present = caddyfile != null,
             .configured_exactly = configured.exact(),
             .configured_host_blocks = configured.host_blocks,
@@ -479,7 +479,7 @@ fn probeCaddyRoute(io: Io, allocator: Allocator, config: core_config.Config, res
         return makeEvidence(allocator, resource, .unknown, "Caddy returned an invalid runtime configuration", .{
             .host = host,
             .declared_upstream = upstream,
-            .caddyfile_path = config.caddyfile_path,
+            .caddyfile_path = config.caddy_owned_path,
             .caddyfile_present = caddyfile != null,
             .configured_exactly = configured.exact(),
             .configured_host_blocks = configured.host_blocks,
@@ -510,7 +510,7 @@ fn probeCaddyRoute(io: Io, allocator: Allocator, config: core_config.Config, res
     return makeEvidence(allocator, resource, if (status == .healthy and !configured.exact()) .degraded else status, summary, .{
         .host = host,
         .declared_upstream = upstream,
-        .caddyfile_path = config.caddyfile_path,
+        .caddyfile_path = config.caddy_owned_path,
         .caddyfile_present = caddyfile != null,
         .configured_exactly = configured.exact(),
         .configured_host_blocks = configured.host_blocks,

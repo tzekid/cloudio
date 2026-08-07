@@ -183,6 +183,13 @@ pub const Repository = struct {
         try stepDone(stmt);
     }
 
+    pub fn deleteDnsRecordsForZone(self: Repository, zone_id: []const u8) !void {
+        const stmt = try self.prepare("DELETE FROM cloudflare_dns_records WHERE zone_id = ?");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, zone_id);
+        try stepDone(stmt);
+    }
+
     pub fn upsertCloudflareResource(self: Repository, key: []const u8, kind: []const u8, resource_id: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, name: ?[]const u8, status: ?[]const u8, resource_type: ?[]const u8, raw: []const u8) !void {
         const stmt = try self.prepare(
             \\INSERT INTO cloudflare_resources(key, kind, resource_id, scope, scope_id, name, status, resource_type, raw_json, updated_at)
@@ -490,5 +497,4 @@ pub const Repository = struct {
         }
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
-
 };

@@ -366,7 +366,10 @@ pub const Client = struct {
     base_url_override: []const u8 = base_url,
 
     pub fn init(auth: Auth) Client {
-        return .{ .auth = auth };
+        return .{
+            .auth = auth,
+            .base_url_override = auth.base_url orelse base_url,
+        };
     }
 
     /// Returns a borrowed Browser Run client with an explicitly selected

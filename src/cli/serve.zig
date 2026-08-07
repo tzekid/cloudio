@@ -1,7 +1,7 @@
 const std = @import("std");
 const app_database = @import("app_database");
 const app_dashboard = @import("app_dashboard");
-const app_serve = @import("app_serve");
+const server = @import("server");
 const cli_args = @import("cli_args");
 const core_config = @import("core_config");
 const runtime_nob_workers = @import("runtime_nob_workers");
@@ -33,11 +33,11 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
             std.debug.print("cloudio nob worker spawn failed: {s}\n", .{@errorName(err)});
         };
     }
-    try app_serve.run(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }, options);
+    try server.run(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }, options);
 }
 
-pub fn parse(args: []const []const u8) !app_serve.Options {
-    var options = app_serve.Options{};
+pub fn parse(args: []const []const u8) !server.Options {
+    var options = server.Options{};
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         if (try cli_args.parseRequiredValueArg(args, &index, .{"--host"}, error.MissingHost)) |value| {

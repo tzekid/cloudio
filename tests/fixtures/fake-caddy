@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="${CLOUDIO_FAKE_CADDY_ROOT:?}"
+state="${CLOUDIO_FAKE_CADDY_STATE:?}"
+control="${CLOUDIO_FAKE_CADDY_CONTROL:?}"
+calls="${CLOUDIO_FAKE_CADDY_CALLS:?}"
+
+command_name="${1:-}"
+shift || true
+printf '%s %s\n' "$command_name" "$*" >>"$calls"
+
+config=""
+while (($#)); do
+  if [[ "$1" == "--config" && $# -ge 2 ]]; then
+    config="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+
+mode="$(tr -d '\r\n' <"$control")"
+
+adapt_json() {
+  local selected="$1"
+  if [[ ! -f "$selected" ]]; then
+    return 1
+  fi
+  if [[ "$selected" == "$root" ]]; then
+    local directory
+    directory="$(dirname "$root")"
+    local digest
+    digest="$({ sha256sum "$root"; find "$directory" -maxdepth 1 -type f -name '*.caddy' -print0 | sort -z | xargs -0 -r sha256sum; } | sha256sum | awk '{print $1}')"
+    printf '{"fixture":"%s"}\n' "$digest"
+    return
+  fi
+  local digest
+  digest="$(sha256sum "$selected" | awk '{print $1}')"
+  printf '{"fragment":"%s"}\n' "$digest"
+}
+
+case "$command_name" in
+  adapt)
+    if [[ "$mode" == "validate-fail" && "$config" == *'.cloudio.tmp.'* ]]; then
+      exit 1
+    fi
+    adapt_json "$config"
+    ;;
+  reload)
+    if [[ "$mode" == "reload-fail" ]]; then
+      : >"$control"
+      exit 1
+    fi
+    adapt_json "$root" >"$state"
+    ;;
+  *)
+    exit 1
+    ;;
+esac

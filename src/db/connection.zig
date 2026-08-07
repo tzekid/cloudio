@@ -12,16 +12,19 @@ const inventory_repository = @import("repositories/inventory.zig");
 const system_repository = @import("repositories/system.zig");
 const auth_repository = @import("repositories/auth.zig");
 const nob_repository = @import("repositories/nob.zig");
+const browser_run_repository = @import("repositories/browser_run.zig");
 
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 pub const DbError = models.DbError;
 const SecretScanSurface = models.SecretScanSurface;
 const SnapshotSummaries = models.SnapshotSummaries;
+const Observation = models.Observation;
 const NameValueRows = models.NameValueRows;
 const ProjectCorrelations = models.ProjectCorrelations;
 const TopologyRows = models.TopologyRows;
 const ContainerRows = models.ContainerRows;
+const ContainerRow = models.ContainerRow;
 const CloudflareAccountRows = models.CloudflareAccountRows;
 const CloudflareZoneRows = models.CloudflareZoneRows;
 const CloudflareDnsRecordRows = models.CloudflareDnsRecordRows;
@@ -83,6 +86,10 @@ pub const Db = struct {
     }
 
     pub fn nob(self: *Db) nob_repository.Repository {
+        return .{ .handle = self.handle };
+    }
+
+    pub fn browserRun(self: *Db) browser_run_repository.Repository {
         return .{ .handle = self.handle };
     }
 
@@ -270,6 +277,12 @@ pub const Db = struct {
     pub fn snapshotsForSource(self: *Db, gpa: Allocator, source: []const u8, limit: i64) !SnapshotSummaries {
         return self.captures().snapshotsForSource(gpa, source, limit);
     }
+    pub fn latestObservation(self: *Db, gpa: Allocator, source: []const u8, kind: []const u8) !?Observation {
+        return self.captures().latestObservation(gpa, source, kind);
+    }
+    pub fn latestObservationForTarget(self: *Db, gpa: Allocator, source: []const u8, kind: []const u8, target: []const u8) !?Observation {
+        return self.captures().latestObservationForTarget(gpa, source, kind, target);
+    }
     pub fn projectList(self: *Db, gpa: Allocator) !NameValueRows {
         return self.system().projectList(gpa);
     }
@@ -287,6 +300,9 @@ pub const Db = struct {
     }
     pub fn containerRows(self: *Db, gpa: Allocator, limit: i64) !ContainerRows {
         return self.system().containerRows(gpa, limit);
+    }
+    pub fn containerRow(self: *Db, gpa: Allocator, name: []const u8) !?ContainerRow {
+        return self.system().containerRow(gpa, name);
     }
     pub fn containerList(self: *Db, gpa: Allocator) !NameValueRows {
         return self.system().containerList(gpa);

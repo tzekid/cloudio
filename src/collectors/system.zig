@@ -9,6 +9,23 @@ const Io = std.Io;
 const Db = db_store.Db;
 
 const max_command_bytes = 4 * 1024 * 1024;
+const max_container_rows = 2000;
+var container_refresh_mutex: std.atomic.Mutex = .unlocked;
+
+pub const ContainerState = enum {
+    running,
+    stopped,
+    exited,
+    restarting,
+    unhealthy,
+    unknown,
+
+    pub fn label(self: ContainerState) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const ContainerAction = enum { start, stop, restart };
 
 pub const Output = core_output.Output;
 
@@ -16,7 +33,9 @@ pub fn collect(io: Io, gpa: Allocator, db: *Db) !void {
     try collectMetrics(io, gpa, db);
     try collectServices(io, gpa, db);
     try collectSockets(io, gpa, db);
-    try collectContainers(io, gpa, db);
+    // The collector records its own failed attempt while retaining last-good
+    // rows. A local runtime outage must not abort unrelated system sources.
+    collectContainers(io, gpa, db) catch {};
 }
 
 pub fn collectMetrics(io: Io, gpa: Allocator, db: *Db) !void {
@@ -94,19 +113,76 @@ pub fn collectSockets(io: Io, gpa: Allocator, db: *Db) !void {
 }
 
 pub fn collectContainers(io: Io, gpa: Allocator, db: *Db) !void {
-    try db.clear("containers");
-    const result = core_process.run(gpa, io, &.{ "docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" }, max_command_bytes) catch |err| {
-        const summary = try std.fmt.allocPrint(gpa, "docker ps failed: {s}", .{@errorName(err)});
+    if (!container_refresh_mutex.tryLock()) return error.ContainerRefreshInProgress;
+    defer container_refresh_mutex.unlock();
+
+    const argv = &.{ "docker", "ps", "-a", "--no-trunc", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" };
+    const result = core_process.run(gpa, io, argv, max_command_bytes) catch |err| {
+        const summary = try std.fmt.allocPrint(gpa, "container runtime unavailable: {s}", .{@errorName(err)});
         defer gpa.free(summary);
         _ = try db.insertSnapshot("system", "containers", null, "error", summary, null, null);
-        return;
+        return error.ContainerRuntimeUnavailable;
     };
     defer result.deinit(gpa);
     const redacted = try core_redact.secrets(gpa, result.stdout);
     defer gpa.free(redacted);
-    _ = try db.insertSnapshot("system", "containers", null, if (result.ok()) "ok" else "error", "docker containers", null, redacted);
+
+    if (!result.ok()) {
+        const stderr_redacted = try core_redact.secrets(gpa, trim(result.stderr));
+        defer gpa.free(stderr_redacted);
+        const summary = if (stderr_redacted.len == 0) "container runtime returned an error" else stderr_redacted;
+        _ = try db.insertSnapshot("system", "containers", null, "error", summary, null, null);
+        return error.ContainerRuntimeUnavailable;
+    }
+
+    const count = validateContainerOutput(redacted) catch |err| {
+        const summary = try std.fmt.allocPrint(gpa, "invalid container observation: {s}", .{@errorName(err)});
+        defer gpa.free(summary);
+        _ = try db.insertSnapshot("system", "containers", null, "error", summary, null, null);
+        return error.ContainerObservationInvalid;
+    };
+
+    try db.exec("BEGIN IMMEDIATE");
+    errdefer db.exec("ROLLBACK") catch {};
+    try db.clear("containers");
+    // Older builds projected runtime rows into Projects. They are derived,
+    // have no project manifest, and must not survive a successful refresh.
+    try db.exec("DELETE FROM projects WHERE source = 'docker'");
     var lines = std.mem.splitScalar(u8, redacted, '\n');
     while (lines.next()) |line| try persistContainerLine(db, line);
+    var summary_buffer: [64]u8 = undefined;
+    const summary = try std.fmt.bufPrint(&summary_buffer, "observed {d} containers", .{count});
+    _ = try db.insertSnapshot("system", "containers", null, "ok", summary, null, redacted);
+    try db.exec("COMMIT");
+}
+
+pub fn classifyContainerStatus(status: []const u8) ContainerState {
+    const clean = trim(status);
+    if (containsIgnoreCase(clean, "unhealthy")) return .unhealthy;
+    if (std.ascii.startsWithIgnoreCase(clean, "restarting")) return .restarting;
+    if (std.ascii.startsWithIgnoreCase(clean, "up ") or std.ascii.eqlIgnoreCase(clean, "up")) return .running;
+    if (std.ascii.startsWithIgnoreCase(clean, "exited")) return .exited;
+    if (std.ascii.startsWithIgnoreCase(clean, "created") or
+        std.ascii.startsWithIgnoreCase(clean, "stopped") or
+        std.ascii.startsWithIgnoreCase(clean, "dead")) return .stopped;
+    return .unknown;
+}
+
+pub fn containerActionAllowed(state: ContainerState, action: ContainerAction) bool {
+    return switch (action) {
+        .start => state == .stopped or state == .exited,
+        .stop => state == .running or state == .unhealthy or state == .restarting,
+        .restart => state == .running or state == .unhealthy,
+    };
+}
+
+pub fn isSafeContainerName(name: []const u8) bool {
+    if (name.len == 0 or name.len > 255 or name[0] == '-') return false;
+    for (name) |ch| switch (ch) {
+        'A'...'Z', 'a'...'z', '0'...'9', '_', '.', '-' => {},
+        else => return false,
+    };
+    return true;
 }
 
 pub fn logs(io: Io, gpa: Allocator, db: *Db, unit: []const u8) !Output {
@@ -159,12 +235,42 @@ fn persistSocketLine(db: *Db, line: []const u8) !void {
 }
 
 fn persistContainerLine(db: *Db, line: []const u8) !void {
-    const clean = trim(line);
+    const clean = trimContainerLine(line);
     if (clean.len == 0) return;
     var fields = std.mem.splitScalar(u8, clean, '\t');
     const name = fields.next() orelse return;
     try db.upsertContainer(name, fields.next(), fields.next(), fields.next(), clean);
-    try db.upsertProject(name, "docker", null, null, null, null, name, clean);
+}
+
+fn validateContainerOutput(raw: []const u8) !usize {
+    var count: usize = 0;
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        const clean = trimContainerLine(line);
+        if (clean.len == 0) continue;
+        if (count >= max_container_rows) return error.TooManyContainers;
+        var fields = std.mem.splitScalar(u8, clean, '\t');
+        const name = fields.next() orelse return error.MalformedContainerRow;
+        _ = fields.next() orelse return error.MalformedContainerRow;
+        _ = fields.next() orelse return error.MalformedContainerRow;
+        _ = fields.next() orelse return error.MalformedContainerRow;
+        if (fields.next() != null or !isSafeContainerName(name)) return error.MalformedContainerRow;
+        count += 1;
+    }
+    return count;
+}
+
+fn trimContainerLine(value: []const u8) []const u8 {
+    return std.mem.trim(u8, value, " \r\n");
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0 or haystack.len < needle.len) return false;
+    var index: usize = 0;
+    while (index + needle.len <= haystack.len) : (index += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return true;
+    }
+    return false;
 }
 
 fn trim(value: []const u8) []const u8 {
@@ -215,5 +321,28 @@ test "persists parsed system inventory rows" {
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("services"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("sockets"));
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("containers"));
-    try std.testing.expectEqual(@as(i64, 1), try db.countTable("projects"));
+    try std.testing.expectEqual(@as(i64, 0), try db.countTable("projects"));
+}
+
+test "container observations classify states and expose only valid actions" {
+    try std.testing.expectEqual(ContainerState.running, classifyContainerStatus("Up 2 hours"));
+    try std.testing.expectEqual(ContainerState.unhealthy, classifyContainerStatus("Up 2 hours (unhealthy)"));
+    try std.testing.expectEqual(ContainerState.restarting, classifyContainerStatus("Restarting (1) 4 seconds ago"));
+    try std.testing.expectEqual(ContainerState.exited, classifyContainerStatus("Exited (0) 3 minutes ago"));
+    try std.testing.expectEqual(ContainerState.stopped, classifyContainerStatus("Created"));
+    try std.testing.expectEqual(ContainerState.unknown, classifyContainerStatus("Removing"));
+
+    try std.testing.expect(containerActionAllowed(.exited, .start));
+    try std.testing.expect(!containerActionAllowed(.exited, .stop));
+    try std.testing.expect(containerActionAllowed(.running, .stop));
+    try std.testing.expect(containerActionAllowed(.running, .restart));
+    try std.testing.expect(!containerActionAllowed(.restarting, .restart));
+
+    try std.testing.expect(isSafeContainerName("web-1"));
+    try std.testing.expect(!isSafeContainerName("-option"));
+    try std.testing.expect(!isSafeContainerName("../escape"));
+    try std.testing.expectEqual(@as(usize, 2), try validateContainerOutput(
+        "web\tnginx\tUp 1 hour\t80/tcp\nworker\tjobs\tExited (0)\t\n",
+    ));
+    try std.testing.expectError(error.MalformedContainerRow, validateContainerOutput("bad row"));
 }

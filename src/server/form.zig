@@ -3,8 +3,8 @@
 const std = @import("std");
 const http = @import("http");
 
-pub const max_body_bytes: usize = 4096;
-pub const max_fields: usize = 16;
+pub const max_body_bytes: usize = 80 * 1024;
+pub const max_fields: usize = 80;
 
 pub const Error = error{
     BodyTooLarge,

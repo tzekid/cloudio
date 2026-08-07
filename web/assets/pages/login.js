@@ -54,11 +54,5 @@
   if (!passkeys.supported()) {
     submit.disabled = true;
     errorMessage.textContent = "Passkeys require a current browser and a secure connection.";
-  } else {
-    fetch("/api/auth/session", { credentials: "same-origin", headers: { Accept: "application/json" } })
-      .then(function (response) {
-        if (response.ok) window.location.replace("/");
-      })
-      .catch(function () {});
   }
 })();

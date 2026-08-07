@@ -1,83 +1,88 @@
 # Cloudio
 
-Cloudio is a self-hosted VPS management platform in Zig: a web UI plus CLI that reads and manages the VPS control plane — Caddy routes, Cloudflare DNS, Hostinger VPS/firewall, Docker containers, and git-based binary deployments — with all state and an audit trail in SQLite.
+Cloudio is a self-hosted VPS control plane written in Zig. It provides a
+server-rendered web UI and a host CLI for Caddy routes, Cloudflare DNS,
+Hostinger VPS instances, bounded Cloudflare Browser Run actions, local Docker
+containers, reviewed project lifecycles, and operational audit history. Runtime
+state is stored in SQLite.
 
-The broad execution plan is tracked in [docs/execution-plan.md](docs/execution-plan.md).
+Cloudio intentionally targets one operator and one host. It is not a generic
+cloud abstraction, a remote Docker manager, a Compose editor, or a replacement
+for Caddy, systemd, provider APIs, or project-owned build logic.
 
-## Platform (web UI)
+## Run it
+
+Use the pinned Zig version from `.zigversion`.
 
 ```sh
-zig build
+zig build --system zig-pkg
+./zig-out/bin/cloudio init
+./zig-out/bin/cloudio doctor
+
 CLOUDIO_AUTH_ORIGIN=http://localhost:9331 \
-  CLOUDIO_AUTH_RP_ID=localhost \
+CLOUDIO_AUTH_RP_ID=localhost \
   ./zig-out/bin/cloudio serve --port 9331
 ```
 
-For local development, run `cloudio auth bootstrap --ttl 10m`, open the
-one-use link, and create a passkey. Production must configure its exact HTTPS
-origin and RP ID before bootstrap. Pages: dashboard, apps
-(register/deploy/rollback with bounded log polling), Caddy routes (desired state,
-preview, validate + apply + reload), Cloudflare DNS, VPS/firewall, Docker,
-audit, passkey security, and appearance settings.
-
-Authenticated pages are rendered on demand with their useful current state,
-native links, and query forms already present. The small dependency-free
-JavaScript layer preserves the same responsive shell and adds mutation
-controls, passkey browser ceremonies, polling, and feedback without owning the
-first view. Run `zig build web-check` for the frontend structural and
-JavaScript syntax gate; it is also included in `zig build check`.
-
-Light is the default appearance. Authenticated users can choose Light, Dark,
-or Device from `/settings.html`. Cloudio stores the browser-scoped choice in a
-host-only `HttpOnly` preference cookie and renders the matching root class
-before CSS loads, so login, setup, and authenticated pages have no theme flash
-and remain complete without JavaScript.
-
-The backend keeps protocol, policy, and domain work separate:
-
-- `web.zig` supplies the pinned context-safe HTML writer used by the
-  server-rendered page adapter.
-- `src/http` owns bounded HTTP/1.1 parsing, routing, responses, static files,
-  and connection lifecycle, with no Cloudio dependencies.
-- `src/server` owns the single route table, default-deny session/CSRF/
-  idempotency policy pipeline, authenticated page rendering, and grouped thin
-  handlers.
-- `src/security/passkeys.zig` is the narrow boundary around the pinned
-  WebAuthn verifier; `src/app/authentication.zig` owns ceremonies and sessions.
-- `src/runtime/scheduler.zig` owns background refresh and retention scheduling.
-- `src/db/repositories` owns concrete SQL by domain; `db/store.zig` is now a
-  small compatibility facade.
-- `packages/cloudflare` and `packages/hostinger` are independently buildable
-  pinned-Zig libraries and the canonical source for their public mirrors.
-
-Run the complete integrated and standalone-package gate with:
+For a local first login:
 
 ```sh
-zig build --system zig-pkg check
+./zig-out/bin/cloudio auth bootstrap --ttl 10m
 ```
 
-Platform and passkey config lives in `cloudio.local.toml`:
+Open the one-use URL printed by the command and enroll a passkey. Production
+must use its exact HTTPS origin and relying-party ID.
 
-```toml
-[platform]
-apps_root = "/home/kid/Projects"
-port_range = "42000-42999"     # ports auto-assigned to deployed apps
-refresh_seconds = 300          # background provider refresh interval
+## Product surface
 
-[auth]
-origin = "https://cloudio.example.com" # or CLOUDIO_AUTH_ORIGIN
-rp_id = "cloudio.example.com"          # or CLOUDIO_AUTH_RP_ID
-```
+Authenticated pages are rendered with useful first-response HTML. Native
+links and forms are the state model. The shared browser script only manages
+responsive navigation; Security has a small, page-local WebAuthn and credential
+management island.
 
-Authentication is passkey-only. Cloudio requires user verification (Touch ID,
-Face ID, device passcode, or a security key), stores only public credentials
-and SHA-256 session/bootstrap token hashes, and protects every non-public route.
-The production cookie is `__Host-cloudio_session` with `Secure`, `HttpOnly`,
-`SameSite=Strict`, a host-only path, and a fixed 12-hour lifetime. Every unsafe
-authenticated request also requires exact-origin validation and a
-session-bound CSRF token.
+| Section | Bounded responsibility |
+| --- | --- |
+| Dashboard | Reconciled DNS, local route, service, project, VPS, and container health |
+| Projects | Reviewed `nob.zig` scan, trust, plan, run, rollback, resource, and secret workflows |
+| Routes | One Cloudio-owned Caddy fragment with preview, apply, verification, and rollback |
+| DNS | Cloudflare DNS observation plus explicitly allowed create, edit, and delete operations |
+| Browser | One-shot Kitesurf HTML renders and PNG screenshots for explicitly allowed public hosts |
+| VPS | Hostinger VPS observation and capability-checked lifecycle actions |
+| Docker | Local container observation, valid lifecycle actions, and bounded log reads |
+| Audit | Read-only mutation and operational history |
+| Security | Passkey enrollment, rename, revoke, logout, and host-controlled recovery |
+| Settings | Server-owned Light, Dark, or Device appearance preference |
 
-Bootstrap, inspect, and recover from the host CLI:
+The old Apps deployer was removed. Project deployment belongs to the reviewed
+`nob.zig` lifecycle, so a second systemd-writing deployment path would create
+conflicting ownership. Its empty legacy SQLite tables remain only for existing
+database compatibility and will be considered during the planned Turso
+cutover.
+
+The canonical HTTP surface is
+[docs/http-route-inventory.md](docs/http-route-inventory.md).
+
+## Safety model
+
+Authentication is passkey-only. Cloudio requires user verification and stores
+public credentials plus hashes of sessions and bootstrap tokens. Unsafe
+authenticated requests require:
+
+- an authenticated host-only session;
+- exact-origin validation;
+- a session-bound CSRF token;
+- an `Idempotency-Key`; and
+- `X-Cloudio-Confirm: confirmed` for destructive operations.
+
+The authenticated actor comes from the session. Caller-provided actor headers
+are not trusted. A repeated idempotency key returns the original response only
+when the request fingerprint matches; conflicting reuse is rejected.
+
+The production session cookie is `__Host-cloudio_session` with `Secure`,
+`HttpOnly`, `SameSite=Strict`, path `/`, no Domain attribute, and a fixed
+12-hour lifetime.
+
+Host-side authentication operations:
 
 ```sh
 cloudio auth status
@@ -85,70 +90,53 @@ cloudio auth bootstrap --ttl 10m
 cloudio auth reset --backup .cloudio/backups/before-auth-reset.db --confirm
 ```
 
-Bootstrap is refused after a passkey exists. Reset first creates and verifies a
-new online SQLite backup, then removes credentials and sessions; it does not
-open setup automatically.
+Reset creates and verifies a new online SQLite backup before revoking
+credentials and sessions. It does not silently reopen setup. See
+[docs/passkey-operations.md](docs/passkey-operations.md).
 
-Deploys clone/pull the app source, detect the toolchain (zig/go/rust/node/prebuilt), build, install into `apps_root/<name>/releases/<sha>/` behind an atomic `current` symlink, write a `cloudio-<name>.service` systemd unit, health-check the assigned port, and upsert a Caddy route for `<name>.<domain>`. Every write action (providers, Caddy, systemd, Docker, deploys) is recorded in the `audit_actions` table with secrets redacted.
+## Configuration
 
-Platform writes use an explicit safety contract. Every product mutation
-requires an `Idempotency-Key`; replaying the same key and request returns the
-stored response, while reusing it for different input is rejected. Destructive
-routes also require `X-Cloudio-Confirm: confirmed`. The authenticated actor is
-derived from the passkey session rather than trusted from a request header.
-Deploy, rollback, and delete operations take a per-app database lock. Failed or
-unhealthy releases automatically restore the previous release when one exists,
-and deleting an app removes its unit, release tree, deploy history, and Caddy
-route after path validation.
-
-Append-only storage has configurable lifecycle management:
+Local configuration lives in ignored `cloudio.local.toml`. Common settings:
 
 ```toml
+db_path = ".cloudio/cloudio.db"
+log_path = ".cloudio/latest-run.log"
+domains = "example.com"
+projects_root = "/srv/projects"
+
+caddyfile_path = "/etc/caddy/Caddyfile"
+caddy_sites_path = "/etc/caddy/conf.d/sites.caddy"
+caddy_owned_path = "/etc/caddy/conf.d/cloudio.caddy"
+caddy_admin_socket = "/run/caddy/admin.socket"
+
+[platform]
+refresh_seconds = 300
+
+[auth]
+origin = "https://cloudio.example.com"
+rp_id = "cloudio.example.com"
+
+[cloudflare]
+api_token = "..."
+
+[browser_run]
+allowed_hosts = "example.com,*.example.org"
+state_root = ".cloudio/browser-run"
+retention_hours = 24
+
+[hostinger]
+api_token = "..."
+
 [storage]
 auto_prune = false
+backup_root = ".cloudio/backups"
+disk_budget_bytes = 0
 snapshot_retention_days = 14
 provider_raw_retention_days = 14
 metrics_retention_days = 30
 maintenance_interval_hours = 24
 maintenance_batch_rows = 5000
-```
 
-Preview, back up, prune, and compact with:
-
-```sh
-cloudio maintenance status
-cloudio maintenance backup --output .cloudio/backups/cloudio.db
-cloudio maintenance prune --apply --backup .cloudio/backups/before-prune.db
-cloudio maintenance run --apply --backup .cloudio/backups/before-maintenance.db
-```
-
-Manual pruning or compaction is refused without a new online SQLite backup path. Scheduled pruning is disabled by default and runs only when `storage.auto_prune` is enabled.
-
-## nob.zig projects
-
-Cloudio includes the control-plane side of
-[`nob.zig`](https://github.com/tzekid/nob.zig), a standardized lifecycle
-contract for Zig repositories. The design is deliberately hybrid:
-
-- `build.zig` remains the source of truth for compilation, tests, and staged
-  package installation.
-- A small project-owned `src/nob.zig` runner owns project-specific planning,
-  migration, deployment, rollback, and health logic.
-- A passive `nob.json` manifest gives Cloudio a safe discovery and review
-  surface before any project code runs.
-- Cloudio owns trust, exact-byte plans, authentication, idempotency, queued
-  operations, audit/history, secret delivery, narrow host-control brokers, and
-  independent resource observation.
-
-The SDK is pinned under `vendor/nob`. Its library and service examples are
-part of Cloudio's integrated build gate. See the
-[nob.zig adoption guide](vendor/nob/docs/adoption.md) for the repository-side
-steps and [the full v1 specification](docs/nob-zig-spec.md) for protocol and
-security details.
-
-The default host configuration is intentionally non-mutating:
-
-```toml
 [nob]
 enabled = true
 scan_depth = 3
@@ -162,552 +150,191 @@ max_run_log_bytes = 67108864
 allow_system_mutation = false
 ```
 
-State, runner cache, and optional pinned-toolchain paths default to the
-corresponding XDG directories. `cloudio doctor` reports the resolved paths,
-runner Zig, toolchain-map validity, user-systemd manager, Caddy config/service/
-admin socket, and mutation kill-switch state.
+Credential environment names are `CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, `HOSTINGER_API_TOKEN`, and
+`HAPI_API_TOKEN`. `CLOUDIO_AUTH_ORIGIN` and `CLOUDIO_AUTH_RP_ID` override
+their auth settings.
 
-A project's first enrollment is explicit:
+Browser Run requires `CLOUDFLARE_API_TOKEN`; legacy email/global-key
+authentication is not accepted. `CLOUDIO_BROWSER_RUN_ALLOWED_HOSTS`,
+`CLOUDIO_BROWSER_RUN_STATE_ROOT`, and
+`CLOUDIO_BROWSER_RUN_RETENTION_HOURS` override the corresponding section.
+An empty host allowlist disables the Browser page's actions.
+
+Cloudio also reads ignored `.env` and `.env.fish` files before the process
+environment. Set `CLOUDIO_DISABLE_ENV_FILES=1` for hermetic invocations.
+`cloudio doctor` reports resolved paths and capability checks without
+printing secrets.
+
+## Operator workflows
+
+Run `cloudio help` for the exact command grammar. The stable command families
+are:
+
+```text
+init          doctor       serve         refresh
+dashboard     topology     inventory     history
+audit         evidence     actions       export
+caddy         cloudflare   hostinger     system
+projects      nob          auth          security
+maintenance   routes       route         coverage
+```
+
+### Caddy routes
+
+Cloudio owns exactly `caddy_owned_path`. The root Caddyfile must import that
+file directly or through an exact same-directory `*.caddy` pattern. Cloudio
+does not rewrite the root or unmanaged fragments.
+
+Create, edit, enable, disable, adopt, and delete change desired state. Preview
+shows the pending diff. Apply validates a sibling temporary fragment, saves the
+previous bytes, atomically replaces the owned file, reloads through the
+configured admin socket, and verifies the running JSON configuration. A failed
+validation, reload, or verification restores and reloads the prior fragment.
+
+```sh
+cloudio caddy owned-refresh
+cloudio caddy owned-status
+cloudio caddy owned-preview
+cloudio caddy owned-create app.example.com 127.0.0.1:9000
+cloudio caddy owned-delete app.example.com --confirm app.example.com
+cloudio caddy owned-apply --confirm APPLY
+```
+
+Only lowercase FQDNs and loopback upstreams are accepted. Global options,
+arbitrary directives, and hand-maintained sites are outside this workflow.
+
+### Docker
+
+Docker support is local and deliberately narrow. Refresh runs one bounded
+`docker ps -a --no-trunc` observation and atomically stores the result. A
+failed refresh preserves the last successful inventory, marks it stale, and
+disables mutations until capability is proven again.
+
+Start, stop, and restart are exposed only when valid for the observed state.
+Cloudio executes a direct argument vector, recollects, verifies the result, and
+records one redacted audit action. Log reads require an observed container and
+a tail between 1 and 500. Image builds, pulls, Compose editing, exec terminals,
+remote daemons, and automatic mutation retries are out of scope.
+
+### Browser Run
+
+The Browser page exposes only rendered HTML and PNG screenshots through
+Cloudflare Kitesurf. The engine is selected explicitly and remains visibly
+beta; Cloudio never switches to Chromium or retries automatically. A run
+requires an observed Cloudflare account and an explicit destination allowlist.
+Exact hosts and `*.subdomain` patterns are supported; private/reserved IP
+literals, localhost names, URL credentials, and non-HTTP schemes are rejected.
+
+Artifacts are private files below `browser_run.state_root`, bounded to 8 MiB,
+and expire after `retention_hours`. Expired files and rows are removed in
+bounded batches before the next accepted run. Returned HTML is displayed only
+as escaped text and downloaded as an attachment. Cloudio does not accept
+cookies, credentials, arbitrary headers, inline HTML, CDP sessions, Puppeteer,
+Playwright, or MCP connections through this UI.
+
+### Storage
+
+```sh
+cloudio maintenance status
+cloudio maintenance backup --output .cloudio/backups/cloudio.db
+cloudio maintenance prune --apply --backup .cloudio/backups/before-prune.db
+cloudio maintenance run --apply --backup .cloudio/backups/before-maintenance.db
+```
+
+Manual pruning and compaction require a new verified backup. Scheduled pruning
+is disabled unless `storage.auto_prune` is true. Cloudio never deletes files
+under `storage.backup_root`. Read
+[docs/storage-operations.md](docs/storage-operations.md) before applying
+maintenance or restoring data.
+
+### Projects and `nob.zig`
+
+Cloudio uses a hybrid project lifecycle:
+
+- `build.zig` remains the build and installation source of truth;
+- a passive `nob.json` is safe to discover before project code runs;
+- a project-owned `src/nob.zig` runner implements project-specific actions;
+- Cloudio owns trust, exact-byte plans, approval, persistence, workers,
+  cancellation, audit, secret delivery, and independent host observation.
+
+Enrollment is explicit:
 
 ```sh
 cloudio nob scan
-cloudio nob list
-cloudio nob show dev.example.my-service
-cloudio nob trust dev.example.my-service <manifest-sha256>
-cloudio nob prepare dev.example.my-service
-cloudio nob observe dev.example.my-service
-cloudio nob plan dev.example.my-service check --json
+cloudio nob show dev.example.service
+cloudio nob trust dev.example.service <manifest-sha256>
+cloudio nob prepare dev.example.service
+cloudio nob observe dev.example.service
+cloudio nob plan dev.example.service check --json
 cloudio nob run <plan-id> --yes --follow
 ```
 
-Trust binds the canonical repository and exact manifest digest. Any manifest
-change returns the project to review-required state and invalidates ready
-plans. Preparing is the first step that builds project code; runners execute
-from a content-addressed cache with a sanitized environment. Plans are
-short-lived and one-use, while operations are persisted, cancellable where
-safe, bounded in time/output/storage, and never automatically retried after an
-interrupted mutation.
+Trust binds the canonical repository and exact manifest digest. A manifest
+change requires review and invalidates ready plans. Plans expire and are
+single-use. Interrupted mutations are not automatically retried. System-scope
+commands, `sudo`, arbitrary root execution, and generic Compose mutation are
+not protocol features.
 
-The authenticated Projects page at `/projects.html` exposes the same scan,
-review, prepare, observe, plan, run, resource-control, secret, event, artifact,
-cancel, revoke, and forget workflows. Cloudio separately verifies declared
-systemd state, loopback HTTP/TCP endpoints, release and data paths, executable
-artifacts, processes, and live Caddy routes; a runner cannot mark contradictory
-host evidence healthy.
+Repository adoption is documented in
+[vendor/nob/docs/adoption.md](vendor/nob/docs/adoption.md); the complete
+Cloudio-side contract is [docs/nob-zig-spec.md](docs/nob-zig-spec.md).
 
-Logical secret bindings support restricted files and values captured from
-Cloudio's startup environment. Secret values become short-lived protected
-files for one approved action and are never returned through the API or UI.
-User-systemd and Caddy mutations remain blocked until
-`allow_system_mutation = true`; even then, the runner receives only exact,
-one-use broker capabilities already present in the reviewed plan. System-scope
-mutation, arbitrary root commands, `sudo`, and generic Compose mutation are not
-part of protocol v1.
+### Provider coverage
 
-Operational history is pruned by age while preserving the newest configured
-number of runs per project and any operation that proves ownership of a managed
-unit or route. `cloudio nob forget <id> --yes` revokes trust, invalidates plans,
-removes runner cache and secret bindings, and leaves host resources plus audit
-history intact. A later exact trust review can restore the tombstoned project.
+Checked-in Cloudflare and Hostinger OpenAPI manifests support route review and
+safe, explicit generic read planning. They do not authorize generated live
+writes, and coverage counts are not product-completion claims.
 
-## Quick Start
+Normal builds are offline. Upstream spec refresh and drift checks are explicit
+networked operations:
 
 ```sh
-zig build
-zig build check
-zig build run -- init
-zig build run -- doctor
-zig build run -- doctor --json
-zig build run -- refresh --all
-zig build run -- overview
-zig build run -- overview --json
-zig build run -- topology
-zig build run -- topology --json
-zig build run -- topology capture --json
-zig build run -- topology changes --json
-zig build run -- history
-zig build run -- history --json
-zig build run -- history --limit 50
-zig build run -- evidence
-zig build run -- evidence hostinger --json
-zig build run -- evidence matrix cloudflare --limit 25
-zig build run -- evidence routes hostinger --json
-zig build run -- evidence coverage all --json
-zig build run -- evidence coverage hostinger --limit 25
-zig build run -- evidence capture-summary all --json
-zig build run -- evidence actual hostinger --limit 10
-zig build run -- inventory
-zig build run -- routes --json
-zig build run -- routes cloudflare dns --limit 25
-zig build run -- log
-zig build run -- log --json
-zig build run -- export history --json
-zig build run -- projects correlate --json
+zig build api-summary
+zig build coverage-manifest
+zig build coverage-check
 ```
 
-Optional local config lives in `cloudio.local.toml` and is ignored by git:
+See [docs/provider-coverage.md](docs/provider-coverage.md).
 
-```toml
-db_path = ".cloudio/cloudio.db"
-log_path = ".cloudio/latest-run.log"
-domains = "plosca.ru sparkdate.love"
-projects_root = "/home/kid/Projects"
-
-[cloudflare]
-api_token = "cfut_..."
-# email = "you@example.com"
-# api_key = "legacy-global-key"
-
-[hostinger]
-api_token = "hapi_..."
-```
-
-Cloudio also auto-loads ignored `.env` and `.env.fish` files before reading process environment. Supported credential names are `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, `HOSTINGER_API_TOKEN`, and `HAPI_API_TOKEN`.
-
-Each `refresh` writes a redacted `.cloudio/latest-run.log` with collector selection, credential presence, table counts, and the snapshots captured during that refresh. Empty provider response bodies are stored as structured diagnostic JSON with the HTTP status and endpoint so failed reads do not disappear as blank logs.
-
-Operational history reads SQLite only and combines audit events with recent snapshots for CLI review or future UI/API callers:
+## Development gates
 
 ```sh
-zig build run -- history
-zig build run -- history --json
-zig build run -- history --audit-limit 25 --snapshot-limit 50 --json
-zig build run -- audit --limit 100
-zig build run -- export history --json
+zig build -l
+zig build --system zig-pkg -Doptimize=Debug check
+tests/setup-browser-e2e.sh
+zig build --system zig-pkg -Doptimize=Debug release-check
+zig build --system zig-pkg -Doptimize=ReleaseSafe release-check
 ```
 
-Provider evidence reads SQLite only and joins redacted provider raw-capture metadata, snapshots, and audit events into one review surface:
+`check` compiles the executable, runs module tests, checks architectural
+boundaries and web structure, and tests both standalone provider packages.
+`release-check` adds authenticated browser product acceptance and host-side
+recovery acceptance. There is no separate smoke suite: release confidence
+comes from the real end-to-end workflows.
 
-```sh
-zig build run -- evidence
-zig build run -- evidence --json
-zig build run -- evidence hostinger --limit 50 --json
-zig build run -- evidence --provider cloudflare
-zig build run -- evidence matrix cloudflare --limit 25
-zig build run -- evidence matrix hostinger --json
-zig build run -- evidence routes
-zig build run -- evidence routes hostinger --json
-zig build run -- evidence coverage
-zig build run -- evidence coverage cloudflare --json
-zig build run -- evidence capture-summary
-zig build run -- evidence capture-summary hostinger --json
+## Repository map
+
+```text
+src/core/          configuration, redaction, logging, process, time, JSON
+src/http/          reusable bounded HTTP/1.1 server
+src/server/        route table, security pipeline, pages, thin handlers
+src/app/           application workflows and read models
+src/db/            migrations, repositories, and current store facade
+src/collectors/    external and local observation
+src/providers/     generated-route planning and provider-neutral transport
+src/nob/           project protocol and host-control boundaries
+src/runtime/       scheduler and nob workers
+src/cli/           host command adapters
+packages/          standalone Cloudflare and Hostinger Zig packages
+web/               authored page templates and bounded browser assets
+tests/             product and recovery acceptance with controlled fixtures
+coverage/          generated provider manifests and reviewed overrides
 ```
 
-`evidence matrix` rolls stored evidence into provider family/status/source groups for broad review. `evidence routes` reads `route.capture` audit rows and extracts provider operation IDs, so L2 route-capture proof can be inspected without scraping recent logs or calling provider APIs. `evidence coverage` joins those DB captures to the generated Cloudflare/Hostinger route manifests and prints official tag, method, path, support, mode, deprecation, and test metadata for each captured operation without making live provider calls. `evidence capture-summary` compares official non-deprecated read routes with actual SQLite route-capture evidence by provider family, keeps raw `missing_read_routes` visible, and separately reports `evidence_covered_read_routes`, `diagnostic_read_routes`, and `unresolved_read_routes` so generated, fixture, diagnostic, and live L2 evidence are not confused.
-
-Topology reads SQLite only and connects Cloudflare DNS records, Caddy routes, project metadata, listening sockets, systemd service state, and Docker container state. It also derives systemd service names from socket cgroup process text and exact project-name service units, maps compose project rows to matching Docker container names, then hydrates state from collected `systemctl` and `docker ps` rows when available. The JSON read model derives status, exposure, DNS match type, capability booleans, and issue arrays/counts such as `upstream_without_socket`, `project_without_runtime`, and `dns_without_local_target` for UI/API consumers:
-
-```sh
-zig build run -- topology
-zig build run -- topology --json
-zig build run -- topology --limit 50 --json
-zig build run -- topology capture --json
-zig build run -- topology changes --limit 50 --json
-```
-
-The server captures topology deltas after each refresh. `topology_state` holds the latest typed operational projection and `topology_changes` records added, changed, and removed resources without duplicating unchanged snapshots.
-
-Central inventory reads join the typed Cloudflare and Hostinger inventory projections without calling live provider APIs:
-
-```sh
-zig build run -- inventory
-zig build run -- inventory summary
-zig build run -- inventory summary hostinger --domain plosca.ru
-zig build run -- inventory summary hostinger --format json
-zig build run -- inventory hostinger --query plosca.ru --json
-zig build run -- inventory cloudflare --domain plosca.ru
-zig build run -- inventory hostinger --query plosca.ru --limit 50
-```
-
-Generic provider route dispatch:
-
-```sh
-zig build run -- routes --json
-zig build run -- routes hostinger vps --limit 25 --json
-zig build run -- routes cloudflare dns --limit 25
-zig build run -- route plan cloudflare --operation accounts-list-accounts
-zig build run -- route read cloudflare --operation accounts-list-accounts
-zig build run -- route capture cloudflare --operation accounts-list-accounts --kind route-cloudflare-accounts --target accounts --paginate --max-pages 5
-zig build run -- route plan hostinger --operation VPS_getVirtualMachinesV1
-zig build run -- route read hostinger --operation VPS_getVirtualMachinesV1
-zig build run -- route capture hostinger --operation VPS_getVirtualMachinesV1 --kind route-hostinger-vps --target vps
-zig build run -- route capture hostinger --operation VPS_getPublicKeysV1 --kind route-hostinger-public-keys --target public-keys --paginate --max-pages 5
-zig build run -- route capture-ready cloudflare control-plane --limit 10
-zig build run -- route capture-ready hostinger --family hostinger-vps --limit 0
-zig build run -- route capture-ready hostinger --family hostinger-vps --limit 0 --max-pages 3 --execute
-zig build run -- route dry-run hostinger --operation VPS_purchaseNewVirtualMachineV1 --body-content-type application/json
-zig build run -- route dry-run cloudflare --operation argo-smart-routing-patch-argo-smart-routing-setting --path-param zone_id=<zone-id> --body-content-type application/json
-zig build run -- coverage --json
-zig build run -- coverage tags cloudflare --json
-zig build run -- coverage l1 all --json
-zig build run -- coverage capture-candidates cloudflare Logs --limit 10 --json
-zig build run -- coverage actual-captures hostinger --family hostinger-vps --limit 20 --json
-zig build run -- coverage dry-run-candidates cloudflare "AI Gateway" --limit 10 --json
-zig build run -- coverage help
-zig build run -- coverage workplan control-plane --limit 0 --json
-zig build run -- coverage workplan security --plans --json
-zig build run -- coverage workplan hostinger hostinger-vps --bundle --plans --json
-zig build run -- coverage workplan cloudflare --limit 10 --json
-zig build run -- coverage workplan cloudflare --focus control-plane --limit 10 --json
-zig build run -- coverage workplan cloudflare --family security --limit 5 --plans --json
-zig build run -- coverage workplan cloudflare --family security --limit 3 --candidate-limit 5 --bundle --plans --json
-zig build run -- coverage actual-workplan hostinger --family hostinger-vps --limit 0
-zig build run -- coverage gaps all --limit 12
-zig build run -- coverage gaps all --limit 12 --json
-zig build run -- coverage levels all
-zig build run -- coverage levels all --format json
-zig build run -- coverage level-tags all --limit 12
-zig build run -- coverage level-tags hostinger --limit 12 --json
-zig build run -- coverage families all --limit 12 --json
-zig build run -- coverage typed-models cloudflare --family security --limit 10 --json
-zig build run -- coverage typed-models cloudflare --focus control-plane --limit 0 --json
-zig build run -- coverage routes hostinger --method GET --path /api/vps/v1/virtual-machines --json
-```
-
-`routes` reads the checked-in provider coverage manifests and `coverage/generated/metadata.json` only. It summarizes the official OpenAPI source URLs, operation counts, routable modes, support states, L1 contract metadata, and a bounded route catalog for review or future UI/API surfaces. `cloudio routes groups --json` rolls the same manifest rows up by provider and upstream OpenAPI tag, including method/mode/support counts, auth requirements, parameter-bearing routes, request-body requirements, and documented response counts. It does not call Cloudflare or Hostinger.
-
-`route plan` never sends HTTP. `route read` executes only generated bodyless `GET`/read routes with the configured provider credentials and prints response metadata without response bodies. `route capture` executes the same safe read path, redacts the response once, stores it in `snapshots` and `provider_raw`, writes a `route.capture` audit event, normalizes stable-ID resource items into `cloudflare_resources` or `hostinger_resources`, updates high-value typed tables for Cloudflare accounts/zones/DNS records and Hostinger VPS when the route shape matches, updates typed Cloudflare and Hostinger inventory rows for stable provider resources, and still prints metadata only. `route capture --paginate` follows generated `page` query parameters for recognized Cloudflare `result_info` and Hostinger `data/meta` page envelopes, and follows generated `cursor` query parameters for recognized Cloudflare cursor envelopes, up to `--max-pages`. Each page is stored as a separate redacted snapshot, normalized resources and typed rows are counted in capture metadata, and cursor token values are redacted from emitted endpoints and audit labels. `route capture-ready` reads the DB-backed actual capture plan, selects only routes with known inputs and live-read support, ranks them through the same family-priority contract as `coverage actual-captures`, and either prints the ready batch (`--execute` omitted) or executes those safe reads into snapshots/provider raw/audit rows (`--execute`); mutation endpoints and blocked-permission reads are skipped unless `--include-blocked` is set for diagnostic reads. Its JSON items include `focus_family`, `family_priority`, `family_candidate_routes`, `family_ready_candidates`, `family_pending_read_gaps`, and `family_missing_tests` so a future UI can explain batch order before execution. `route dry-run` renders mutation plans with `will_execute:false`; it validates path/query/header/body metadata but never sends a provider write. `coverage l1` audits the generated manifests for provider-wide L1 routability invariants without calling live APIs. `coverage capture-candidates` does not call provider APIs; it lists generated bodyless `GET` routes that still need L2 capture evidence, required path/query/header placeholders, pagination hints, and a `cloudio route capture ...` command template so whole tag groups can be collected deliberately; `--plans` expands visible candidates with nested generic read plan JSON using schema-compatible example inputs and `will_execute:false`, so broad read families can be reviewed before any live provider read or snapshot capture. `coverage actual-captures`, also available as `coverage actual-workplan` or `coverage missing-captures`, reads SQLite `route.capture` audit evidence plus provider manifests and lists official `GET`/read routes that do not yet have an OK actual capture; for Hostinger VPS routes it fills known `virtualMachineId` values from the `hostinger_vps` table, marks commands as ready or not ready, and lists unresolved path/query/header inputs without calling provider APIs. `coverage dry-run-candidates` does not call provider APIs; it lists generated non-`GET` mutation routes that still need dry-run review evidence, required path/query/header placeholders, request-body content-type/schema metadata, and a `cloudio route dry-run ...` command template; `--plans` expands visible candidates with nested generic `will_execute:false` plan JSON using schema-compatible example inputs, so an entire mutation family can be reviewed in one no-write bundle. `coverage workplan`, also available as `coverage slice-plan` or `coverage slices`, ranks unresolved provider tag groups and emits the exact `routes`, `capture-candidates`, and `dry-run-candidates` commands needed to review each broad slice; `coverage workplan control-plane` is shorthand for the Cloudio-relevant focus, and `coverage workplan security`, `coverage workplan hostinger-vps`, or `coverage workplan hostinger vps` select whole control-plane families without tag-string guesswork. `--focus control-plane` keeps the same evidence scoring while filtering to Cloudio control-plane areas such as accounts, zones, DNS, SSL/TLS, Access, tunnels, rulesets, logs, cache, security posture, tokens, memberships, Hostinger VPS, billing, domains, hosting, Docker, and security surfaces. `--family` applies that shared classifier to workplans, exact routes, capture candidates, actual captures, ready captures, and dry-run candidates, so broad slices can be reviewed from summary down to individual operations without tag-string guessing. `coverage gaps` ranks provider tag groups by pending read evidence and pending mutation dry-run evidence while treating diagnostic-blocked reads and generated Cloudflare dry-run policy as evidence, so future API work moves in broad slices without reopening already-reviewed no-write paths. `coverage levels` summarizes manifest-backed L0/L1/L2 evidence, dry-run review evidence, and L3 projection candidates by provider without treating that summary as final completion proof. `coverage level-tags`, also available as `coverage levels-by-tag` or `coverage evidence`, applies the same evidence accounting per upstream tag group and ranks by pending reads and pending mutation dry-runs while counting diagnostic-blocked reads as L2 evidence so review can pick whole endpoint families instead of one route at a time. `coverage families`, also available as `coverage family-summary`, rolls those tag rows up to Cloudio control-plane families and emits the matching family workplan command for each broad slice; `coverage families control-plane` is the positional shorthand for filtering that overview to Cloudio-relevant families. `coverage help` prints the review command grammar. `coverage routes --json` emits the exact generated route contract, including parameters, request body, responses, security alternatives, support/mode, and tests.
-`coverage workplan --plans` remains no-execute; it appends `--plans` to generated capture and dry-run candidate commands so each selected slice points directly at nested read/dry-run plan JSON bundles. `coverage workplan --bundle --plans --json` expands each selected workplan row with the actual capture/dry-run candidate rows and nested generated read/dry-run plan JSON, still using only checked-in coverage manifests.
-`coverage typed-models` ranks tag groups where generic L3 inventory rows exist but typed SQLite projections are missing or thin, with family/focus filters and route/workplan commands for the next broad modeling slice. Its summary separates `control_plane_typed_gap` from `outside_control_plane_typed_gap`, and each row exposes `scope`, `required_for_goal`, and `next_action`, so optional generic inventory modeling does not look like unfinished Cloudio control-plane L3 work.
-
-The `coverage summary`, `coverage tags`, `coverage l1`, `coverage capture-candidates`, `coverage actual-captures`, `coverage dry-run-candidates`, `coverage workplan`, `coverage gaps`, `coverage levels`, `coverage level-tags`, `coverage families`, `coverage typed-models`, and `coverage routes` review surfaces accept `--json` or `--format json` for future web/native UI callers without scraping CLI text.
-
-Useful read-only Cloudflare checks:
-
-```sh
-zig build run -- cloudflare inventory
-zig build run -- cloudflare resources
-zig build run -- cloudflare ips
-zig build run -- cloudflare ips jdcloud
-zig build run -- cloudflare account dns-record-usage <account-id>
-zig build run -- cloudflare account user-group-members <account-id> <user-group-id>
-zig build run -- cloudflare account user-group-member <account-id> <user-group-id> <member-id>
-zig build run -- cloudflare zone plosca.ru
-zig build run -- cloudflare zone show <zone-id>
-zig build run -- cloudflare zone available-plans <zone-id>
-zig build run -- cloudflare zone cache-reserve <zone-id>
-zig build run -- cloudflare zone environments <zone-id>
-zig build run -- cloudflare zone hold <zone-id>
-zig build run -- cloudflare zone subscription <zone-id>
-zig build run -- cloudflare secondary-dns acls <account-id>
-zig build run -- cloudflare secondary-dns primary-status <zone-id>
-zig build run -- cloudflare secondary-dns secondary <zone-id>
-zig build run -- cloudflare dns-analytics report <zone-id>
-zig build run -- cloudflare dns-firewall list <account-id>
-zig build run -- cloudflare dns-firewall analytics bytime <account-id> <dns-firewall-id>
-zig build run -- cloudflare load-balancing account monitors <account-id>
-zig build run -- cloudflare load-balancing account pool-health <account-id> <pool-id>
-zig build run -- cloudflare load-balancing user healthcheck-events
-zig build run -- cloudflare load-balancing zone load-balancers <zone-id>
-zig build run -- cloudflare health-checks endpoint list <account-id>
-zig build run -- cloudflare health-checks endpoint show <account-id> <healthcheck-id>
-zig build run -- cloudflare health-checks zone list <zone-id>
-zig build run -- cloudflare health-checks zone preview <zone-id> <preview-id>
-zig build run -- cloudflare health-checks smart-shield list <zone-id>
-zig build run -- cloudflare resource-tags account keys <account-id>
-zig build run -- cloudflare resource-tags account resources <account-id> zone
-zig build run -- cloudflare resource-tags account values <account-id> managed-by
-zig build run -- cloudflare resource-tags zone tags <zone-id> zone <zone-id>
-zig build run -- cloudflare rulesets account list <account-id>
-zig build run -- cloudflare rulesets account versions <account-id> <ruleset-id>
-zig build run -- cloudflare rulesets account entrypoint <account-id> http_request_firewall_custom
-zig build run -- cloudflare rulesets zone list <zone-id>
-zig build run -- cloudflare rulesets zone show <zone-id> <ruleset-id>
-zig build run -- cloudflare rulesets zone rules-by-tag <zone-id> <ruleset-id> <version> <tag>
-zig build run -- cloudflare cloudforce-one-rules list <account-id> namespace=yara/workers recursive=true
-zig build run -- cloudflare cloudforce-one-rules search <account-id> "proxy worker" mode=hybrid language=yara
-zig build run -- cloudflare cloudforce-one-rules stats <account-id>
-zig build run -- cloudflare cloudforce-one-rules show <account-id> <rule-id>
-zig build run -- cloudflare ip-access user list mode=block target=ip value=198.51.100.4
-zig build run -- cloudflare ip-access account list <account-id> notes=attack match=any
-zig build run -- cloudflare ip-access account show <account-id> <rule-id>
-zig build run -- cloudflare ip-access zone list <zone-id> order=mode direction=desc
-zig build run -- cloudflare page-rules list <zone-id>
-zig build run -- cloudflare page-rules show <zone-id> <pagerule-id>
-zig build run -- cloudflare ua-rules list <zone-id>
-zig build run -- cloudflare ua-rules show <zone-id> <ua-rule-id>
-zig build run -- cloudflare zone-lockdown list <zone-id>
-zig build run -- cloudflare zone-lockdown show <zone-id> <lockdown-id>
-zig build run -- cloudflare page-shield settings <zone-id>
-zig build run -- cloudflare page-shield policies <zone-id>
-zig build run -- cloudflare page-shield connections <zone-id> hosts=cdn.example.com page=all
-zig build run -- cloudflare page-shield scripts <zone-id> status=active exclude-cdn-cgi=true
-zig build run -- cloudflare page-shield cookies <zone-id> name=session secure=true
-zig build run -- cloudflare page-shield policy <zone-id> <policy-id>
-zig build run -- cloudflare custom-pages account pages list <account-id>
-zig build run -- cloudflare custom-pages account assets show <account-id> <asset-name>
-zig build run -- cloudflare custom-pages zone pages list <zone-id>
-zig build run -- cloudflare custom-pages zone assets show <zone-id> <asset-name>
-zig build run -- cloudflare access-custom-pages list <account-id>
-zig build run -- cloudflare access-custom-pages show <account-id> <custom-page-id>
-zig build run -- cloudflare access account applications <account-id>
-zig build run -- cloudflare access account application <account-id> <app-id>
-zig build run -- cloudflare access account application-policies <account-id> <app-id>
-zig build run -- cloudflare access account service-tokens <account-id>
-zig build run -- cloudflare access account authenticator-aaguids <account-id>
-zig build run -- cloudflare access account idp-federation-grants <account-id>
-zig build run -- cloudflare access account saml-certificates <account-id>
-zig build run -- cloudflare access account scim-update-logs <account-id>
-zig build run -- cloudflare access account keys <account-id>
-zig build run -- cloudflare access account mtls-certificates <account-id>
-zig build run -- cloudflare access account cas <account-id>
-zig build run -- cloudflare access zone applications <zone-id>
-zig build run -- cloudflare access zone mtls-certificates <zone-id>
-zig build run -- cloudflare access zone cas <zone-id>
-zig build run -- cloudflare tunnel cfd-tunnels <account-id>
-zig build run -- cloudflare tunnel cfd-configurations <account-id> <tunnel-id>
-zig build run -- cloudflare tunnel all-tunnels <account-id>
-zig build run -- cloudflare tunnel routes <account-id>
-zig build run -- cloudflare tunnel route-ip <account-id> 10.0.0.0/24
-zig build run -- cloudflare tunnel virtual-networks <account-id>
-zig build run -- cloudflare tunnel connectivity-settings <account-id>
-zig build run -- cloudflare tunnel hostname-routes <account-id>
-zig build run -- cloudflare tunnel subnets <account-id>
-zig build run -- cloudflare zero-trust gateway <account-id>
-zig build run -- cloudflare zero-trust gateway-configuration <account-id>
-zig build run -- cloudflare zero-trust rules <account-id>
-zig build run -- cloudflare zero-trust rule <account-id> <rule-id>
-zig build run -- cloudflare zero-trust lists <account-id> type=SERIAL
-zig build run -- cloudflare zero-trust list-items <account-id> <list-id>
-zig build run -- cloudflare zero-trust users <account-id> search=admin
-zig build run -- cloudflare zero-trust user-last-seen-identity <account-id> <user-id>
-zig build run -- cloudflare security-center account insights <account-id>
-zig build run -- cloudflare security-center account severity <account-id> dismissed=false
-zig build run -- cloudflare security-center zone insights <zone-id> severity=critical
-zig build run -- cloudflare security-center account context <account-id> <issue-id>
-zig build run -- cloudflare api-shield discovery-operations <zone-id>
-zig build run -- cloudflare api-shield operations <zone-id>
-zig build run -- cloudflare api-shield configuration <zone-id>
-zig build run -- cloudflare api-shield client-certificates <zone-id>
-zig build run -- cloudflare email-routing account addresses <account-id>
-zig build run -- cloudflare email-routing zone settings <zone-id>
-zig build run -- cloudflare email-routing zone dns <zone-id>
-zig build run -- cloudflare email-routing zone rules <zone-id>
-zig build run -- cloudflare email-routing zone catch-all <zone-id>
-zig build run -- cloudflare email-auth dmarc-reports <zone-id>
-zig build run -- cloudflare email-auth spf-inspect <zone-id> <spf-record-id>
-zig build run -- cloudflare email-sending account limits <account-id>
-zig build run -- cloudflare email-sending zone subdomains <zone-id>
-zig build run -- cloudflare email-sending zone subdomain-dns <zone-id> <subdomain-id>
-zig build run -- cloudflare email-security settings domains <account-id>
-zig build run -- cloudflare email-security settings trusted-domains <account-id>
-zig build run -- cloudflare email-security settings allow-policies <account-id>
-zig build run -- cloudflare email-security settings blocked-senders <account-id>
-zig build run -- cloudflare email-security settings url-ignore-patterns <account-id>
-zig build run -- cloudflare security-posture ai-settings <zone-id>
-zig build run -- cloudflare security-posture bot-management <zone-id>
-zig build run -- cloudflare security-posture content-scanning-settings <zone-id>
-zig build run -- cloudflare security-posture leaked-credential-detections <zone-id>
-zig build run -- cloudflare audit-logs account <account-id> per-page=10
-zig build run -- cloudflare audit-logs account-v2 <account-id> since=2026-06-16T00:00:00Z before=2026-06-17T23:59:00Z limit=10
-zig build run -- cloudflare audit-logs user per-page=10
-zig build run -- cloudflare logpush account jobs <account-id>
-zig build run -- cloudflare logpush zone jobs <zone-id>
-zig build run -- cloudflare logpush account dataset-fields <account-id> <dataset-id>
-zig build run -- cloudflare log-explorer account datasets <account-id> include_zones=true
-zig build run -- cloudflare log-explorer zone available <zone-id>
-zig build run -- cloudflare logs-received fields <zone-id>
-zig build run -- cloudflare logs-received received <zone-id> start=2026-06-17T00:00:00Z end=2026-06-17T01:00:00Z count=true
-zig build run -- cloudflare tls zone certificate-packs <zone-id>
-zig build run -- cloudflare tls zone universal-ssl <zone-id>
-zig build run -- cloudflare tls zone ssl-verification <zone-id> retry=false
-zig build run -- cloudflare tls zone total-tls <zone-id>
-zig build run -- cloudflare tls zone custom-ssl <zone-id> status=active
-zig build run -- cloudflare tls origin-ca certificates <zone-id>
-zig build run -- cloudflare zone argo-analytics <zone-id>
-zig build run -- cloudflare zone argo-analytics-colos <zone-id>
-zig build run -- cloudflare zone argo-smart-routing <zone-id>
-zig build run -- cloudflare zone argo-tiered-caching <zone-id>
-zig build run -- cloudflare zone smart-tiered-cache <zone-id>
-zig build run -- cloudflare zone origin-post-quantum <zone-id>
-zig build run -- cloudflare zone smart-shield <zone-id>
-zig build run -- cloudflare zone smart-shield-cache-reserve-clear <zone-id>
-zig build run -- cloudflare zone cloud-connector-rules <zone-id>
-zig build run -- cloudflare dns plosca.ru
-zig build run -- cloudflare dns usage plosca.ru
-zig build run -- cloudflare dns show <record-id> plosca.ru
-zig build run -- cloudflare dnssec plosca.ru
-zig build run -- cloudflare dnssec zsk plosca.ru
-zig build run -- cloudflare token
-zig build run -- cloudflare token show <token-id>
-zig build run -- cloudflare dry-run dns create <zone-id>
-zig build run -- cloudflare dry-run dns patch <zone-id> <record-id>
-zig build run -- cloudflare dry-run dns delete <zone-id> <record-id>
-zig build run -- cloudflare dry-run dns trigger-scan <zone-id>
-zig build run -- cloudflare dry-run dnssec edit-status <zone-id>
-zig build run -- cloudflare dry-run zone create
-zig build run -- cloudflare dry-run zone edit <zone-id>
-zig build run -- cloudflare dry-run zone purge-cache <zone-id>
-zig build run -- cloudflare dry-run zone purge-environment-cache <zone-id> <environment-id>
-zig build run -- cloudflare dry-run zone-lifecycle cache-reserve-change <zone-id>
-zig build run -- cloudflare dry-run zone-lifecycle argo-smart-routing-change <zone-id>
-zig build run -- cloudflare dry-run zone-lifecycle smart-tiered-cache-create <zone-id>
-zig build run -- cloudflare dry-run zone-lifecycle cloud-connector-rules-update <zone-id>
-zig build run -- cloudflare dry-run zone-lifecycle environments-update <zone-id>
-zig build run -- cloudflare dry-run zone-lifecycle environment-rollback <zone-id> <environment-id>
-zig build run -- cloudflare dry-run zone-lifecycle subscription-update <zone-id>
-zig build run -- cloudflare dry-run secondary-dns-account acl create <account-id>
-zig build run -- cloudflare dry-run secondary-dns-account peer update <account-id> <peer-id>
-zig build run -- cloudflare dry-run secondary-dns-zone primary-force-notify <zone-id>
-zig build run -- cloudflare dry-run secondary-dns-zone secondary-force-axfr <zone-id>
-zig build run -- cloudflare dry-run dns-firewall create <account-id>
-zig build run -- cloudflare dry-run dns-firewall update-reverse-dns <account-id> <dns-firewall-id>
-zig build run -- cloudflare dry-run dns-settings account <account-id>
-zig build run -- cloudflare dry-run dns-settings zone <zone-id>
-zig build run -- cloudflare dry-run load-balancing account-monitor create <account-id>
-zig build run -- cloudflare dry-run load-balancing account-pool patch-all <account-id>
-zig build run -- cloudflare dry-run load-balancing user-monitor preview <monitor-id>
-zig build run -- cloudflare dry-run load-balancing zone-load-balancer patch <zone-id> <load-balancer-id>
-zig build run -- cloudflare dry-run health-checks endpoint create <account-id>
-zig build run -- cloudflare dry-run health-checks zone patch <zone-id> <healthcheck-id>
-zig build run -- cloudflare dry-run health-checks preview delete <zone-id> <preview-id>
-zig build run -- cloudflare dry-run health-checks smart-shield update <zone-id> <healthcheck-id>
-zig build run -- cloudflare dry-run resource-tags account set <account-id>
-zig build run -- cloudflare dry-run resource-tags zone delete <zone-id>
-zig build run -- cloudflare dry-run rulesets account create <account-id>
-zig build run -- cloudflare dry-run rulesets account update-rule <account-id> <ruleset-id> <rule-id>
-zig build run -- cloudflare dry-run rulesets zone update-entrypoint <zone-id> http_request_firewall_custom
-zig build run -- cloudflare dry-run rulesets zone delete-version <zone-id> <ruleset-id> <version>
-zig build run -- cloudflare dry-run cloudforce-one-rules create <account-id>
-zig build run -- cloudflare dry-run cloudforce-one-rules update <account-id> <rule-id>
-zig build run -- cloudflare dry-run cloudforce-one-rules delete-all <account-id>
-zig build run -- cloudflare dry-run ip-access user create
-zig build run -- cloudflare dry-run ip-access account update <account-id> <rule-id>
-zig build run -- cloudflare dry-run ip-access zone delete <zone-id> <rule-id>
-zig build run -- cloudflare dry-run page-rules edit <zone-id> <pagerule-id>
-zig build run -- cloudflare dry-run ua-rules update <zone-id> <ua-rule-id>
-zig build run -- cloudflare dry-run zone-lockdown delete <zone-id> <lockdown-id>
-zig build run -- cloudflare dry-run page-shield update-settings <zone-id>
-zig build run -- cloudflare dry-run page-shield create-policy <zone-id>
-zig build run -- cloudflare dry-run page-shield update-policy <zone-id> <policy-id>
-zig build run -- cloudflare dry-run custom-pages account update-page <account-id> <page-id>
-zig build run -- cloudflare dry-run custom-pages zone create-preview-token <zone-id>
-zig build run -- cloudflare dry-run custom-pages zone update-asset <zone-id> <asset-name>
-zig build run -- cloudflare dry-run access-custom-pages update <account-id> <custom-page-id>
-zig build run -- cloudflare dry-run access account create-application <account-id>
-zig build run -- cloudflare dry-run access account update-application-policy <account-id> <app-id> <policy-id>
-zig build run -- cloudflare dry-run access account rotate-keys <account-id>
-zig build run -- cloudflare dry-run access account create-idp-federation-grant <account-id>
-zig build run -- cloudflare dry-run access account rotate-saml-certificate <account-id> <saml-cert-set-id>
-zig build run -- cloudflare dry-run access account create-mtls-certificate <account-id>
-zig build run -- cloudflare dry-run access account create-ca <account-id> <app-id>
-zig build run -- cloudflare dry-run access zone create-mtls-certificate <zone-id>
-zig build run -- cloudflare dry-run access zone delete-ca <zone-id> <app-id>
-zig build run -- cloudflare dry-run token create
-zig build run -- cloudflare dry-run token roll <token-id>
-zig build run -- cloudflare dry-run account create
-zig build run -- cloudflare dry-run account update <account-id>
-zig build run -- cloudflare dry-run account batch-move
-zig build run -- cloudflare dry-run membership update <membership-id>
-zig build run -- cloudflare dry-run membership delete <membership-id>
-zig build run -- cloudflare dry-run account-token create <account-id>
-zig build run -- cloudflare dry-run account-token roll <account-id> <token-id>
-zig build run -- cloudflare dry-run account-member create <account-id>
-zig build run -- cloudflare dry-run account-member update <account-id> <member-id>
-zig build run -- cloudflare dry-run account-member delete <account-id> <member-id>
-zig build run -- cloudflare dry-run resource-group create <account-id>
-zig build run -- cloudflare dry-run resource-group update <account-id> <resource-group-id>
-zig build run -- cloudflare dry-run user-group create <account-id>
-zig build run -- cloudflare dry-run user-group delete <account-id> <user-group-id>
-zig build run -- cloudflare dry-run account-user-group-member create <account-id> <user-group-id>
-zig build run -- cloudflare dry-run account-user-group-member delete <account-id> <user-group-id> <member-id>
-```
-
-Cloudflare Email Sending inventory routes currently require API Email + Global API Key auth in the official schema. Token-only or unauthorized credentials are stored as skipped/permission diagnostics; send operations remain dry-run only.
-
-Useful read-only Hostinger checks:
-
-```sh
-zig build run -- hostinger vps overview --json
-zig build run -- hostinger vps list
-zig build run -- hostinger vps show <vm-id>
-zig build run -- hostinger inventory
-zig build run -- hostinger resources
-zig build run -- hostinger dry-run vps restart <vm-id>
-zig build run -- hostinger dry-run vps start-recovery <vm-id>
-zig build run -- hostinger dry-run vps create-ptr <vm-id> <ip-address-id>
-zig build run -- hostinger dry-run vps restore-backup <vm-id> <backup-id>
-zig build run -- hostinger dry-run vps create-snapshot <vm-id>
-zig build run -- hostinger dry-run vps install-monarx <vm-id>
-zig build run -- hostinger dry-run firewall create
-zig build run -- hostinger dry-run firewall activate <firewall-id> <vm-id>
-zig build run -- hostinger dry-run firewall update-rule <firewall-id> <rule-id>
-zig build run -- hostinger dry-run docker create <vm-id>
-zig build run -- hostinger dry-run docker restart <vm-id> <project-name>
-zig build run -- hostinger dry-run docker delete <vm-id> <project-name>
-zig build run -- hostinger dry-run public-key create
-zig build run -- hostinger dry-run public-key attach <vm-id>
-zig build run -- hostinger dry-run public-key delete <public-key-id>
-zig build run -- hostinger dry-run post-install-script create
-zig build run -- hostinger dry-run post-install-script update <script-id>
-zig build run -- hostinger dry-run post-install-script delete <script-id>
-zig build run -- hostinger dry-run billing set-default-payment-method <payment-method-id>
-zig build run -- hostinger dry-run billing enable-auto-renewal <subscription-id>
-zig build run -- hostinger dry-run dns validate plosca.ru
-zig build run -- hostinger dry-run dns restore-snapshot plosca.ru <snapshot-id>
-zig build run -- hostinger dry-run domain availability
-zig build run -- hostinger dry-run domain purchase-domain
-zig build run -- hostinger dry-run domain create-forwarding plosca.ru
-zig build run -- hostinger dry-run domain delete-forwarding plosca.ru
-zig build run -- hostinger dry-run domain update-nameservers plosca.ru
-zig build run -- hostinger dry-run domain delete-whois-profile <whois-id>
-zig build run -- hostinger dry-run hosting create-website
-zig build run -- hostinger dry-run hosting install-wordpress <username>
-zig build run -- hostinger dry-run hosting change-database-password <username> <database>
-zig build run -- hostinger dry-run hosting delete-parked-domain <username> plosca.ru <parked-domain>
-zig build run -- hostinger dry-run hosting create-nodejs-build-from-archive <username> plosca.ru
-zig build run -- hostinger dry-run ecommerce create-store
-zig build run -- hostinger dry-run horizons create-website
-zig build run -- hostinger dry-run reach create-segment
-zig build run -- hostinger dry-run reach create-profile-contacts <profile-uuid>
-zig build run -- hostinger dry-run reach delete-contact <contact-uuid>
-zig build run -- hostinger billing-catalog
-zig build run -- hostinger billing-payment-methods
-zig build run -- hostinger billing-subscriptions
-zig build run -- hostinger domains
-zig build run -- hostinger domain plosca.ru
-zig build run -- hostinger domain-forwarding plosca.ru
-zig build run -- hostinger whois
-zig build run -- hostinger whois com
-zig build run -- hostinger whois-profile <whois-id>
-zig build run -- hostinger whois-usage <whois-id>
-zig build run -- hostinger hosting-orders
-zig build run -- hostinger hosting-websites
-zig build run -- hostinger hosting-wordpress
-zig build run -- hostinger hosting-datacenters <order-id>
-zig build run -- hostinger hosting-databases <username>
-zig build run -- hostinger hosting-phpmyadmin <username> <database>
-zig build run -- hostinger hosting-parked-domains <username> <domain>
-zig build run -- hostinger hosting-subdomains <username> <domain>
-zig build run -- hostinger hosting-node-builds <username> <domain>
-zig build run -- hostinger hosting-node-logs <username> <domain> <build-uuid> [from-line]
-zig build run -- hostinger ecommerce-stores
-zig build run -- hostinger horizons-website <website-id>
-zig build run -- hostinger reach-contacts
-zig build run -- hostinger reach-profiles
-zig build run -- hostinger reach-segments
-zig build run -- hostinger reach-segment <segment-uuid>
-zig build run -- hostinger reach-segment-contacts <segment-uuid>
-zig build run -- hostinger reach-profile-segment-contacts <profile-uuid> <segment-uuid>
-zig build run -- hostinger dns plosca.ru
-zig build run -- hostinger dns-snapshots plosca.ru
-zig build run -- hostinger dns-snapshot plosca.ru <snapshot-id>
-zig build run -- hostinger docker <vm-id>
-zig build run -- hostinger docker-project <vm-id> <project-name>
-zig build run -- hostinger docker-containers <vm-id> <project-name>
-zig build run -- hostinger docker-logs <vm-id> <project-name>
-zig build run -- hostinger data-centers
-zig build run -- hostinger templates
-zig build run -- hostinger firewalls
-zig build run -- hostinger firewall <firewall-id>
-zig build run -- hostinger public-keys
-zig build run -- hostinger post-install-scripts
-zig build run -- hostinger post-install-script <script-id>
-zig build run -- hostinger template <template-id>
-```
-
-## Development
-
-- [Architecture target](docs/architecture.md) describes the intended internal library boundaries.
-- [Provider coverage baseline](docs/provider-coverage.md) tracks current Cloudflare and Hostinger API coverage against official documentation.
-- `zig build api-summary` fetches the current official Cloudflare and Hostinger OpenAPI specs and prints operation/tag counts. It is networked and intentionally separate from normal tests.
+The current architecture and anti-churn rules are in
+[docs/architecture.md](docs/architecture.md) and
+[docs/cleanup-spec.md](docs/cleanup-spec.md). The protected
+[Turso migration draft](docs/turso-migration-spec.md) is the intended next
+persistence project after this cleanup; it is not implemented by the current
+SQLite code.

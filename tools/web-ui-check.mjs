@@ -5,18 +5,18 @@ import process from "node:process";
 
 const root = resolve(import.meta.dirname, "..");
 const webRoot = join(root, "web");
-const authenticatedPages = new Map([
-  ["index.html", "dashboard.js"],
-  ["apps.html", "apps.js"],
-  ["projects.html", "projects.js"],
-  ["routes.html", "routes.js"],
-  ["dns.html", "dns.js"],
-  ["vps.html", "vps.js"],
-  ["docker.html", "docker.js"],
-  ["audit.html", "audit.js"],
-  ["security.html", "security.js"],
-  ["settings.html", "settings.js"],
-]);
+const authenticatedPages = [
+  "index.html",
+  "projects.html",
+  "routes.html",
+  "dns.html",
+  "browser.html",
+  "vps.html",
+  "docker.html",
+  "audit.html",
+  "security.html",
+  "settings.html",
+];
 const errors = [];
 
 function check(condition, message) {
@@ -51,13 +51,18 @@ function checkHtmlBasics(filename, html) {
   }
 }
 
-for (const [filename, pageScript] of authenticatedPages) {
+for (const filename of authenticatedPages) {
   const html = read(`web/${filename}`);
   checkHtmlBasics(filename, html);
   check(html.includes('defer src="/assets/app.js"'), `${filename}: missing deferred shared script`);
-  check(html.includes(`defer src="/assets/pages/${pageScript}"`), `${filename}: missing deferred page script`);
+  if (filename === "security.html") {
+    check(html.includes('defer src="/assets/passkeys.js"'), "security.html: missing shared passkey adapter");
+    check(html.includes('defer src="/assets/pages/security.js"'), "security.html: missing bounded credential island");
+  } else {
+    check(!html.includes('defer src="/assets/pages/'), `${filename}: unnecessary page script must be removed`);
+  }
   check(/<main\b[^>]*\bid="page-content"/i.test(html), `${filename}: missing #page-content`);
-  check(!/<(?:aside|nav)\b/i.test(html), `${filename}: application navigation must come only from app.js`);
+  check(!/<(?:aside|nav)\b/i.test(html), `${filename}: authored template must not duplicate the server shell`);
   check(!/\bclass="[^"]*\bsidebar\b/i.test(html), `${filename}: duplicated sidebar markup`);
 }
 
@@ -72,16 +77,40 @@ check(setupHtml.includes('defer src="/assets/passkeys.js"'), "setup.html: missin
 check(setupHtml.includes('defer src="/assets/pages/setup.js"'), "setup.html: missing deferred setup script");
 
 const appScript = read("web/assets/app.js");
+const loginScript = read("web/assets/pages/login.js");
+const routesHtml = read("web/routes.html");
+const securityHtml = read("web/security.html");
+const securityScript = read("web/assets/pages/security.js");
 const pageRenderer = read("src/server/pages.zig");
-check(/href:\s*"\/"/.test(appScript), "app.js: Cloudio brand must link to /");
-check(/"aria-label":\s*"Cloudio dashboard"/.test(appScript), "app.js: Cloudio brand needs an accessible dashboard label");
-check(/function\s+confirmAction/.test(appScript), "app.js: shared confirmation dialog helper is missing");
-check(/function\s+api/.test(appScript), "app.js: shared API wrapper is missing");
+const routeSource = read("src/server/routes.zig");
+const routeInventory = read("docs/http-route-inventory.md");
+check(/class="brand" href="\/" aria-label="Cloudio dashboard"/.test(pageRenderer), "pages.zig: Cloudio brand must be an accessible dashboard link");
+check(!/function\s+(renderTable|tableEmpty|createBrand)/.test(appScript), "app.js: obsolete client renderers or shell builders must be removed");
+check(!/\bfetch\s*\(|window\.cloudio|\bdialog\b/.test(appScript), "app.js: shared shell must not own page-specific API or dialog behavior");
+check(!/api\/auth\/session/.test(loginScript), "login.js: authenticated login redirects belong to the server, not a startup session probe");
+check(/id="routes-empty" class="panel-body route-empty-state"/.test(routesHtml), "routes.html: purposeful zero-route state is missing");
+check(/id="routes-adoption-panel" class="panel hidden"/.test(routesHtml), "routes.html: adoption must be hidden until candidates exist");
+check(/id="routes-preview-panel" class="panel hidden"/.test(routesHtml), "routes.html: apply preview must be hidden until changes exist");
+check(/class="route-form-actions span-2"/.test(routesHtml), "routes.html: route actions need a bounded grid column");
+check(/function\s+api/.test(securityScript), "security.js: credential API helper is missing");
+check(/function\s+confirmRevocation/.test(securityScript), "security.js: bounded revoke confirmation is missing");
+check(/X-Cloudio-CSRF/.test(securityScript), "security.js: credential mutations must use the server-rendered CSRF token");
+check(!/window\.cloudio\b|window\.confirm\s*\(/.test(securityScript), "security.js: global app facade and native confirmation fallback are forbidden");
+check(/id="toast-region"/.test(securityHtml), "security.html: credential notification region is missing");
+check(/<dialog\b[^>]*aria-labelledby="revoke-dialog-title"/.test(securityHtml), "security.html: revoke dialog is missing");
+check(/<form\b[^>]*method="dialog"/.test(securityHtml), "security.html: revoke dialog must use native dialog form behavior");
+check(!/toast-region|confirm-dialog-title/.test(pageRenderer), "pages.zig: shared shell must not inject Security-only controls");
 check(/id="app-shell"/.test(pageRenderer), "pages.zig: server-rendered application shell is missing");
 check(/injectPageData/.test(pageRenderer), "pages.zig: server-rendered first-view data adapter is missing");
 check(/web_html\.text/.test(pageRenderer), "pages.zig: dynamic HTML must use context-safe escaping");
 
-const pageScripts = [...authenticatedPages.values(), "login.js", "setup.js"].map((name) => `web/assets/pages/${name}`);
+const jsonRoutes = [...routeSource.matchAll(/(?:route|publicRoute|mutation)\("([A-Z]+)", "([^"]+)"/g)];
+check(jsonRoutes.length > 0, "routes.zig: no JSON routes found");
+for (const [, method, path] of jsonRoutes) {
+  check(routeInventory.includes(`\`${method} ${path}\``), `http-route-inventory.md: missing ${method} ${path}`);
+}
+
+const pageScripts = ["security.js", "login.js", "setup.js"].map((name) => `web/assets/pages/${name}`);
 for (const relativePath of ["web/assets/app.js", "web/assets/passkeys.js", ...pageScripts]) {
   const source = read(relativePath);
   check(!/\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write\s*\(/.test(source), `${relativePath}: unsafe dynamic HTML construction is forbidden`);
@@ -90,23 +119,7 @@ for (const relativePath of ["web/assets/app.js", "web/assets/passkeys.js", ...pa
   check(syntax.status === 0, `${relativePath}: JavaScript syntax check failed\n${syntax.stderr.trim()}`);
 }
 
-const prohibitedStartupReads = new Map([
-  ["dashboard.js", "load"],
-  ["apps.js", "loadApps"],
-  ["routes.js", "loadRoutes"],
-  ["vps.js", "loadAll"],
-  ["docker.js", "loadContainers"],
-  ["audit.js", "load"],
-  ["security.js", "load"],
-]);
-for (const [script, functionName] of prohibitedStartupReads) {
-  const source = read(`web/assets/pages/${script}`);
-  const escaped = functionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const startupCall = new RegExp(`\\n\\s*${escaped}\\(\\);\\s*\\n\\}\\)\\(\\);\\s*$`);
-  check(!startupCall.test(source), `${script}: automatic startup read ${functionName}() is forbidden`);
-}
-const dnsSource = read("web/assets/pages/dns.js");
-check(!/async function initialize\(\)[\s\S]*loadRecords\(\)/.test(dnsSource), "dns.js: automatic startup DNS reads are forbidden");
+check(!/api\("\/api\/auth\/credentials"\s*[,)]/.test(securityScript), "security.js: initial credential state must remain server-owned");
 
 const css = read("web/assets/app.css");
 check(css.includes(":focus-visible"), "app.css: visible keyboard focus styling is missing");
@@ -125,4 +138,4 @@ if (errors.length) {
   process.exit(1);
 }
 
-process.stdout.write(`web-ui-check: ${authenticatedPages.size} authenticated pages, login/setup, shared UI, and ${pageScripts.length + 2} scripts passed\n`);
+process.stdout.write(`web-ui-check: ${authenticatedPages.length} authenticated pages, login/setup, shared UI, and ${pageScripts.length + 2} scripts passed\n`);

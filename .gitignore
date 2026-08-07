@@ -9,3 +9,5 @@ cloudio.local.toml
 zig-cache/
 zig-out/
 .zig-cache/
+__pycache__/
+*.py[cod]

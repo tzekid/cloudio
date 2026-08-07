@@ -11,8 +11,16 @@ pub const Context = struct {
     config: core_config.Config,
 };
 
-pub fn run(ctx: Context) !void {
-    try app_refresh.run(.{
+pub fn run(ctx: Context) !app_refresh.Result {
+    return runSelection(ctx, .all());
+}
+
+pub fn runDashboard(ctx: Context) !app_refresh.Result {
+    return runSelection(ctx, .dashboardProfile());
+}
+
+fn runSelection(ctx: Context, selection: app_refresh.Selection) !app_refresh.Result {
+    const result = try app_refresh.run(.{
         .io = ctx.io,
         .gpa = ctx.gpa,
         .db = ctx.db,
@@ -21,11 +29,14 @@ pub fn run(ctx: Context) !void {
             .token = ctx.config.cloudflare_api_token,
             .email = ctx.config.cloudflare_email,
             .key = ctx.config.cloudflare_api_key,
+            .base_url = ctx.config.cloudflare_api_base,
         },
         .hostinger_token = ctx.config.hostinger_api_token,
+        .hostinger_api_base = ctx.config.hostinger_api_base,
         .caddy_paths = .{
             .caddyfile_path = ctx.config.caddyfile_path,
             .caddy_sites_path = ctx.config.caddy_sites_path,
+            .caddy_owned_path = ctx.config.caddy_owned_path,
             .caddy_admin_socket = ctx.config.caddy_admin_socket,
         },
         .projects_root = ctx.config.projects_root,
@@ -41,7 +52,7 @@ pub fn run(ctx: Context) !void {
             .cloudflare_auth = ctx.config.hasCloudflareAuth(),
             .hostinger_auth = ctx.config.hasHostingerAuth(),
         },
-    }, .{});
+    }, selection);
     const delta = try app_topology.captureDeltas(.{ .gpa = ctx.gpa, .db = ctx.db }, .{});
     if (delta.totalChanges() != 0) {
         std.debug.print(
@@ -49,4 +60,5 @@ pub fn run(ctx: Context) !void {
             .{ delta.added, delta.changed, delta.removed },
         );
     }
+    return result;
 }

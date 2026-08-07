@@ -36,7 +36,7 @@ pub fn request(gpa: Allocator, io: Io, method: std.http.Method, url: []const u8,
         manual_headers[extra.len] = .{ .name = "Content-Length", .value = cl };
     }
     var req = try client.request(method, uri, .{
-        .redirect_behavior = if (manual_body) .unhandled else @enumFromInt(3),
+        .redirect_behavior = if (manual_body) .unhandled else @fromBackingInt(@intCast(3)),
         .headers = .{ .user_agent = .{ .override = "cloudio-poc/0.1" } },
         .extra_headers = if (manual_body) manual_headers else extra,
         .privileged_headers = privileged,
@@ -51,6 +51,11 @@ pub fn request(gpa: Allocator, io: Io, method: std.http.Method, url: []const u8,
         req.transfer_encoding = .{ .content_length = payload.len };
         var body_writer = try req.sendBodyUnflushed(&.{});
         try body_writer.writer.writeAll(payload);
+        try body_writer.end();
+        try req.connection.?.flush();
+    } else if (method.requestHasBody()) {
+        req.transfer_encoding = .{ .content_length = 0 };
+        var body_writer = try req.sendBodyUnflushed(&.{});
         try body_writer.end();
         try req.connection.?.flush();
     } else {
@@ -81,7 +86,7 @@ pub fn request(gpa: Allocator, io: Io, method: std.http.Method, url: []const u8,
 }
 
 pub fn statusText(status: std.http.Status) []const u8 {
-    const code: u16 = @intFromEnum(status);
+    const code: u16 = @backingInt(status);
     if (code >= 200 and code < 300) return "ok";
     if (code == 401 or code == 403) return "permission";
     if (code == 404) return "not_found";
@@ -89,12 +94,12 @@ pub fn statusText(status: std.http.Status) []const u8 {
 }
 
 pub fn isOk(status: std.http.Status) bool {
-    const code: u16 = @intFromEnum(status);
+    const code: u16 = @backingInt(status);
     return code >= 200 and code < 300;
 }
 
 pub fn summary(gpa: Allocator, label: []const u8, status: std.http.Status) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s} HTTP {d}", .{ label, @intFromEnum(status) });
+    return try std.fmt.allocPrint(gpa, "{s} HTTP {d}", .{ label, @backingInt(status) });
 }
 
 test "status helpers classify api responses" {

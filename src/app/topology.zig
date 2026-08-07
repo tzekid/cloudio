@@ -680,6 +680,23 @@ pub fn rowHasIssues(row: db_store.TopologyRow) bool {
     return issueCount(row) != 0;
 }
 
+/// Incidents are conditions that require an operator to repair an existing
+/// runtime path. A discovered project without a runtime is inventory awaiting
+/// enrollment, not a failed workload.
+pub fn rowHasIncidents(row: db_store.TopologyRow) bool {
+    return incidentCount(row) != 0;
+}
+
+pub fn incidentCount(row: db_store.TopologyRow) usize {
+    var count: usize = 0;
+    if (isDnsOnly(row)) count += 1;
+    if (isCaddyWithoutDns(row)) count += 1;
+    if (isUpstreamWithoutSocket(row)) count += 1;
+    if (isServiceNotRunning(row)) count += 1;
+    if (isContainerNotRunning(row)) count += 1;
+    return count;
+}
+
 pub fn issueCount(row: db_store.TopologyRow) usize {
     var count: usize = 0;
     if (isDnsOnly(row)) count += 1;
@@ -861,6 +878,17 @@ test "topology read model connects DNS Caddy project and system state" {
     try std.testing.expectEqual(@as(usize, 1), summary.project_without_runtime);
     try std.testing.expectEqual(@as(usize, 1), summary.service_not_running);
     try std.testing.expectEqual(@as(usize, 1), summary.container_not_running);
+    for (topology.rows.items) |row| {
+        if (std.mem.eql(u8, row.project, "compose-only")) {
+            try std.testing.expect(rowHasIssues(row));
+            try std.testing.expect(!rowHasIncidents(row));
+            try std.testing.expectEqual(@as(usize, 0), incidentCount(row));
+        }
+        if (std.mem.eql(u8, row.project, "worker")) {
+            try std.testing.expect(rowHasIncidents(row));
+            try std.testing.expectEqual(@as(usize, 2), incidentCount(row));
+        }
+    }
 
     var text_out = std.Io.Writer.Allocating.init(allocator);
     defer text_out.deinit();

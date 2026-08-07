@@ -513,6 +513,83 @@ p {
   gap: 10px;
 }
 
+.routes-status-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.6fr) repeat(3, minmax(130px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.routes-status-item {
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+
+.routes-status-item dt {
+  margin-bottom: 3px;
+  color: var(--text-subtle);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.routes-status-item dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.routes-status-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.routes-status-actions .notice {
+  margin: 0;
+}
+
+.routes-paths summary {
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.routes-paths .kv-list {
+  padding-top: 9px;
+}
+
+.route-form-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.route-form-actions > * {
+  flex: 1 1 auto;
+}
+
+.route-empty-state {
+  display: grid;
+  gap: 3px;
+  padding-block: 18px;
+}
+
+.route-empty-state strong {
+  font-size: 12px;
+}
+
+.route-empty-state p {
+  max-width: 700px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .field {
   display: flex;
   min-width: 0;
@@ -557,6 +634,10 @@ p {
 
 .span-6 {
   grid-column: span 6;
+}
+
+.span-8 {
+  grid-column: span 8;
 }
 
 .span-12 {
@@ -761,6 +842,41 @@ button:disabled,
 
 .stat-card.tone-danger .stat-value {
   color: var(--danger);
+}
+
+.stat-card.tone-info .stat-value {
+  color: var(--accent);
+}
+
+.diagnosis-list {
+  display: grid;
+  gap: 7px;
+  min-width: 230px;
+}
+
+.diagnosis {
+  display: grid;
+  gap: 2px;
+  padding-left: 8px;
+  border-left: 2px solid var(--danger);
+}
+
+.diagnosis.tone-info {
+  border-left-color: var(--accent);
+}
+
+.diagnosis strong {
+  font-size: 11px;
+}
+
+.diagnosis span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.diagnosis a {
+  justify-self: start;
+  font-size: 11px;
 }
 
 .resource-grid {
@@ -1112,6 +1228,28 @@ code {
   color: var(--text-muted);
 }
 
+.browser-preview {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.browser-preview img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.browser-html-preview {
+  max-height: 32rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .detail-block {
   display: grid;
   gap: 5px;
@@ -1460,6 +1598,10 @@ dialog::backdrop {
 }
 
 @media (max-width: 860px) {
+  .routes-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .form-grid {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
@@ -1471,7 +1613,8 @@ dialog::backdrop {
 
   .span-4,
   .span-5,
-  .span-6 {
+  .span-6,
+  .span-8 {
     grid-column: span 6;
   }
 }
@@ -1550,6 +1693,16 @@ dialog::backdrop {
 
   .form-grid > * {
     grid-column: 1 !important;
+  }
+
+  .routes-status-grid,
+  .routes-status-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .routes-status-actions button,
+  .route-form-actions {
+    width: 100%;
   }
 
   .responsive-table thead {

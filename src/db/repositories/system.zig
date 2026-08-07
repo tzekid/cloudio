@@ -485,6 +485,34 @@ pub const Repository = struct {
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
 
+    pub fn containerRow(self: Repository, gpa: Allocator, name: []const u8) !?ContainerRow {
+        const stmt = try self.prepare(
+            \\SELECT COALESCE(name,''), COALESCE(image,''), COALESCE(status,''), COALESCE(ports,''), updated_at
+            \\FROM containers
+            \\WHERE name = ?
+        );
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, name);
+        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return null;
+        const row_name = try dupeColumn(gpa, stmt, 0);
+        errdefer gpa.free(row_name);
+        const image = try dupeColumn(gpa, stmt, 1);
+        errdefer gpa.free(image);
+        const status = try dupeColumn(gpa, stmt, 2);
+        errdefer gpa.free(status);
+        const ports = try dupeColumn(gpa, stmt, 3);
+        errdefer gpa.free(ports);
+        const updated_at = try dupeColumn(gpa, stmt, 4);
+        errdefer gpa.free(updated_at);
+        return .{
+            .name = row_name,
+            .image = image,
+            .status = status,
+            .ports = ports,
+            .updated_at = updated_at,
+        };
+    }
+
     pub fn containerList(self: Repository, gpa: Allocator) !NameValueRows {
         return try self.nameValueRows(gpa, "SELECT COALESCE(name,''), COALESCE(status,'') FROM containers ORDER BY 1 LIMIT 200");
     }
@@ -537,5 +565,4 @@ pub const Repository = struct {
         }
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
-
 };

@@ -44,6 +44,7 @@ pub fn plan(
     const project = (try app_nob_projects.find(projectContext(ctx), project_reference)) orelse return error.ProjectNotFound;
     defer project.deinit(ctx.gpa);
     const binding = try executableBinding(project);
+    try requireActionAvailable(ctx, project.id, action_id);
     const runner_detail = project.runner_detail orelse return error.RunnerMetadataMissing;
     const zig_path = try bootstrap.zigPathFromMetadata(ctx.gpa, runner_detail);
     defer ctx.gpa.free(zig_path);
@@ -141,6 +142,7 @@ pub fn planResourceControl(
         control_name,
     );
     defer planned.deinit(ctx.gpa);
+    if (!ctx.config.nob_allow_system_mutation) return error.SystemMutationDisabled;
     try ctx.db.nob().insertPlan(.{
         .id = &plan_id,
         .project_id = project.id,
@@ -234,6 +236,7 @@ fn queueBound(
     if (!std.mem.eql(u8, binding.manifest_sha256, stored.manifest_sha256) or
         !std.mem.eql(u8, binding.runner_sha256, stored.runner_sha256 orelse return error.PlanBindingMissing))
     {
+        try ctx.db.nob().invalidatePlan(stored.id);
         return error.PlanBindingChanged;
     }
     try verifyRunner(ctx, binding.runner_path, binding.runner_sha256);
@@ -243,6 +246,7 @@ fn queueBound(
         source_state.dirty != (stored.source_dirty orelse return error.PlanBindingMissing) or
         !optionalEqual(source_state.revision, stored.source_revision))
     {
+        try ctx.db.nob().invalidatePlan(stored.id);
         return error.SourceChanged;
     }
     const actual_plan_sha256 = try action_protocol.hashBytes(ctx.gpa, stored.plan_json);
@@ -274,6 +278,12 @@ fn queueBound(
         source_state,
     );
     defer parsed.deinit();
+
+    if (!ctx.config.nob_allow_system_mutation and
+        (stored.resource_id != null or parsed.value.broker_requests.len != 0))
+    {
+        return error.SystemMutationDisabled;
+    }
 
     var authorizations = std.ArrayList(db_store.NobBrokerAuthorization).empty;
     defer {
@@ -321,6 +331,10 @@ pub fn getRun(ctx: Context, operation_id: []const u8) !?db_store.NobRun {
     return try ctx.db.nob().getRun(ctx.gpa, operation_id);
 }
 
+pub fn getPlan(ctx: Context, plan_id: []const u8) !?db_store.NobPlan {
+    return try ctx.db.nob().getPlan(ctx.gpa, plan_id);
+}
+
 pub fn listRuns(ctx: Context, project_id: ?i64, limit: i64) !db_store.NobRuns {
     return try ctx.db.nob().listRuns(ctx.gpa, project_id, @min(@max(limit, 1), 200));
 }
@@ -339,6 +353,29 @@ pub fn listRecentEvents(ctx: Context, operation_id: []const u8, limit: i64) !db_
 
 pub fn listArtifacts(ctx: Context, operation_id: []const u8) !db_store.NobArtifacts {
     return try ctx.db.nob().listArtifacts(ctx.gpa, operation_id);
+}
+
+pub fn readRunLog(ctx: Context, operation_id: []const u8, requested_tail_bytes: usize) ![]u8 {
+    const tail_bytes = @min(@max(requested_tail_bytes, 1), 1024 * 1024);
+    const run_value = (try getRun(ctx, operation_id)) orelse return error.RunNotFound;
+    defer run_value.deinit(ctx.gpa);
+    const path = run_value.log_path orelse return ctx.gpa.dupe(u8, "");
+    const state_root = try std.Io.Dir.cwd().realPathFileAlloc(ctx.io, ctx.config.nob_state_root, ctx.gpa);
+    defer ctx.gpa.free(state_root);
+    const expected_dir = try std.fs.path.join(ctx.gpa, &.{ state_root, operation_id });
+    defer ctx.gpa.free(expected_dir);
+    const expected_path = try std.fs.path.join(ctx.gpa, &.{ expected_dir, "events.ndjson" });
+    defer ctx.gpa.free(expected_path);
+    if (!std.mem.eql(u8, path, expected_path)) return error.InvalidOperationLogPath;
+    const file = try std.Io.Dir.cwd().openFile(ctx.io, path, .{ .follow_symlinks = false });
+    defer file.close(ctx.io);
+    const length = try file.length(ctx.io);
+    const amount: usize = @intCast(@min(length, tail_bytes));
+    const bytes = try ctx.gpa.alloc(u8, amount);
+    errdefer ctx.gpa.free(bytes);
+    const read = try file.readPositionalAll(ctx.io, bytes, length - amount);
+    if (read == bytes.len) return bytes;
+    return try ctx.gpa.realloc(bytes, read);
 }
 
 pub fn resourceLogs(ctx: Context, project_reference: []const u8, resource_id: []const u8, lines: u16) ![]u8 {

@@ -1,13 +1,15 @@
 const std = @import("std");
 const app_caddy_desired = @import("app_caddy_desired");
 const app_dashboard = @import("app_dashboard");
-const app_deploy = @import("app_deploy");
+const app_browser_run = @import("app_browser_run");
+const app_dns = @import("app_dns");
 const app_nob_projects = @import("app_nob_projects");
 const app_nob_actions = @import("app_nob_actions");
 const app_nob_runtime = @import("app_nob_runtime");
 const app_nob_secrets = @import("app_nob_secrets");
 const app_provider_writes = @import("app_provider_writes");
 const app_system_control = @import("app_system_control");
+const app_vps = @import("app_vps");
 const app_writes = @import("app_writes");
 const core_config = @import("core_config");
 const core_version = @import("core_version");
@@ -26,20 +28,46 @@ pub const Context = struct {
     trust_proxy_client_ip: bool = false,
 };
 
-pub fn deploy(ctx: Context) app_deploy.Context {
-    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config, .write_meta = ctx.write_meta };
-}
-
 pub fn caddy(ctx: Context) app_caddy_desired.Context {
-    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .write_meta = ctx.write_meta };
+    return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config, .write_meta = ctx.write_meta };
 }
 
 pub fn provider(ctx: Context) app_provider_writes.Context {
     return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config, .write_meta = ctx.write_meta };
 }
 
+pub fn dns(ctx: Context) app_dns.Context {
+    return .{
+        .io = ctx.io,
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+        .config = ctx.config,
+        .write_meta = ctx.write_meta,
+    };
+}
+
+pub fn browserRun(ctx: Context) app_browser_run.Context {
+    return .{
+        .io = ctx.io,
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+        .config = ctx.config,
+        .write_meta = ctx.write_meta,
+    };
+}
+
 pub fn system(ctx: Context) app_system_control.Context {
     return .{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .write_meta = ctx.write_meta };
+}
+
+pub fn vps(ctx: Context) app_vps.Context {
+    return .{
+        .io = ctx.io,
+        .gpa = ctx.gpa,
+        .db = ctx.db,
+        .config = ctx.config,
+        .write_meta = ctx.write_meta,
+    };
 }
 
 pub fn nob(ctx: Context) app_nob_projects.Context {

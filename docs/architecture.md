@@ -1,330 +1,240 @@
-# Cloudio Architecture Target
+# Cloudio architecture
 
-Cloudio should become a small Zig toolkit, not a CLI-shaped monolith. The CLI remains the first product surface, but every command should delegate to internal libraries that can later be reused by a web or native UI without rewriting collectors or provider clients. The HTTP surface is default-deny: passkey ceremonies live behind one authentication app service, browser sessions are server-side and opaque, and route handlers do not own authentication persistence or WebAuthn policy.
+Status: current implementation boundary after the 2026-08-03 anti-churn pass.
 
-## Current State
+Cloudio is one Zig executable with a server-rendered web UI, a host CLI,
+background work, and SQLite persistence. The architecture optimizes for
+auditable operator workflows on one host, not for reuse as a framework.
 
-The POC has moved the current data-gathering paths out of the original CLI-shaped executable. Core config/redaction/logging/output/process/time/version/JSON/filesystem helpers, reusable HTTP and JSON pagination helpers, SQLite migrations/storage, and the current Cloudflare, Hostinger, Caddy, system, and project collector paths are split into reviewable modules. `main.zig` is now process entry only, `cli/root.zig` owns top-level dispatch, command-group modules own deeper CLI parsing/rendering, `cli/cloudflare_options.zig` owns reusable Cloudflare overview and key-value option grammar across many Cloudflare command families, `cli/cloudflare_dry_run.zig` owns Cloudflare mutation planning command grammar while keeping live writes out of the CLI path, `cli/coverage_parse.zig` owns provider coverage command grammar, `cli/route_request.zig` owns generic provider route request grammar shared by `coverage plan` and `route plan/read/capture/dry-run`, and every CLI command group delegates domain behavior through `app/*` instead of importing collectors, database modules, or the public `cloudio.zig` embedding facade directly. `core/fs.zig` owns common relative-path parent creation and existence checks, `core/output.zig` owns the optional text-return contract shared by collector/app workflows and CLI rendering, `core/version.zig` owns the single POC version string used by CLI and facade surfaces, `core/json.zig` owns shared JSON string escaping plus field, nullable-field, array, and comma writer primitives used by app, provider, and collector renderers, `db/schema.zig` owns versioned SQLite migrations, `db/store.zig` owns connection/repository/query APIs, `app/database.zig` owns app-level store startup and schema initialization for CLI and future UI/API adapters, `app/render.zig` owns shared app text row writers, app-facing JSON wrappers, and shell-safe review-command quoting used by coverage adapters, `net/pagination.zig` owns recognized Cloudflare offset `result_info`, Cloudflare cursor `result_info`, Cloudflare root cursor, and Hostinger `data/meta` page envelope parsing plus Hostinger `data/meta` merging, `providers/routes.zig` owns generated-manifest-backed route metadata lookup, canonical provider identity and provider filters, official path/query/header parameter requirements and shape metadata, body/response/security requirements, required path/query/header validation, path-template metadata invariants, and path/query rendering, `providers/typed_routes.zig` owns shared provider-specific route helpers for path escaping, optional query rendering, and typed mutation dry-run JSON, `providers/auth.zig` owns provider-neutral credential bundles and OpenAPI security validation for Cloudflare token/legacy credentials and Hostinger `apiToken`, `providers/request_plan.zig` owns reusable structured request plans for no-execute read plans, dry-run mutation plans, and live-read URL validation, `providers/transport.zig` owns the HTTP handoff to Cloudflare/Hostinger clients after the shared planner and auth checks pass, `providers/route_result.zig` owns live read response matching plus metadata-only result JSON, `providers/dispatch.zig` owns the compatibility facade for generic read calls and request/response-aware dry-run mutation plan handoff, `packages/cloudflare/src/routes.zig` and `packages/hostinger/src/routes.zig` own provider-specific endpoint enums, path/query construction, and typed dry-run plan builders, `packages/cloudflare/src/models.zig` owns typed account/zone/DNS parsing plus broad Cloudflare resource-row and typed inventory-row extraction for `result` envelopes and single resource objects, `packages/hostinger/src/models.zig` owns VPS row parsing, broad Hostinger resource-row extraction, and typed Hostinger inventory-row extraction for official root arrays, `data` envelopes, and single resource objects, `app/coverage.zig` owns human-readable provider coverage summaries and detailed L1 route contract views through the shared route parser, `collectors/capture.zig` owns shared redacted API response capture into snapshots and raw-provider storage, `collectors/capture_normalize.zig` owns shared Cloudflare/Hostinger resource and inventory persistence for both generic route capture and handwritten provider collectors, `collectors/cloudflare.zig` persists Cloudflare-specific high-value rows and delegates broad resource/inventory projection writes to the shared normalization helper, `collectors/hostinger.zig` persists VPS-specific rows and delegates broad resource/inventory projection writes to the shared normalization helper, `app/init.zig` owns reusable first-run config initialization, `app/doctor.zig` owns the reusable health-check report, `app/log.zig` owns reusable redacted run-log reading, `app/refresh.zig` owns reusable refresh orchestration, `app/overview.zig` owns the reusable overview query/read model, `app/inventory.zig` owns the provider-neutral typed inventory read model over Cloudflare and Hostinger projections, `app/provider_list.zig` owns provider-neutral NameValue resource/inventory row access for provider-specific command wrappers, `app/cloudflare_overview.zig` owns the Cloudflare account/zone/DNS/API-family overview read model and render contract, `app/hostinger_overview.zig` owns the Hostinger account/VPS API-family overview read models and render contracts, `app/export.zig` owns snapshot export JSON via the `app.exports` facade, and `app/caddy.zig`, `app/projects.zig`, `app/system.zig`, `app/cloudflare.zig`, and `app/hostinger.zig` own reusable command workflows for their domains. `cloudio.zig` exposes the public library facade for future web/native integration through stable `core`, `db`, `net`, `providers`, and `app` namespaces; collector modules remain internal implementation details behind app workflows and are blocked from facade re-export by `zig build architecture-check`. The next refactor goal is to keep shrinking CLI rendering and DB printing while expanding provider coverage against the checked upstream manifests.
-
-`src/http` is the dependency-clean inbound HTTP package. It owns bounded
-request parsing, literal/named-segment routing, 404/405 decisions, responses,
-static files, and socket lifecycle. `src/server` owns Cloudio's single
-direct-handler route table and fixed authentication, actor, idempotency, and
-confirmation pipeline. Its page adapter uses pinned `web.zig` context-safe
-writers to turn existing app-service JSON contracts into complete
-authenticated first views. JavaScript enhances those views with passkey
-ceremonies, mutation controls, and bounded deploy-log polling; no initial
-state, SSE, WebSocket, or client-rendered shell is required. Grouped handlers
-delegate provider, process, and SQL work through application services.
-`src/runtime/scheduler.zig` owns background refresh and retention scheduling
-independently of the listener. The former `app/serve.zig`
-enum/switch/runtime god file no longer exists.
-
-Appearance remains at the HTTP/rendering edge. `src/server/theme.zig` resolves
-the closed Light/Dark/Device preference from a host-only cookie before any HTML
-response, and the pinned `web.zig` document writer emits its escaped root class
-before the stylesheet. Light is the missing/invalid-state fallback; Device is
-implemented by `prefers-color-scheme`. The authenticated Settings form uses a
-small bounded URL-encoded decoder plus the existing exact-origin/session-CSRF
-policy and native Post/Redirect/Get. It does not add database, domain-service,
-JSON API, or theme-JavaScript state.
-
-Typed platform mutations require an `Idempotency-Key`; `app/writes.zig`
-atomically claims and replays keys, rejects mismatched reuse, and records
-redacted actor/idempotency metadata. Routes classified as destructive
-additionally require an explicit confirmation header. This safety contract
-applies to the narrow Caddy/provider/system/deployment allowlist only.
-Generated provider mutation routes remain dry-run-only through the provider
-planner.
-
-`packages/cloudflare` and `packages/hostinger` are canonical monorepo packages
-for the public `cloudflare-zig` and `hostinger-zig` mirrors. Each has an
-independent build pinned to the repository's exact qualified Zig master
-snapshot, an MIT license, changelog, CI, a small public root, raw
-request escape hatch, typed routes/models, and provider-specific auth. Cloudio
-compiles directly against their local sources. Publishing is one-way from a
-history-preserving `git subtree split`; standalone repositories are never
-merged back automatically.
-
-Persistence is split into `db/connection.zig`, `db/models.zig`, shared
-`db/helpers.zig`, and concrete capture, audit, maintenance, Cloudflare,
-Hostinger, inventory, and local-system repositories. `db/store.zig` retains
-only public type aliases and compatibility tests; `Db` compatibility methods
-delegate at the connection edge so existing collectors preserve behavior
-while new application code can select an explicit repository.
-
-`app/deploy.zig` owns app registration, build/install, atomic release swaps, health checks, rollback, and cleanup. Database-backed per-app locks serialize deploy, rollback, and delete across HTTP connections; stale locks and stale running deploy rows are recoverable. A failure after release installation or an unhealthy probe restores the previous release when available. Delete validates that the app directory is a strict descendant of `apps_root` before removing the unit, releases, logs, deploy history, and Caddy route.
-
-`app/maintenance.zig` owns append-only storage lifecycle operations. Status/preview is non-mutating; manual prune and compact operations require a newly created online SQLite backup. Deletes run in bounded batches using retention indexes, then checkpoint the WAL. Scheduled pruning is opt-in through configuration and compaction remains an explicit operator action.
-
-`app/topology.zig` owns the provider/Caddy/project/system graph read model for UI/API consumers. It derives row status, exposure, DNS match type, capability booleans, and issue arrays from the SQLite topology rows without changing collector or DB ownership. The topology query correlates Caddy/project runtimes with Cloudflare local-target `A`/`AAAA` records and deduplicated Caddy upstreams; non-runtime DNS records such as mail and verification records stay in provider inventory instead of inflating local socket/runtime issue counts. The app read model also derives systemd service identity from socket cgroup process text, exact project-name service units, and compose-style Docker container names, then hydrates service/container state from collected system tables when available. After refresh, a typed fingerprint projection in `topology_state` produces `added`, `changed`, and `removed` rows in `topology_changes`; unchanged graph rows are not appended again.
-
-`app/provider_family.zig` owns the shared Cloudio control-plane family classifier for provider tags. Coverage filters, workplans, route evidence, and future UI grouping all use this module instead of each command inventing its own tag buckets. `app/evidence.zig` owns provider/system event and matrix evidence, while `app/evidence_routes.zig` owns route-capture evidence, generated-route matching, and captured-versus-missing read-route family summaries. Shared evidence filters, evidence status classification, limit normalization, and redacted evidence output helpers live in `app/evidence_common.zig`.
-
-`app/provider_coverage_*.zig` owns the provider coverage read models behind CLI and future UI/API review surfaces. The split modules keep generated-route rollups, family summaries, exact route listings, workplans, typed-model gaps, route candidates, and actual DB-backed capture plans separate enough to review without duplicating OpenAPI parsing or SQLite hint logic. Actual-capture planning is the DB-backed counterpart to manifest-only capture candidates: it combines generated route metadata, captured provider evidence, normalized resource hints, source-route body shape summaries, family-scoped source-route mappings, and support policy into candidate-level `actual_state`, `review_status`, and `next_action` fields, plus pre-limit `review_summary` and `review_groups` rollups for whole-family triage. Source-route mappings live in the app coverage-input layer and should map child path/query identifiers only to read-only official list routes that can discover those IDs for the same provider family; they must not hide write operations, fabricate scalar examples, or bypass the request planner. Those fields are part of the app contract for future UI/API triage, not terminal-only decoration.
-
-`app/security.zig` owns the reusable redaction audit read model. `cloudio security redaction` uses configured API tokens/keys as exact-match probes, scans Cloudio output/storage surfaces such as snapshots, provider raw rows, normalized raw JSON tables, Caddy/project/system raw fields, settings, audit events, and the run log, and reports only secret labels, surfaces, counts, and status. It intentionally does not scan credential config files because those are expected to contain secret material.
-
-## Target Module Boundaries
+## Dependency direction
 
 ```text
-src/
-  main.zig                 # process setup and CLI entry only
-  cloudio.zig              # public library facade for future UI/app embedding
-  core/
-    config.zig             # config file, dotenv, fish env, process env
-    fs.zig                 # filesystem helpers for parent directories and existence checks
-    redact.zig             # secret detection and output redaction
-    log.zig                # run log writer and audit-safe formatting
-    output.zig             # optional text output container for app/CLI handoff
-    process.zig            # bounded command execution and result status helpers
-    time.zig               # UTC windows and testable clock helpers
-    version.zig            # shared product version for CLI and facade surfaces
-    json.zig               # common JSON writer, field/extract/stringify helpers
-  db/
-    schema.zig             # versioned migrations and schema metadata
-    models.zig             # explicit SQLite row/filter/read-model types
-    helpers.zig            # shared binding and row decoding
-    connection.zig         # connection lifecycle and compatibility delegation
-    repositories/          # concrete domain SQL repositories
-    store.zig              # stable public facade and compatibility tests
-  http/
-    root.zig               # dependency-clean inbound HTTP package
-    request.zig            # bounded HTTP/1.x request parsing and query/header access
-    router.zig             # literal and named-segment route matching
-    response.zig           # buffered response framing and status text
-    server.zig             # listener and connection lifecycle
-    static.zig             # safe static files and MIME mapping
-  net/
-    http.zig               # std.http wrapper, headers, status, body limits
-    pagination.zig         # cursor/page handling and collection envelopes
-  providers/
-    auth.zig                # provider-neutral credential bundles and official security validation
-    routes.zig              # canonical provider selectors, generated manifest-backed route lookup, params, headers, URL rendering
-    typed_routes.zig        # provider-specific path/query helpers and typed mutation dry-run JSON
-    request_plan.zig        # structured no-execute and live-read request planning
-    dispatch.zig            # generic provider read dispatch and dry-run mutation plan facade
-    transport.zig           # generic live read HTTP client handoff
-    route_plan.zig          # read and mutation no-execute plan JSON
-    route_result.zig        # live read response matching and metadata-only result JSON
-    route_safety.zig        # generated route safety policy JSON
-    capabilities.zig        # live-read, diagnostic-read, dry-run, auth, and pagination classification
-    # provider-neutral Cloudio planning, coverage, and dispatch only;
-    # provider clients live under packages/
-  collectors/
-    capture.zig            # shared redacted response capture to snapshots/provider_raw
-    cloudflare.zig         # provider -> snapshots/store
-    hostinger.zig
-    caddy.zig
-    system.zig
-    projects.zig
-  app/
-    caddy.zig              # reusable Caddy site/upstream workflows
-    caddy_desired.zig      # desired routes plus guarded validate/apply workflow
-    cloudflare.zig         # reusable Cloudflare provider workflows
-    cloudflare_overview.zig # Cloudflare account/zone/DNS read model and render contract
-    coverage.zig           # reusable provider coverage summary/detail workflows
-    database.zig           # app-level DB startup and schema initialization boundary
-    evidence.zig           # provider/system event and matrix evidence read models
-    evidence_common.zig    # shared evidence filters, redaction helpers, and family/status classification
-    evidence_routes.zig    # route capture evidence, generated-route matching, and read-route summaries
-    export.zig             # reusable snapshot export JSON
-    doctor.zig             # reusable health-check report
-    init.zig               # reusable first-run config initialization
-    inventory.zig          # provider-neutral typed inventory read model
-    deploy.zig             # locked build/release/health/rollback/cleanup pipeline
-    log.zig                # reusable redacted run-log reader
-    maintenance.zig        # retention preview, online backup, batched prune, compact
-    render.zig             # shared app JSON/text row writers and review-command quoting helpers
-    provider_coverage_actual_captures.zig # actual DB-backed capture candidate rows and review status
-    provider_coverage_actual_commands.zig # no-execute and optional execution command planning for actual captures
-    provider_coverage_actual_inputs.zig # DB-backed missing-input hints and source-route evidence
-    provider_coverage_actual_plan.zig # assembled actual capture planning model
-    provider_coverage_actual_ready.zig # ready-candidate filtering and execution summaries
-    provider_coverage_candidates.zig # generated manifest-only capture/dry-run candidate rows
-    provider_coverage_families.zig # family rollups over L1/L2/L3 coverage evidence
-    provider_coverage_levels.zig # provider/tag level evidence reports
-    provider_coverage_routes.zig # exact generated route detail views
-    provider_coverage_typed_models.zig # L3 typed projection backlog
-    provider_coverage_workplan.zig # broad provider slice ranking and command bundles
-    provider_family.zig    # shared provider control-plane family classifier
-    provider_list.zig      # provider-neutral NameValue resource/inventory row access
-    hostinger.zig          # reusable Hostinger provider workflows and facade aliases
-    hostinger_overview.zig # Hostinger account/VPS read models and render contracts
-    overview.zig           # overview counts and recent-snapshot read model
-    projects.zig           # reusable project list/detail workflows
-    refresh.zig            # reusable refresh service for CLI and future UI/API
-    security.zig           # reusable redaction/storage leak audit read model
-    system.zig             # reusable system summary/listing workflows
-    system_control.zig     # typed systemd/Docker write allowlist
-    topology.zig           # operational graph plus persisted change projection
-    writes.zig             # idempotency claims and actor-aware redacted audits
-  cli/
-    root.zig               # command dispatch
-    caddy.zig              # Caddy command-group parsing and collector handoff
-    cloudflare.zig         # Cloudflare command-group parsing and collector handoff
-    cloudflare_dry_run.zig # Cloudflare dry-run mutation command grammar
-    cloudflare_options.zig # Cloudflare overview/filter option grammar
-    hostinger.zig          # Hostinger command-group parsing and collector handoff
-    inventory.zig          # top-level provider-neutral inventory parsing
-    projects.zig           # Projects command-group parsing and collector handoff
-    route_request.zig      # shared provider route request parser for coverage plan and route commands
-    render.zig             # terminal output and shared output-format parsing
-    system.zig             # System command-group parsing and collector handoff
-  server/
-    root.zig               # Cloudio listener adapter
-    routes.zig             # direct-handler route and policy table
-    pipeline.zig           # fixed auth/idempotency/confirmation pipeline
-    handlers/              # grouped thin HTTP adapters
-  runtime/
-    events.zig             # refresh event clock
-    scheduler.zig          # refresh and maintenance scheduling
-packages/
-  cloudflare/              # standalone Cloudflare Zig package
-  hostinger/               # standalone Hostinger Zig package
+main
+  -> cli
+       -> server/runtime
+       -> app
+            -> collectors
+            -> providers and standalone provider packages
+            -> db
+       -> core
+
+server
+  -> app
+  -> reusable http
+
+collectors
+  -> providers
+  -> db
+
+providers
+  -> core/net and standalone provider packages
 ```
 
-## Internal API Rules
+Dependencies point toward smaller owner modules. The executable does not expose
+a public library facade: no supported embedder exists, and maintaining a mirror
+of every internal module would make normal refactors more expensive.
 
-- Provider clients do HTTP and JSON only. They must not know about SQLite, CLI rendering, terminal colors, files outside config, or Caddy/system inventory.
-- `zig build architecture-check` enforces module-boundary rules: `core`/`net` modules cannot import higher layers, database modules cannot import providers/collectors/apps/CLI, provider modules cannot import persistence/collector/app/CLI modules, collectors cannot import app/CLI modules, collectors cannot write directly to terminal output, app modules cannot import CLI modules or expose collector-owned `Output` aliases, provider app modules must expose provider contract types directly instead of through collectors, provider-specific app row-list commands must reuse `app/provider_list.zig`, app provider identity and provider filters must reuse `providers/routes.zig` rather than local provider enums, CLI adapters must delegate through `app.*` instead of importing provider, collector, or database modules, and CLI modules must not import the public `cloudio.zig` embedding facade.
-- SQLite DDL lives in `db/schema.zig`; `db/store.zig` delegates initialization and exposes repository/read-model APIs. `zig build architecture-check` fails if schema DDL drifts back into the store module.
-- SQLite-backed Zig modules should use the `linkSqlite` helper in `build.zig`; direct per-module `linkSystemLibrary("sqlite3", ...)` and `link_libc` boilerplate should not be reintroduced.
-- `cloudio.zig` is the future web/native embedding facade. It exposes stable app workflows, provider route/auth/transport/dispatch metadata, typed provider clients/models, and low-level core/db/net utilities, but it must not expose collector modules or become a dependency of CLI command routing. Collectors are internal data-entry and normalization implementation details that can change as app APIs mature.
-- `providers/routes.zig` owns generated-manifest-backed route metadata for Cloudflare and Hostinger: canonical provider identity and filters, provider, tag, method, path template, operation ID, support/mode, deprecation state, official path/query/header parameter requirements, parameter style/explode/schema shape metadata, generated enum/scalar validation for path/query/header inputs, OpenAPI-aware repeated query array serialization, OpenAPI security alternatives, allocation-free `name=value` request parameter parsing, request-body requirements, dry-run-safe body input metadata, response status/content/schema metadata, response-status matching, operation/path lookup, path-placeholder extraction, required path/query/header validation, path-template metadata invariants, one reusable request object, and escaped path/query/URL rendering. This is the L1 bridge for broad provider coverage and future generic dispatch.
-- `providers/auth.zig`, `providers/request_plan.zig`, `providers/transport.zig`, `providers/route_result.zig`, `providers/route_plan.zig`, and `providers/dispatch.zig` together own provider-neutral L1 dispatch. `providers/auth.zig` validates official route security against the credentials Cloudio can send and keeps Cloudflare token/legacy and Hostinger `apiToken` decisions out of call execution. `providers/request_plan.zig` is the shared request-planning boundary: it validates provider route mode, bodyless read policy, required path/query/header inputs, dry-run body metadata, provider base URLs, dispatch support flags, and safety policy into reusable `RequestPlan` and `LiveReadPlan` structs before JSON rendering or HTTP handoff. `providers/transport.zig` is the only generic live-read executor: it reuses `LiveReadPlan`, validates auth, preserves Cloudflare anonymous reads, and hands the planned URL to the existing Cloudflare or Hostinger HTTP clients. `providers/route_result.zig` matches live read responses back to generated response metadata and renders metadata-only read-result JSON without printing response bodies. `providers/route_plan.zig` renders `RequestPlan` values as no-execute JSON plans for read routes and request/response-aware mutation routes as `will_execute:false` dry-run plans with full provider URLs without issuing HTTP or printing request body contents. `providers/dispatch.zig` stays a compatibility facade for older callers, while app route planning/read metadata/route capture/dry-run rendering imports the owner modules directly so future UI/API layers can depend on the same smaller contracts. Generic plans expose dispatch flags for live-call and dry-run support so future UI/API layers do not need to infer behavior from lower-level route metadata. Cloudflare dispatch keeps raw OpenAPI security alternatives visible while explicitly mapping named `bearerAuth` and combined `api_email+api_key+api_token` requirement bundles to the supported Cloudflare credential forms: bearer API token or legacy email/global-key.
-- `app/coverage.zig` owns human-facing inspection of generated route contracts, including tag/status/mode filters, exact route selection by operation ID or method/path, provider-wide L1 routability audits, no-execute route planning, metadata-only route reads, and generic route capture into `snapshots`, `provider_raw`, and `audit_events`; `collectors/capture_normalize.zig` owns the follow-on normalization into broad provider inventory tables and selected high-value typed tables. The same helper functions are also the only broad resource/inventory persistence path used by handwritten Cloudflare and Hostinger collectors, so stable-ID projection behavior does not drift between generic route capture and provider-specific refresh flows. Paginated capture is generic but conservative: it requires generated `page` or `cursor` query metadata, stores each page as its own redacted snapshot/raw row, recognizes Cloudflare offset `result_info`, Cloudflare cursor `result_info`, Cloudflare root cursor, and Hostinger `data/meta` page envelopes through `net/pagination.zig`, reports the recognized envelope, normalized resource count, and typed row count in metadata, redacts cursor tokens from emitted endpoints and audit labels, and stops on non-2xx, missing page-envelope metadata, no next page, or the max-page cap. CLI coverage and route commands should stay thin over this app surface so future UI/API views can reuse the same route addressing, request planning, redacted capture, and inventory behavior.
-- Generic read dispatch is bodyless by design. Generated non-deprecated `GET` operations with `requestBody.required=true` must be visible in coverage as `not_applicable` / `none` until there is an explicit read-with-body transport policy.
-- Provider-specific route modules own typed endpoint enums and path/query construction where hand-written wrappers improve Cloudio ergonomics. `providers/typed_routes.zig` owns the shared path escaping, optional query rendering, and typed mutation dry-run JSON contract for those modules, including `will_execute:false`; provider route modules supply provider-specific metadata and safety text. Route modules should stay pure and fixture-testable so future UI/API layers can reuse provider operations without invoking HTTP. Provider-specific transport modules own concrete provider auth/header assembly and HTTP handoff, keeping typed clients focused on endpoint/path facades.
-- Collector capture owns redacted raw API response persistence. It redacts response bodies once, writes `snapshots` and `provider_raw`, returns the redacted body for optional CLI output or collector normalization, and converts empty provider bodies into structured HTTP-status diagnostics so logs stay reviewable.
-- Collectors own normalization. They call provider/system libraries, pass provider responses through shared capture, and normalize selected fields into indexed tables. Cloudflare and Hostinger collectors should populate specific high-value tables such as `cloudflare_dns_records` and `hostinger_vps` themselves, then use `collectors/capture_normalize.zig` for broad tables such as `cloudflare_resources`, `hostinger_resources`, `cloudflare_inventory_items`, and `hostinger_inventory_items` whenever a read response has stable resource identity. Collectors return optional captured text through `core.output.Output` values instead of printing, so CLI and future UI surfaces remain responsible for presentation without depending on collector-owned output types. Cloudflare inventory projection covers account, zone, DNS, security, API Shield, Access, logs, rules, load balancing, health, and Zero Trust read groups with stable columns for scope, status, category, domain, account/zone IDs, related IDs, lifecycle timestamps, and redacted raw JSON. Hostinger inventory projection covers billing, domains, DNS, hosting, ecommerce, reach, Docker, and VPS read groups with stable columns for status, category, domain, username, related IDs, lifecycle timestamps, and redacted raw JSON.
-- App services own cross-collector workflows and read models. They compose collectors, persistence, audit events, run logs, and typed query output behind stable inputs so CLI, web, or native surfaces can reuse the same behavior. Provider app modules may call collectors internally, but their public endpoint/argument/scope/resource aliases come directly from `packages/cloudflare/src` or `packages/hostinger/src` so UI and embedding code are not coupled to collector implementation modules. Provider app facades should delegate large read models to focused app modules, as `app.cloudflare` now delegates Cloudflare account/zone/DNS summaries to `app/cloudflare_overview.zig` and `app.hostinger` delegates Hostinger account/VPS summaries to `app/hostinger_overview.zig`. Cross-provider views such as `app.inventory`, provider row views such as `app.provider_list`, provider-owned summaries such as the Cloudflare account/zone/DNS overview and Hostinger VPS overview, and coverage filters in `app.coverage` should use `providers.routes.Provider` and `providers.routes.ProviderFilter` for provider identity/selection and query projection tables through `db.store` instead of duplicating provider-specific parsing or rendering. Coverage, workplan, route-evidence, and future UI family grouping must use `app.provider_family` so exact route views and evidence summaries cannot drift into separate provider taxonomies. DB-backed provider/system evidence stays in `app.evidence`, while route-capture proof and generated-route matching live in `app.evidence_routes`; both remain read-only and expose reusable text and JSON render paths rather than making the CLI scrape logs.
-- Authentication is an app service, not handler logic. `app/authentication.zig`
-  owns bootstrap authorization, WebAuthn ceremony state, credential lifecycle,
-  session issuance, and recovery reset. `security/passkeys.zig` is the narrow
-  adapter over the pinned WebAuthn verifier; `db/repositories/auth.zig` owns
-  persistence; `server/pipeline.zig` owns the single default-deny browser
-  policy. CLI and HTTP adapters call that same app service.
-- Authentication secrets are capability values. Only SHA-256 hashes of
-  bootstrap tokens and session identifiers are stored; raw values live only
-  in the one-time setup URL fragment or the protected cookie. WebAuthn
-  challenges are short-lived and single-use, and successful setup consumes
-  its bootstrap capability transactionally.
-- CLI commands are thin adapters. `cli/root.zig` should stay limited to top-level dispatch; command-group modules parse their own subcommands, call collectors or query services, and render output. Provider-specific option grammars that span many command families, such as Cloudflare key-value filters and overview options, should live in focused CLI helper modules instead of being repeated through large command adapters. Coverage report/workplan/candidate grammar lives in `cli/coverage_parse.zig`; generic provider route request grammar for `coverage plan` and `route plan/read/capture/dry-run` lives in `cli/route_request.zig`, keeping route execution independent of coverage-command parsing. Data output goes through `cli/render.zig` to stdout so text and JSON surfaces can be piped predictably; shared CLI output-format parsing uses `cli_render.RenderFormat` plus `cli_render.parseFormatArg`, repeated split/inline value option parsing goes through `cli_args.parseValueArg`, and shared provider/query/limit command filters go through `cli_args.parseFormatProviderLimit` or `cli_args.parseFormatProviderQueryLimit`. Shared render helpers own the allocate-render-print lifecycle so `--json`, `--format`, common `--option value`/`--option=value` behavior, filter behavior, and stdout behavior do not drift between command groups. Diagnostics and usage errors may continue to use stderr.
-- Redaction is core infrastructure. Any path that writes terminal output, run logs, exports, snapshots, diffs, or raw provider bodies must pass through the same redaction API unless the data is proven public. `cloudio security redaction` is the reusable audit surface that checks configured secret bytes against Cloudio output/storage artifacts without printing those bytes.
-- Time-dependent code takes a clock abstraction or has a deterministic helper test. Provider-specific default windows, such as Hostinger metrics, should live in provider code.
-- Generated or checked provider coverage must be separate from hand-written client behavior. The manifest states what exists upstream, `providers/routes.zig` exposes the generic route contract, `providers/dispatch.zig` exposes the generic auth/call contract, and typed clients state what Cloudio supports ergonomically and safely today.
-- Coverage review surfaces must reuse the same generated route parser as generic dispatch when showing L1 details, so docs, CLI output, and provider calls do not drift into separate interpretations of the OpenAPI manifest.
-- Provider dry-run plans should be built from typed route metadata in `providers/*` and exposed through `app/*`; collectors remain responsible for live read capture and normalization.
+`tools/architecture-check.sh` enforces the important edges:
 
-## Provider Coverage Contract
+- `core`, `net`, and reusable `http` do not depend on Cloudio application
+  or persistence layers;
+- database code does not import providers, collectors, app services, or CLI;
+- providers and standalone packages do not import persistence or application
+  layers;
+- collectors do not import app or CLI code or write terminal output;
+- HTTP handlers delegate domain work to app services;
+- app services do not import CLI adapters; and
+- CLI modules do not bypass app services to reach persistence or collectors.
 
-Every provider endpoint should have one generated coverage row with:
+These checks protect ownership boundaries. They are not a demand for one file
+per type or function.
 
-- `provider`
-- `tag` or upstream group
-- `method`
-- `path`
-- `operation_id` when available
-- `path_params`: generated path parameters with `{name, required, style, explode, schema}`
-- `query_params`: generated query parameters with `{name, required, style, explode, schema}`
-- `header_params`: generated header parameters with `{name, required, style, explode, schema}`
-- `request_body`: generated required flag, accepted content types, and schema refs
-- `responses`: generated status, accepted content types, and schema refs
-- `security`: generated auth-required flag and OpenAPI scheme alternatives, including anonymous alternatives
-- `support`: `implemented`, `partial`, `planned`, `blocked_permission`, `unsafe_mutation`, `deprecated`, or `not_applicable`
-- `mode`: `read`, `dry_run`, `write`, or `none`
-- `tests`: fixture, live smoke, or missing
-- `notes`
+## Process and adapters
 
-Coverage rows are checked against the latest official OpenAPI source before provider work begins. If an upstream endpoint appears or disappears, `zig build coverage-check` should show that drift explicitly. `cloudio coverage gaps` then ranks unresolved work by the same pending-read and pending-mutation evidence model used by levels/workplans, while keeping raw planned/blocked/unsafe counters visible for context. `cloudio coverage levels` separates L0/L1/L2 evidence from L3 projection candidates. `cloudio coverage level-tags` applies the same evidence accounting per upstream tag group so reviews can choose a whole API family before drilling into exact `coverage routes` entries, keeping provider work broad enough for human inspection without turning evidence summaries into completion claims. `cloudio coverage families` rolls those tag rows up to Cloudio control-plane families and emits the exact family workplan command, giving reviewers a stable family-level read model before choosing implementation slices. `cloudio coverage capture-candidates` bridges L1 route contracts to L2 collection by listing generated bodyless read routes with missing capture evidence, required parameter placeholders, pagination hints, and no-execute `route capture` command templates; `--plans` reuses the same provider-dispatch read planner with generated schema-compatible example requests to create one JSON review bundle for a whole read family before live collection. `cloudio coverage dry-run-candidates` bridges L1 mutation route contracts to dry-run review by listing generated non-`GET` mutation routes with missing review evidence, required parameter placeholders, request-body content-type/schema metadata, and no-execute `route dry-run` command templates; `--plans` reuses the same provider-dispatch dry-run planner with generated schema-compatible example requests to create one JSON review bundle for a whole family without sending writes. `cloudio coverage workplan` turns those evidence counters into broad review slices by ranking provider tags and emitting exact `coverage routes`, `coverage capture-candidates`, and `coverage dry-run-candidates` commands per slice; its `control-plane` focus applies the same evidence scoring after filtering to the Cloudio-relevant API families named in the long-term goal. The family filter is an app-level selector, not a CLI-only string search: `--family tokens`, `--family security`, `--family hostinger-vps`, and related aliases expose the same grouping through text and JSON on workplans, exact route listings, capture candidates, and dry-run candidates so a future UI can show provider-family slices without duplicating classification rules. The summary, tag, L1 audit, capture-candidates, dry-run-candidates, workplan, gaps, levels, level-tags, families, typed-models, and routes reports have app-level JSON writers so future UI/API layers can consume provider totals, provider routability evidence, broad review surfaces, and exact generated route contracts without scraping CLI text. `providers/typed_routes.zig` owns shared provider-specific route escaping/query/dry-run JSON helpers, `packages/cloudflare/src/routes.zig` and `packages/hostinger/src/routes.zig` own provider-specific endpoint/path metadata, `packages/cloudflare/src/transport.zig` and `packages/hostinger/src/transport.zig` own provider-specific auth/header assembly and HTTP GET handoff, and provider clients remain live-read facades. `cloudio overview --json` exposes the first-dashboard counts and recent snapshot feed as a reusable app read model. `cloudio inventory summary` groups the normalized Cloudflare and Hostinger L3 inventory projections by provider/kind/status/category so broad collector work can be reviewed before opening individual inventory rows; both inventory list and summary paths have app-level JSON writers so a future UI/API layer does not need to scrape CLI text.
-`cloudio coverage actual-captures` is the DB-backed follow-through view for route capture work. It starts from generated read routes, folds in existing route-capture evidence, SQLite resource hints, source-route body summaries, family-scoped source-route mappings, and generated enum parameter metadata, then emits candidate-level `actual_state`, `review_status`, and `next_action` fields so a reviewer can decide whether to capture, retry, normalize a source, accept an empty source, or record a policy block without manually reading nested diagnostics. Official enum path/query parameters can become actual capture hints because they are finite generated route values; arbitrary scalar example values remain limited to no-execute read/dry-run plans until a real source mapping exists. Child-resource source mappings are broad-slice work: this control-plane pass maps Cloudflare accounts, zones, Access, DNS, token-validation, rulesets, memberships, custom assets/hostnames/settings, IAM, SCIM, and Zero Trust identifiers together; a load-balancing pass should map monitor, pool, and load-balancer detail prerequisites together; a tunnel pass should map Cloudflared, WARP, GRE/IPsec, route, and connector prerequisites together; a security pass should map Botnet Threat Feed, DNS Firewall, Email Security, IP Access rules, leaked-credential, Page Shield, Radar bot, and Security Center prerequisites together. Inputs that Cloudflare only returns after starting a generated operation, such as Access policy-test IDs and load-balancer preview IDs, or inputs that require external traffic/log evidence, such as Ray IDs and arbitrary Logs Received windows, must be classified as explicit/no-official-source instead of receiving fabricated examples. Its `review_summary` and provider/family `review_groups` count all matching candidates before row limiting, and each group now exposes a group-level `next_action` plus reusable no-execute commands for `coverage actual-captures`, `route capture-ready`, and diagnostic-only blocked capture planning where applicable. UI/API consumers can page candidate rows without losing family-level status totals or the next broad review command.
+`src/main.zig` only enters `cli/root.zig`. The CLI loads configuration,
+opens the initialized database, and dispatches to command-family adapters.
+Adapters parse arguments and render output; application behavior stays in
+`src/app`.
 
-Diagnostic-blocked reads with fixture or live blocked evidence are L2 evidence rows, not unresolved workplan priority. They stay visible in levels/families output, especially with `--limit=0`, while default workplans focus on pending reads and unreviewed mutation dry-runs that still need implementation.
-Cloudflare mutation routes can also contribute `generated_dry_run_policy_evidence` when the checked manifest route is non-deprecated, routable, and remains `unsafe_mutation` / `dry_run`. This evidence is still no-execute L1 review evidence only: generic provider dispatch renders `will_execute:false` mutation plans and never promotes manifest routes into executable writes. Hostinger mutations likewise stay visible as dry-run candidates unless explicit fixture or typed dry-run evidence closes them. The separate platform write policy is a fixed typed allowlist implemented by `app/provider_writes.zig`; adding a generated route to coverage does not authorize it for live execution.
-`cloudio coverage workplan --plans` is still no-execute; it only appends the existing candidate `--plans` flag to generated capture/dry-run commands so a broad family slice can hand reviewers or a future UI directly to nested read/dry-run plan JSON. `cloudio coverage workplan --bundle --plans --json` adds an app-level read model for broad slices by embedding the exact capture/dry-run candidate arrays and nested generated plan JSON under each selected workplan row, capped per tag by `--candidate-limit` and built only from checked-in manifests.
-`cloudio coverage typed-models` adds the corresponding L3 planning read model: it ranks generic inventory groups that do not yet have typed SQLite projections, emits family-aware route/workplan review commands, and keeps the L3 modeling backlog visible without conflating generic raw inventory with typed control-plane models. Its `--focus control-plane` view is the required Cloudio L3 backlog; all-scope output keeps optional generic inventory modeling visible with explicit `scope`, `required_for_goal`, `control_plane_typed_gap`, and `outside_control_plane_typed_gap` fields for UI/API callers.
-Route-library tests also check that every generated `path_params` entry is required and exactly matches a placeholder in the generated path template. Route rendering rejects unknown path keys and missing required path values before generic dispatch can build an HTTP URL or dry-run plan.
+`cloudio serve` starts:
 
-## nob.zig Hybrid Project Lifecycle
+- the bounded reusable server in `src/http`;
+- the Cloudio route and security pipeline in `src/server`;
+- the refresh/retention scheduler in `src/runtime/scheduler.zig`; and
+- persisted `nob.zig` workers in `src/runtime/nob_workers.zig`.
 
-The nob.zig subsystem standardizes project lifecycle behavior without turning
-Cloudio into a universal build-script interpreter. It has three trust layers:
+There is one route table in `src/server/routes.zig`. The shipped route list is
+maintained in `docs/http-route-inventory.md`.
 
-```mermaid
-flowchart LR
-    M["Passive nob.json manifest"] --> D["Cloudio discovery and review"]
-    B["Existing build.zig graph"] --> R["Project-owned nob runner"]
-    D -->|"trust exact manifest digest"| R
-    R --> P["Read-only exact plan"]
-    P -->|"authenticated approval"| W["Persisted Cloudio worker"]
-    W --> X["Sanitized runner process"]
-    W --> K["Exact systemd/Caddy broker"]
-    X --> E["Sequenced events and artifacts"]
-    K --> O["Independent host observation"]
-    E --> O
-```
+## HTTP and page rendering
 
-`app/nob_projects.zig` owns passive scan, canonical repository identity,
-manifest review, trust/revoke, and forget/tombstone behavior. It never builds
-or executes a candidate. `app/nob_runtime.zig` owns trusted runner bootstrap,
-describe, and observation. `app/nob_actions.zig` owns exact-byte, expiring,
-one-use plans and operation reads; `app/nob_worker.zig` owns the asynchronous
-run state machine, lock, cancellation, event/artifact persistence, and honest
-restart recovery. `app/nob_secrets.zig` resolves logical secret bindings only
-for the approved action. `runtime/nob.zig` and `runtime/nob_workers.zig` attach
-workers and due observation to the server lifecycle.
+`src/http` owns bounded HTTP/1.1 parsing, static responses, routing, security
+headers, and connection lifecycle without knowing Cloudio policy.
 
-The modules under `src/nob` are the protocol and privilege boundary:
+`src/server/pipeline.zig` is the single request-policy boundary. It owns:
 
-- `bootstrap.zig`, `source.zig`, and `subprocess.zig` resolve reviewed Zig
-  toolchains, content-address runner caches, canonical source identity, bounded
-  output/time, sanitized environments, and process-group cancellation.
-- `protocol.zig`, `action_protocol.zig`, and `model.zig` reject malformed,
-  oversized, identity-expanding, stale, or contradictory runner messages.
-- `independent_observation.zig` checks exact declared systemd, endpoint,
-  release, artifact, data, process, and live Caddy state separately from runner
-  claims and applies the conservative merge policy.
-- `resource_control.zig`, `systemd.zig`, `managed_unit.zig`, and `broker.zig`
-  limit host changes to reviewed user units, controls, and literal Caddy
-  host/upstream pairs. Broker requests are operation-bound, peer-checked,
-  token-authenticated, one-use, and globally disabled unless configured.
+- public versus authenticated route selection;
+- session lookup and expiry;
+- exact-origin enforcement;
+- CSRF validation;
+- idempotency lookup, fingerprinting, and response replay;
+- explicit destructive confirmation;
+- body and header limits;
+- stable HTML redirects or JSON errors; and
+- audit metadata passed to application writes.
 
-Persistence lives behind `db/repositories/nob.zig`. Manifests, trust,
-resources, descriptions, observations, plans, operations, structural events,
-artifacts, secret bindings, broker authorizations, managed unit/route ownership,
-and tombstones are separate rows instead of being collapsed into the legacy
-`projects` or `apps` model. Retention expires ready plans, deletes only old
-terminal history beyond a per-project floor, cascades events/artifacts, removes
-validated operation directories, and preserves ownership evidence referenced
-by a managed unit or route.
+Grouped handlers translate HTTP input to app-service calls. They do not own SQL
+or provider transports. Native form workflows use `303 See Other` and
+server-rendered result state; JSON routes return explicit status and error
+payloads.
 
-`cli/nob.zig`, `server/handlers/nob.zig`, and the authenticated Projects page
-are adapters over those same app services. The HTTP side stays inside the
-default-deny session/origin/CSRF/idempotency/confirmation pipeline. There is no
-second synchronous CLI deployment implementation and no runner endpoint that
-bypasses persisted plans or workers.
+`src/server/pages.zig` loads the authored `<main>` from `web/*.html`,
+injects escaped current data, and wraps it in one authenticated shell. Dynamic
+text, attributes, and URLs go through the context-safe HTML writer.
 
-## Review Shape
+The browser boundary is deliberately small:
 
-Small reviews should usually touch one layer:
+- `web/assets/app.js` manages only responsive navigation;
+- login and setup scripts own WebAuthn ceremonies for their public page;
+- `web/assets/pages/security.js` alone owns authenticated credential
+  ceremony requests and its revoke dialog; and
+- every other authenticated page uses native links and forms with no
+  page-specific script.
 
-- core extraction with unit tests and no behavior change
-- DB repository/schema change with migration tests
-- provider endpoint support with fixture response tests and one live dry-run/read-only smoke command
-- collector normalization with SQLite integration tests
-- CLI rendering with command smoke tests
+There is no client-side store, page bootstrap fetch, polling loop, global API
+facade, or duplicated client renderer.
 
-Large provider coverage expansions should be split by upstream tag group, not by HTTP method.
+## Application workflows
 
-## Refactor Order
+`src/app` owns product behavior and reusable read models. Important owners
+include:
 
-1. Extract `core.redact`, `core.time`, `core.config`, `core.json`, `core.fs`, `core.log`, `net.http`, and `net.pagination` because they have narrow dependencies and good existing tests. This tranche is split out.
-2. Extract `db.store` while preserving the current schema and temp-DB tests. This is split out as the first database module, and `db/schema.zig` now owns versioned migrations with schema metadata and read-model indexes.
-3. Move Hostinger into `packages/hostinger/src` first because the current endpoint set is smaller and recently verified. The read-only HTTP client, route/path construction, VPS model parsing, and current POC collector have moved; broader typed models and generated coverage still need to follow.
-4. Move Cloudflare into `packages/cloudflare/src`. The read-only account/zone/DNS route helpers, auth transport, live-read client facade, response normalization, and current collector have moved. The generated coverage manifest now exists; broad endpoint expansion should proceed against that manifest by upstream tag group.
-5. Move Caddy, system, and project collectors out of `main.zig`. This tranche is split out.
-6. Split CLI dispatch/rendering into `cli/` modules now that collector behavior has module boundaries. This tranche is split out as `cli/root.zig`, `cli/render.zig`, `cli/caddy.zig`, `cli/cloudflare.zig`, `cli/hostinger.zig`, `cli/projects.zig`, and `cli/system.zig`; those CLI modules now call `app/*` APIs rather than collectors directly.
-7. Add `cloudio.zig` facade once CLI dispatch no longer owns application behavior. The facade exists and now exposes stable `core`, `db`, `net`, `providers`, and `app` namespaces for embedding; collector internals are intentionally not re-exported and should stay behind app workflows.
-8. Continue moving provider behavior from collector-shaped raw workflows toward typed app/query services as Cloudflare and Hostinger client coverage expands by upstream tag group. The shared `collectors.capture` helper now handles redacted snapshot/provider_raw persistence for current Cloudflare and Hostinger API response paths while provider modules stay HTTP/JSON-only.
-9. Continue Cloudflare and Hostinger provider expansion by upstream tag group, using `zig build coverage-check` before each provider change.
+- `dashboard.zig` and `topology.zig` for reconciled health;
+- `caddy_desired.zig` for the owned-fragment desired/apply transaction;
+- `dns.zig`, `vps.zig`, and `system_control.zig` for typed,
+  capability-checked mutations;
+- `browser_run.zig` for allowlisted, bounded Kitesurf actions and private
+  artifact lifecycle;
+- `provider_writes.zig` for the fixed provider mutation allowlist;
+- `authentication.zig` for passkey ceremonies and sessions;
+- `maintenance.zig` for backup, retention, and compaction policy;
+- `nob_projects.zig`, `nob_runtime.zig`, `nob_actions.zig`,
+  `nob_worker.zig`, and `nob_secrets.zig` for project lifecycle state; and
+- `writes.zig` for idempotent mutation and audit records.
+
+An app module is warranted when it owns a workflow or stable policy boundary.
+Thin one-consumer wrappers are not created merely to shorten a file.
+
+## Observation and external systems
+
+`src/collectors` converts external or host state into atomic database
+observations. Provider packages own HTTP and response parsing; collectors own
+redacted persistence and normalization.
+
+Failed refreshes do not manufacture an empty healthy state. The last successful
+rows remain available with explicit freshness or capability evidence. Product
+mutations consult current capability state and recollect after execution when
+the result can be observed.
+
+External process execution uses direct argument vectors and bounded output and
+time. Secret-bearing values are redacted before logs, snapshots, audit details,
+or runner diagnostics are persisted.
+
+## Providers
+
+`packages/cloudflare` and `packages/hostinger` are independently buildable
+libraries. Their package tests run inside the root `check` gate.
+
+`coverage/generated/*.jsonl` is a checked snapshot of official OpenAPI route
+metadata plus reviewed overrides. `src/providers/routes.zig` parses that
+contract for route inspection and generic request planning. Owner modules
+`auth.zig`, `request_plan.zig`, `transport.zig`,
+`route_result.zig`, and `route_plan.zig` handle the narrower steps.
+
+Generic generated-route behavior is intentionally asymmetric:
+
+- supported bodyless reads may be planned and explicitly executed;
+- read capture stores redacted evidence;
+- generated mutations may produce `will_execute:false` review plans; and
+- generated metadata never authorizes a live write.
+
+Live product writes use the small typed allowlist in
+`app/provider_writes.zig`. Provider coverage is implementation evidence, not
+a product-completion percentage. Upstream generation and drift checks remain
+explicit networked developer commands and are not part of offline tests.
+
+## Persistence
+
+`src/db/schema.zig` owns ordered SQLite migrations. Concrete SQL is grouped
+under `src/db/repositories`; `src/db/store.zig` is the existing composition
+facade used by application code.
+
+The database stores observations, normalized provider rows, topology, audit
+events, idempotency responses, authentication state, desired Caddy state,
+Browser Run metadata, and `nob.zig` lifecycle records. Browser artifacts live
+as private bounded files outside SQLite and are resolved only from opaque run
+IDs. Append-only data has bounded, backup-first maintenance described in
+`docs/storage-operations.md`.
+
+Legacy empty Apps/deployer tables are retained for existing SQLite files. A
+schema-only cleanup now would add migration and rollback risk immediately
+before the intended persistence replacement.
+
+`docs/turso-migration-spec.md` is the protected next persistence design. It
+is not current architecture and must not be implemented piecemeal during
+unrelated cleanup.
+
+## `nob.zig` trust boundary
+
+The project lifecycle has three layers:
+
+1. A passive `nob.json` can be discovered and reviewed without executing the
+   project.
+2. Trust binds canonical source identity and an exact manifest digest before a
+   project runner can be built.
+3. Mutations require an expiring exact-byte plan, authenticated approval, a
+   persisted worker operation, and independent host observation.
+
+The project runner owns project-specific behavior. Cloudio owns process
+isolation, secret materialization, idempotency, structural events, audit,
+cancellation, and narrow one-use systemd/Caddy broker capabilities. Runner
+claims cannot override contradictory host evidence.
+
+The normative contract is `docs/nob-zig-spec.md`.
+
+## Test architecture
+
+Confidence is layered by production value:
+
+1. `release-check` exercises authenticated browser workflows and host-side
+   recovery against controlled real processes and fixtures.
+2. SQLite and provider integration tests verify persistence, parsing, and
+   failure semantics.
+3. Focused module tests protect parsers, security invariants, state machines,
+   serializers, and pure policy.
+4. Static architecture and web checks prevent forbidden dependency and
+   rendering regressions.
+
+There is no separate smoke-test suite. A compile-only test root is not a test;
+the executable compile gate already provides that signal. Every registered
+module test root contains tests, while the executable remains the proof that
+all runtime modules compile together.
+
+## Change rules
+
+A new abstraction, compatibility alias, route, configuration field, fallback,
+or test suite needs a current consumer and a failure mode it improves.
+
+Prefer:
+
+- one owner for each policy;
+- server-owned state and native forms;
+- explicit capability errors over optimistic fallback;
+- deletion of completed plans over updating them indefinitely;
+- current runbooks and inventories over aspirational roadmaps; and
+- end-to-end proof for user workflows.
+
+Do not split a large file only because of line count. Split when a stable
+ownership boundary reduces dependencies or lets a workflow be tested more
+directly. Do not remove compatibility state or schema without a backed-up,
+rehearsed migration and rollback.

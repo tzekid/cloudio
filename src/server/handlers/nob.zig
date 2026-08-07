@@ -316,28 +316,10 @@ pub fn operationEvents(ctx: context.Context, request: http.Request, params: http
 pub fn operationLog(ctx: context.Context, request: http.Request, params: http.Params, writer: *std.Io.Writer, _: *std.Io.Writer) !u16 {
     const operation_id = params.get("id") orelse return common.badRequest(writer);
     const tail_bytes: usize = @intCast(@min(@max(common.intQuery(request, "tail_bytes", 64 * 1024), 1), 1024 * 1024));
-    const run_value = (try app_nob_actions.getRun(context.nobActions(ctx), operation_id)) orelse return error.RunNotFound;
-    defer run_value.deinit(ctx.gpa);
-    const path = run_value.log_path orelse {
-        try writer.writeAll("{\"kind\":\"nob_run_log\",\"text\":\"\"}\n");
-        return 200;
-    };
-    const state_root = try std.Io.Dir.cwd().realPathFileAlloc(ctx.io, ctx.config.nob_state_root, ctx.gpa);
-    defer ctx.gpa.free(state_root);
-    const expected_dir = try std.fs.path.join(ctx.gpa, &.{ state_root, operation_id });
-    defer ctx.gpa.free(expected_dir);
-    const expected_path = try std.fs.path.join(ctx.gpa, &.{ expected_dir, "events.ndjson" });
-    defer ctx.gpa.free(expected_path);
-    if (!std.mem.eql(u8, path, expected_path)) return error.InvalidOperationLogPath;
-    const file = try std.Io.Dir.cwd().openFile(ctx.io, path, .{ .follow_symlinks = false });
-    defer file.close(ctx.io);
-    const length = try file.length(ctx.io);
-    const amount: usize = @intCast(@min(length, tail_bytes));
-    const bytes = try ctx.gpa.alloc(u8, amount);
+    const bytes = try app_nob_actions.readRunLog(context.nobActions(ctx), operation_id, tail_bytes);
     defer ctx.gpa.free(bytes);
-    const read = try file.readPositionalAll(ctx.io, bytes, length - amount);
     try writer.writeAll("{\"kind\":\"nob_run_log\",\"text\":");
-    try std.json.Stringify.value(bytes[0..read], .{}, writer);
+    try std.json.Stringify.value(bytes, .{}, writer);
     try writer.writeAll("}\n");
     return 200;
 }

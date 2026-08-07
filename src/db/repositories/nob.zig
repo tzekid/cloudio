@@ -216,6 +216,13 @@ pub const Repository = struct {
         defer if (!committed) self.exec("ROLLBACK") catch {};
 
         const project_id = try self.upsertProject(record);
+        const invalidate = try self.prepare(
+            "UPDATE project_plans SET state='invalidated' WHERE project_id=? AND state='ready' AND manifest_sha256 IS NOT ?",
+        );
+        defer _ = sqlite.sqlite3_finalize(invalidate);
+        try bindI64(invalidate, 1, project_id);
+        try bindTextOpt(invalidate, 2, record.manifest_sha256);
+        try stepDone(invalidate);
         if (record.replace_declarations) {
             try self.replaceDeclarations(project_id, record.resources, record.actions);
         }
@@ -563,6 +570,13 @@ pub const Repository = struct {
         try bindI64(stmt, 1, now);
         try stepDone(stmt);
         return @intCast(sqlite.sqlite3_changes(self.handle));
+    }
+
+    pub fn invalidatePlan(self: Repository, id: []const u8) !void {
+        const stmt = try self.prepare("UPDATE project_plans SET state='invalidated' WHERE id=? AND state='ready'");
+        defer _ = sqlite.sqlite3_finalize(stmt);
+        try bindText(stmt, 1, id);
+        try stepDone(stmt);
     }
 
     pub fn queueRun(self: Repository, value: NewRun) !void {

@@ -50,10 +50,11 @@
             </tr>
           </thead>
           <tbody id="passkeys-body">
-            <tr><td class="empty-state loading-state" colspan="5">Loading passkeys…</td></tr>
+            <tr><td class="empty-state" colspan="5">No passkeys are enrolled.</td></tr>
           </tbody>
         </table>
       </div>
+      <noscript><p class="panel-footnote muted">JavaScript is required only to use your browser's passkey ceremony and to rename or revoke a passkey.</p></noscript>
     </section>
 
     <section class="panel" aria-labelledby="recovery-title">
@@ -65,12 +66,24 @@
       </div>
       <div class="panel-body stack">
         <p class="muted security-copy">If every passkey is lost, use <code>cloudio auth reset --backup &lt;path&gt; --confirm</code> on the server. Cloudio verifies an online database backup before revoking credentials and sessions.</p>
-        <div class="cluster">
-          <button id="sign-out" type="button">Sign out of this session</button>
-          <span id="security-status" class="status-message" aria-live="polite"></span>
-        </div>
+        <form id="security-logout-form" class="cluster" method="post" action="/security/logout">
+          <input id="security-csrf" name="csrf_token" type="hidden" value="">
+          <button id="sign-out" type="submit">Sign out of this session</button>
+        </form>
       </div>
     </section>
+
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-label="Notifications"></div>
+    <dialog aria-labelledby="revoke-dialog-title">
+      <form class="dialog-form" method="dialog">
+        <div class="dialog-header"><h2 id="revoke-dialog-title" class="dialog-title">Revoke passkey</h2></div>
+        <div class="dialog-body">Revoke this passkey?</div>
+        <div class="dialog-actions">
+          <button class="button" value="cancel">Cancel</button>
+          <button class="button button-danger" value="confirm">Revoke</button>
+        </div>
+      </form>
+    </dialog>
   </main>
 </body>
 </html>

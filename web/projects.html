@@ -6,19 +6,24 @@
   <title>Projects · Cloudio</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script defer src="/assets/app.js"></script>
-  <script defer src="/assets/pages/projects.js"></script>
 </head>
 <body>
   <main id="page-content">
-    <p class="page-intro">Discover projects that speak the nob.zig protocol, review what they declare, and approve them before Cloudio runs any project-owned code.</p>
+    <p class="page-intro">Discover projects that speak the nob.zig protocol, review their exact declarations, and approve project-owned code before Cloudio prepares or runs it.</p>
+
+    <div id="projects-feedback" class="notice hidden" role="status"></div>
 
     <section class="panel" aria-labelledby="project-scan-title">
       <div class="panel-header">
         <div>
           <h2 id="project-scan-title">Project discovery</h2>
-          <p>Scanning only reads manifests and project markers. It never builds or runs a project.</p>
+          <p>Scanning reads manifests and project markers only. It does not build or execute project code.</p>
         </div>
-        <button id="nob-scan-button" class="button button-primary" type="button">Scan projects</button>
+        <form method="post" action="/projects/scan">
+          <input id="projects-scan-csrf" name="csrf_token" type="hidden" value="">
+          <input id="projects-scan-idempotency" name="idempotency_key" type="hidden" value="">
+          <button id="nob-scan-button" class="button button-primary" type="submit">Scan projects</button>
+        </form>
       </div>
     </section>
 
@@ -26,10 +31,11 @@
       <div class="panel-header">
         <div>
           <h2 id="nob-project-list-title">Projects</h2>
-          <p>Approval is tied to the exact manifest contents. Any change requires another review.</p>
+          <p>Approval is tied to the exact manifest digest. A changed declaration returns to review.</p>
         </div>
         <span id="nob-projects-count" class="muted" aria-live="polite"></span>
       </div>
+      <div id="project-view-links" class="filter-tabs" role="navigation" aria-label="Project views"></div>
       <div class="table-scroll">
         <table class="responsive-table">
           <thead>
@@ -40,72 +46,26 @@
               <th scope="col">Approval</th>
               <th scope="col">Status</th>
               <th scope="col">Runner</th>
-              <th scope="col">Actions</th>
+              <th scope="col">Open</th>
             </tr>
           </thead>
           <tbody id="nob-projects-body">
-            <tr><td class="empty-state loading-state" colspan="7">Loading projects…</td></tr>
+            <tr><td class="empty-state" colspan="7">No projects discovered yet.</td></tr>
           </tbody>
         </table>
       </div>
     </section>
 
     <section class="panel hidden" id="nob-project-detail" aria-labelledby="nob-project-detail-title">
-      <div class="panel-header">
-        <div>
-          <h2 id="nob-project-detail-title">Project details</h2>
-          <p id="nob-project-detail-meta"></p>
-        </div>
-        <button id="nob-project-detail-close" class="button button-quiet button-small" type="button">Close</button>
-      </div>
-      <div class="panel-body stack">
-        <dl id="nob-project-facts" class="kv-list"></dl>
-        <div>
-          <h3 class="section-heading">Resources</h3>
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th scope="col">Resource</th><th scope="col">Kind</th><th scope="col">Ownership</th><th scope="col">Status</th></tr></thead>
-              <tbody id="nob-resources-body"></tbody>
-            </table>
-          </div>
-        </div>
-        <div>
-          <h3 class="section-heading">Actions</h3>
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th scope="col">Action</th><th scope="col">Effect</th><th scope="col">Confirmation</th><th scope="col">Available</th><th scope="col">Operate</th></tr></thead>
-              <tbody id="nob-actions-body"></tbody>
-            </table>
-          </div>
-        </div>
-        <div>
-          <div class="panel-header compact-header">
-            <div>
-              <h3 class="section-heading">Secrets</h3>
-              <p>Bind logical names to local sources. Cloudio never displays the source reference or secret value.</p>
-            </div>
-          </div>
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th scope="col">Secret</th><th scope="col">Required for</th><th scope="col">Status</th><th scope="col">Source</th><th scope="col">Manage</th></tr></thead>
-              <tbody id="nob-secrets-body"><tr><td class="empty-state" colspan="5">Open an approved project to load secrets.</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-        <div>
-          <div class="panel-header compact-header">
-            <div><h3 class="section-heading">Recent runs</h3><p>Reviewed plans, progress, and retained results for this project.</p></div>
-            <button id="nob-runs-refresh" class="button button-small" type="button">Refresh runs</button>
-          </div>
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th scope="col">Run</th><th scope="col">Action</th><th scope="col">State</th><th scope="col">Summary</th><th scope="col">Controls</th></tr></thead>
-              <tbody id="nob-runs-body"><tr><td class="empty-state" colspan="5">Open a project to load runs.</td></tr></tbody>
-            </table>
-          </div>
-          <div id="nob-run-detail" class="run-detail hidden" aria-live="polite"></div>
-        </div>
-      </div>
+      <div id="nob-project-detail-content"></div>
+    </section>
+
+    <section class="panel hidden" id="nob-plan-review" aria-labelledby="nob-plan-review-title">
+      <div id="nob-plan-review-content"></div>
+    </section>
+
+    <section class="panel hidden" id="nob-run-detail" aria-labelledby="nob-run-detail-title">
+      <div id="nob-run-detail-content"></div>
     </section>
   </main>
 </body>

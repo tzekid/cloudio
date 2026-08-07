@@ -1,62 +1,136 @@
-//! B3: Caddyfile desired state: import, render, validate, write, reload.
-//!
-//! cloudio owns the whole Caddyfile. Routes live in caddy_desired_routes;
-//! the global options block and preserved top-level lines live in settings
-//! (keys 'caddy_global_options' and 'caddy_top_level_lines').
-//!
-//! Import notes: `import /etc/caddy/conf.d/*.caddy` lines are preserved in
-//! 'caddy_top_level_lines' but are NOT expanded; site blocks in included
-//! files must be imported separately by calling importCaddyfile on that
-//! path. After import the DB is the source of truth, so render() drops
-//! import lines: everything is emitted from the DB.
+//! Cloudio-owned Caddy fragment desired state and fail-safe apply workflow.
 const std = @import("std");
 const sqlite = @import("sqlite");
 const app_writes = @import("app_writes");
-const core_fs = @import("core_fs");
+const core_config = @import("core_config");
 const core_json = @import("core_json");
 const core_process = @import("core_process");
 const db_store = @import("db_store");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
-const Db = db_store.Db;
-
 const max_file_bytes = 8 * 1024 * 1024;
 const max_command_bytes = 4 * 1024 * 1024;
-const runCommand = core_process.run;
+const owned_marker = "# Managed by Cloudio. Changes are replaced on apply.";
+var caddy_mutex: std.atomic.Mutex = .unlocked;
 
-pub const Error = error{ SqliteBind, SqliteStep, ValidateFailed };
+pub const Error = error{
+    SqliteBind,
+    SqliteStep,
+    InvalidRouteRequest,
+    RouteAlreadyExists,
+    RouteNotObserved,
+    RouteNotOwned,
+    RouteNeedsAdoption,
+    CaddyBusy,
+    CaddyWriteUnavailable,
+    CaddyObservationChanged,
+    CaddyFragmentInvalid,
+    CaddyValidationFailed,
+    CaddyWriteFailed,
+    CaddyReloadFailed,
+    CaddyVerificationFailed,
+    CaddyRecoveryFailed,
+};
 
 pub const Context = struct {
-    io: std.Io,
-    gpa: std.mem.Allocator,
+    io: Io,
+    gpa: Allocator,
     db: *db_store.Db,
+    config: core_config.Config,
     write_meta: app_writes.Metadata = .{},
 };
 
-pub const ImportSummary = struct {
-    imported_manual: usize = 0,
-    imported_raw: usize = 0,
-    skipped_app: usize = 0,
+pub const Action = enum { create, update, toggle, delete, adopt };
+
+pub const RouteInput = struct {
+    host: []const u8,
+    upstream: ?[]const u8 = null,
+    enabled: ?bool = null,
 };
 
 pub const ApplyOptions = struct {
-    validate_cmd: bool = true,
-    reload: bool = true,
     caddy_executable: []const u8 = "caddy",
-    systemctl_executable: []const u8 = "systemctl",
+    curl_executable: []const u8 = "curl",
 };
 
 pub const ApplyResult = struct {
     validated: bool,
     reloaded: bool,
+    verified: bool,
     bytes: usize,
     backup_path: ?[]u8,
 
     pub fn deinit(self: ApplyResult, gpa: Allocator) void {
-        if (self.backup_path) |p| gpa.free(p);
+        if (self.backup_path) |path| gpa.free(path);
     }
 };
+
+pub const Capability = struct {
+    refresh: bool,
+    write: bool,
+    apply: bool,
+    code: []const u8,
+    reason: []const u8,
+};
+
+const DesiredRoute = struct {
+    host: []u8,
+    upstream: []u8,
+    kind: []u8,
+    extra: []u8,
+    raw: []u8,
+    enabled: bool,
+    updated_at: []u8,
+
+    fn deinit(self: DesiredRoute, gpa: Allocator) void {
+        gpa.free(self.host);
+        gpa.free(self.upstream);
+        gpa.free(self.kind);
+        gpa.free(self.extra);
+        gpa.free(self.raw);
+        gpa.free(self.updated_at);
+    }
+};
+
+const DesiredRoutes = struct {
+    items: []DesiredRoute,
+
+    fn deinit(self: *DesiredRoutes, gpa: Allocator) void {
+        for (self.items) |route| route.deinit(gpa);
+        gpa.free(self.items);
+    }
+};
+
+const ObservedRoute = struct {
+    host: []u8,
+    upstream: []u8,
+
+    fn deinit(self: ObservedRoute, gpa: Allocator) void {
+        gpa.free(self.host);
+        gpa.free(self.upstream);
+    }
+};
+
+const ObservedRoutes = struct {
+    items: []ObservedRoute,
+
+    fn deinit(self: *ObservedRoutes, gpa: Allocator) void {
+        for (self.items) |route| route.deinit(gpa);
+        gpa.free(self.items);
+    }
+};
+
+const Fragment = struct {
+    exists: bool,
+    text: []u8,
+
+    fn deinit(self: Fragment, gpa: Allocator) void {
+        gpa.free(self.text);
+    }
+};
+
+const DiffKind = enum { addition, change, removal, unchanged, unadopted };
 
 pub const NobRouteOwnership = enum { managed, adopted };
 pub const NobRouteOperation = enum { enable, disable, remove };
@@ -68,10 +142,9 @@ pub const NobRouteRequest = struct {
     operation: NobRouteOperation,
     host: []const u8,
     upstream: []const u8,
-    caddyfile_path: []const u8,
     now: i64,
     caddy_executable: []const u8 = "caddy",
-    systemctl_executable: []const u8 = "systemctl",
+    curl_executable: []const u8 = "curl",
 };
 
 pub const NobRouteTransition = struct {
@@ -81,983 +154,906 @@ pub const NobRouteTransition = struct {
     removed: bool,
 };
 
-const DesiredRoute = struct {
-    upstream: ?[]u8,
-    kind: []u8,
-    enabled: bool,
-
-    fn deinit(self: DesiredRoute, allocator: Allocator) void {
-        if (self.upstream) |value| allocator.free(value);
-        allocator.free(self.kind);
+pub fn refresh(ctx: Context) !void {
+    if (!caddy_mutex.tryLock()) return error.CaddyBusy;
+    defer caddy_mutex.unlock();
+    const fragment = readFragment(ctx) catch |err| {
+        try recordObservationFailure(ctx, "Could not read the configured Cloudio fragment.");
+        return err;
+    };
+    defer fragment.deinit(ctx.gpa);
+    if (fragment.exists) {
+        if (!hasOwnershipMarker(fragment.text)) {
+            try recordObservationFailure(ctx, "The configured fragment does not carry Cloudio's ownership marker.");
+            return error.CaddyFragmentInvalid;
+        }
+        var parsed = parseOwnedFragment(ctx.gpa, fragment.text) catch {
+            try recordObservationFailure(ctx, "The configured fragment is not a supported Cloudio route fragment.");
+            return error.CaddyFragmentInvalid;
+        };
+        parsed.deinit(ctx.gpa);
     }
-};
-
-const ManagedRoute = struct {
-    project_id: i64,
-    resource_id: []u8,
-    upstream: []u8,
-
-    fn deinit(self: ManagedRoute, allocator: Allocator) void {
-        allocator.free(self.resource_id);
-        allocator.free(self.upstream);
-    }
-};
-
-// --- Route CRUD ---
-
-pub fn upsertRoute(ctx: Context, host: []const u8, upstream: ?[]const u8, kind: []const u8, extra_directives: ?[]const u8, raw_block: ?[]const u8, app_id: ?i64) !void {
-    const stmt = try ctx.db.prepare(
-        \\INSERT INTO caddy_desired_routes(host, upstream, kind, extra_directives, raw_block, app_id)
-        \\VALUES (?, ?, ?, ?, ?, ?)
-        \\ON CONFLICT(host) DO UPDATE SET
-        \\  upstream = excluded.upstream,
-        \\  kind = excluded.kind,
-        \\  extra_directives = excluded.extra_directives,
-        \\  raw_block = excluded.raw_block,
-        \\  app_id = excluded.app_id,
-        \\  updated_at = CURRENT_TIMESTAMP
-    );
-    defer _ = sqlite.sqlite3_finalize(stmt);
-    try bindText(stmt, 1, host);
-    try bindTextOpt(stmt, 2, upstream);
-    try bindText(stmt, 3, kind);
-    try bindTextOpt(stmt, 4, extra_directives);
-    try bindTextOpt(stmt, 5, raw_block);
-    if (app_id) |id| {
-        if (sqlite.sqlite3_bind_int64(stmt, 6, id) != sqlite.SQLITE_OK) return Error.SqliteBind;
-    } else {
-        if (sqlite.sqlite3_bind_null(stmt, 6) != sqlite.SQLITE_OK) return Error.SqliteBind;
-    }
-    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
-    const detail = try std.fmt.allocPrint(ctx.gpa, "kind={s}; upstream={s}; enabled=true", .{ kind, upstream orelse "" });
-    defer ctx.gpa.free(detail);
-    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "caddy.route.upsert", host, null, .ok, detail);
+    const summary = if (fragment.exists)
+        "Observed the configured Cloudio-owned Caddy fragment."
+    else
+        "The configured Cloudio-owned Caddy fragment is absent and may be initialized.";
+    _ = try ctx.db.insertSnapshot("caddy", "owned-fragment", ctx.config.caddy_owned_path, "ok", summary, null, fragment.text);
 }
 
-pub fn deleteRoute(ctx: Context, host: []const u8) !void {
-    const stmt = try ctx.db.prepare("DELETE FROM caddy_desired_routes WHERE host = ?");
-    defer _ = sqlite.sqlite3_finalize(stmt);
-    try bindText(stmt, 1, host);
-    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
-    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "caddy.route.delete", host, null, .ok, "desired route removed");
-}
+pub fn mutate(ctx: Context, action: Action, input: RouteInput) !void {
+    if (!caddy_mutex.tryLock()) return error.CaddyBusy;
+    defer caddy_mutex.unlock();
+    try requireWriteCapability(ctx);
+    if (!validHost(input.host)) return error.InvalidRouteRequest;
+    if (input.upstream) |upstream| if (!validUpstream(upstream)) return error.InvalidRouteRequest;
 
-pub fn setEnabled(ctx: Context, host: []const u8, enabled: bool) !void {
-    const stmt = try ctx.db.prepare("UPDATE caddy_desired_routes SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE host = ?");
-    defer _ = sqlite.sqlite3_finalize(stmt);
-    if (sqlite.sqlite3_bind_int64(stmt, 1, if (enabled) 1 else 0) != sqlite.SQLITE_OK) return Error.SqliteBind;
-    try bindText(stmt, 2, host);
-    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
-    _ = try app_writes.recordWithMetadata(
-        ctx.gpa,
-        ctx.db,
-        ctx.write_meta,
-        "caddy.route.toggle",
-        host,
-        null,
-        .ok,
-        if (enabled) "enabled" else "disabled",
-    );
-}
+    var desired = try loadDesired(ctx);
+    defer desired.deinit(ctx.gpa);
+    const current = findDesired(desired.items, input.host);
+    const observed_text = (try latestObservedText(ctx)) orelse return error.CaddyWriteUnavailable;
+    defer ctx.gpa.free(observed_text);
+    var observed = try parseObservedOrEmpty(ctx.gpa, observed_text);
+    defer observed.deinit(ctx.gpa);
+    const active = findObserved(observed.items, input.host);
 
-/// Apply one exact, plan-approved nob.zig route transition. The desired-state
-/// row and its ownership record change in the same transaction. If Caddy
-/// reload rejects the new configuration, the transaction is rolled back and
-/// the previously rendered configuration is restored before returning.
-pub fn applyNobRoute(ctx: Context, request: NobRouteRequest) !NobRouteTransition {
-    if (request.host.len == 0 or request.upstream.len == 0 or request.resource_id.len == 0) return error.InvalidNobRoute;
-    try ctx.db.exec("BEGIN IMMEDIATE");
-    var transaction_open = true;
-    defer if (transaction_open) ctx.db.exec("ROLLBACK") catch {};
-
-    const project_id = try operationProjectId(ctx, request.operation_id);
-    const desired = try desiredRoute(ctx, request.host);
-    defer if (desired) |value| value.deinit(ctx.gpa);
-    const managed = try managedRoute(ctx, request.host);
-    defer if (managed) |value| value.deinit(ctx.gpa);
-    const before_enabled = if (desired) |value| value.enabled else null;
-    var created = false;
-    var removed = false;
-
-    switch (request.ownership) {
-        .managed => {
-            if (desired) |value| {
-                const owner = managed orelse return error.CaddyRouteNotOwned;
-                if (owner.project_id != project_id or
-                    !std.mem.eql(u8, owner.resource_id, request.resource_id) or
-                    !std.mem.eql(u8, owner.upstream, request.upstream) or
-                    !std.mem.eql(u8, value.kind, "nob") or
-                    value.upstream == null or
-                    !std.mem.eql(u8, value.upstream.?, request.upstream))
-                {
-                    return error.CaddyRouteNotOwned;
-                }
+    switch (action) {
+        .create => {
+            const upstream = input.upstream orelse return error.InvalidRouteRequest;
+            if (current != null) return error.RouteAlreadyExists;
+            if (active != null) return error.RouteNeedsAdoption;
+            try insertDesired(ctx, input.host, upstream, "manual", true);
+            try recordRouteMutation(ctx, "caddy.route.create", input.host, upstream);
+        },
+        .update => {
+            const upstream = input.upstream orelse return error.InvalidRouteRequest;
+            const route = current orelse return error.RouteNotObserved;
+            if (!std.mem.eql(u8, route.kind, "manual")) return error.RouteNotOwned;
+            try updateDesiredUpstream(ctx, input.host, upstream);
+            try recordRouteMutation(ctx, "caddy.route.update", input.host, upstream);
+        },
+        .toggle => {
+            const enabled = input.enabled orelse return error.InvalidRouteRequest;
+            const route = current orelse return error.RouteNotObserved;
+            if (!std.mem.eql(u8, route.kind, "manual")) return error.RouteNotOwned;
+            try updateDesiredEnabled(ctx, input.host, enabled);
+            try recordRouteMutation(ctx, "caddy.route.toggle", input.host, if (enabled) "enabled" else "disabled");
+        },
+        .delete => {
+            const route = current orelse return error.RouteNotObserved;
+            if (!std.mem.eql(u8, route.kind, "manual")) return error.RouteNotOwned;
+            if (active == null) {
+                try deleteDesiredExact(ctx, input.host);
             } else {
-                if (managed != null or request.operation != .enable) return error.CaddyRouteNotFound;
-                try upsertRoute(ctx, request.host, request.upstream, "nob", null, null, null);
-                try insertManagedRoute(ctx, project_id, request);
-                created = true;
+                try markDesiredForDeletion(ctx, input.host);
             }
+            try recordRouteMutation(ctx, "caddy.route.delete", input.host, "pending apply");
         },
-        .adopted => {
-            const value = desired orelse return error.CaddyRouteNotFound;
-            if (managed != null or value.upstream == null or !std.mem.eql(u8, value.upstream.?, request.upstream)) {
-                return error.CaddyRouteIdentityMismatch;
-            }
-            if (request.operation == .remove) return error.CaddyRouteNotOwned;
+        .adopt => {
+            if (current != null) return error.RouteAlreadyExists;
+            const route = active orelse return error.RouteNotObserved;
+            try insertDesired(ctx, route.host, route.upstream, "manual", true);
+            try recordRouteMutation(ctx, "caddy.route.adopt", route.host, route.upstream);
         },
     }
+}
 
-    switch (request.operation) {
-        .enable => if (!created) try setEnabled(ctx, request.host, true),
-        .disable => try setEnabled(ctx, request.host, false),
-        .remove => {
-            if (request.ownership != .managed) return error.CaddyRouteNotOwned;
-            try deleteManagedRoute(ctx, project_id, request.resource_id, request.host);
-            try deleteRoute(ctx, request.host);
-            removed = true;
-        },
-    }
-
-    const applied = apply(ctx, request.caddyfile_path, .{
-        .caddy_executable = request.caddy_executable,
-        .systemctl_executable = request.systemctl_executable,
-    }) catch {
-        recoverNobRoute(ctx, request, &transaction_open) catch return error.CaddyRouteRecoveryFailed;
-        return error.CaddyRouteApplyFailed;
-    };
-    defer applied.deinit(ctx.gpa);
-    if (!applied.validated or !applied.reloaded) {
-        recoverNobRoute(ctx, request, &transaction_open) catch return error.CaddyRouteRecoveryFailed;
-        return error.CaddyRouteApplyFailed;
-    }
-
-    try ctx.db.exec("COMMIT");
-    transaction_open = false;
-    return .{
-        .before_enabled = before_enabled,
-        .after_enabled = if (removed) null else request.operation == .enable,
-        .created = created,
-        .removed = removed,
+pub fn apply(ctx: Context, opts: ApplyOptions) !ApplyResult {
+    if (!caddy_mutex.tryLock()) return error.CaddyBusy;
+    defer caddy_mutex.unlock();
+    return applyLocked(ctx, opts) catch |err| {
+        try recordApplyFailure(ctx, err);
+        return err;
     };
 }
 
-fn recoverNobRoute(ctx: Context, request: NobRouteRequest, transaction_open: *bool) !void {
-    try ctx.db.exec("ROLLBACK");
-    transaction_open.* = false;
-    const recovered = try apply(ctx, request.caddyfile_path, .{
-        .caddy_executable = request.caddy_executable,
-        .systemctl_executable = request.systemctl_executable,
-    });
-    defer recovered.deinit(ctx.gpa);
-    if (!recovered.validated or !recovered.reloaded) return error.CaddyRouteRecoveryFailed;
-}
+fn applyLocked(ctx: Context, opts: ApplyOptions) !ApplyResult {
+    const capability = try evaluateCapability(ctx);
+    if (!capability.apply) return error.CaddyWriteUnavailable;
+    const before = try readFragment(ctx);
+    defer before.deinit(ctx.gpa);
+    const observed_text = (try latestObservedText(ctx)) orelse return error.CaddyWriteUnavailable;
+    defer ctx.gpa.free(observed_text);
+    if (!std.mem.eql(u8, before.text, observed_text)) return error.CaddyObservationChanged;
 
-fn operationProjectId(ctx: Context, operation_id: []const u8) !i64 {
-    const stmt = try ctx.db.prepare("SELECT project_id FROM project_operations WHERE id=?");
-    defer _ = sqlite.sqlite3_finalize(stmt);
-    try bindText(stmt, 1, operation_id);
-    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return error.RunNotFound;
-    return sqlite.sqlite3_column_int64(stmt, 0);
-}
+    const rendered = try render(ctx, ctx.gpa);
+    defer ctx.gpa.free(rendered);
+    const temp_path = try temporaryPath(ctx.io, ctx.gpa, ctx.config.caddy_owned_path, "tmp");
+    defer ctx.gpa.free(temp_path);
+    Io.Dir.cwd().deleteFile(ctx.io, temp_path) catch {};
+    errdefer Io.Dir.cwd().deleteFile(ctx.io, temp_path) catch {};
+    Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = temp_path, .data = rendered }) catch return error.CaddyWriteFailed;
+    Io.Dir.cwd().setFilePermissions(ctx.io, temp_path, @fromBackingInt(@intCast(0o640)), .{ .follow_symlinks = false }) catch return error.CaddyWriteFailed;
 
-fn desiredRoute(ctx: Context, host: []const u8) !?DesiredRoute {
-    const stmt = try ctx.db.prepare("SELECT upstream, kind, enabled FROM caddy_desired_routes WHERE host=?");
-    defer _ = sqlite.sqlite3_finalize(stmt);
-    try bindText(stmt, 1, host);
-    const rc = sqlite.sqlite3_step(stmt);
-    if (rc == sqlite.SQLITE_DONE) return null;
-    if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
-    const upstream = if (columnText(stmt, 0)) |value| try ctx.gpa.dupe(u8, value) else null;
-    errdefer if (upstream) |value| ctx.gpa.free(value);
-    return .{
-        .upstream = upstream,
-        .kind = try ctx.gpa.dupe(u8, columnText(stmt, 1) orelse ""),
-        .enabled = sqlite.sqlite3_column_int64(stmt, 2) != 0,
+    const fragment_adapted = try adaptConfig(ctx, opts.caddy_executable, temp_path);
+    ctx.gpa.free(fragment_adapted);
+    const previous_runtime = try adaptConfig(ctx, opts.caddy_executable, ctx.config.caddyfile_path);
+    defer ctx.gpa.free(previous_runtime);
+
+    var backup_path: ?[]u8 = null;
+    errdefer if (backup_path) |path| ctx.gpa.free(path);
+    if (before.exists) {
+        const path = try temporaryPath(ctx.io, ctx.gpa, ctx.config.caddy_owned_path, "bak");
+        Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = path, .data = before.text }) catch {
+            ctx.gpa.free(path);
+            return error.CaddyWriteFailed;
+        };
+        backup_path = path;
+    }
+
+    Io.Dir.cwd().rename(temp_path, Io.Dir.cwd(), ctx.config.caddy_owned_path, ctx.io) catch return error.CaddyWriteFailed;
+    const expected_runtime = adaptConfig(ctx, opts.caddy_executable, ctx.config.caddyfile_path) catch |err| {
+        try restoreAndReload(ctx, opts, before, previous_runtime);
+        return err;
     };
-}
-
-fn managedRoute(ctx: Context, host: []const u8) !?ManagedRoute {
-    const stmt = try ctx.db.prepare("SELECT project_id, resource_id, upstream FROM project_managed_routes WHERE host=?");
-    defer _ = sqlite.sqlite3_finalize(stmt);
-    try bindText(stmt, 1, host);
-    const rc = sqlite.sqlite3_step(stmt);
-    if (rc == sqlite.SQLITE_DONE) return null;
-    if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
-    const resource_id = try ctx.gpa.dupe(u8, columnText(stmt, 1) orelse return error.InvalidManagedRoute);
-    errdefer ctx.gpa.free(resource_id);
-    return .{
-        .project_id = sqlite.sqlite3_column_int64(stmt, 0),
-        .resource_id = resource_id,
-        .upstream = try ctx.gpa.dupe(u8, columnText(stmt, 2) orelse return error.InvalidManagedRoute),
+    defer ctx.gpa.free(expected_runtime);
+    reloadConfig(ctx, opts.caddy_executable) catch |err| {
+        try restoreAndReload(ctx, opts, before, previous_runtime);
+        return err;
     };
+    verifyRuntime(ctx, opts.curl_executable, expected_runtime) catch |err| {
+        try restoreAndReload(ctx, opts, before, previous_runtime);
+        return err;
+    };
+
+    try deleteAppliedTombstones(ctx);
+    _ = try ctx.db.insertSnapshot("caddy", "owned-fragment", ctx.config.caddy_owned_path, "ok", "Applied and verified the Cloudio-owned Caddy fragment.", null, rendered);
+    const detail = try std.fmt.allocPrint(ctx.gpa, "fragment={s}; bytes={d}; validate=ok; reload=ok; verify=ok", .{ ctx.config.caddy_owned_path, rendered.len });
+    defer ctx.gpa.free(detail);
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "caddy.apply", ctx.config.caddy_owned_path, null, .ok, detail);
+    return .{ .validated = true, .reloaded = true, .verified = true, .bytes = rendered.len, .backup_path = backup_path };
 }
 
-fn insertManagedRoute(ctx: Context, project_id: i64, request: NobRouteRequest) !void {
-    const stmt = try ctx.db.prepare(
-        \\INSERT INTO project_managed_routes(
-        \\  project_id, resource_id, host, upstream, installed_operation_id, updated_at
-        \\) VALUES(?,?,?,?,?,?)
-    );
-    defer _ = sqlite.sqlite3_finalize(stmt);
-    if (sqlite.sqlite3_bind_int64(stmt, 1, project_id) != sqlite.SQLITE_OK) return Error.SqliteBind;
-    try bindText(stmt, 2, request.resource_id);
-    try bindText(stmt, 3, request.host);
-    try bindText(stmt, 4, request.upstream);
-    try bindText(stmt, 5, request.operation_id);
-    if (sqlite.sqlite3_bind_int64(stmt, 6, request.now) != sqlite.SQLITE_OK) return Error.SqliteBind;
-    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
-}
-
-fn deleteManagedRoute(ctx: Context, project_id: i64, resource_id: []const u8, host: []const u8) !void {
-    const stmt = try ctx.db.prepare("DELETE FROM project_managed_routes WHERE project_id=? AND resource_id=? AND host=?");
-    defer _ = sqlite.sqlite3_finalize(stmt);
-    if (sqlite.sqlite3_bind_int64(stmt, 1, project_id) != sqlite.SQLITE_OK) return Error.SqliteBind;
-    try bindText(stmt, 2, resource_id);
-    try bindText(stmt, 3, host);
-    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
-    if (sqlite.sqlite3_changes(ctx.db.handle) != 1) return error.CaddyRouteNotOwned;
-}
-
-pub fn writeRoutesJson(ctx: Context, writer: anytype) !void {
-    const stmt = try ctx.db.prepare(
-        \\SELECT host, upstream, kind, extra_directives, enabled, app_id, updated_at
-        \\FROM caddy_desired_routes ORDER BY host
-    );
-    defer _ = sqlite.sqlite3_finalize(stmt);
-
-    try writer.writeAll("{\"kind\":\"caddy_routes\",\"routes\":[");
-    var first = true;
-    while (true) {
-        const rc = sqlite.sqlite3_step(stmt);
-        if (rc == sqlite.SQLITE_DONE) break;
-        if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
-        if (!first) try writer.writeByte(',');
-        first = false;
-        try writer.writeByte('{');
-        try core_json.writeStringField(writer, "host", columnText(stmt, 0) orelse "", true);
-        try core_json.writeNullableStringField(writer, "upstream", columnText(stmt, 1), true);
-        try core_json.writeStringField(writer, "kind", columnText(stmt, 2) orelse "", true);
-        try core_json.writeNullableStringField(writer, "extra_directives", columnText(stmt, 3), true);
-        try core_json.writeBoolField(writer, "enabled", sqlite.sqlite3_column_int64(stmt, 4) != 0, true);
-        if (sqlite.sqlite3_column_type(stmt, 5) == sqlite.SQLITE_NULL) {
-            try writer.writeAll("\"app_id\":null,");
-        } else {
-            try core_json.writeIntField(writer, "app_id", sqlite.sqlite3_column_int64(stmt, 5), true);
-        }
-        try core_json.writeNullableStringField(writer, "updated_at", columnText(stmt, 6), false);
-        try writer.writeByte('}');
-    }
-    try writer.writeAll("]}\n");
-}
-
-// --- Importer ---
-
-pub fn importCaddyfile(ctx: Context, path: []const u8) !ImportSummary {
-    const raw = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.gpa, .limited(max_file_bytes));
-    defer ctx.gpa.free(raw);
-    return importCaddyfileText(ctx, raw);
-}
-
-fn importCaddyfileText(ctx: Context, raw: []const u8) !ImportSummary {
-    var summary = ImportSummary{};
-    const gpa = ctx.gpa;
-
-    var top_level_lines = std.ArrayList(u8).empty;
-    defer top_level_lines.deinit(gpa);
-    var block = std.ArrayList(u8).empty;
-    defer block.deinit(gpa);
-
-    var depth: i32 = 0;
-    var in_block = false;
-    var is_global_block = false;
-    var host_label: ?[]u8 = null;
-    defer if (host_label) |h| gpa.free(h);
-    var seen_site_block = false;
-
-    var lines = std.mem.splitScalar(u8, raw, '\n');
-    while (lines.next()) |line_raw| {
-        const line = trim(line_raw);
-        if (!in_block) {
-            if (line.len == 0 or std.mem.startsWith(u8, line, "#")) continue;
-            if (std.mem.endsWith(u8, line, "{")) {
-                const label = trim(line[0 .. line.len - 1]);
-                in_block = true;
-                is_global_block = label.len == 0 and !seen_site_block;
-                if (!is_global_block) {
-                    seen_site_block = true;
-                    host_label = try gpa.dupe(u8, label);
-                }
-                block.clearRetainingCapacity();
-                try block.appendSlice(gpa, line_raw);
-                try block.append(gpa, '\n');
-                depth = @intCast(countByte(line, '{'));
-                depth -= @intCast(countByte(line, '}'));
-                if (depth == 0) {
-                    try finishBlock(ctx, &summary, is_global_block, &host_label, block.items);
-                    in_block = false;
-                }
-                continue;
-            }
-            // Top-level non-block line (e.g. `import /etc/caddy/conf.d/*.caddy`):
-            // preserved verbatim, in order, in settings 'caddy_top_level_lines'.
-            try top_level_lines.appendSlice(gpa, line_raw);
-            try top_level_lines.append(gpa, '\n');
-            continue;
-        }
-        try block.appendSlice(gpa, line_raw);
-        try block.append(gpa, '\n');
-        depth += @intCast(countByte(line, '{'));
-        depth -= @intCast(countByte(line, '}'));
-        if (depth <= 0) {
-            try finishBlock(ctx, &summary, is_global_block, &host_label, block.items);
-            in_block = false;
-            depth = 0;
-        }
-    }
-
-    if (top_level_lines.items.len > 0) {
-        try setSetting(ctx, "caddy_top_level_lines", top_level_lines.items);
-    }
-    return summary;
-}
-
-fn finishBlock(ctx: Context, summary: *ImportSummary, is_global: bool, host_label: *?[]u8, block_text: []const u8) !void {
-    if (is_global) {
-        try setSetting(ctx, "caddy_global_options", block_text);
-        return;
-    }
-    const host = host_label.* orelse return;
-    defer {
-        ctx.gpa.free(host);
-        host_label.* = null;
-    }
-
-    if (try routeKind(ctx, host)) |existing_kind| {
-        defer ctx.gpa.free(existing_kind);
-        if (std.mem.eql(u8, existing_kind, "app")) {
-            summary.skipped_app += 1;
-            return;
-        }
-    }
-
-    if (soleReverseProxyUpstream(block_text)) |upstream| {
-        try upsertRoute(ctx, host, upstream, "manual", null, null, null);
-        summary.imported_manual += 1;
+fn restoreAndReload(ctx: Context, opts: ApplyOptions, before: Fragment, previous_runtime: []const u8) !void {
+    if (before.exists) {
+        const recovery_path = temporaryPath(ctx.io, ctx.gpa, ctx.config.caddy_owned_path, "recovery") catch
+            return error.CaddyRecoveryFailed;
+        defer ctx.gpa.free(recovery_path);
+        Io.Dir.cwd().deleteFile(ctx.io, recovery_path) catch {};
+        errdefer Io.Dir.cwd().deleteFile(ctx.io, recovery_path) catch {};
+        Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = recovery_path, .data = before.text }) catch
+            return error.CaddyRecoveryFailed;
+        Io.Dir.cwd().setFilePermissions(ctx.io, recovery_path, @fromBackingInt(@intCast(0o640)), .{ .follow_symlinks = false }) catch
+            return error.CaddyRecoveryFailed;
+        Io.Dir.cwd().rename(recovery_path, Io.Dir.cwd(), ctx.config.caddy_owned_path, ctx.io) catch
+            return error.CaddyRecoveryFailed;
     } else {
-        try upsertRoute(ctx, host, null, "raw", null, block_text, null);
-        summary.imported_raw += 1;
+        Io.Dir.cwd().deleteFile(ctx.io, ctx.config.caddy_owned_path) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return error.CaddyRecoveryFailed,
+        };
     }
+    reloadConfig(ctx, opts.caddy_executable) catch return error.CaddyRecoveryFailed;
+    verifyRuntime(ctx, opts.curl_executable, previous_runtime) catch return error.CaddyRecoveryFailed;
 }
 
-/// If the block body is exactly one `reverse_proxy <upstream>` directive
-/// (ignoring blank lines and comments), return the upstream token.
-fn soleReverseProxyUpstream(block_text: []const u8) ?[]const u8 {
-    var upstream: ?[]const u8 = null;
-    var body_lines: usize = 0;
-    var lines = std.mem.splitScalar(u8, block_text, '\n');
-    var index: usize = 0;
-    while (lines.next()) |line_raw| : (index += 1) {
-        const line = trim(line_raw);
-        if (index == 0) continue; // host line with `{`
-        if (line.len == 0 or std.mem.startsWith(u8, line, "#")) continue;
-        if (std.mem.eql(u8, line, "}")) continue;
-        body_lines += 1;
-        if (std.mem.startsWith(u8, line, "reverse_proxy")) {
-            const rest = trim(line["reverse_proxy".len..]);
-            const token = firstToken(rest);
-            if (token.len > 0 and !std.mem.eql(u8, token, "{") and std.mem.indexOfScalar(u8, rest, '{') == null) {
-                if (std.mem.eql(u8, rest, token)) upstream = token;
-            }
-        }
-    }
-    if (body_lines == 1) return upstream;
-    return null;
-}
-
-fn routeKind(ctx: Context, host: []const u8) !?[]u8 {
-    const stmt = try ctx.db.prepare("SELECT kind FROM caddy_desired_routes WHERE host = ?");
-    defer _ = sqlite.sqlite3_finalize(stmt);
-    try bindText(stmt, 1, host);
-    const rc = sqlite.sqlite3_step(stmt);
-    if (rc == sqlite.SQLITE_DONE) return null;
-    if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
-    return try ctx.gpa.dupe(u8, columnText(stmt, 0) orelse "");
-}
-
-// --- Renderer ---
-
-/// Deterministic full Caddyfile from the DB: global options block (if
-/// imported), preserved top-level lines except `import` lines (the DB is
-/// the source of truth after import), then every enabled route ordered by
-/// host. Raw rows are emitted verbatim; app/manual rows get a generated
-/// block with tab-indented directives.
 pub fn render(ctx: Context, gpa: Allocator) ![]u8 {
+    var desired = try loadDesired(ctx);
+    defer desired.deinit(ctx.gpa);
+    if (!desiredRoutesSupported(desired.items)) return error.CaddyFragmentInvalid;
     var out = std.Io.Writer.Allocating.init(gpa);
     errdefer out.deinit();
-    const w = &out.writer;
-
-    if (try getSetting(ctx, "caddy_global_options")) |global_block| {
-        defer ctx.gpa.free(global_block);
-        try w.writeAll(global_block);
-        if (!std.mem.endsWith(u8, global_block, "\n")) try w.writeByte('\n');
-        try w.writeByte('\n');
+    try out.writer.writeAll(owned_marker ++ "\n# Source: caddy_desired_routes\n");
+    for (desired.items) |route| {
+        if (!route.enabled or std.mem.endsWith(u8, route.kind, "-delete")) continue;
+        try out.writer.writeByte('\n');
+        try out.writer.writeAll(route.host);
+        try out.writer.writeAll(" {\n\treverse_proxy ");
+        try out.writer.writeAll(route.upstream);
+        try out.writer.writeAll("\n}\n");
     }
-
-    if (try getSetting(ctx, "caddy_top_level_lines")) |top_lines| {
-        defer ctx.gpa.free(top_lines);
-        var wrote_any = false;
-        var lines = std.mem.splitScalar(u8, top_lines, '\n');
-        while (lines.next()) |line_raw| {
-            const line = trim(line_raw);
-            if (line.len == 0) continue;
-            if (std.mem.startsWith(u8, line, "import ")) continue;
-            try w.writeAll(line_raw);
-            try w.writeByte('\n');
-            wrote_any = true;
-        }
-        if (wrote_any) try w.writeByte('\n');
-    }
-
-    const stmt = try ctx.db.prepare(
-        \\SELECT host, upstream, kind, extra_directives, raw_block
-        \\FROM caddy_desired_routes WHERE enabled = 1 ORDER BY host
-    );
-    defer _ = sqlite.sqlite3_finalize(stmt);
-
-    var first = true;
-    while (true) {
-        const rc = sqlite.sqlite3_step(stmt);
-        if (rc == sqlite.SQLITE_DONE) break;
-        if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
-        if (!first) try w.writeByte('\n');
-        first = false;
-
-        const host = columnText(stmt, 0) orelse "";
-        const kind = columnText(stmt, 2) orelse "";
-        if (std.mem.eql(u8, kind, "raw")) {
-            const raw_block = columnText(stmt, 4) orelse "";
-            try w.writeAll(raw_block);
-            if (!std.mem.endsWith(u8, raw_block, "\n")) try w.writeByte('\n');
-            continue;
-        }
-        try w.writeAll(host);
-        try w.writeAll(" {\n");
-        if (columnText(stmt, 1)) |upstream| {
-            try w.writeAll("\treverse_proxy ");
-            try w.writeAll(upstream);
-            try w.writeByte('\n');
-        }
-        if (columnText(stmt, 3)) |extra| {
-            var extra_lines = std.mem.splitScalar(u8, extra, '\n');
-            while (extra_lines.next()) |extra_line| {
-                const trimmed = trim(extra_line);
-                if (trimmed.len == 0) continue;
-                try w.writeByte('\t');
-                try w.writeAll(trimmed);
-                try w.writeByte('\n');
-            }
-        }
-        try w.writeAll("}\n");
-    }
-
     return try out.toOwnedSlice();
 }
 
-// --- Apply ---
+pub fn writeJson(ctx: Context, writer: anytype) !void {
+    var desired = try loadDesired(ctx);
+    defer desired.deinit(ctx.gpa);
+    const observed_text = try latestObservedText(ctx);
+    defer if (observed_text) |text| ctx.gpa.free(text);
+    var observed = try parseObservedOrEmpty(ctx.gpa, observed_text orelse "");
+    defer observed.deinit(ctx.gpa);
+    const observation = try ctx.db.latestObservationForTarget(ctx.gpa, "caddy", "owned-fragment", ctx.config.caddy_owned_path);
+    defer if (observation) |value| value.deinit(ctx.gpa);
+    const capability = try evaluateCapability(ctx);
 
-pub fn apply(ctx: Context, caddyfile_path: []const u8, opts: ApplyOptions) !ApplyResult {
-    const gpa = ctx.gpa;
-    const rendered = try render(ctx, gpa);
-    defer gpa.free(rendered);
-
-    const tmp_path = try std.fmt.allocPrint(gpa, "{s}.cloudio.tmp", .{caddyfile_path});
-    defer gpa.free(tmp_path);
-    errdefer Io.Dir.cwd().deleteFile(ctx.io, tmp_path) catch {};
-    try core_fs.ensureParentDir(ctx.io, caddyfile_path);
-    try Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = tmp_path, .data = rendered });
-
-    var validated = false;
-    if (opts.validate_cmd) {
-        const result = runCommand(gpa, ctx.io, &.{ opts.caddy_executable, "validate", "--config", tmp_path }, max_command_bytes) catch |err| {
-            const detail = try std.fmt.allocPrint(gpa, "caddy validate could not run: {s}", .{@errorName(err)});
-            defer gpa.free(detail);
-            _ = try app_writes.recordWithMetadata(gpa, ctx.db, ctx.write_meta, "caddy.apply", caddyfile_path, null, .err, detail);
-            Io.Dir.cwd().deleteFile(ctx.io, tmp_path) catch {};
-            return Error.ValidateFailed;
-        };
-        defer result.deinit(gpa);
-        if (!result.ok()) {
-            const detail = try std.fmt.allocPrint(gpa, "caddy validate failed: {s}", .{result.stderr});
-            defer gpa.free(detail);
-            _ = try app_writes.recordWithMetadata(gpa, ctx.db, ctx.write_meta, "caddy.apply", caddyfile_path, null, .err, detail);
-            Io.Dir.cwd().deleteFile(ctx.io, tmp_path) catch {};
-            return Error.ValidateFailed;
-        }
-        validated = true;
+    try writer.writeAll("{\"kind\":\"caddy_owned_fragment\",\"ownership\":{");
+    try core_json.writeStringField(writer, "root", ctx.config.caddyfile_path, true);
+    try core_json.writeStringField(writer, "fragment", ctx.config.caddy_owned_path, true);
+    try core_json.writeStringField(writer, "admin_socket", ctx.config.caddy_admin_socket, false);
+    try writer.writeAll("},");
+    try core_json.writeStringField(writer, "freshness", if (capability.write) "current" else if (observation != null and observation.?.hasSuccessfulObservation()) "stale" else "unavailable", true);
+    try writer.writeAll("\"observation\":{");
+    if (observation) |value| {
+        try core_json.writeStringField(writer, "status", value.attempt_status, true);
+        try core_json.writeStringField(writer, "attempted_at", value.attempted_at, true);
+        try core_json.writeStringField(writer, "observed_at", value.observed_at, true);
+        try core_json.writeStringField(writer, "summary", value.attempt_summary, false);
+    } else {
+        try core_json.writeStringField(writer, "status", "unavailable", true);
+        try core_json.writeNullableStringField(writer, "attempted_at", null, true);
+        try core_json.writeNullableStringField(writer, "observed_at", null, true);
+        try core_json.writeStringField(writer, "summary", "The owned fragment has not been refreshed.", false);
     }
-
-    var backup_path: ?[]u8 = null;
-    errdefer if (backup_path) |p| gpa.free(p);
-    if (try core_fs.fileExists(ctx.io, caddyfile_path)) {
-        const existing = try Io.Dir.cwd().readFileAlloc(ctx.io, caddyfile_path, gpa, .limited(max_file_bytes));
-        defer gpa.free(existing);
-        const ts = try epochSeconds();
-        const bak = try std.fmt.allocPrint(gpa, "{s}.bak.{d}", .{ caddyfile_path, ts });
-        try Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = bak, .data = existing });
-        backup_path = bak;
+    try writer.writeAll("},\"capability\":");
+    try writeCapabilityJson(capability, writer);
+    try writer.writeAll(",\"routes\":[");
+    for (desired.items, 0..) |route, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.writeByte('{');
+        try core_json.writeStringField(writer, "host", route.host, true);
+        try core_json.writeStringField(writer, "upstream", route.upstream, true);
+        try core_json.writeStringField(writer, "ownership", if (std.mem.eql(u8, route.kind, "nob")) "project" else "cloudio", true);
+        try core_json.writeStringField(writer, "state", if (std.mem.endsWith(u8, route.kind, "-delete")) "pending_delete" else if (route.enabled) "enabled" else "disabled", true);
+        try core_json.writeBoolField(writer, "enabled", route.enabled, true);
+        try core_json.writeBoolField(writer, "editable", std.mem.eql(u8, route.kind, "manual") and capability.write, true);
+        try core_json.writeStringField(writer, "updated_at", route.updated_at, false);
+        try writer.writeByte('}');
     }
-
-    try Io.Dir.cwd().rename(tmp_path, Io.Dir.cwd(), caddyfile_path, ctx.io);
-
-    var reloaded = false;
-    var reload_status: []const u8 = "skipped";
-    var reload_stderr: []u8 = &.{};
-    defer if (reload_stderr.len > 0) gpa.free(reload_stderr);
-    if (opts.reload) {
-        if (runCommand(gpa, ctx.io, &.{ opts.systemctl_executable, "--system", "--no-ask-password", "reload", "--", "caddy.service" }, max_command_bytes)) |result| {
-            defer result.deinit(gpa);
-            reloaded = result.ok();
-            reload_status = result.statusText();
-            if (!result.ok()) reload_stderr = try gpa.dupe(u8, result.stderr);
-        } else |err| {
-            reload_status = @errorName(err);
-        }
+    try writer.writeAll("],\"adopt_candidates\":[");
+    var first = true;
+    for (observed.items) |route| {
+        if (findDesired(desired.items, route.host) != null) continue;
+        if (!first) try writer.writeByte(',');
+        first = false;
+        try writer.writeByte('{');
+        try core_json.writeStringField(writer, "host", route.host, true);
+        try core_json.writeStringField(writer, "upstream", route.upstream, false);
+        try writer.writeByte('}');
     }
-
-    const detail = try std.fmt.allocPrint(gpa, "wrote {d} bytes; validate={s}; reload={s}{s}{s}", .{
-        rendered.len,
-        if (validated) "ok" else "skipped",
-        reload_status,
-        if (reload_stderr.len > 0) "; reload stderr: " else "",
-        reload_stderr,
-    });
-    defer gpa.free(detail);
-    const result_state: app_writes.Result = if (opts.reload and !reloaded) .err else .ok;
-    _ = try app_writes.recordWithMetadata(gpa, ctx.db, ctx.write_meta, "caddy.apply", caddyfile_path, null, result_state, detail);
-
-    return .{
-        .validated = validated,
-        .reloaded = reloaded,
-        .bytes = rendered.len,
-        .backup_path = backup_path,
-    };
-}
-
-// --- Preview ---
-
-pub fn writePreviewJson(ctx: Context, writer: anytype) !void {
-    const rendered = try render(ctx, ctx.gpa);
-    defer ctx.gpa.free(rendered);
-    try writer.writeAll("{\"kind\":\"caddy_preview\",");
-    try core_json.writeStringField(writer, "rendered", rendered, false);
+    try writer.writeAll("],\"diff\":");
+    try writeDiffJson(desired.items, observed.items, writer);
     try writer.writeAll("}\n");
 }
 
-// --- Settings helpers ---
+pub fn writePreviewJson(ctx: Context, writer: anytype) !void {
+    var desired = try loadDesired(ctx);
+    defer desired.deinit(ctx.gpa);
+    const observed_text = try latestObservedText(ctx);
+    defer if (observed_text) |text| ctx.gpa.free(text);
+    var observed = try parseObservedOrEmpty(ctx.gpa, observed_text orelse "");
+    defer observed.deinit(ctx.gpa);
+    const rendered = try render(ctx, ctx.gpa);
+    defer ctx.gpa.free(rendered);
+    try writer.writeAll("{\"kind\":\"caddy_owned_preview\",");
+    try core_json.writeStringField(writer, "fragment", ctx.config.caddy_owned_path, true);
+    try core_json.writeStringField(writer, "rendered", rendered, true);
+    try writer.writeAll("\"diff\":");
+    try writeDiffJson(desired.items, observed.items, writer);
+    try writer.writeAll("}\n");
+}
 
-fn setSetting(ctx: Context, key: []const u8, value: []const u8) !void {
+pub fn writeCapabilityJson(capability: Capability, writer: anytype) !void {
+    try writer.writeByte('{');
+    try core_json.writeBoolField(writer, "refresh", capability.refresh, true);
+    try core_json.writeBoolField(writer, "write", capability.write, true);
+    try core_json.writeBoolField(writer, "apply", capability.apply, true);
+    try core_json.writeStringField(writer, "code", capability.code, true);
+    try core_json.writeStringField(writer, "reason", capability.reason, false);
+    try writer.writeByte('}');
+}
+
+fn evaluateCapability(ctx: Context) !Capability {
+    if (std.mem.eql(u8, ctx.config.caddyfile_path, ctx.config.caddy_owned_path) or
+        std.mem.eql(u8, ctx.config.caddy_sites_path, ctx.config.caddy_owned_path))
+    {
+        return blocked(false, "unsafe_fragment_path", "The owned fragment must be separate from the root and unmanaged Caddy files.");
+    }
+    Io.Dir.cwd().access(ctx.io, ctx.config.caddyfile_path, .{ .read = true }) catch
+        return blocked(false, "root_unreadable", "Cloudio cannot read the configured root Caddyfile.");
+    const root = Io.Dir.cwd().readFileAlloc(ctx.io, ctx.config.caddyfile_path, ctx.gpa, .limited(max_file_bytes)) catch
+        return blocked(false, "root_unreadable", "Cloudio cannot read the configured root Caddyfile.");
+    defer ctx.gpa.free(root);
+    if (!rootImportsFragment(root, ctx.config.caddy_owned_path)) {
+        return blocked(false, "fragment_not_imported", "The root Caddyfile does not import the configured Cloudio fragment.");
+    }
+    const parent = std.fs.path.dirname(ctx.config.caddy_owned_path) orelse ".";
+    Io.Dir.cwd().access(ctx.io, parent, .{ .read = true, .write = true }) catch
+        return blocked(true, "fragment_parent_unwritable", "Cloudio cannot atomically replace files in the owned fragment directory.");
+    const fragment = readFragment(ctx) catch
+        return blocked(true, "fragment_unreadable", "Cloudio cannot read the configured owned fragment.");
+    defer fragment.deinit(ctx.gpa);
+    if (fragment.exists) {
+        Io.Dir.cwd().access(ctx.io, ctx.config.caddy_owned_path, .{ .read = true, .write = true }) catch
+            return blocked(true, "fragment_unwritable", "Cloudio cannot replace the configured owned fragment.");
+        if (!hasOwnershipMarker(fragment.text)) {
+            return blocked(true, "ownership_marker_missing", "The configured fragment is not marked as Cloudio-owned.");
+        }
+        var parsed = parseOwnedFragment(ctx.gpa, fragment.text) catch
+            return blocked(true, "unsupported_fragment", "The owned fragment contains syntax outside Cloudio's simple reverse-proxy route format.");
+        parsed.deinit(ctx.gpa);
+    }
+    Io.Dir.cwd().access(ctx.io, ctx.config.caddy_admin_socket, .{ .read = true, .write = true }) catch
+        return blocked(true, "admin_socket_unavailable", "Cloudio cannot use the configured Caddy admin socket for reload and verification.");
+    var desired = try loadDesired(ctx);
+    defer desired.deinit(ctx.gpa);
+    if (!desiredRoutesSupported(desired.items)) {
+        return blocked(true, "unsupported_desired_route", "Stored desired state contains a route outside the owned fragment contract.");
+    }
+    const observation = try ctx.db.latestObservationForTarget(ctx.gpa, "caddy", "owned-fragment", ctx.config.caddy_owned_path);
+    defer if (observation) |value| value.deinit(ctx.gpa);
+    if (observation == null or !observation.?.hasSuccessfulObservation()) {
+        return blocked(true, "observation_required", "Refresh the owned fragment before changing desired state.");
+    }
+    if (!std.mem.eql(u8, observation.?.attempt_status, "ok")) {
+        return blocked(true, "latest_observation_failed", "The latest fragment refresh failed; recover it and refresh again.");
+    }
+    const observed_text = (try latestObservedText(ctx)) orelse
+        return blocked(true, "observation_required", "Refresh the owned fragment before changing desired state.");
+    defer ctx.gpa.free(observed_text);
+    if (!std.mem.eql(u8, observed_text, fragment.text)) {
+        return blocked(true, "observation_changed", "The owned fragment changed after the last refresh; refresh before continuing.");
+    }
+    var observed = try parseObservedOrEmpty(ctx.gpa, observed_text);
+    defer observed.deinit(ctx.gpa);
+    if (hasUnadopted(observed.items, desired.items)) {
+        return .{
+            .refresh = true,
+            .write = true,
+            .apply = false,
+            .code = "adoption_required",
+            .reason = "Adopt each exact observed route before Cloudio may replace the fragment.",
+        };
+    }
+    return .{
+        .refresh = true,
+        .write = true,
+        .apply = true,
+        .code = "ready",
+        .reason = "The owned fragment, exact observation, filesystem boundary, and Caddy admin socket are ready.",
+    };
+}
+
+fn blocked(refresh_available: bool, code: []const u8, reason: []const u8) Capability {
+    return .{ .refresh = refresh_available, .write = false, .apply = false, .code = code, .reason = reason };
+}
+
+fn requireWriteCapability(ctx: Context) !void {
+    const capability = try evaluateCapability(ctx);
+    if (!capability.write) return error.CaddyWriteUnavailable;
+}
+
+fn writeDiffJson(desired: []const DesiredRoute, observed: []const ObservedRoute, writer: anytype) !void {
+    var additions: usize = 0;
+    var changes: usize = 0;
+    var removals: usize = 0;
+    var unchanged: usize = 0;
+    var unadopted: usize = 0;
+    for (desired) |route| switch (diffForDesired(route, observed)) {
+        .addition => additions += 1,
+        .change => changes += 1,
+        .removal => removals += 1,
+        .unchanged => unchanged += 1,
+        .unadopted => unreachable,
+    };
+    for (observed) |route| if (findDesired(desired, route.host) == null) {
+        unadopted += 1;
+    };
+    try writer.writeByte('{');
+    try core_json.writeIntField(writer, "additions", additions, true);
+    try core_json.writeIntField(writer, "changes", changes, true);
+    try core_json.writeIntField(writer, "removals", removals, true);
+    try core_json.writeIntField(writer, "unchanged", unchanged, true);
+    try core_json.writeIntField(writer, "unadopted", unadopted, true);
+    try writer.writeAll("\"items\":[");
+    var first = true;
+    for (desired) |route| {
+        const kind = diffForDesired(route, observed);
+        if (!first) try writer.writeByte(',');
+        first = false;
+        try writeDiffItem(writer, @tagName(kind), route.host, route.upstream, if (findObserved(observed, route.host)) |value| value.upstream else null, if (std.mem.eql(u8, route.kind, "nob")) "project" else "cloudio");
+    }
+    for (observed) |route| {
+        if (findDesired(desired, route.host) != null) continue;
+        if (!first) try writer.writeByte(',');
+        first = false;
+        try writeDiffItem(writer, "unadopted", route.host, null, route.upstream, "unadopted");
+    }
+    try writer.writeAll("]}");
+}
+
+fn writeDiffItem(writer: anytype, state: []const u8, host: []const u8, desired: ?[]const u8, observed: ?[]const u8, ownership: []const u8) !void {
+    try writer.writeByte('{');
+    try core_json.writeStringField(writer, "state", state, true);
+    try core_json.writeStringField(writer, "host", host, true);
+    try core_json.writeNullableStringField(writer, "desired_upstream", desired, true);
+    try core_json.writeNullableStringField(writer, "observed_upstream", observed, true);
+    try core_json.writeStringField(writer, "ownership", ownership, false);
+    try writer.writeByte('}');
+}
+
+fn diffForDesired(route: DesiredRoute, observed: []const ObservedRoute) DiffKind {
+    const current = findObserved(observed, route.host);
+    if (!route.enabled or std.mem.endsWith(u8, route.kind, "-delete")) return if (current == null) .unchanged else .removal;
+    if (current == null) return .addition;
+    return if (std.mem.eql(u8, route.upstream, current.?.upstream)) .unchanged else .change;
+}
+
+fn adaptConfig(ctx: Context, executable: []const u8, path: []const u8) ![]u8 {
+    const result = core_process.run(ctx.gpa, ctx.io, &.{ executable, "adapt", "--adapter", "caddyfile", "--config", path }, max_command_bytes) catch
+        return error.CaddyValidationFailed;
+    defer result.deinit(ctx.gpa);
+    if (!result.ok()) return error.CaddyValidationFailed;
+    var parsed = std.json.parseFromSlice(std.json.Value, ctx.gpa, result.stdout, .{}) catch return error.CaddyValidationFailed;
+    parsed.deinit();
+    return try ctx.gpa.dupe(u8, result.stdout);
+}
+
+fn reloadConfig(ctx: Context, executable: []const u8) !void {
+    const result = core_process.run(ctx.gpa, ctx.io, &.{ executable, "reload", "--adapter", "caddyfile", "--config", ctx.config.caddyfile_path, "--force" }, max_command_bytes) catch
+        return error.CaddyReloadFailed;
+    defer result.deinit(ctx.gpa);
+    if (!result.ok()) return error.CaddyReloadFailed;
+}
+
+fn verifyRuntime(ctx: Context, curl_executable: []const u8, expected: []const u8) !void {
+    const result = core_process.run(ctx.gpa, ctx.io, &.{ curl_executable, "-fsS", "--max-time", "5", "--unix-socket", ctx.config.caddy_admin_socket, "http://localhost/config/" }, max_command_bytes) catch
+        return error.CaddyVerificationFailed;
+    defer result.deinit(ctx.gpa);
+    if (!result.ok()) return error.CaddyVerificationFailed;
+    var expected_json = std.json.parseFromSlice(std.json.Value, ctx.gpa, expected, .{}) catch return error.CaddyVerificationFailed;
+    defer expected_json.deinit();
+    var actual_json = std.json.parseFromSlice(std.json.Value, ctx.gpa, result.stdout, .{}) catch return error.CaddyVerificationFailed;
+    defer actual_json.deinit();
+    if (!jsonEqual(expected_json.value, actual_json.value)) return error.CaddyVerificationFailed;
+}
+
+fn jsonEqual(a: std.json.Value, b: std.json.Value) bool {
+    if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+    return switch (a) {
+        .null => true,
+        .bool => |value| value == b.bool,
+        .integer => |value| value == b.integer,
+        .float => |value| value == b.float,
+        .number_string => |value| std.mem.eql(u8, value, b.number_string),
+        .string => |value| std.mem.eql(u8, value, b.string),
+        .array => |array| blk: {
+            if (array.items.len != b.array.items.len) break :blk false;
+            for (array.items, b.array.items) |left, right| if (!jsonEqual(left, right)) break :blk false;
+            break :blk true;
+        },
+        .object => |object| blk: {
+            if (object.count() != b.object.count()) break :blk false;
+            var iterator = object.iterator();
+            while (iterator.next()) |entry| {
+                const other = b.object.get(entry.key_ptr.*) orelse break :blk false;
+                if (!jsonEqual(entry.value_ptr.*, other)) break :blk false;
+            }
+            break :blk true;
+        },
+    };
+}
+
+fn readFragment(ctx: Context) !Fragment {
+    const stat = Io.Dir.cwd().statFile(ctx.io, ctx.config.caddy_owned_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return .{ .exists = false, .text = try ctx.gpa.dupe(u8, "") },
+        else => return err,
+    };
+    if (stat.kind != .file) return error.CaddyFragmentInvalid;
+    return .{
+        .exists = true,
+        .text = try Io.Dir.cwd().readFileAlloc(ctx.io, ctx.config.caddy_owned_path, ctx.gpa, .limited(max_file_bytes)),
+    };
+}
+
+fn hasOwnershipMarker(text: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        const value = trim(line);
+        if (value.len == 0) continue;
+        return std.mem.eql(u8, value, owned_marker);
+    }
+    return false;
+}
+
+fn parseObservedOrEmpty(gpa: Allocator, text: []const u8) !ObservedRoutes {
+    if (text.len == 0) return .{ .items = try gpa.alloc(ObservedRoute, 0) };
+    return parseOwnedFragment(gpa, text);
+}
+
+fn parseOwnedFragment(gpa: Allocator, text: []const u8) !ObservedRoutes {
+    if (!hasOwnershipMarker(text)) return error.CaddyFragmentInvalid;
+    var rows = std.ArrayList(ObservedRoute).empty;
+    errdefer deinitObservedList(&rows, gpa);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw_line| {
+        const line = trim(raw_line);
+        if (line.len == 0 or std.mem.startsWith(u8, line, "#")) continue;
+        if (!std.mem.endsWith(u8, line, "{") or std.mem.indexOfScalar(u8, line[0 .. line.len - 1], '{') != null) return error.CaddyFragmentInvalid;
+        const host = trim(line[0 .. line.len - 1]);
+        if (!validHost(host)) return error.CaddyFragmentInvalid;
+        var upstream: ?[]const u8 = null;
+        var closed = false;
+        while (lines.next()) |raw_body| {
+            const body = trim(raw_body);
+            if (body.len == 0 or std.mem.startsWith(u8, body, "#")) continue;
+            if (std.mem.eql(u8, body, "}")) {
+                closed = true;
+                break;
+            }
+            if (!std.mem.startsWith(u8, body, "reverse_proxy ") or upstream != null) return error.CaddyFragmentInvalid;
+            const value = trim(body["reverse_proxy ".len..]);
+            if (!validUpstream(value)) return error.CaddyFragmentInvalid;
+            upstream = value;
+        }
+        if (!closed or upstream == null or findObserved(rows.items, host) != null) return error.CaddyFragmentInvalid;
+        const host_copy = try gpa.dupe(u8, host);
+        errdefer gpa.free(host_copy);
+        const upstream_copy = try gpa.dupe(u8, upstream.?);
+        rows.append(gpa, .{ .host = host_copy, .upstream = upstream_copy }) catch |err| {
+            gpa.free(host_copy);
+            gpa.free(upstream_copy);
+            return err;
+        };
+    }
+    return .{ .items = try rows.toOwnedSlice(gpa) };
+}
+
+fn deinitObservedList(rows: *std.ArrayList(ObservedRoute), gpa: Allocator) void {
+    for (rows.items) |row| row.deinit(gpa);
+    rows.deinit(gpa);
+}
+
+fn rootImportsFragment(root: []const u8, fragment_path: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, root, '\n');
+    while (lines.next()) |raw_line| {
+        const line = trim(raw_line);
+        if (!std.mem.startsWith(u8, line, "import ")) continue;
+        var tokens = std.mem.tokenizeAny(u8, line["import ".len..], " \t\r");
+        const pattern = tokens.next() orelse continue;
+        if (std.mem.eql(u8, pattern, fragment_path)) return true;
+        if (!std.mem.endsWith(u8, pattern, "/*.caddy") or !std.mem.endsWith(u8, fragment_path, ".caddy")) continue;
+        const pattern_dir = pattern[0 .. pattern.len - "/*.caddy".len];
+        const fragment_dir = std.fs.path.dirname(fragment_path) orelse ".";
+        if (std.mem.eql(u8, pattern_dir, fragment_dir)) return true;
+    }
+    return false;
+}
+
+fn validHost(host: []const u8) bool {
+    if (host.len < 3 or host.len > 253 or host[0] == '.' or host[host.len - 1] == '.') return false;
+    var saw_dot = false;
+    var label_len: usize = 0;
+    for (host, 0..) |ch, index| {
+        if (ch == '.') {
+            if (label_len == 0 or host[index - 1] == '-') return false;
+            saw_dot = true;
+            label_len = 0;
+            continue;
+        }
+        if (!(std.ascii.isLower(ch) or std.ascii.isDigit(ch) or ch == '-')) return false;
+        if (label_len == 0 and ch == '-') return false;
+        label_len += 1;
+        if (label_len > 63) return false;
+    }
+    return saw_dot and label_len > 0 and host[host.len - 1] != '-';
+}
+
+fn validUpstream(upstream: []const u8) bool {
+    if (upstream.len < 3 or upstream.len > 128 or std.mem.indexOfAny(u8, upstream, " \t\r\n/\\") != null) return false;
+    const colon = std.mem.lastIndexOfScalar(u8, upstream, ':') orelse return false;
+    const host = upstream[0..colon];
+    if (!(std.mem.eql(u8, host, "127.0.0.1") or std.mem.eql(u8, host, "localhost") or std.mem.eql(u8, host, "[::1]"))) return false;
+    const port = std.fmt.parseInt(u16, upstream[colon + 1 ..], 10) catch return false;
+    return port != 0;
+}
+
+fn desiredRoutesSupported(routes: []const DesiredRoute) bool {
+    for (routes) |route| {
+        if (!(std.mem.eql(u8, route.kind, "manual") or std.mem.eql(u8, route.kind, "manual-delete") or std.mem.eql(u8, route.kind, "nob") or std.mem.eql(u8, route.kind, "nob-delete"))) return false;
+        if (route.extra.len != 0 or route.raw.len != 0 or !validHost(route.host) or !validUpstream(route.upstream)) return false;
+    }
+    return true;
+}
+
+fn hasUnadopted(observed: []const ObservedRoute, desired: []const DesiredRoute) bool {
+    for (observed) |route| if (findDesired(desired, route.host) == null) return true;
+    return false;
+}
+
+fn findDesired(routes: []const DesiredRoute, host: []const u8) ?*const DesiredRoute {
+    for (routes) |*route| if (std.mem.eql(u8, route.host, host)) return route;
+    return null;
+}
+
+fn findObserved(routes: []const ObservedRoute, host: []const u8) ?*const ObservedRoute {
+    for (routes) |*route| if (std.mem.eql(u8, route.host, host)) return route;
+    return null;
+}
+
+fn loadDesired(ctx: Context) !DesiredRoutes {
     const stmt = try ctx.db.prepare(
-        \\INSERT INTO settings(key, value) VALUES (?, ?)
-        \\ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+        "SELECT host, COALESCE(upstream,''), kind, COALESCE(extra_directives,''), COALESCE(raw_block,''), enabled, COALESCE(updated_at,'') FROM caddy_desired_routes ORDER BY host",
     );
     defer _ = sqlite.sqlite3_finalize(stmt);
-    try bindText(stmt, 1, key);
-    try bindText(stmt, 2, value);
-    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return Error.SqliteStep;
+    var rows = std.ArrayList(DesiredRoute).empty;
+    errdefer {
+        for (rows.items) |row| row.deinit(ctx.gpa);
+        rows.deinit(ctx.gpa);
+    }
+    while (true) {
+        const rc = sqlite.sqlite3_step(stmt);
+        if (rc == sqlite.SQLITE_DONE) break;
+        if (rc != sqlite.SQLITE_ROW) return error.SqliteStep;
+        var row = DesiredRoute{
+            .host = try dupeColumn(ctx.gpa, stmt, 0),
+            .upstream = undefined,
+            .kind = undefined,
+            .extra = undefined,
+            .raw = undefined,
+            .enabled = sqlite.sqlite3_column_int64(stmt, 5) != 0,
+            .updated_at = undefined,
+        };
+        errdefer ctx.gpa.free(row.host);
+        row.upstream = try dupeColumn(ctx.gpa, stmt, 1);
+        errdefer ctx.gpa.free(row.upstream);
+        row.kind = try dupeColumn(ctx.gpa, stmt, 2);
+        errdefer ctx.gpa.free(row.kind);
+        row.extra = try dupeColumn(ctx.gpa, stmt, 3);
+        errdefer ctx.gpa.free(row.extra);
+        row.raw = try dupeColumn(ctx.gpa, stmt, 4);
+        errdefer ctx.gpa.free(row.raw);
+        row.updated_at = try dupeColumn(ctx.gpa, stmt, 6);
+        rows.append(ctx.gpa, row) catch |err| {
+            row.deinit(ctx.gpa);
+            return err;
+        };
+    }
+    return .{ .items = try rows.toOwnedSlice(ctx.gpa) };
 }
 
-fn getSetting(ctx: Context, key: []const u8) !?[]u8 {
-    const stmt = try ctx.db.prepare("SELECT value FROM settings WHERE key = ?");
+fn latestObservedText(ctx: Context) !?[]u8 {
+    const stmt = try ctx.db.prepare(
+        "SELECT COALESCE(raw_text,'') FROM snapshots WHERE source='caddy' AND kind='owned-fragment' AND target=? AND status='ok' ORDER BY id DESC LIMIT 1",
+    );
     defer _ = sqlite.sqlite3_finalize(stmt);
-    try bindText(stmt, 1, key);
-    const rc = sqlite.sqlite3_step(stmt);
-    if (rc == sqlite.SQLITE_DONE) return null;
-    if (rc != sqlite.SQLITE_ROW) return Error.SqliteStep;
-    const text = columnText(stmt, 0) orelse return null;
-    return try ctx.gpa.dupe(u8, text);
+    try bindText(stmt, 1, ctx.config.caddy_owned_path);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return null;
+    return try dupeColumn(ctx.gpa, stmt, 0);
 }
 
-// --- Small helpers ---
-
-fn bindText(stmt: *sqlite.sqlite3_stmt, idx: c_int, value: []const u8) !void {
-    if (sqlite.sqlite3_bind_text(stmt, idx, @ptrCast(value.ptr), @intCast(value.len), sqlite.SQLITE_TRANSIENT) != sqlite.SQLITE_OK) return Error.SqliteBind;
+fn insertDesired(ctx: Context, host: []const u8, upstream: []const u8, kind: []const u8, enabled: bool) !void {
+    const stmt = try ctx.db.prepare("INSERT INTO caddy_desired_routes(host,upstream,kind,enabled) VALUES(?,?,?,?)");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindText(stmt, 1, host);
+    try bindText(stmt, 2, upstream);
+    try bindText(stmt, 3, kind);
+    try bindI64(stmt, 4, if (enabled) 1 else 0);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return error.SqliteStep;
 }
 
-fn bindTextOpt(stmt: *sqlite.sqlite3_stmt, idx: c_int, value: ?[]const u8) !void {
-    if (value) |v| return bindText(stmt, idx, v);
-    if (sqlite.sqlite3_bind_null(stmt, idx) != sqlite.SQLITE_OK) return Error.SqliteBind;
+fn updateDesiredUpstream(ctx: Context, host: []const u8, upstream: []const u8) !void {
+    const stmt = try ctx.db.prepare("UPDATE caddy_desired_routes SET upstream=?, updated_at=CURRENT_TIMESTAMP WHERE host=? AND kind='manual'");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindText(stmt, 1, upstream);
+    try bindText(stmt, 2, host);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE or sqlite.sqlite3_changes(ctx.db.handle) != 1) return error.RouteNotObserved;
 }
 
-fn columnText(stmt: *sqlite.sqlite3_stmt, idx: c_int) ?[]const u8 {
-    const ptr = sqlite.sqlite3_column_text(stmt, idx) orelse return null;
-    const len: usize = @intCast(sqlite.sqlite3_column_bytes(stmt, idx));
-    return @as([*]const u8, @ptrCast(ptr))[0..len];
+fn updateDesiredEnabled(ctx: Context, host: []const u8, enabled: bool) !void {
+    const stmt = try ctx.db.prepare("UPDATE caddy_desired_routes SET enabled=?, updated_at=CURRENT_TIMESTAMP WHERE host=? AND kind='manual'");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindI64(stmt, 1, if (enabled) 1 else 0);
+    try bindText(stmt, 2, host);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE or sqlite.sqlite3_changes(ctx.db.handle) != 1) return error.RouteNotObserved;
+}
+
+fn markDesiredForDeletion(ctx: Context, host: []const u8) !void {
+    const stmt = try ctx.db.prepare("UPDATE caddy_desired_routes SET kind='manual-delete', enabled=0, updated_at=CURRENT_TIMESTAMP WHERE host=? AND kind='manual'");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindText(stmt, 1, host);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE or sqlite.sqlite3_changes(ctx.db.handle) != 1) return error.RouteNotObserved;
+}
+
+fn deleteDesiredExact(ctx: Context, host: []const u8) !void {
+    const stmt = try ctx.db.prepare("DELETE FROM caddy_desired_routes WHERE host=? AND kind='manual'");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindText(stmt, 1, host);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE or sqlite.sqlite3_changes(ctx.db.handle) != 1) return error.RouteNotObserved;
+}
+
+fn deleteAppliedTombstones(ctx: Context) !void {
+    try ctx.db.exec("DELETE FROM caddy_desired_routes WHERE kind IN ('manual-delete','nob-delete')");
+}
+
+fn recordObservationFailure(ctx: Context, summary: []const u8) !void {
+    _ = try ctx.db.insertSnapshot("caddy", "owned-fragment", ctx.config.caddy_owned_path, "error", summary, null, null);
+}
+
+fn recordRouteMutation(ctx: Context, kind: []const u8, host: []const u8, detail: []const u8) !void {
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, kind, host, null, .ok, detail);
+}
+
+fn recordApplyFailure(ctx: Context, err: anyerror) !void {
+    const summary = if (err == error.CaddyRecoveryFailed)
+        "Caddy apply and automatic recovery failed; follow the Routes recovery runbook immediately."
+    else
+        "Caddy apply failed; the previous owned fragment was retained or restored.";
+    _ = try ctx.db.insertSnapshot("caddy", "owned-fragment", ctx.config.caddy_owned_path, "error", summary, null, null);
+    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "caddy.apply", ctx.config.caddy_owned_path, null, .err, @errorName(err));
+}
+
+fn temporaryPath(io: Io, gpa: Allocator, base: []const u8, label: []const u8) ![]u8 {
+    var random: [8]u8 = undefined;
+    io.random(&random);
+    return try std.fmt.allocPrint(gpa, "{s}.cloudio.{s}.{x}", .{ base, label, random });
+}
+
+fn bindText(stmt: *sqlite.sqlite3_stmt, index: c_int, value: []const u8) !void {
+    if (sqlite.sqlite3_bind_text(stmt, index, @ptrCast(value.ptr), @intCast(value.len), sqlite.SQLITE_TRANSIENT) != sqlite.SQLITE_OK) return error.SqliteBind;
+}
+
+fn bindI64(stmt: *sqlite.sqlite3_stmt, index: c_int, value: i64) !void {
+    if (sqlite.sqlite3_bind_int64(stmt, index, value) != sqlite.SQLITE_OK) return error.SqliteBind;
+}
+
+fn dupeColumn(gpa: Allocator, stmt: *sqlite.sqlite3_stmt, index: c_int) ![]u8 {
+    const ptr = sqlite.sqlite3_column_text(stmt, index) orelse return try gpa.dupe(u8, "");
+    const len: usize = @intCast(sqlite.sqlite3_column_bytes(stmt, index));
+    return try gpa.dupe(u8, @as([*]const u8, @ptrCast(ptr))[0..len]);
 }
 
 fn trim(value: []const u8) []const u8 {
     return std.mem.trim(u8, value, " \t\r\n");
 }
 
-fn firstToken(value: []const u8) []const u8 {
-    var it = std.mem.tokenizeAny(u8, value, " \t\r\n");
-    return it.next() orelse "";
+// Compatibility helpers used by the nob broker while it shares this exact
+// owned-fragment service with the Routes page.
+pub fn upsertRoute(ctx: Context, host: []const u8, upstream: ?[]const u8, kind: []const u8, extra_directives: ?[]const u8, raw_block: ?[]const u8, app_id: ?i64) !void {
+    _ = app_id;
+    if (!validHost(host) or upstream == null or !validUpstream(upstream.?) or extra_directives != null or raw_block != null or !std.mem.eql(u8, kind, "nob")) return error.InvalidRouteRequest;
+    const stmt = try ctx.db.prepare(
+        "INSERT INTO caddy_desired_routes(host,upstream,kind,enabled) VALUES(?,?,?,1) ON CONFLICT(host) DO UPDATE SET upstream=excluded.upstream,kind=excluded.kind,enabled=1,extra_directives=NULL,raw_block=NULL,updated_at=CURRENT_TIMESTAMP",
+    );
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindText(stmt, 1, host);
+    try bindText(stmt, 2, upstream.?);
+    try bindText(stmt, 3, kind);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return error.SqliteStep;
 }
 
-fn countByte(value: []const u8, needle: u8) usize {
-    var count: usize = 0;
-    for (value) |ch| {
-        if (ch == needle) count += 1;
+pub fn applyNobRoute(ctx: Context, request: NobRouteRequest) !NobRouteTransition {
+    if (!caddy_mutex.tryLock()) return error.CaddyBusy;
+    defer caddy_mutex.unlock();
+    if (!validHost(request.host) or !validUpstream(request.upstream) or request.resource_id.len == 0) return error.InvalidRouteRequest;
+    try requireWriteCapability(ctx);
+    try ctx.db.exec("BEGIN IMMEDIATE");
+    var transaction_open = true;
+    defer if (transaction_open) ctx.db.exec("ROLLBACK") catch {};
+    const project_id = try operationProjectId(ctx, request.operation_id);
+    var desired = try loadDesired(ctx);
+    defer desired.deinit(ctx.gpa);
+    const route = findDesired(desired.items, request.host);
+    const managed = try managedRoute(ctx, request.host);
+    defer if (managed) |value| value.deinit(ctx.gpa);
+    const before_enabled = if (route) |value| value.enabled else null;
+    var created = false;
+    var removed = false;
+
+    switch (request.ownership) {
+        .managed => if (route) |value| {
+            const owner = managed orelse return error.RouteNotOwned;
+            if (owner.project_id != project_id or !std.mem.eql(u8, owner.resource_id, request.resource_id) or
+                !std.mem.eql(u8, owner.upstream, request.upstream) or !std.mem.eql(u8, value.kind, "nob") or
+                !std.mem.eql(u8, value.upstream, request.upstream)) return error.RouteNotOwned;
+        } else {
+            if (managed != null or request.operation != .enable) return error.RouteNotObserved;
+            try upsertRoute(ctx, request.host, request.upstream, "nob", null, null, null);
+            try insertManagedRoute(ctx, project_id, request);
+            created = true;
+        },
+        .adopted => {
+            const value = route orelse return error.RouteNotObserved;
+            if (managed != null or !std.mem.eql(u8, value.kind, "manual") or !std.mem.eql(u8, value.upstream, request.upstream) or request.operation == .remove) return error.RouteNotOwned;
+        },
     }
-    return count;
+    switch (request.operation) {
+        .enable => if (!created) try setDesiredEnabledAny(ctx, request.host, true),
+        .disable => try setDesiredEnabledAny(ctx, request.host, false),
+        .remove => {
+            if (request.ownership != .managed) return error.RouteNotOwned;
+            try deleteManagedRoute(ctx, project_id, request.resource_id, request.host);
+            try markNobForDeletion(ctx, request.host);
+            removed = true;
+        },
+    }
+    const applied = applyLocked(ctx, .{ .caddy_executable = request.caddy_executable, .curl_executable = request.curl_executable }) catch |err| {
+        try ctx.db.exec("ROLLBACK");
+        transaction_open = false;
+        return err;
+    };
+    defer applied.deinit(ctx.gpa);
+    try ctx.db.exec("COMMIT");
+    transaction_open = false;
+    return .{ .before_enabled = before_enabled, .after_enabled = if (removed) null else request.operation == .enable, .created = created, .removed = removed };
 }
 
-fn epochSeconds() !u64 {
-    var ts: std.os.linux.timespec = undefined;
-    const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
-    if (std.os.linux.errno(rc) != .SUCCESS) return error.ClockGettimeFailed;
-    if (ts.sec < 0) return error.ClockGettimeFailed;
-    return @intCast(ts.sec);
-}
-
-// --- Tests ---
-
-const TestEnv = struct {
-    tmp: std.testing.TmpDir,
-    db: Db,
-    db_path: []u8,
-
-    fn init(gpa: Allocator) !TestEnv {
-        var tmp = std.testing.tmpDir(.{});
-        errdefer tmp.cleanup();
-        const db_path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/caddy_desired.db", .{tmp.sub_path});
-        errdefer gpa.free(db_path);
-        var db = try Db.open(std.testing.io, db_path);
-        errdefer db.close();
-        try db.initSchema();
-        return .{ .tmp = tmp, .db = db, .db_path = db_path };
-    }
-
-    fn ctx(self: *TestEnv) Context {
-        return .{ .io = std.testing.io, .gpa = std.testing.allocator, .db = &self.db };
-    }
-
-    fn deinit(self: *TestEnv, gpa: Allocator) void {
-        self.db.close();
-        gpa.free(self.db_path);
-        self.tmp.cleanup();
-    }
-
-    fn subPath(self: *TestEnv, gpa: Allocator, name: []const u8) ![]u8 {
-        return std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ self.tmp.sub_path, name });
+const ManagedRoute = struct {
+    project_id: i64,
+    resource_id: []u8,
+    upstream: []u8,
+    fn deinit(self: ManagedRoute, gpa: Allocator) void {
+        gpa.free(self.resource_id);
+        gpa.free(self.upstream);
     }
 };
 
-const synthetic_caddyfile =
-    "{\n" ++
-    "\tadmin unix//run/caddy/admin.socket|0660\n" ++
-    "\t# admin 127.0.0.1:2019\n" ++
-    "}\n" ++
-    "\n" ++
-    "import /etc/caddy/conf.d/*.caddy\n" ++
-    "\n" ++
-    "simple.example.com {\n" ++
-    "\treverse_proxy 127.0.0.1:3000\n" ++
-    "}\n" ++
-    "\n" ++
-    "multi.example.com {\n" ++
-    "\tencode zstd gzip\n" ++
-    "\treverse_proxy 127.0.0.1:4000\n" ++
-    "}\n" ++
-    "\n" ++
-    "a.example.com, b.example.com {\n" ++
-    "\t# both hosts proxied\n" ++
-    "\treverse_proxy 127.0.0.1:5000\n" ++
-    "}\n";
-
-test "importer classifies blocks and is idempotent" {
-    const allocator = std.testing.allocator;
-    var env = try TestEnv.init(allocator);
-    defer env.deinit(allocator);
-    const ctx = env.ctx();
-
-    const caddyfile_path = try env.subPath(allocator, "Caddyfile");
-    defer allocator.free(caddyfile_path);
-    try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = caddyfile_path, .data = synthetic_caddyfile });
-
-    const summary = try importCaddyfile(ctx, caddyfile_path);
-    try std.testing.expectEqual(@as(usize, 2), summary.imported_manual);
-    try std.testing.expectEqual(@as(usize, 1), summary.imported_raw);
-    try std.testing.expectEqual(@as(usize, 0), summary.skipped_app);
-
-    // Comma host label kept as full label string, single reverse_proxy => manual.
-    const comma_kind = (try routeKind(ctx, "a.example.com, b.example.com")).?;
-    defer allocator.free(comma_kind);
-    try std.testing.expectEqualStrings("manual", comma_kind);
-
-    const multi_kind = (try routeKind(ctx, "multi.example.com")).?;
-    defer allocator.free(multi_kind);
-    try std.testing.expectEqualStrings("raw", multi_kind);
-
-    const global = (try getSetting(ctx, "caddy_global_options")).?;
-    defer allocator.free(global);
-    try std.testing.expect(std.mem.indexOf(u8, global, "admin unix//run/caddy/admin.socket|0660") != null);
-
-    const top_lines = (try getSetting(ctx, "caddy_top_level_lines")).?;
-    defer allocator.free(top_lines);
-    try std.testing.expect(std.mem.indexOf(u8, top_lines, "import /etc/caddy/conf.d/*.caddy") != null);
-
-    // App-owned rows survive re-import.
-    try upsertRoute(ctx, "simple.example.com", "127.0.0.1:9999", "app", null, null, 7);
-    const again = try importCaddyfile(ctx, caddyfile_path);
-    try std.testing.expectEqual(@as(usize, 1), again.imported_manual);
-    try std.testing.expectEqual(@as(usize, 1), again.imported_raw);
-    try std.testing.expectEqual(@as(usize, 1), again.skipped_app);
-    const count_stmt = try env.db.prepare("SELECT COUNT(*) FROM caddy_desired_routes");
-    defer _ = sqlite.sqlite3_finalize(count_stmt);
-    try std.testing.expect(sqlite.sqlite3_step(count_stmt) == sqlite.SQLITE_ROW);
-    try std.testing.expectEqual(@as(i64, 3), sqlite.sqlite3_column_int64(count_stmt, 0));
-
-    var out = std.Io.Writer.Allocating.init(allocator);
-    defer out.deinit();
-    try writeRoutesJson(ctx, &out.writer);
-    const json = out.written();
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"caddy_routes\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"upstream\":\"127.0.0.1:9999\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"app_id\":7") != null);
-}
-
-test "renderer is deterministic, honors raw and disabled rows" {
-    const allocator = std.testing.allocator;
-    var env = try TestEnv.init(allocator);
-    defer env.deinit(allocator);
-    const ctx = env.ctx();
-
-    try upsertRoute(ctx, "b.app.example", "127.0.0.1:3001", "app", "encode zstd gzip\nheader X-Test on", null, 1);
-    try upsertRoute(ctx, "c.manual.example", "127.0.0.1:3002", "manual", null, null, null);
-    const raw_block = "a.raw.example {\n\trespond \"hi\" 200\n}\n";
-    try upsertRoute(ctx, "a.raw.example", null, "raw", null, raw_block, null);
-    try upsertRoute(ctx, "d.disabled.example", "127.0.0.1:3003", "manual", null, null, null);
-    try setEnabled(ctx, "d.disabled.example", false);
-
-    const rendered = try render(ctx, allocator);
-    defer allocator.free(rendered);
-    const expected =
-        "a.raw.example {\n\trespond \"hi\" 200\n}\n" ++
-        "\nb.app.example {\n\treverse_proxy 127.0.0.1:3001\n\tencode zstd gzip\n\theader X-Test on\n}\n" ++
-        "\nc.manual.example {\n\treverse_proxy 127.0.0.1:3002\n}\n";
-    try std.testing.expectEqualStrings(expected, rendered);
-
-    const rendered_again = try render(ctx, allocator);
-    defer allocator.free(rendered_again);
-    try std.testing.expectEqualStrings(rendered, rendered_again);
-
-    var out = std.Io.Writer.Allocating.init(allocator);
-    defer out.deinit();
-    try writePreviewJson(ctx, &out.writer);
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"kind\":\"caddy_preview\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "a.raw.example {\\n") != null);
-
-    try deleteRoute(ctx, "a.raw.example");
-    const after_delete = try render(ctx, allocator);
-    defer allocator.free(after_delete);
-    try std.testing.expect(std.mem.indexOf(u8, after_delete, "a.raw.example") == null);
-}
-
-test "apply writes file, backs up, records audit; no validate or reload" {
-    const allocator = std.testing.allocator;
-    var env = try TestEnv.init(allocator);
-    defer env.deinit(allocator);
-    const ctx = env.ctx();
-
-    try upsertRoute(ctx, "site.example.com", "127.0.0.1:8000", "manual", null, null, null);
-
-    const target = try env.subPath(allocator, "Caddyfile.out");
-    defer allocator.free(target);
-
-    const first = try apply(ctx, target, .{ .validate_cmd = false, .reload = false });
-    defer first.deinit(allocator);
-    try std.testing.expect(!first.validated);
-    try std.testing.expect(!first.reloaded);
-    try std.testing.expect(first.bytes > 0);
-    try std.testing.expect(first.backup_path == null);
-
-    const written = try Io.Dir.cwd().readFileAlloc(std.testing.io, target, allocator, .limited(max_file_bytes));
-    defer allocator.free(written);
-    try std.testing.expect(std.mem.indexOf(u8, written, "site.example.com {") != null);
-    try std.testing.expectEqual(first.bytes, written.len);
-
-    const second = try apply(ctx, target, .{ .validate_cmd = false, .reload = false });
-    defer second.deinit(allocator);
-    try std.testing.expect(second.backup_path != null);
-    try std.testing.expect(try core_fs.fileExists(std.testing.io, second.backup_path.?));
-
-    const stmt = try env.db.prepare("SELECT COUNT(*) FROM audit_actions WHERE kind = 'caddy.apply' AND result = 'ok'");
+fn operationProjectId(ctx: Context, operation_id: []const u8) !i64 {
+    const stmt = try ctx.db.prepare("SELECT project_id FROM project_operations WHERE id=?");
     defer _ = sqlite.sqlite3_finalize(stmt);
-    try std.testing.expect(sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW);
-    try std.testing.expectEqual(@as(i64, 2), sqlite.sqlite3_column_int64(stmt, 0));
+    try bindText(stmt, 1, operation_id);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return error.RouteNotObserved;
+    return sqlite.sqlite3_column_int64(stmt, 0);
 }
 
-test "nob managed routes apply exact identity and retain ownership" {
-    const allocator = std.testing.allocator;
-    var env = try TestEnv.init(allocator);
-    defer env.deinit(allocator);
-    const ctx = env.ctx();
-    try env.db.exec(
-        \\INSERT INTO managed_projects(
-        \\  id, declared_id, display_name, kind, root_path, discovery_state,
-        \\  trust_state, last_seen_at, created_at, updated_at
-        \\) VALUES(1, 'dev.example.service', 'Service', 'service', '/tmp/service',
-        \\  'valid', 'trusted', 1, 1, 1);
-        \\INSERT INTO project_operations(
-        \\  id, project_id, action_id, state, effect, requested_by, queued_at
-        \\) VALUES('01ARZ3NDEKTSV4RRFFQ69G5FAV', 1, 'deploy', 'running',
-        \\  'runtime-change', 'test', 1);
-    );
-
-    const target = try env.subPath(allocator, "nob.Caddyfile");
-    defer allocator.free(target);
-    const fake_bin = try Io.Dir.cwd().realPathFileAlloc(std.testing.io, "test/fixtures/fake-bin", allocator);
-    defer allocator.free(fake_bin);
-    const caddy_executable = try std.fs.path.join(allocator, &.{ fake_bin, "caddy" });
-    defer allocator.free(caddy_executable);
-    const systemctl_executable = try std.fs.path.join(allocator, &.{ fake_bin, "systemctl" });
-    defer allocator.free(systemctl_executable);
-    const base_request = NobRouteRequest{
-        .operation_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        .resource_id = "route",
-        .ownership = .managed,
-        .operation = .enable,
-        .host = "service.example.com",
-        .upstream = "127.0.0.1:42100",
-        .caddyfile_path = target,
-        .now = 2,
-        .caddy_executable = caddy_executable,
-        .systemctl_executable = systemctl_executable,
-    };
-    const enabled = try applyNobRoute(ctx, base_request);
-    try std.testing.expect(enabled.created);
-    try std.testing.expectEqual(@as(?bool, null), enabled.before_enabled);
-    try std.testing.expectEqual(@as(?bool, true), enabled.after_enabled);
-
-    const rendered = try Io.Dir.cwd().readFileAlloc(std.testing.io, target, allocator, .limited(max_file_bytes));
-    defer allocator.free(rendered);
-    try std.testing.expect(std.mem.indexOf(u8, rendered, "service.example.com {") != null);
-    try std.testing.expect(std.mem.indexOf(u8, rendered, "reverse_proxy 127.0.0.1:42100") != null);
-    const owned = try env.db.prepare(
-        "SELECT COUNT(*) FROM project_managed_routes WHERE project_id=1 AND resource_id='route' AND host='service.example.com' AND upstream='127.0.0.1:42100'",
-    );
-    defer _ = sqlite.sqlite3_finalize(owned);
-    try std.testing.expect(sqlite.sqlite3_step(owned) == sqlite.SQLITE_ROW);
-    try std.testing.expectEqual(@as(i64, 1), sqlite.sqlite3_column_int64(owned, 0));
-
-    const disabled = try applyNobRoute(ctx, withNobRouteOperation(base_request, .disable));
-    try std.testing.expectEqual(@as(?bool, true), disabled.before_enabled);
-    try std.testing.expectEqual(@as(?bool, false), disabled.after_enabled);
-    const disabled_render = try Io.Dir.cwd().readFileAlloc(std.testing.io, target, allocator, .limited(max_file_bytes));
-    defer allocator.free(disabled_render);
-    try std.testing.expect(std.mem.indexOf(u8, disabled_render, "service.example.com") == null);
-
-    const removed = try applyNobRoute(ctx, withNobRouteOperation(base_request, .remove));
-    try std.testing.expect(removed.removed);
-    try std.testing.expectEqual(@as(?bool, null), removed.after_enabled);
-    const routes = try env.db.prepare("SELECT COUNT(*) FROM caddy_desired_routes WHERE host='service.example.com'");
-    defer _ = sqlite.sqlite3_finalize(routes);
-    try std.testing.expect(sqlite.sqlite3_step(routes) == sqlite.SQLITE_ROW);
-    try std.testing.expectEqual(@as(i64, 0), sqlite.sqlite3_column_int64(routes, 0));
-}
-
-test "nob route reload failure rolls back desired state and rendered config" {
-    const allocator = std.testing.allocator;
-    var env = try TestEnv.init(allocator);
-    defer env.deinit(allocator);
-    const ctx = env.ctx();
-    try env.db.exec(
-        \\INSERT INTO managed_projects(
-        \\  id, declared_id, display_name, kind, root_path, discovery_state,
-        \\  trust_state, last_seen_at, created_at, updated_at
-        \\) VALUES(1, 'dev.example.service', 'Service', 'service', '/tmp/service',
-        \\  'valid', 'trusted', 1, 1, 1);
-        \\INSERT INTO project_operations(
-        \\  id, project_id, action_id, state, effect, requested_by, queued_at
-        \\) VALUES('01ARZ3NDEKTSV4RRFFQ69G5FAW', 1, 'deploy', 'running',
-        \\  'runtime-change', 'test', 1);
-    );
-
-    const target = try env.subPath(allocator, "rollback.Caddyfile");
-    defer allocator.free(target);
-    const fake_bin = try Io.Dir.cwd().realPathFileAlloc(std.testing.io, "test/fixtures/fake-bin", allocator);
-    defer allocator.free(fake_bin);
-    const caddy_executable = try std.fs.path.join(allocator, &.{ fake_bin, "caddy" });
-    defer allocator.free(caddy_executable);
-    const fail_once = try env.subPath(allocator, "systemctl-fail-once");
-    defer allocator.free(fail_once);
-    try Io.Dir.cwd().writeFile(std.testing.io, .{
-        .sub_path = fail_once,
-        .data =
-        \\#!/bin/sh
-        \\set -eu
-        \\marker="$0.failed"
-        \\if test -e "$marker"; then exit 0; fi
-        \\touch "$marker"
-        \\exit 1
-        \\
-        ,
-    });
-    try Io.Dir.cwd().setFilePermissions(std.testing.io, fail_once, @fromBackingInt(@intCast(0o755)), .{ .follow_symlinks = false });
-
-    const request = NobRouteRequest{
-        .operation_id = "01ARZ3NDEKTSV4RRFFQ69G5FAW",
-        .resource_id = "route",
-        .ownership = .managed,
-        .operation = .enable,
-        .host = "rollback.example.com",
-        .upstream = "127.0.0.1:42100",
-        .caddyfile_path = target,
-        .now = 2,
-        .caddy_executable = caddy_executable,
-        .systemctl_executable = fail_once,
-    };
-    try std.testing.expectError(error.CaddyRouteApplyFailed, applyNobRoute(ctx, request));
-    const desired = try env.db.prepare("SELECT COUNT(*) FROM caddy_desired_routes WHERE host='rollback.example.com'");
-    defer _ = sqlite.sqlite3_finalize(desired);
-    try std.testing.expect(sqlite.sqlite3_step(desired) == sqlite.SQLITE_ROW);
-    try std.testing.expectEqual(@as(i64, 0), sqlite.sqlite3_column_int64(desired, 0));
-    const owned = try env.db.prepare("SELECT COUNT(*) FROM project_managed_routes WHERE host='rollback.example.com'");
-    defer _ = sqlite.sqlite3_finalize(owned);
-    try std.testing.expect(sqlite.sqlite3_step(owned) == sqlite.SQLITE_ROW);
-    try std.testing.expectEqual(@as(i64, 0), sqlite.sqlite3_column_int64(owned, 0));
-    const rendered = try Io.Dir.cwd().readFileAlloc(std.testing.io, target, allocator, .limited(max_file_bytes));
-    defer allocator.free(rendered);
-    try std.testing.expect(std.mem.indexOf(u8, rendered, "rollback.example.com") == null);
-}
-
-fn withNobRouteOperation(request: NobRouteRequest, operation: NobRouteOperation) NobRouteRequest {
-    var result = request;
-    result.operation = operation;
-    return result;
-}
-
-test "round-trips real /etc/caddy/Caddyfile when readable" {
-    const allocator = std.testing.allocator;
-    const real = Io.Dir.cwd().readFileAlloc(std.testing.io, "/etc/caddy/Caddyfile", allocator, .limited(max_file_bytes)) catch return;
-    defer allocator.free(real);
-
-    var env = try TestEnv.init(allocator);
-    defer env.deinit(allocator);
-    const ctx = env.ctx();
-
-    _ = try importCaddyfileText(ctx, real);
-    const rendered = try render(ctx, allocator);
-    defer allocator.free(rendered);
-
-    const stmt = try env.db.prepare("SELECT host FROM caddy_desired_routes ORDER BY host");
+fn managedRoute(ctx: Context, host: []const u8) !?ManagedRoute {
+    const stmt = try ctx.db.prepare("SELECT project_id,resource_id,upstream FROM project_managed_routes WHERE host=?");
     defer _ = sqlite.sqlite3_finalize(stmt);
-    while (true) {
-        const rc = sqlite.sqlite3_step(stmt);
-        if (rc == sqlite.SQLITE_DONE) break;
-        try std.testing.expect(rc == sqlite.SQLITE_ROW);
-        const host = columnText(stmt, 0) orelse "";
-        try std.testing.expect(std.mem.indexOf(u8, rendered, host) != null);
-    }
+    try bindText(stmt, 1, host);
+    const rc = sqlite.sqlite3_step(stmt);
+    if (rc == sqlite.SQLITE_DONE) return null;
+    if (rc != sqlite.SQLITE_ROW) return error.SqliteStep;
+    return .{ .project_id = sqlite.sqlite3_column_int64(stmt, 0), .resource_id = try dupeColumn(ctx.gpa, stmt, 1), .upstream = try dupeColumn(ctx.gpa, stmt, 2) };
+}
+
+fn insertManagedRoute(ctx: Context, project_id: i64, request: NobRouteRequest) !void {
+    const stmt = try ctx.db.prepare("INSERT INTO project_managed_routes(project_id,resource_id,host,upstream,installed_operation_id,updated_at) VALUES(?,?,?,?,?,?)");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindI64(stmt, 1, project_id);
+    try bindText(stmt, 2, request.resource_id);
+    try bindText(stmt, 3, request.host);
+    try bindText(stmt, 4, request.upstream);
+    try bindText(stmt, 5, request.operation_id);
+    try bindI64(stmt, 6, request.now);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return error.SqliteStep;
+}
+
+fn deleteManagedRoute(ctx: Context, project_id: i64, resource_id: []const u8, host: []const u8) !void {
+    const stmt = try ctx.db.prepare("DELETE FROM project_managed_routes WHERE project_id=? AND resource_id=? AND host=?");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindI64(stmt, 1, project_id);
+    try bindText(stmt, 2, resource_id);
+    try bindText(stmt, 3, host);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE or sqlite.sqlite3_changes(ctx.db.handle) != 1) return error.RouteNotOwned;
+}
+
+fn setDesiredEnabledAny(ctx: Context, host: []const u8, enabled: bool) !void {
+    const stmt = try ctx.db.prepare("UPDATE caddy_desired_routes SET enabled=?,updated_at=CURRENT_TIMESTAMP WHERE host=?");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindI64(stmt, 1, if (enabled) 1 else 0);
+    try bindText(stmt, 2, host);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE or sqlite.sqlite3_changes(ctx.db.handle) != 1) return error.RouteNotObserved;
+}
+
+fn markNobForDeletion(ctx: Context, host: []const u8) !void {
+    const stmt = try ctx.db.prepare("UPDATE caddy_desired_routes SET kind='nob-delete',enabled=0,updated_at=CURRENT_TIMESTAMP WHERE host=? AND kind='nob'");
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindText(stmt, 1, host);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE or sqlite.sqlite3_changes(ctx.db.handle) != 1) return error.RouteNotObserved;
+}
+
+test "owned fragment parser accepts only exact generated reverse proxies" {
+    const allocator = std.testing.allocator;
+    var routes = try parseOwnedFragment(allocator, owned_marker ++ "\n# Source: caddy_desired_routes\n\napp.example.test {\n\treverse_proxy 127.0.0.1:9000\n}\n");
+    defer routes.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), routes.items.len);
+    try std.testing.expectEqualStrings("app.example.test", routes.items[0].host);
+    try std.testing.expectError(error.CaddyFragmentInvalid, parseOwnedFragment(allocator, owned_marker ++ "\napp.example.test {\n\trespond 200\n}\n"));
+    try std.testing.expect(!validHost("*.example.test"));
+    try std.testing.expect(validUpstream("127.0.0.1:9000"));
+    try std.testing.expect(!validUpstream("http://127.0.0.1:9000"));
+}
+
+test "root import matching is exact and bounded to caddy fragments" {
+    try std.testing.expect(rootImportsFragment("import /etc/caddy/conf.d/*.caddy\n", "/etc/caddy/conf.d/cloudio.caddy"));
+    try std.testing.expect(rootImportsFragment("import /tmp/cloudio.caddy\n", "/tmp/cloudio.caddy"));
+    try std.testing.expect(!rootImportsFragment("import /etc/caddy/conf.d/*.caddy\n", "/tmp/cloudio.caddy"));
+    try std.testing.expect(!rootImportsFragment("import /etc/caddy/conf.d/*\n", "/etc/caddy/conf.d/cloudio.caddy"));
+}
+
+test "semantic JSON verification ignores object order and formatting" {
+    const allocator = std.testing.allocator;
+    var left = try std.json.parseFromSlice(std.json.Value, allocator, "{\"a\":1,\"b\":[true,null]}", .{});
+    defer left.deinit();
+    var right = try std.json.parseFromSlice(std.json.Value, allocator, "{ \"b\" : [true, null], \"a\": 1 }", .{});
+    defer right.deinit();
+    try std.testing.expect(jsonEqual(left.value, right.value));
 }

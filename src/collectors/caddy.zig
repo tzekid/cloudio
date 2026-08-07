@@ -15,6 +15,7 @@ const runCommand = core_process.run;
 pub const Paths = struct {
     caddyfile_path: []const u8,
     caddy_sites_path: []const u8,
+    caddy_owned_path: []const u8,
     caddy_admin_socket: []const u8,
 };
 
@@ -51,17 +52,12 @@ pub fn collect(io: Io, gpa: Allocator, paths: Paths, db: *Db) !void {
         _ = try db.insertSnapshot("caddy", "caddyfile", paths.caddyfile_path, "ok", "root Caddyfile", null, redacted);
     }
 
-    var sites = try parseSitesFromFile(io, gpa, paths.caddy_sites_path);
-    defer sites.deinit(gpa);
-    for (sites.items) |site| {
-        const redacted_block = try core_redact.secrets(gpa, site.raw_block);
-        defer gpa.free(redacted_block);
-        try db.upsertCaddySite(site.host, paths.caddy_sites_path, redacted_block);
-        for (site.upstreams.items) |upstream| try db.insertCaddyUpstream(site.host, "", upstream);
-        try db.upsertProject(projectNameFromHost(site.host), "caddy", null, site.host, if (site.upstreams.items.len > 0) site.upstreams.items[0] else null, null, null, null);
+    try collectSitesFile(io, gpa, db, paths.caddy_sites_path);
+    if (!std.mem.eql(u8, paths.caddy_owned_path, paths.caddy_sites_path)) {
+        try collectSitesFile(io, gpa, db, paths.caddy_owned_path);
     }
 
-    const adapt_result = runCommand(gpa, io, &.{ "caddy", "adapt", "--config", paths.caddyfile_path, "--pretty" }, max_command_bytes) catch |err| {
+    const adapt_result = runCommand(gpa, io, &.{ "caddy", "adapt", "--adapter", "caddyfile", "--config", paths.caddyfile_path, "--pretty" }, max_command_bytes) catch |err| {
         const summary = try std.fmt.allocPrint(gpa, "caddy adapt failed: {s}", .{@errorName(err)});
         defer gpa.free(summary);
         _ = try db.insertSnapshot("caddy", "adapt", paths.caddyfile_path, "error", summary, null, null);
@@ -88,15 +84,29 @@ pub fn collect(io: Io, gpa: Allocator, paths: Paths, db: *Db) !void {
     _ = try db.insertSnapshot("caddy", "admin", paths.caddy_admin_socket, if (api.ok()) "ok" else "error", "runtime config from admin socket", api_text, api_stderr);
 }
 
+fn collectSitesFile(io: Io, gpa: Allocator, db: *Db, path: []const u8) !void {
+    const raw = (try readFileMaybe(io, gpa, path, max_file_bytes)) orelse return;
+    defer gpa.free(raw);
+    var sites = try parseSites(gpa, raw);
+    defer sites.deinit(gpa);
+    for (sites.items) |site| {
+        const redacted_block = try core_redact.secrets(gpa, site.raw_block);
+        defer gpa.free(redacted_block);
+        try db.upsertCaddySite(site.host, path, redacted_block);
+        for (site.upstreams.items) |upstream| try db.insertCaddyUpstream(site.host, "", upstream);
+        try db.upsertProject(projectNameFromHost(site.host), "caddy", null, site.host, if (site.upstreams.items.len > 0) site.upstreams.items[0] else null, null, null, null);
+    }
+}
+
 pub fn render(io: Io, gpa: Allocator, paths: Paths) !Output {
-    const result = try runCommand(gpa, io, &.{ "caddy", "adapt", "--config", paths.caddyfile_path, "--pretty" }, max_command_bytes);
+    const result = try runCommand(gpa, io, &.{ "caddy", "adapt", "--adapter", "caddyfile", "--config", paths.caddyfile_path, "--pretty" }, max_command_bytes);
     defer result.deinit(gpa);
     const redacted = try core_redact.secrets(gpa, result.stdout);
     return .{ .text = redacted };
 }
 
 pub fn validate(io: Io, gpa: Allocator, paths: Paths) !Output {
-    const result = try runCommand(gpa, io, &.{ "caddy", "validate", "--config", paths.caddyfile_path }, max_command_bytes);
+    const result = try runCommand(gpa, io, &.{ "caddy", "validate", "--adapter", "caddyfile", "--config", paths.caddyfile_path }, max_command_bytes);
     defer result.deinit(gpa);
     const stdout = try core_redact.secrets(gpa, result.stdout);
     defer gpa.free(stdout);
@@ -111,9 +121,9 @@ pub fn validate(io: Io, gpa: Allocator, paths: Paths) !Output {
 }
 
 pub fn diff(io: Io, gpa: Allocator, paths: Paths) !Output {
-    const validate_result = try runCommand(gpa, io, &.{ "caddy", "validate", "--config", paths.caddyfile_path }, max_command_bytes);
+    const validate_result = try runCommand(gpa, io, &.{ "caddy", "validate", "--adapter", "caddyfile", "--config", paths.caddyfile_path }, max_command_bytes);
     defer validate_result.deinit(gpa);
-    const adapt_result = try runCommand(gpa, io, &.{ "caddy", "adapt", "--config", paths.caddyfile_path, "--pretty" }, max_command_bytes);
+    const adapt_result = try runCommand(gpa, io, &.{ "caddy", "adapt", "--adapter", "caddyfile", "--config", paths.caddyfile_path, "--pretty" }, max_command_bytes);
     defer adapt_result.deinit(gpa);
 
     var out = std.Io.Writer.Allocating.init(gpa);

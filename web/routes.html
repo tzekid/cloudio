@@ -6,77 +6,136 @@
   <title>Routes · Cloudio</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script defer src="/assets/app.js"></script>
-  <script defer src="/assets/pages/routes.js"></script>
 </head>
 <body>
   <main id="page-content">
-    <p class="page-intro">Manage Cloudio’s desired Caddy routes, review the generated configuration, and apply it deliberately.</p>
+    <p class="page-intro">Manage reverse proxies in Cloudio's dedicated Caddy fragment. Other Caddy files remain read-only.</p>
+    <div id="routes-feedback" class="notice hidden" aria-live="polite"></div>
 
-    <section class="panel" aria-labelledby="add-route-title">
+    <section class="panel" aria-labelledby="routes-observation-title">
       <div class="panel-header">
         <div>
-          <h2 id="add-route-title">Add route</h2>
-          <p>Point a public hostname at a local upstream.</p>
+          <h2 id="routes-observation-title">Managed fragment</h2>
+          <p id="routes-source-note">Health and last exact observation.</p>
+        </div>
+      </div>
+      <div class="panel-body stack compact-stack">
+        <dl class="routes-status-grid">
+          <div class="routes-status-item"><dt>Managed file</dt><dd id="routes-fragment" class="mono breakable">Unavailable</dd></div>
+          <div class="routes-status-item"><dt>Freshness</dt><dd id="routes-freshness">Unavailable</dd></div>
+          <div class="routes-status-item"><dt>Observed</dt><dd id="routes-observed-at">Never</dd></div>
+          <div class="routes-status-item"><dt>Last attempt</dt><dd id="routes-attempt">Not run</dd></div>
+        </dl>
+        <div class="routes-status-actions">
+          <p id="caddy-apply-capability" class="notice tone-warning">Refresh the owned fragment before changing desired state.</p>
+          <form id="routes-refresh-form" method="post" action="/routes/refresh">
+            <input id="routes-refresh-csrf" name="csrf_token" type="hidden" value="">
+            <input id="routes-refresh-idempotency" name="idempotency_key" type="hidden" value="">
+            <button class="button-primary" type="submit">Refresh fragment</button>
+          </form>
+        </div>
+        <details class="routes-paths">
+          <summary>Configuration boundary</summary>
+          <dl class="kv-list compact-stack">
+            <div class="kv-row"><dt>Root (read-only)</dt><dd id="routes-root" class="mono breakable">Unavailable</dd></div>
+            <div class="kv-row"><dt>Owned fragment</dt><dd class="mono breakable">Cloudio writes only the managed file shown above.</dd></div>
+          </dl>
+        </details>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="route-form-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="route-form-title">Add route</h2>
+          <p>Map a public hostname to a local HTTP service.</p>
         </div>
       </div>
       <div class="panel-body">
-        <form id="route-form" class="form-grid">
-          <div class="field span-3">
+        <form id="route-form" class="form-grid" method="post" action="/routes/route">
+          <input id="route-csrf" name="csrf_token" type="hidden" value="">
+          <input id="route-idempotency" name="idempotency_key" type="hidden" value="">
+          <input id="route-action" name="action" type="hidden" value="create">
+          <div class="field span-5">
             <label for="route-host">Host</label>
             <input id="route-host" name="host" type="text" placeholder="app.example.com" required autocomplete="off">
           </div>
-          <div class="field span-3">
+          <div class="field span-5">
             <label for="route-upstream">Upstream</label>
             <input id="route-upstream" name="upstream" type="text" placeholder="127.0.0.1:9000" required autocomplete="off">
           </div>
-          <div class="field span-5">
-            <label for="route-extra">Extra directives</label>
-            <textarea id="route-extra" name="extra" rows="2" placeholder="encode gzip"></textarea>
+          <div class="route-form-actions span-2">
+            <button id="add-route" class="button-primary" type="submit" disabled>Save route</button>
+            <a id="route-form-cancel" class="button hidden" href="/routes.html">Cancel</a>
           </div>
-          <button id="add-route" class="button-primary" type="submit">Add route</button>
         </form>
       </div>
     </section>
 
     <section class="panel" aria-labelledby="routes-list-title">
       <div class="panel-header">
-        <h2 id="routes-list-title">Caddy routes</h2>
+        <h2 id="routes-list-title">Managed routes</h2>
         <span id="routes-count" class="muted" aria-live="polite"></span>
       </div>
-      <div class="table-scroll">
+      <div id="routes-empty" class="panel-body route-empty-state">
+        <strong>No routes are managed by Cloudio yet.</strong>
+        <p>Add the first route above. Existing unmanaged Caddy configuration remains read-only and untouched.</p>
+      </div>
+      <div id="routes-table" class="table-scroll hidden">
         <table class="responsive-table">
-          <thead>
-            <tr>
-              <th scope="col">Enabled</th>
-              <th scope="col">Host</th>
-              <th scope="col">Upstream</th>
-              <th scope="col">Kind</th>
-              <th scope="col">Updated</th>
-              <th scope="col">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="routes-body">
-            <tr><td class="empty-state loading-state" colspan="6">Loading routes…</td></tr>
-          </tbody>
+          <thead><tr><th scope="col">State</th><th scope="col">Host</th><th scope="col">Upstream</th><th scope="col">Ownership</th><th scope="col">Updated</th><th scope="col">Actions</th></tr></thead>
+          <tbody id="routes-body"><tr><td class="empty-state loading-state" colspan="6">Loading desired routes…</td></tr></tbody>
         </table>
       </div>
     </section>
 
-    <section class="panel" aria-labelledby="caddyfile-title">
-      <div class="panel-header">
-        <div>
-          <h2 id="caddyfile-title">Caddyfile</h2>
-          <p>Import existing state, preview desired state, then validate and apply.</p>
-        </div>
+    <section id="route-confirmation-panel" class="panel hidden" aria-labelledby="route-confirmation-title">
+      <div class="panel-header"><div><h2 id="route-confirmation-title">Confirm route removal</h2><p>Removal changes desired state first and reaches Caddy only after a separately confirmed apply.</p></div></div>
+      <div class="panel-body stack">
+        <p>Type <code id="route-confirmation-target"></code> to confirm.</p>
+        <form id="route-delete-form" method="post" action="/routes/route" class="form-grid">
+          <input id="route-delete-csrf" name="csrf_token" type="hidden" value="">
+          <input id="route-delete-idempotency" name="idempotency_key" type="hidden" value="">
+          <input name="action" type="hidden" value="delete">
+          <input id="route-delete-host" name="host" type="hidden" value="">
+          <div class="field span-5"><label for="route-delete-confirmation">Confirmation</label><input id="route-delete-confirmation" name="confirmation" type="text" required autocomplete="off"></div>
+          <button class="button-danger" type="submit">Mark route for removal</button>
+          <a class="button" href="/routes.html">Cancel</a>
+        </form>
+      </div>
+    </section>
+
+    <section id="routes-adoption-panel" class="panel hidden" aria-labelledby="adopt-routes-title">
+      <div class="panel-header"><div><h2 id="adopt-routes-title">Exact adoption</h2><p>Routes observed in the owned fragment but absent from desired state must be adopted one at a time before Apply is available.</p></div></div>
+      <div id="adopt-routes" class="panel-body stack"></div>
+    </section>
+
+    <section id="routes-preview-panel" class="panel hidden" aria-labelledby="caddy-preview-title">
+      <div class="panel-header"><div><h2 id="caddy-preview-title">Pending changes</h2><p>Review the exact owned-fragment difference before applying it.</p></div></div>
+      <div class="table-scroll">
+        <table class="responsive-table">
+          <thead><tr><th scope="col">Change</th><th scope="col">Host</th><th scope="col">Desired</th><th scope="col">Observed</th><th scope="col">Ownership</th></tr></thead>
+          <tbody id="routes-diff-body"><tr><td class="empty-state loading-state" colspan="5">Loading preview…</td></tr></tbody>
+        </table>
       </div>
       <div class="panel-body stack">
-        <div class="cluster cluster-mobile-stack">
-          <button id="import-btn" type="button">Import current file</button>
-          <button id="preview-btn" type="button">Preview desired file</button>
-          <button id="apply-btn" class="button-primary" type="button">Apply and reload</button>
-          <span id="caddy-result" class="status-message" aria-live="polite"></span>
-        </div>
-        <pre class="log-viewer hidden" id="preview-output"></pre>
+        <p id="routes-diff-summary" class="muted"></p>
+        <details><summary>Generated fragment</summary><pre class="log-viewer" id="preview-output"></pre></details>
+        <a id="apply-btn" class="button button-primary" href="/routes.html?confirm=apply" aria-describedby="caddy-apply-capability">Review Apply</a>
+      </div>
+    </section>
+
+    <section id="apply-confirmation-panel" class="panel hidden" aria-labelledby="apply-confirmation-title">
+      <div class="panel-header"><div><h2 id="apply-confirmation-title">Apply and verify</h2><p>Cloudio validates the candidate, backs up and atomically replaces only its fragment, reloads through the configured admin socket, and verifies runtime JSON. Any failure restores the previous fragment and reloads it.</p></div></div>
+      <div class="panel-body stack">
+        <p>Type <code>APPLY</code> to confirm this exact preview.</p>
+        <form id="routes-apply-form" method="post" action="/routes/apply" class="form-grid">
+          <input id="routes-apply-csrf" name="csrf_token" type="hidden" value="">
+          <input id="routes-apply-idempotency" name="idempotency_key" type="hidden" value="">
+          <div class="field span-5"><label for="routes-apply-confirmation">Confirmation</label><input id="routes-apply-confirmation" name="confirmation" type="text" required autocomplete="off"></div>
+          <button class="button-primary" type="submit">Apply owned fragment</button>
+          <a class="button" href="/routes.html">Cancel</a>
+        </form>
       </div>
     </section>
   </main>

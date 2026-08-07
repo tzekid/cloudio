@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state="${CLOUDIO_FAKE_CADDY_STATE:?}"
+control="${CLOUDIO_FAKE_CADDY_CONTROL:?}"
+calls="${CLOUDIO_FAKE_CADDY_CALLS:?}"
+printf 'curl %s\n' "$*" >>"$calls"
+
+mode="$(tr -d '\r\n' <"$control")"
+if [[ "$mode" == "verify-fail" ]]; then
+  : >"$control"
+  printf '%s\n' '{"fixture":"verification-mismatch"}'
+  exit 0
+fi
+cat "$state"

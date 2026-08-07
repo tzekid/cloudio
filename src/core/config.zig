@@ -11,18 +11,24 @@ const Setting = enum {
     domains,
     caddyfile_path,
     caddy_sites_path,
+    caddy_owned_path,
     caddy_admin_socket,
     projects_root,
     cloudflare_api_token,
     cloudflare_email,
     cloudflare_api_key,
+    cloudflare_api_base,
+    browser_run_allowed_hosts,
+    browser_run_state_root,
+    browser_run_retention_hours,
     hostinger_api_token,
+    hostinger_api_base,
     auth_origin,
     auth_rp_id,
-    apps_root,
-    port_range,
     refresh_seconds,
     storage_auto_prune,
+    storage_backup_root,
+    storage_disk_budget_bytes,
     snapshot_retention_days,
     provider_raw_retention_days,
     metrics_retention_days,
@@ -62,16 +68,23 @@ const env_bindings = [_]EnvBinding{
     .{ .key = "CLOUDIO_DOMAINS", .setting = .domains },
     .{ .key = "DOMAINS", .setting = .domains },
     .{ .key = "DOMAIN", .setting = .domains },
+    .{ .key = "CLOUDIO_CADDY_OWNED_PATH", .setting = .caddy_owned_path },
     .{ .key = "CLOUDFLARE_API_TOKEN", .setting = .cloudflare_api_token },
     .{ .key = "CLOUDFLARE_EMAIL", .setting = .cloudflare_email },
     .{ .key = "CLOUDFLARE_API_KEY", .setting = .cloudflare_api_key },
+    .{ .key = "CLOUDIO_CLOUDFLARE_API_BASE", .setting = .cloudflare_api_base },
+    .{ .key = "CLOUDIO_BROWSER_RUN_ALLOWED_HOSTS", .setting = .browser_run_allowed_hosts },
+    .{ .key = "CLOUDIO_BROWSER_RUN_STATE_ROOT", .setting = .browser_run_state_root },
+    .{ .key = "CLOUDIO_BROWSER_RUN_RETENTION_HOURS", .setting = .browser_run_retention_hours },
     .{ .key = "HOSTINGER_API_TOKEN", .setting = .hostinger_api_token },
     .{ .key = "HAPI_API_TOKEN", .setting = .hostinger_api_token },
+    .{ .key = "CLOUDIO_HOSTINGER_API_BASE", .setting = .hostinger_api_base },
     .{ .key = "CLOUDIO_AUTH_ORIGIN", .setting = .auth_origin },
     .{ .key = "CLOUDIO_AUTH_RP_ID", .setting = .auth_rp_id },
-    .{ .key = "CLOUDIO_APPS_ROOT", .setting = .apps_root },
     .{ .key = "CLOUDIO_PROJECTS_ROOT", .setting = .projects_root },
     .{ .key = "CLOUDIO_STORAGE_AUTO_PRUNE", .setting = .storage_auto_prune },
+    .{ .key = "CLOUDIO_STORAGE_BACKUP_ROOT", .setting = .storage_backup_root },
+    .{ .key = "CLOUDIO_STORAGE_DISK_BUDGET_BYTES", .setting = .storage_disk_budget_bytes },
     .{ .key = "CLOUDIO_SNAPSHOT_RETENTION_DAYS", .setting = .snapshot_retention_days },
     .{ .key = "CLOUDIO_PROVIDER_RAW_RETENTION_DAYS", .setting = .provider_raw_retention_days },
     .{ .key = "CLOUDIO_METRICS_RETENTION_DAYS", .setting = .metrics_retention_days },
@@ -98,18 +111,24 @@ const config_bindings = [_]ConfigBinding{
     .{ .section = "", .key = "domains", .setting = .domains },
     .{ .section = "", .key = "caddyfile_path", .setting = .caddyfile_path },
     .{ .section = "", .key = "caddy_sites_path", .setting = .caddy_sites_path },
+    .{ .section = "", .key = "caddy_owned_path", .setting = .caddy_owned_path },
     .{ .section = "", .key = "caddy_admin_socket", .setting = .caddy_admin_socket },
     .{ .section = "", .key = "projects_root", .setting = .projects_root },
     .{ .section = "cloudflare", .key = "api_token", .setting = .cloudflare_api_token },
     .{ .section = "cloudflare", .key = "email", .setting = .cloudflare_email },
     .{ .section = "cloudflare", .key = "api_key", .setting = .cloudflare_api_key },
+    .{ .section = "cloudflare", .key = "api_base", .setting = .cloudflare_api_base },
+    .{ .section = "browser_run", .key = "allowed_hosts", .setting = .browser_run_allowed_hosts },
+    .{ .section = "browser_run", .key = "state_root", .setting = .browser_run_state_root },
+    .{ .section = "browser_run", .key = "retention_hours", .setting = .browser_run_retention_hours },
     .{ .section = "hostinger", .key = "api_token", .setting = .hostinger_api_token },
+    .{ .section = "hostinger", .key = "api_base", .setting = .hostinger_api_base },
     .{ .section = "auth", .key = "origin", .setting = .auth_origin },
     .{ .section = "auth", .key = "rp_id", .setting = .auth_rp_id },
-    .{ .section = "platform", .key = "apps_root", .setting = .apps_root },
-    .{ .section = "platform", .key = "port_range", .setting = .port_range },
     .{ .section = "platform", .key = "refresh_seconds", .setting = .refresh_seconds },
     .{ .section = "storage", .key = "auto_prune", .setting = .storage_auto_prune },
+    .{ .section = "storage", .key = "backup_root", .setting = .storage_backup_root },
+    .{ .section = "storage", .key = "disk_budget_bytes", .setting = .storage_disk_budget_bytes },
     .{ .section = "storage", .key = "snapshot_retention_days", .setting = .snapshot_retention_days },
     .{ .section = "storage", .key = "provider_raw_retention_days", .setting = .provider_raw_retention_days },
     .{ .section = "storage", .key = "metrics_retention_days", .setting = .metrics_retention_days },
@@ -154,19 +173,24 @@ pub const Config = struct {
     domains: []const []const u8,
     caddyfile_path: []const u8 = "/etc/caddy/Caddyfile",
     caddy_sites_path: []const u8 = "/etc/caddy/conf.d/sites.caddy",
+    caddy_owned_path: []const u8 = "/etc/caddy/conf.d/cloudio.caddy",
     caddy_admin_socket: []const u8 = "/run/caddy/admin.socket",
     projects_root: []const u8 = "/home/kid/Projects",
     cloudflare_api_token: ?[]const u8 = null,
     cloudflare_email: ?[]const u8 = null,
     cloudflare_api_key: ?[]const u8 = null,
+    cloudflare_api_base: []const u8 = "https://api.cloudflare.com/client/v4",
+    browser_run_allowed_hosts: []const []const u8 = &.{},
+    browser_run_state_root: []const u8 = ".cloudio/browser-run",
+    browser_run_retention_hours: u32 = 24,
     hostinger_api_token: ?[]const u8 = null,
+    hostinger_api_base: []const u8 = "https://developers.hostinger.com",
     auth_origin: []const u8 = "http://localhost:9328",
     auth_rp_id: []const u8 = "localhost",
-    apps_root: []const u8 = "/home/kid/Projects",
-    port_min: u16 = 42000,
-    port_max: u16 = 42999,
     refresh_seconds: u32 = 300,
     storage_auto_prune: bool = false,
+    storage_backup_root: []const u8 = ".cloudio/backups",
+    storage_disk_budget_bytes: u64 = 0,
     snapshot_retention_days: u32 = 14,
     provider_raw_retention_days: u32 = 14,
     metrics_retention_days: u32 = 30,
@@ -199,8 +223,10 @@ pub const Config = struct {
             try applyConfigText(arena, &cfg, text);
         }
 
-        cfg.loaded_dotenv = try applyEnvFileIfPresent(io, arena, &cfg, ".env", .dotenv);
-        cfg.loaded_fish_env = try applyEnvFileIfPresent(io, arena, &cfg, ".env.fish", .fish);
+        if (!envFilesDisabled(env)) {
+            cfg.loaded_dotenv = try applyEnvFileIfPresent(io, arena, &cfg, ".env", .dotenv);
+            cfg.loaded_fish_env = try applyEnvFileIfPresent(io, arena, &cfg, ".env.fish", .fish);
+        }
 
         try applyProcessEnv(arena, &cfg, env);
         return cfg;
@@ -210,10 +236,20 @@ pub const Config = struct {
         return self.cloudflare_api_token != null or (self.cloudflare_email != null and self.cloudflare_api_key != null);
     }
 
+    pub fn hasCloudflareApiToken(self: Config) bool {
+        const token = self.cloudflare_api_token orelse return false;
+        return token.len != 0;
+    }
+
     pub fn hasHostingerAuth(self: Config) bool {
         return self.hostinger_api_token != null;
     }
 };
+
+fn envFilesDisabled(env: *std.process.Environ.Map) bool {
+    const raw = env.get("CLOUDIO_DISABLE_ENV_FILES") orelse return false;
+    return parseBool(raw) orelse false;
+}
 
 const EnvFileKind = enum { dotenv, fish };
 
@@ -306,22 +342,24 @@ fn applySetting(arena: Allocator, cfg: *Config, setting: Setting, raw_value: []c
         .log_path => cfg.log_path = try arena.dupe(u8, value),
         .caddyfile_path => cfg.caddyfile_path = try arena.dupe(u8, value),
         .caddy_sites_path => cfg.caddy_sites_path = try arena.dupe(u8, value),
+        .caddy_owned_path => cfg.caddy_owned_path = try arena.dupe(u8, value),
         .caddy_admin_socket => cfg.caddy_admin_socket = try arena.dupe(u8, value),
         .projects_root => cfg.projects_root = try arena.dupe(u8, value),
         .cloudflare_api_token => cfg.cloudflare_api_token = try arena.dupe(u8, value),
         .cloudflare_email => cfg.cloudflare_email = try arena.dupe(u8, value),
         .cloudflare_api_key => cfg.cloudflare_api_key = try arena.dupe(u8, value),
+        .cloudflare_api_base => cfg.cloudflare_api_base = try arena.dupe(u8, value),
+        .browser_run_allowed_hosts => cfg.browser_run_allowed_hosts = try parseOptionalList(arena, value),
+        .browser_run_state_root => cfg.browser_run_state_root = try arena.dupe(u8, value),
+        .browser_run_retention_hours => cfg.browser_run_retention_hours = parsePositiveU32(value) orelse return,
         .hostinger_api_token => cfg.hostinger_api_token = try arena.dupe(u8, value),
+        .hostinger_api_base => cfg.hostinger_api_base = try arena.dupe(u8, value),
         .auth_origin => cfg.auth_origin = try arena.dupe(u8, value),
         .auth_rp_id => cfg.auth_rp_id = try arena.dupe(u8, value),
-        .apps_root => cfg.apps_root = try arena.dupe(u8, value),
-        .port_range => {
-            const dash = std.mem.indexOfScalar(u8, value, '-') orelse return;
-            cfg.port_min = std.fmt.parseInt(u16, trim(value[0..dash]), 10) catch return;
-            cfg.port_max = std.fmt.parseInt(u16, trim(value[dash + 1 ..]), 10) catch return;
-        },
         .refresh_seconds => cfg.refresh_seconds = std.fmt.parseInt(u32, value, 10) catch return,
         .storage_auto_prune => cfg.storage_auto_prune = parseBool(value) orelse return,
+        .storage_backup_root => cfg.storage_backup_root = try arena.dupe(u8, value),
+        .storage_disk_budget_bytes => cfg.storage_disk_budget_bytes = std.fmt.parseInt(u64, value, 10) catch return,
         .snapshot_retention_days => cfg.snapshot_retention_days = parsePositiveU32(value) orelse return,
         .provider_raw_retention_days => cfg.provider_raw_retention_days = parsePositiveU32(value) orelse return,
         .metrics_retention_days => cfg.metrics_retention_days = parsePositiveU32(value) orelse return,
@@ -374,7 +412,11 @@ fn applyNobPathDefaults(arena: Allocator, cfg: *Config, env: *std.process.Enviro
     else
         null;
 
-    if (state_base) |path| cfg.nob_state_root = try std.fmt.allocPrint(arena, "{s}/cloudio/nob/operations", .{path});
+    if (state_base) |path| {
+        cfg.storage_backup_root = try std.fmt.allocPrint(arena, "{s}/cloudio/backups", .{path});
+        cfg.browser_run_state_root = try std.fmt.allocPrint(arena, "{s}/cloudio/browser-run", .{path});
+        cfg.nob_state_root = try std.fmt.allocPrint(arena, "{s}/cloudio/nob/operations", .{path});
+    }
     if (cache_base) |path| cfg.nob_cache_root = try std.fmt.allocPrint(arena, "{s}/cloudio/nob/runners", .{path});
     if (config_base) |path| cfg.nob_toolchains_file = try std.fmt.allocPrint(arena, "{s}/cloudio/nob/toolchains.json", .{path});
 }
@@ -433,6 +475,22 @@ fn parseList(arena: Allocator, value: []const u8) ![]const []const u8 {
     return try list.toOwnedSlice(arena);
 }
 
+fn parseOptionalList(arena: Allocator, value: []const u8) ![]const []const u8 {
+    var list = std.ArrayList([]const u8).empty;
+    errdefer list.deinit(arena);
+    var start: usize = 0;
+    for (value, 0..) |ch, idx| {
+        if (ch == ',' or ch == ';' or ch == '|' or ch == '\n' or ch == ' ' or ch == '\t') {
+            const item = trim(value[start..idx]);
+            if (item.len > 0) try list.append(arena, try arena.dupe(u8, item));
+            start = idx + 1;
+        }
+    }
+    const item = trim(value[start..]);
+    if (item.len > 0) try list.append(arena, try arena.dupe(u8, item));
+    return try list.toOwnedSlice(arena);
+}
+
 fn readFileMaybe(io: Io, allocator: Allocator, path: []const u8, max_bytes: usize) !?[]u8 {
     return Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(max_bytes)) catch |err| switch (err) {
         error.FileNotFound => return null,
@@ -486,22 +544,17 @@ test "parse list supports mixed separators" {
     try std.testing.expectEqualStrings("sparkdate.love", list[1]);
 }
 
-test "config parser reads platform and passkey settings" {
+test "config parser reads refresh and passkey settings" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var cfg = Config{ .domains = try parseList(arena.allocator(), "plosca.ru") };
     try applyConfigText(arena.allocator(), &cfg,
         \\[platform]
-        \\apps_root = "/srv/apps"
-        \\port_range = "43000-43100"
         \\refresh_seconds = 60
         \\[auth]
         \\origin = "https://cloudio.example.com"
         \\rp_id = "cloudio.example.com"
     );
-    try std.testing.expectEqualStrings("/srv/apps", cfg.apps_root);
-    try std.testing.expectEqual(@as(u16, 43000), cfg.port_min);
-    try std.testing.expectEqual(@as(u16, 43100), cfg.port_max);
     try std.testing.expectEqual(@as(u32, 60), cfg.refresh_seconds);
     try std.testing.expectEqualStrings("https://cloudio.example.com", cfg.auth_origin);
     try std.testing.expectEqualStrings("cloudio.example.com", cfg.auth_rp_id);
@@ -514,6 +567,8 @@ test "config parser reads storage lifecycle settings" {
     try applyConfigText(arena.allocator(), &cfg,
         \\[storage]
         \\auto_prune = true
+        \\backup_root = "/var/backups/cloudio"
+        \\disk_budget_bytes = 1073741824
         \\snapshot_retention_days = 21
         \\provider_raw_retention_days = 10
         \\metrics_retention_days = 45
@@ -521,11 +576,30 @@ test "config parser reads storage lifecycle settings" {
         \\maintenance_batch_rows = 2500
     );
     try std.testing.expect(cfg.storage_auto_prune);
+    try std.testing.expectEqualStrings("/var/backups/cloudio", cfg.storage_backup_root);
+    try std.testing.expectEqual(@as(u64, 1073741824), cfg.storage_disk_budget_bytes);
     try std.testing.expectEqual(@as(u32, 21), cfg.snapshot_retention_days);
     try std.testing.expectEqual(@as(u32, 10), cfg.provider_raw_retention_days);
     try std.testing.expectEqual(@as(u32, 45), cfg.metrics_retention_days);
     try std.testing.expectEqual(@as(u32, 12), cfg.maintenance_interval_hours);
     try std.testing.expectEqual(@as(u32, 2500), cfg.maintenance_batch_rows);
+}
+
+test "config parser reads Browser Run destination and retention policy" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var cfg = Config{ .domains = try parseList(arena.allocator(), "plosca.ru") };
+    try applyConfigText(arena.allocator(), &cfg,
+        \\[browser_run]
+        \\allowed_hosts = "example.com,*.example.org"
+        \\state_root = "/var/lib/cloudio/browser-run"
+        \\retention_hours = 12
+    );
+    try std.testing.expectEqual(@as(usize, 2), cfg.browser_run_allowed_hosts.len);
+    try std.testing.expectEqualStrings("example.com", cfg.browser_run_allowed_hosts[0]);
+    try std.testing.expectEqualStrings("*.example.org", cfg.browser_run_allowed_hosts[1]);
+    try std.testing.expectEqualStrings("/var/lib/cloudio/browser-run", cfg.browser_run_state_root);
+    try std.testing.expectEqual(@as(u32, 12), cfg.browser_run_retention_hours);
 }
 
 test "config parser reads bounded nob control-plane settings" {
@@ -575,6 +649,8 @@ test "nob storage defaults follow XDG locations" {
     var cfg = Config{ .domains = try parseList(arena.allocator(), "plosca.ru") };
     try applyNobPathDefaults(arena.allocator(), &cfg, &env);
     try std.testing.expectEqualStrings("/state/cloudio/nob/operations", cfg.nob_state_root);
+    try std.testing.expectEqualStrings("/state/cloudio/browser-run", cfg.browser_run_state_root);
+    try std.testing.expectEqualStrings("/state/cloudio/backups", cfg.storage_backup_root);
     try std.testing.expectEqualStrings("/cache/cloudio/nob/runners", cfg.nob_cache_root);
     try std.testing.expectEqualStrings("/config/cloudio/nob/toolchains.json", cfg.nob_toolchains_file);
 }
@@ -605,11 +681,13 @@ test "config parser reads provider settings" {
         \\api_token = "token"
         \\[hostinger]
         \\api_token = "hapi"
+        \\api_base = "http://127.0.0.1:19333"
     );
     try std.testing.expectEqualStrings(".cloudio/test.db", cfg.db_path);
     try std.testing.expectEqual(@as(usize, 2), cfg.domains.len);
     try std.testing.expect(cfg.hasCloudflareAuth());
     try std.testing.expect(cfg.hasHostingerAuth());
+    try std.testing.expectEqualStrings("http://127.0.0.1:19333", cfg.hostinger_api_base);
 }
 
 test "config parser reads path and project settings through shared bindings" {
@@ -619,11 +697,13 @@ test "config parser reads path and project settings through shared bindings" {
     try applyConfigText(arena.allocator(), &cfg,
         \\caddyfile_path = "/tmp/Caddyfile"
         \\caddy_sites_path = "/tmp/sites.caddy"
+        \\caddy_owned_path = "/tmp/cloudio.caddy"
         \\caddy_admin_socket = "/tmp/admin.sock"
         \\projects_root = "/srv/projects"
     );
     try std.testing.expectEqualStrings("/tmp/Caddyfile", cfg.caddyfile_path);
     try std.testing.expectEqualStrings("/tmp/sites.caddy", cfg.caddy_sites_path);
+    try std.testing.expectEqualStrings("/tmp/cloudio.caddy", cfg.caddy_owned_path);
     try std.testing.expectEqualStrings("/tmp/admin.sock", cfg.caddy_admin_socket);
     try std.testing.expectEqualStrings("/srv/projects", cfg.projects_root);
 }
@@ -685,6 +765,18 @@ test "process env parser uses shared aliases with later aliases taking precedenc
     try std.testing.expectEqualStrings("one.example", cfg.domains[0]);
     try std.testing.expectEqualStrings("cf-token", cfg.cloudflare_api_token.?);
     try std.testing.expectEqualStrings("hostinger-alias", cfg.hostinger_api_token.?);
+}
+
+test "process environment can disable implicit env files for isolated runs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var env = std.process.Environ.Map.init(arena.allocator());
+    defer env.deinit();
+    try std.testing.expect(!envFilesDisabled(&env));
+    try env.put("CLOUDIO_DISABLE_ENV_FILES", "1");
+    try std.testing.expect(envFilesDisabled(&env));
+    try env.put("CLOUDIO_DISABLE_ENV_FILES", "false");
+    try std.testing.expect(!envFilesDisabled(&env));
 }
 
 test "fish env parser reads set exports" {

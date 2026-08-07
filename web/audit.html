@@ -6,11 +6,10 @@
   <title>Audit · Cloudio</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script defer src="/assets/app.js"></script>
-  <script defer src="/assets/pages/audit.js"></script>
 </head>
 <body>
   <main id="page-content">
-    <p class="page-intro">Review control-plane mutations, their actor, result, request detail, and idempotency identity.</p>
+    <p class="page-intro">Review operator mutations and important control-plane failures from one redacted history.</p>
 
     <section class="panel" aria-labelledby="audit-filters-title">
       <div class="panel-header">
@@ -18,6 +17,55 @@
       </div>
       <div class="panel-body">
         <form class="toolbar" method="get" action="/audit.html">
+          <div class="field">
+            <label for="audit-view">Entries</label>
+            <select id="audit-view" name="view">
+              <option value="important" selected>Mutations and failures</option>
+              <option value="all">All events</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="audit-category">Category</label>
+            <select id="audit-category" name="category">
+              <option value="" selected>All categories</option>
+              <option value="dashboard">Dashboard</option>
+              <option value="projects">Projects</option>
+              <option value="routes">Routes</option>
+              <option value="dns">DNS</option>
+              <option value="browser">Browser</option>
+              <option value="vps">VPS</option>
+              <option value="docker">Docker</option>
+              <option value="security">Security</option>
+              <option value="settings">Settings</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="audit-result">Result</label>
+            <select id="audit-result" name="result">
+              <option value="all" selected>All results</option>
+              <option value="success">Success</option>
+              <option value="failure">Failure</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="audit-window">Window</label>
+            <select id="audit-window" name="window">
+              <option value="1h">1 hour</option>
+              <option value="24h" selected>24 hours</option>
+              <option value="7d">7 days</option>
+              <option value="30d">30 days</option>
+              <option value="all">All time</option>
+            </select>
+          </div>
+          <div class="field field-grow">
+            <label for="audit-target">Target contains</label>
+            <input id="audit-target" name="target" type="text" autocomplete="off">
+          </div>
+          <div class="field field-grow">
+            <label for="audit-actor">Actor contains</label>
+            <input id="audit-actor" name="actor" type="text" autocomplete="off">
+          </div>
           <div class="field">
             <label for="audit-limit">Limit</label>
             <select id="audit-limit" name="limit">
@@ -28,11 +76,6 @@
             </select>
           </div>
           <button id="reload-audit" type="submit">Reload entries</button>
-          <label class="field-inline" for="audit-auto">
-            <input id="audit-auto" type="checkbox">
-            Auto-refresh every 10s
-          </label>
-          <span id="audit-updated" class="toolbar-meta" aria-live="polite"></span>
         </form>
       </div>
     </section>
@@ -45,7 +88,7 @@
         <span id="audit-count" class="muted" aria-live="polite"></span>
       </div>
       <div class="table-scroll">
-        <table>
+        <table class="responsive-table">
           <thead>
             <tr>
               <th scope="col">Time</th>
@@ -57,7 +100,7 @@
             </tr>
           </thead>
           <tbody id="audit-body">
-            <tr><td class="empty-state loading-state" colspan="6">Loading audit entries…</td></tr>
+            <tr><td class="empty-state" colspan="6">No entries match this view.</td></tr>
           </tbody>
         </table>
       </div>

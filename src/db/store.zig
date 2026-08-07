@@ -6,12 +6,14 @@ const helpers = @import("helpers.zig");
 const connection = @import("connection.zig");
 const auth_repository = @import("repositories/auth.zig");
 const nob_repository = @import("repositories/nob.zig");
+const browser_run_repository = @import("repositories/browser_run.zig");
 const nob_model = @import("nob_model");
 
 pub const Db = connection.Db;
 pub const DbError = models.DbError;
 pub const SnapshotSummary = models.SnapshotSummary;
 pub const SnapshotSummaries = models.SnapshotSummaries;
+pub const Observation = models.Observation;
 pub const NameValueRow = models.NameValueRow;
 pub const NameValueRows = models.NameValueRows;
 pub const InventoryFilter = models.InventoryFilter;
@@ -105,6 +107,10 @@ pub const NobManagedUnitUpdate = nob_repository.ManagedUnitUpdate;
 pub const NobSecretBinding = nob_model.SecretBinding;
 pub const NobSecretBindings = nob_model.SecretBindings;
 pub const NobSecretBindingUpdate = nob_repository.SecretBindingUpdate;
+pub const BrowserRun = browser_run_repository.Run;
+pub const BrowserRuns = browser_run_repository.Runs;
+pub const NewBrowserRun = browser_run_repository.NewRun;
+pub const BrowserRunFinish = browser_run_repository.Finish;
 
 test "sqlite schema initializes" {
     const allocator = std.testing.allocator;

@@ -6,37 +6,52 @@
   <title>DNS · Cloudio</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script defer src="/assets/app.js"></script>
-  <script defer src="/assets/pages/dns.js"></script>
 </head>
 <body>
   <main id="page-content">
-    <p class="page-intro">Inspect and manage Cloudflare DNS records and the zone settings Cloudio uses for public traffic.</p>
+    <p class="page-intro">View and manage records in explicitly configured Cloudflare zones. Records remain read-only until a current provider observation confirms the exact zone.</p>
+
+    <div id="dns-notice" class="notice hidden" aria-live="polite"></div>
 
     <section class="panel" aria-labelledby="dns-zone-title">
       <div class="panel-header">
-        <h2 id="dns-zone-title">Zone</h2>
+        <div>
+          <h2 id="dns-zone-title">Zone observation</h2>
+          <p id="dns-source-note">No zone selected.</p>
+        </div>
+        <span id="dns-freshness" class="status">Unavailable</span>
       </div>
-      <div class="panel-body">
+      <div class="panel-body stack">
         <form id="domain-form" class="toolbar" method="get" action="/dns.html">
           <div class="field field-grow">
-            <label for="domain">Domain</label>
-            <input id="domain" name="domain" type="text" placeholder="example.com" required autocomplete="off">
+            <label for="domain">Configured zone</label>
+            <select id="domain" name="domain" required>
+              <option value="" selected>No configured zones</option>
+            </select>
           </div>
-          <button id="load-domain" type="submit">Load records</button>
-          <span id="source-note" class="toolbar-meta"></span>
+          <button id="load-domain" type="submit">View zone</button>
+        </form>
+        <dl class="kv-list compact-kv">
+          <div class="kv-row"><dt>Last good observation</dt><dd id="dns-observed-at" class="mono">Never</dd></div>
+          <div class="kv-row"><dt>Latest attempt</dt><dd id="dns-attempt" class="mono">Not run</dd></div>
+        </dl>
+        <p id="dns-capability" class="muted">Refresh a configured zone before changing records.</p>
+        <form id="dns-refresh-form" class="cluster" method="post" action="/dns/refresh">
+          <input id="dns-refresh-domain" name="domain" type="hidden" value="">
+          <input id="dns-refresh-csrf" name="csrf_token" type="hidden" value="">
+          <input id="dns-refresh-idempotency" name="idempotency_key" type="hidden" value="">
+          <button class="button-primary" type="submit" disabled>Refresh zone</button>
         </form>
       </div>
     </section>
 
-    <div id="dns-notice" class="notice hidden" aria-live="polite"></div>
-
     <section class="panel" aria-labelledby="records-title">
       <div class="panel-header">
         <h2 id="records-title">Records</h2>
-        <span id="record-count" class="muted" aria-live="polite"></span>
+        <span id="record-count" class="muted" aria-live="polite">0 records</span>
       </div>
       <div class="table-scroll">
-        <table>
+        <table class="responsive-table">
           <thead>
             <tr>
               <th scope="col">Type</th>
@@ -48,7 +63,7 @@
             </tr>
           </thead>
           <tbody id="records-body">
-            <tr><td class="empty-state loading-state" colspan="6">Loading DNS records…</td></tr>
+            <tr><td class="empty-state" colspan="6">No DNS records observed.</td></tr>
           </tbody>
         </table>
       </div>
@@ -56,83 +71,57 @@
 
     <section class="panel" id="add-record-panel" aria-labelledby="add-record-title">
       <div class="panel-header">
-        <h2 id="add-record-title">Add record</h2>
+        <div>
+          <h2 id="add-record-title">Add record</h2>
+          <p>Supported record types are A, AAAA, CNAME, and TXT.</p>
+        </div>
       </div>
       <div class="panel-body">
-        <form id="add-record-form" class="form-grid">
+        <form id="add-record-form" class="form-grid" method="post" action="/dns/record">
+          <input id="dns-create-action" name="action" type="hidden" value="create">
+          <input id="dns-create-domain" name="domain" type="hidden" value="">
+          <input id="dns-create-csrf" name="csrf_token" type="hidden" value="">
+          <input id="dns-create-idempotency" name="idempotency_key" type="hidden" value="">
           <div class="field span-2">
             <label for="record-type">Type</label>
-            <select id="record-type" name="type">
-              <option>A</option>
-              <option>AAAA</option>
-              <option>CNAME</option>
-              <option>TXT</option>
-              <option>MX</option>
+            <select id="record-type" name="type" disabled>
+              <option value="A" selected>A</option>
+              <option value="AAAA">AAAA</option>
+              <option value="CNAME">CNAME</option>
+              <option value="TXT">TXT</option>
             </select>
           </div>
           <div class="field span-3">
             <label for="record-name">Name</label>
-            <input id="record-name" name="name" type="text" placeholder="www" required autocomplete="off">
+            <input id="record-name" name="name" type="text" placeholder="www or @" required autocomplete="off" disabled>
           </div>
           <div class="field span-4">
             <label for="record-content">Content</label>
-            <input id="record-content" name="content" type="text" placeholder="192.0.2.10" required autocomplete="off">
+            <input id="record-content" name="content" type="text" required autocomplete="off" disabled>
           </div>
           <div class="field span-2">
             <label for="record-ttl">TTL</label>
-            <input id="record-ttl" name="ttl" type="number" value="1" min="1">
+            <input id="record-ttl" name="ttl" type="number" value="1" min="1" max="86400" required disabled>
           </div>
           <label class="field-inline" for="record-proxied">
-            <input id="record-proxied" name="proxied" type="checkbox">
+            <input id="record-proxied" name="proxied" type="checkbox" value="1" disabled>
             Proxied
           </label>
           <div class="span-12 cluster">
-            <button id="add-record" class="button-primary" type="submit">Add record</button>
-            <span id="record-status" class="status-message" aria-live="polite"></span>
+            <button id="add-record" class="button-primary" type="submit" disabled>Add record</button>
           </div>
         </form>
       </div>
     </section>
 
-    <section class="panel" aria-labelledby="zone-tools-title">
-      <div class="panel-header">
-        <div>
-          <h2 id="zone-tools-title">Zone tools</h2>
-          <p>Apply focused settings to the loaded zone.</p>
-        </div>
-      </div>
-      <div class="panel-body stack">
-        <div class="toolbar">
-          <div class="field">
-            <span class="field-label">Cache</span>
-            <button id="purge-cache" class="button-danger" type="button">Purge entire cache</button>
-          </div>
-          <span id="purge-status" class="status-message" aria-live="polite"></span>
-        </div>
-        <div class="toolbar">
-          <div class="field">
-            <label for="ssl-mode">SSL mode</label>
-            <select id="ssl-mode">
-              <option value="off">Off</option>
-              <option value="flexible">Flexible</option>
-              <option value="full">Full</option>
-              <option value="strict">Strict</option>
-            </select>
-          </div>
-          <button id="apply-ssl" type="button">Apply SSL mode</button>
-          <span id="ssl-status" class="status-message" aria-live="polite"></span>
-        </div>
-        <div class="toolbar">
-          <div class="field">
-            <span class="field-label">Always use HTTPS</span>
-            <div class="cluster">
-              <button id="https-on" type="button">Enable</button>
-              <button id="https-off" type="button">Disable</button>
-            </div>
-          </div>
-          <span id="https-status" class="status-message" aria-live="polite"></span>
-        </div>
-      </div>
+    <section id="edit-record-panel" class="panel hidden" aria-labelledby="edit-record-title">
+      <div class="panel-header"><h2 id="edit-record-title">Edit record</h2></div>
+      <div id="edit-record-body" class="panel-body"></div>
+    </section>
+
+    <section id="delete-record-panel" class="panel hidden" aria-labelledby="delete-record-title">
+      <div class="panel-header"><h2 id="delete-record-title">Confirm record deletion</h2></div>
+      <div id="delete-record-body" class="panel-body"></div>
     </section>
   </main>
 </body>

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browser Run · Cloudio</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <main id="page-content">
+    <p class="page-intro">Run bounded, one-shot page renders with Cloudflare Kitesurf. Kitesurf is a beta, agent-oriented browser engine and is not a pixel-compatible Chromium replacement.</p>
+
+    <div id="browser-notice" class="notice hidden" aria-live="polite"></div>
+
+    <section class="panel" aria-labelledby="browser-capability-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="browser-capability-title">Capability</h2>
+          <p>Availability is derived from configured policy and observed Cloudflare accounts.</p>
+        </div>
+        <span id="browser-capability-status" class="status">Unavailable</span>
+      </div>
+      <div class="panel-body stack">
+        <dl class="kv-list compact-kv">
+          <div class="kv-row"><dt>Engine</dt><dd><span class="badge">Kitesurf · Beta</span></dd></div>
+          <div class="kv-row"><dt>API token</dt><dd id="browser-token-status">Not configured</dd></div>
+          <div class="kv-row"><dt>Destinations</dt><dd id="browser-destinations" class="mono breakable">None configured</dd></div>
+          <div class="kv-row"><dt>Artifact retention</dt><dd id="browser-retention">24 hours</dd></div>
+        </dl>
+        <p id="browser-capability-reason" class="muted">Configure Browser Run before submitting an action.</p>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="browser-run-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="browser-run-title">Run a page</h2>
+          <p>Only the URL is sent. Cloudio does not accept cookies, credentials, custom headers, or inline HTML.</p>
+        </div>
+      </div>
+      <div class="panel-body">
+        <form id="browser-run-form" class="form-grid" method="post" action="/browser/run">
+          <input id="browser-run-csrf" name="csrf_token" type="hidden" value="">
+          <input id="browser-run-idempotency" name="idempotency_key" type="hidden" value="">
+          <div class="field span-4">
+            <label for="browser-account">Observed account</label>
+            <select id="browser-account" name="account_id" required disabled>
+              <option value="" selected>No observed accounts</option>
+            </select>
+          </div>
+          <div class="field span-8">
+            <label for="browser-url">Public URL</label>
+            <input id="browser-url" name="url" type="url" inputmode="url" placeholder="https://example.com/page" maxlength="4096" autocomplete="off" required disabled>
+          </div>
+          <div class="span-12 cluster">
+            <button id="browser-content-submit" class="button-primary" type="submit" name="action" value="content" disabled>Render HTML</button>
+            <button id="browser-screenshot-submit" type="submit" name="action" value="screenshot" disabled>Capture screenshot</button>
+            <span class="muted">A run can take up to 60 seconds. There is no automatic retry or Chromium fallback.</span>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="browser-result-panel" class="panel hidden" aria-labelledby="browser-result-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="browser-result-title">Run result</h2>
+          <p id="browser-result-summary">No run selected.</p>
+        </div>
+        <span id="browser-result-status" class="status">Unknown</span>
+      </div>
+      <div class="panel-body stack">
+        <dl class="kv-list compact-kv">
+          <div class="kv-row"><dt>Target</dt><dd id="browser-result-target" class="mono breakable">—</dd></div>
+          <div class="kv-row"><dt>Output</dt><dd id="browser-result-action">—</dd></div>
+          <div class="kv-row"><dt>Origin status</dt><dd id="browser-result-origin" class="mono">—</dd></div>
+          <div class="kv-row"><dt>Artifact</dt><dd id="browser-result-size">—</dd></div>
+          <div class="kv-row"><dt>Browser usage</dt><dd id="browser-result-usage">—</dd></div>
+          <div class="kv-row"><dt>CF-Ray</dt><dd id="browser-result-ray" class="mono breakable">—</dd></div>
+          <div class="kv-row"><dt>SHA-256</dt><dd id="browser-result-sha" class="mono breakable">—</dd></div>
+          <div class="kv-row"><dt>Expires</dt><dd id="browser-result-expiry" class="mono">—</dd></div>
+        </dl>
+        <div id="browser-result-output"></div>
+        <p class="muted">Rendered pages are untrusted external content. Cloudio never executes returned HTML or passes it to an agent automatically.</p>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="browser-recent-title">
+      <div class="panel-header">
+        <h2 id="browser-recent-title">Recent runs</h2>
+        <span id="browser-run-count" class="muted">0 runs</span>
+      </div>
+      <div class="table-scroll">
+        <table class="responsive-table">
+          <thead>
+            <tr>
+              <th scope="col">Started</th>
+              <th scope="col">Action</th>
+              <th scope="col">Target</th>
+              <th scope="col">Result</th>
+              <th scope="col">Usage</th>
+              <th scope="col">Artifact</th>
+            </tr>
+          </thead>
+          <tbody id="browser-runs-body">
+            <tr><td class="empty-state" colspan="6">No Browser Run results yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

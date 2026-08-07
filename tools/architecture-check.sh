@@ -107,11 +107,6 @@ check_no_matches \
     src/cli
 
 check_no_matches \
-    "CLI modules must not import the public cloudio embedding facade" \
-    '@import\("cloudio"\)' \
-    src/cli
-
-check_no_matches \
     "CLI output format enums must reuse cli_render.RenderFormat" \
     '(RenderFormat|OverviewFormat) = enum' \
     src/cli/root.zig src/cli/coverage.zig src/cli/inventory.zig
@@ -130,11 +125,6 @@ check_no_matches \
     "coverage and inventory CLI output must use cli_render render helpers" \
     'Writer\.Allocating\.init\(ctx\.gpa\)' \
     src/cli/coverage.zig src/cli/inventory.zig
-
-check_no_matches \
-    "public cloudio facade must not expose collector internals" \
-    '@import\("(collector_[^"]+)"\)|pub const collectors' \
-    src/cloudio.zig
 
 check_no_matches \
     "SQLite schema DDL belongs in src/db/schema.zig, not src/db/store.zig" \

@@ -1,0 +1,130 @@
+{
+  "schema": "nob.zig/manifest/v1",
+  "project": {
+    "id": "dev.cloudio.acceptance",
+    "display_name": "Cloudio acceptance project",
+    "kind": "service",
+    "description": "Hermetic lifecycle fixture for the Projects control plane"
+  },
+  "runner": {
+    "kind": "zig-build",
+    "protocol": { "major": 1, "minor": 0 }
+  },
+  "resources": [
+    {
+      "id": "workspace",
+      "kind": "data.path",
+      "label": "Project workspace",
+      "ownership": "managed",
+      "controls": [],
+      "spec": {
+        "path": "${PROJECT_ROOT}",
+        "classification": "persistent",
+        "backup_policy": "none",
+        "purge": "never"
+      }
+    },
+    {
+      "id": "observed-service",
+      "kind": "systemd.service",
+      "label": "Observed service",
+      "ownership": "observed",
+      "controls": [],
+      "spec": {
+        "scope": "user",
+        "unit": "cloudio-acceptance-observed.service",
+        "desired": { "active": true }
+      }
+    },
+    {
+      "id": "system-service",
+      "kind": "systemd.service",
+      "label": "System service",
+      "ownership": "managed",
+      "controls": ["start", "logs"],
+      "spec": {
+        "scope": "system",
+        "unit": "cloudio-acceptance-system.service",
+        "desired": { "active": true }
+      }
+    },
+    {
+      "id": "user-service",
+      "kind": "systemd.service",
+      "label": "User service behind kill switch",
+      "ownership": "managed",
+      "controls": ["start"],
+      "spec": {
+        "scope": "user",
+        "unit": "cloudio-acceptance-user.service",
+        "desired": { "active": true }
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "check",
+      "label": "Check fixture",
+      "description": "Emit retained progress and a result artifact",
+      "executor": "runner",
+      "effect": "workspace-write",
+      "confirmation": "review-plan",
+      "source_policy": "any",
+      "timeout_seconds": 60,
+      "rollback": "none",
+      "affects": ["workspace"],
+      "parameters": [
+        { "name": "channel", "type": "enum", "required": true, "values": ["fast", "full"] },
+        { "name": "attempts", "type": "integer", "required": false, "default": 1, "minimum": 1, "maximum": 3 },
+        { "name": "note", "type": "string", "required": false, "min_length": 1, "max_length": 40 }
+      ]
+    },
+    {
+      "id": "fail",
+      "label": "Intentional failure",
+      "description": "Return a valid terminal failure for acceptance coverage",
+      "executor": "runner",
+      "effect": "workspace-write",
+      "confirmation": "review-plan",
+      "source_policy": "any",
+      "timeout_seconds": 60,
+      "rollback": "none",
+      "affects": ["workspace"],
+      "parameters": []
+    },
+    {
+      "id": "slow",
+      "label": "Cancelable work",
+      "description": "Wait long enough for cancellation while retaining an artifact",
+      "executor": "runner",
+      "effect": "workspace-write",
+      "confirmation": "review-plan",
+      "source_policy": "any",
+      "timeout_seconds": 60,
+      "rollback": "none",
+      "affects": ["workspace"],
+      "parameters": []
+    },
+    {
+      "id": "secret-check",
+      "label": "Use logical secret",
+      "description": "Verify a delivered secret without logging its value",
+      "executor": "runner",
+      "effect": "read-only",
+      "confirmation": "review-plan",
+      "source_policy": "any",
+      "timeout_seconds": 60,
+      "rollback": "none",
+      "affects": [],
+      "parameters": []
+    }
+  ],
+  "secrets": [
+    {
+      "id": "fixture-token",
+      "purpose": "Acceptance-only logical token",
+      "required_for": ["secret-check"],
+      "delivery": "file"
+    }
+  ]
+}

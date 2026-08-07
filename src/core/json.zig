@@ -75,13 +75,25 @@ pub fn writeString(writer: anytype, value: []const u8) !void {
         switch (ch) {
             '\\' => try writer.writeAll("\\\\"),
             '"' => try writer.writeAll("\\\""),
+            '\x08' => try writer.writeAll("\\b"),
+            '\x0c' => try writer.writeAll("\\f"),
             '\n' => try writer.writeAll("\\n"),
             '\r' => try writer.writeAll("\\r"),
             '\t' => try writer.writeAll("\\t"),
-            else => try writer.writeByte(ch),
+            else => if (ch < 0x20)
+                try writer.print("\\u00{x:0>2}", .{ch})
+            else
+                try writer.writeByte(ch),
         }
     }
     try writer.writeByte('"');
+}
+
+test "writeString escapes every JSON control byte" {
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try writeString(&output.writer, "a\x00\x01\x08\x0c\n\rb");
+    try std.testing.expectEqualStrings("\"a\\u0000\\u0001\\b\\f\\n\\rb\"", output.written());
 }
 
 pub fn writeStringField(writer: anytype, name: []const u8, value: []const u8, trailing_comma: bool) !void {

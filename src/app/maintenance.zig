@@ -15,6 +15,11 @@ const Db = db_store.Db;
 const Io = std.Io;
 
 pub const Policy = struct {
+    scheduled_retention_enabled: bool = false,
+    database_path: []const u8 = ".cloudio/cloudio.db",
+    backup_root: []const u8 = ".cloudio/backups",
+    disk_budget_bytes: u64 = 0,
+    log_path: []const u8 = ".cloudio/latest-run.log",
     snapshot_days: u32 = 14,
     provider_raw_days: u32 = 14,
     metrics_days: u32 = 30,
@@ -22,10 +27,16 @@ pub const Policy = struct {
     nob_operation_days: u32 = 30,
     nob_min_operations_per_project: u16 = 20,
     nob_state_root: []const u8 = ".cloudio/nob/operations",
+    nob_cache_root: []const u8 = ".cloudio/nob/runners",
     batch_rows: u32 = 5000,
 
     pub fn fromConfig(config: core_config.Config) Policy {
         return .{
+            .scheduled_retention_enabled = config.storage_auto_prune,
+            .database_path = config.db_path,
+            .backup_root = config.storage_backup_root,
+            .disk_budget_bytes = config.storage_disk_budget_bytes,
+            .log_path = config.log_path,
             .snapshot_days = config.snapshot_retention_days,
             .provider_raw_days = config.provider_raw_retention_days,
             .metrics_days = config.metrics_retention_days,
@@ -33,6 +44,7 @@ pub const Policy = struct {
             .nob_operation_days = config.nob_operation_retention_days,
             .nob_min_operations_per_project = config.nob_min_operations_per_project,
             .nob_state_root = config.nob_state_root,
+            .nob_cache_root = config.nob_cache_root,
             .batch_rows = config.maintenance_batch_rows,
         };
     }
@@ -49,6 +61,11 @@ pub const TableStats = struct {
     eligible: i64 = 0,
 };
 
+pub const FileInventory = struct {
+    files: i64 = 0,
+    bytes: i64 = 0,
+};
+
 pub const Stats = struct {
     snapshots: TableStats = .{},
     provider_raw: TableStats = .{},
@@ -59,6 +76,14 @@ pub const Stats = struct {
     page_size: i64 = 0,
     page_count: i64 = 0,
     freelist_pages: i64 = 0,
+    database_file_bytes: i64 = 0,
+    wal_bytes: i64 = 0,
+    shm_bytes: i64 = 0,
+    log_bytes: i64 = 0,
+    backups: FileInventory = .{},
+    nob_operation_state: FileInventory = .{},
+    nob_runner_cache: FileInventory = .{},
+    disk_budget_bytes: i64 = 0,
 
     pub fn databaseBytes(self: Stats) i64 {
         return self.page_size * self.page_count;
@@ -66,6 +91,32 @@ pub const Stats = struct {
 
     pub fn reclaimableBytes(self: Stats) i64 {
         return self.page_size * self.freelist_pages;
+    }
+
+    pub fn managedBytes(self: Stats) i64 {
+        var total = self.database_file_bytes;
+        total +|= self.wal_bytes;
+        total +|= self.shm_bytes;
+        total +|= self.log_bytes;
+        total +|= self.backups.bytes;
+        total +|= self.nob_operation_state.bytes;
+        total +|= self.nob_runner_cache.bytes;
+        return total;
+    }
+
+    /// A maintenance run writes one verified database backup before VACUUM,
+    /// which may itself need another database-sized temporary file. The WAL is
+    /// included so the recommendation remains useful during active writes.
+    pub fn maintenanceHeadroomBytes(self: Stats) i64 {
+        const database = @max(self.database_file_bytes, self.databaseBytes());
+        return (database *| 2) +| self.wal_bytes;
+    }
+
+    pub fn budgetWarning(self: Stats) bool {
+        if (self.disk_budget_bytes <= 0) return false;
+        const warning_threshold = self.disk_budget_bytes - @divTrunc(self.disk_budget_bytes, 5);
+        return self.managedBytes() >= warning_threshold or
+            self.managedBytes() +| self.maintenanceHeadroomBytes() > self.disk_budget_bytes;
     }
 };
 
@@ -134,10 +185,13 @@ pub const Error = error{
     SqliteStep,
     NobStateRootUnsafe,
     NobOperationStatePathUnsafe,
+    StorageRootUnsafe,
+    StorageInventoryTooLarge,
+    ScheduledRetentionDisabled,
 };
 
 pub fn execute(ctx: Context, policy: Policy, options: Options) !Result {
-    const before = try inspect(ctx.db, policy);
+    const before = try inspect(ctx, policy);
     var result = Result{
         .operation = options.operation,
         .applied = options.apply,
@@ -171,12 +225,13 @@ pub fn execute(ctx: Context, policy: Policy, options: Options) !Result {
         try compact(ctx.db);
         result.compacted = true;
     }
-    result.after = try inspect(ctx.db, policy);
+    result.after = try inspect(ctx, policy);
     return result;
 }
 
-pub fn inspect(db: *Db, policy: Policy) !Stats {
-    return .{
+pub fn inspect(ctx: Context, policy: Policy) !Stats {
+    const db = ctx.db;
+    var stats = Stats{
         .snapshots = try tableStats(
             db,
             "SELECT COUNT(*) FROM snapshots",
@@ -207,6 +262,26 @@ pub fn inspect(db: *Db, policy: Policy) !Stats {
         .page_count = try scalar(db, "PRAGMA page_count"),
         .freelist_pages = try scalar(db, "PRAGMA freelist_count"),
     };
+    stats.database_file_bytes = try fileBytes(ctx.io, policy.database_path);
+    const wal_path = try std.fmt.allocPrint(ctx.gpa, "{s}-wal", .{policy.database_path});
+    defer ctx.gpa.free(wal_path);
+    stats.wal_bytes = try fileBytes(ctx.io, wal_path);
+    const shm_path = try std.fmt.allocPrint(ctx.gpa, "{s}-shm", .{policy.database_path});
+    defer ctx.gpa.free(shm_path);
+    stats.shm_bytes = try fileBytes(ctx.io, shm_path);
+    stats.log_bytes = try fileBytes(ctx.io, policy.log_path);
+    stats.backups = try inventory(ctx, policy.backup_root);
+    stats.nob_operation_state = try inventory(ctx, policy.nob_state_root);
+    stats.nob_runner_cache = try inventory(ctx, policy.nob_cache_root);
+    stats.disk_budget_bytes = @intCast(@min(policy.disk_budget_bytes, @as(u64, std.math.maxInt(i64))));
+    return stats;
+}
+
+/// The scheduler must use this guarded entry point. Merely calling the
+/// scheduler cannot activate retention when no operator policy was enabled.
+pub fn pruneScheduled(ctx: Context, policy: Policy) !void {
+    if (!policy.scheduled_retention_enabled) return Error.ScheduledRetentionDisabled;
+    try prune(ctx, policy);
 }
 
 /// Prune eligible rows in bounded transactions. Callers are responsible for
@@ -319,6 +394,11 @@ pub fn backup(ctx: Context, path: []const u8) !void {
 
 pub fn writeText(result: Result, policy: Policy, writer: anytype) !void {
     try writer.print("maintenance {s}: {s}\n", .{ result.operation.text(), if (result.applied) "applied" else "preview" });
+    try writer.print("storage policy: scheduled_retention={s} backup_retention=operator-managed backup_root={s} disk_budget_bytes={d}\n", .{
+        if (policy.scheduled_retention_enabled) "enabled" else "disabled",
+        policy.backup_root,
+        policy.disk_budget_bytes,
+    });
     try writer.print("retention: snapshots={d}d provider_raw={d}d metrics={d}d nob_plans={d}d nob_operations={d}d keep_operations={d} batch={d}\n", .{
         policy.snapshot_days,
         policy.provider_raw_days,
@@ -353,6 +433,10 @@ pub fn writeJson(result: Result, policy: Policy, writer: anytype) !void {
     try core_json.writeBoolField(writer, "compacted", result.compacted, true);
     try core_json.writeNullableStringField(writer, "backup_path", result.backup_path, true);
     try writer.writeAll("\"policy\":{");
+    try core_json.writeBoolField(writer, "scheduled_retention_enabled", policy.scheduled_retention_enabled, true);
+    try core_json.writeStringField(writer, "backup_retention", "operator-managed", true);
+    try core_json.writeStringField(writer, "backup_root", policy.backup_root, true);
+    try core_json.writeIntField(writer, "disk_budget_bytes", policy.disk_budget_bytes, true);
     try core_json.writeIntField(writer, "snapshot_days", policy.snapshot_days, true);
     try core_json.writeIntField(writer, "provider_raw_days", policy.provider_raw_days, true);
     try core_json.writeIntField(writer, "metrics_days", policy.metrics_days, true);
@@ -376,7 +460,27 @@ pub fn writeJson(result: Result, policy: Policy, writer: anytype) !void {
 
 fn writeStatsText(label: []const u8, stats: Stats, writer: anytype) !void {
     try writer.print(
-        "{s}: db_bytes={d} reclaimable_bytes={d} snapshots={d}/{d} provider_raw={d}/{d} hostinger_metrics={d}/{d} system_metrics={d}/{d} nob_plans={d}/{d} nob_operations={d}/{d}\n",
+        "{s} storage: database_file_bytes={d} wal_bytes={d} shm_bytes={d} log_bytes={d} backups={d}/{d} nob_operation_state={d}/{d} nob_runner_cache={d}/{d} managed_bytes={d} maintenance_headroom_bytes={d} disk_budget_bytes={d} budget_warning={}\n",
+        .{
+            label,
+            stats.database_file_bytes,
+            stats.wal_bytes,
+            stats.shm_bytes,
+            stats.log_bytes,
+            stats.backups.files,
+            stats.backups.bytes,
+            stats.nob_operation_state.files,
+            stats.nob_operation_state.bytes,
+            stats.nob_runner_cache.files,
+            stats.nob_runner_cache.bytes,
+            stats.managedBytes(),
+            stats.maintenanceHeadroomBytes(),
+            stats.disk_budget_bytes,
+            stats.budgetWarning(),
+        },
+    );
+    try writer.print(
+        "{s} rows: db_logical_bytes={d} reclaimable_bytes={d} snapshots={d}/{d} provider_raw={d}/{d} hostinger_metrics={d}/{d} system_metrics={d}/{d} nob_plans={d}/{d} nob_operations={d}/{d}\n",
         .{
             label,
             stats.databaseBytes(),
@@ -400,6 +504,21 @@ fn writeStatsText(label: []const u8, stats: Stats, writer: anytype) !void {
 fn writeStatsJson(stats: Stats, writer: anytype) !void {
     try writer.writeByte('{');
     try core_json.writeIntField(writer, "database_bytes", stats.databaseBytes(), true);
+    try core_json.writeIntField(writer, "database_file_bytes", stats.database_file_bytes, true);
+    try core_json.writeIntField(writer, "wal_bytes", stats.wal_bytes, true);
+    try core_json.writeIntField(writer, "shm_bytes", stats.shm_bytes, true);
+    try core_json.writeIntField(writer, "log_bytes", stats.log_bytes, true);
+    try core_json.writeIntField(writer, "managed_bytes", stats.managedBytes(), true);
+    try core_json.writeIntField(writer, "maintenance_headroom_bytes", stats.maintenanceHeadroomBytes(), true);
+    try core_json.writeIntField(writer, "disk_budget_bytes", stats.disk_budget_bytes, true);
+    try core_json.writeBoolField(writer, "budget_warning", stats.budgetWarning(), true);
+    try writer.writeAll("\"backups\":");
+    try writeFileInventoryJson(stats.backups, writer);
+    try writer.writeAll(",\"nob_operation_state\":");
+    try writeFileInventoryJson(stats.nob_operation_state, writer);
+    try writer.writeAll(",\"nob_runner_cache\":");
+    try writeFileInventoryJson(stats.nob_runner_cache, writer);
+    try writer.writeByte(',');
     try core_json.writeIntField(writer, "reclaimable_bytes", stats.reclaimableBytes(), true);
     try core_json.writeIntField(writer, "page_size", stats.page_size, true);
     try core_json.writeIntField(writer, "page_count", stats.page_count, true);
@@ -416,6 +535,13 @@ fn writeStatsJson(stats: Stats, writer: anytype) !void {
     try writeTableStatsJson(stats.nob_plans, writer);
     try writer.writeAll(",\"nob_operations\":");
     try writeTableStatsJson(stats.nob_operations, writer);
+    try writer.writeByte('}');
+}
+
+fn writeFileInventoryJson(inventory_value: FileInventory, writer: anytype) !void {
+    try writer.writeByte('{');
+    try core_json.writeIntField(writer, "files", inventory_value.files, true);
+    try core_json.writeIntField(writer, "bytes", inventory_value.bytes, false);
     try writer.writeByte('}');
 }
 
@@ -623,6 +749,49 @@ fn scalar(db: *Db, sql: []const u8) !i64 {
     return sqlite.sqlite3_column_int64(stmt, 0);
 }
 
+const max_inventory_files: i64 = 100_000;
+const max_inventory_depth: u8 = 32;
+
+fn fileBytes(io: Io, path: []const u8) !i64 {
+    const stat = Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = true }) catch |err| switch (err) {
+        error.FileNotFound => return 0,
+        else => return err,
+    };
+    if (stat.kind != .file) return 0;
+    return @intCast(@min(stat.size, @as(u64, std.math.maxInt(i64))));
+}
+
+fn inventory(ctx: Context, root: []const u8) !FileInventory {
+    const stat = Io.Dir.cwd().statFile(ctx.io, root, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return .{},
+        else => return err,
+    };
+    if (stat.kind != .directory) return Error.StorageRootUnsafe;
+    var result = FileInventory{};
+    try inventoryDirectory(ctx, root, 0, &result);
+    return result;
+}
+
+fn inventoryDirectory(ctx: Context, path: []const u8, depth: u8, result: *FileInventory) !void {
+    if (depth >= max_inventory_depth) return Error.StorageInventoryTooLarge;
+    var directory = try Io.Dir.cwd().openDir(ctx.io, path, .{ .iterate = true });
+    defer directory.close(ctx.io);
+    var iterator = directory.iterate();
+    while (try iterator.next(ctx.io)) |entry| {
+        const child = try std.fs.path.join(ctx.gpa, &.{ path, entry.name });
+        defer ctx.gpa.free(child);
+        const stat = try Io.Dir.cwd().statFile(ctx.io, child, .{ .follow_symlinks = false });
+        if (stat.kind == .directory) {
+            try inventoryDirectory(ctx, child, depth + 1, result);
+        } else if (stat.kind == .file) {
+            if (result.files >= max_inventory_files) return Error.StorageInventoryTooLarge;
+            result.files += 1;
+            result.bytes +|= @intCast(@min(stat.size, @as(u64, std.math.maxInt(i64))));
+        }
+        // Symlinks and special files are never followed or counted.
+    }
+}
+
 fn pruneBatches(db: *Db, sql: []const u8, days: u32, batch_rows: u32) !void {
     while (true) {
         const stmt = try db.prepare(sql);
@@ -653,10 +822,20 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
     defer allocator.free(base);
     const db_path = try std.fmt.allocPrint(allocator, "{s}/maintenance.db", .{base});
     defer allocator.free(db_path);
-    const backup_path = try std.fmt.allocPrint(allocator, "{s}/backup.db", .{base});
+    const backup_root = try std.fmt.allocPrint(allocator, "{s}/backups", .{base});
+    defer allocator.free(backup_root);
+    const backup_path = try std.fmt.allocPrint(allocator, "{s}/before-maintenance.db", .{backup_root});
     defer allocator.free(backup_path);
+    const retained_backup = try std.fmt.allocPrint(allocator, "{s}/retained.db", .{backup_root});
+    defer allocator.free(retained_backup);
     const nob_state_root = try std.fmt.allocPrint(allocator, "{s}/operations", .{base});
     defer allocator.free(nob_state_root);
+    const nob_cache_root = try std.fmt.allocPrint(allocator, "{s}/runner-cache", .{base});
+    defer allocator.free(nob_cache_root);
+    const cache_marker = try std.fmt.allocPrint(allocator, "{s}/runner.bin", .{nob_cache_root});
+    defer allocator.free(cache_marker);
+    const log_path = try std.fmt.allocPrint(allocator, "{s}/cloudio.log", .{base});
+    defer allocator.free(log_path);
     const operation_prefix = "01ARZ3NDEKTSV4RRFFQ69G5F";
     const retained_operation = operation_prefix ++ "01";
     const pruned_operation = operation_prefix ++ "02";
@@ -672,6 +851,11 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
     defer allocator.free(pruned_marker);
     try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = retained_marker, .data = "retained" });
     try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = pruned_marker, .data = "pruned" });
+    try core_fs.ensureParentDir(std.testing.io, retained_backup);
+    try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = retained_backup, .data = "operator-owned-backup" });
+    try core_fs.ensureParentDir(std.testing.io, cache_marker);
+    try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = cache_marker, .data = "runner-cache" });
+    try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = log_path, .data = "latest log" });
 
     var db = try Db.open(std.testing.io, db_path);
     defer db.close();
@@ -681,6 +865,8 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
         \\INSERT INTO provider_raw(provider,endpoint,captured_at) VALUES ('cloudflare','old','2020-01-01'),('cloudflare','new',CURRENT_TIMESTAMP);
         \\INSERT INTO hostinger_metrics(vm_id,metric,captured_at) VALUES ('1','old','2020-01-01'),('1','new',CURRENT_TIMESTAMP);
         \\INSERT INTO system_metrics(metric,value,captured_at) VALUES ('old','1','2020-01-01'),('new','1',CURRENT_TIMESTAMP);
+        \\INSERT INTO audit_actions(kind,result,created_at) VALUES ('fixture.required','ok','2020-01-01');
+        \\INSERT INTO audit_events(action,status,created_at) VALUES ('fixture.required','error','2020-01-01');
         \\INSERT INTO managed_projects(
         \\  id, declared_id, display_name, kind, root_path, discovery_state,
         \\  trust_state, last_seen_at, created_at, updated_at
@@ -741,6 +927,10 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
 
     const ctx = Context{ .io = std.testing.io, .gpa = allocator, .db = &db };
     const policy = Policy{
+        .database_path = db_path,
+        .backup_root = backup_root,
+        .disk_budget_bytes = 1,
+        .log_path = log_path,
         .snapshot_days = 7,
         .provider_raw_days = 7,
         .metrics_days = 7,
@@ -748,6 +938,7 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
         .nob_operation_days = 7,
         .nob_min_operations_per_project = 20,
         .nob_state_root = nob_state_root,
+        .nob_cache_root = nob_cache_root,
         .batch_rows = 1,
     };
     const preview = try execute(ctx, policy, .{ .operation = .run });
@@ -756,6 +947,12 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
     try std.testing.expectEqual(@as(i64, 2), preview.after.snapshots.total);
     try std.testing.expectEqual(@as(i64, 1), preview.before.nob_plans.eligible);
     try std.testing.expectEqual(@as(i64, 1), preview.before.nob_operations.eligible);
+    try std.testing.expectEqual(@as(i64, 1), preview.before.backups.files);
+    try std.testing.expect(preview.before.nob_operation_state.bytes > 0);
+    try std.testing.expect(preview.before.nob_runner_cache.bytes > 0);
+    try std.testing.expect(preview.before.log_bytes > 0);
+    try std.testing.expect(preview.before.budgetWarning());
+    try std.testing.expectError(Error.ScheduledRetentionDisabled, pruneScheduled(ctx, policy));
 
     try std.testing.expectError(Error.ApplyRequiresBackup, execute(ctx, policy, .{ .operation = .prune, .apply = true }));
     const applied = try execute(ctx, policy, .{ .operation = .run, .apply = true, .backup_path = backup_path });
@@ -767,6 +964,8 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
     try std.testing.expectEqual(@as(i64, 1), applied.after.system_metrics.total);
     try std.testing.expectEqual(@as(i64, 1), applied.after.nob_plans.total);
     try std.testing.expectEqual(@as(i64, 21), applied.after.nob_operations.total);
+    try std.testing.expectEqual(@as(i64, 1), try scalar(&db, "SELECT COUNT(*) FROM audit_actions"));
+    try std.testing.expectEqual(@as(i64, 1), try scalar(&db, "SELECT COUNT(*) FROM audit_events"));
     try std.testing.expectEqual(@as(i64, 2), applied.deletedNobPlans());
     try std.testing.expectEqual(@as(i64, 1), applied.deletedNobOperations());
     try std.testing.expect(try core_fs.fileExists(std.testing.io, retained_marker));
@@ -778,6 +977,8 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
     defer deleted_artifacts.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), deleted_artifacts.items.len);
     try std.testing.expect(try core_fs.fileExists(std.testing.io, backup_path));
+    try std.testing.expect(try core_fs.fileExists(std.testing.io, retained_backup));
+    try std.testing.expectEqual(@as(i64, 2), applied.after.backups.files);
     try std.testing.expectError(Error.BackupAlreadyExists, backup(ctx, backup_path));
 
     var out = std.Io.Writer.Allocating.init(allocator);
@@ -785,4 +986,64 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
     try writeJson(applied, policy, &out.writer);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"deleted\":{\"snapshots\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"compacted\":true") != null);
+}
+
+test "verified backup and maintenance survive interruption and database reopen" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer allocator.free(base);
+    const db_path = try std.fmt.allocPrint(allocator, "{s}/reopen.db", .{base});
+    defer allocator.free(db_path);
+    const backup_root = try std.fmt.allocPrint(allocator, "{s}/backups", .{base});
+    defer allocator.free(backup_root);
+    const interrupted_backup = try std.fmt.allocPrint(allocator, "{s}/before-interruption.db", .{backup_root});
+    defer allocator.free(interrupted_backup);
+    const maintenance_backup = try std.fmt.allocPrint(allocator, "{s}/before-run.db", .{backup_root});
+    defer allocator.free(maintenance_backup);
+    const missing_state = try std.fmt.allocPrint(allocator, "{s}/operations", .{base});
+    defer allocator.free(missing_state);
+    const missing_cache = try std.fmt.allocPrint(allocator, "{s}/cache", .{base});
+    defer allocator.free(missing_cache);
+
+    var database = try Db.open(std.testing.io, db_path);
+    try database.initSchema();
+    try database.exec(
+        "INSERT INTO snapshots(source,kind,status,captured_at) VALUES ('system','old','ok','2020-01-01'),('system','new','ok',CURRENT_TIMESTAMP)",
+    );
+    const policy = Policy{
+        .database_path = db_path,
+        .backup_root = backup_root,
+        .snapshot_days = 1,
+        .provider_raw_days = 1,
+        .metrics_days = 1,
+        .nob_plan_days = 1,
+        .nob_operation_days = 1,
+        .nob_state_root = missing_state,
+        .nob_cache_root = missing_cache,
+    };
+    try backup(.{ .io = std.testing.io, .gpa = allocator, .db = &database }, interrupted_backup);
+    // Closing here models a process interruption after the required recovery
+    // point exists but before any prune or VACUUM starts.
+    database.close();
+
+    var recovery = try Db.open(std.testing.io, interrupted_backup);
+    try std.testing.expectEqual(@as(i64, 2), try scalar(&recovery, "SELECT COUNT(*) FROM snapshots"));
+    recovery.close();
+
+    var reopened = try Db.open(std.testing.io, db_path);
+    const applied = try execute(
+        .{ .io = std.testing.io, .gpa = allocator, .db = &reopened },
+        policy,
+        .{ .operation = .run, .apply = true, .backup_path = maintenance_backup },
+    );
+    try std.testing.expect(applied.pruned and applied.compacted);
+    reopened.close();
+
+    var verified = try Db.open(std.testing.io, db_path);
+    defer verified.close();
+    try std.testing.expectEqual(@as(i64, 1), try scalar(&verified, "SELECT COUNT(*) FROM snapshots"));
+    try std.testing.expect(try core_fs.fileExists(std.testing.io, interrupted_backup));
+    try std.testing.expect(try core_fs.fileExists(std.testing.io, maintenance_backup));
 }

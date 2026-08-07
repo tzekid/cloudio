@@ -276,21 +276,22 @@ fn serveCaddyRoute(
         return;
     };
     defer shared.gpa.free(caddy_executable);
-    const systemctl_executable = subprocess.resolveExecutable(
+    const curl_executable = subprocess.resolveExecutable(
         shared.io,
         shared.gpa,
-        "systemctl",
+        "curl",
         shared.config.runtime_environment.path,
     ) catch {
-        try writeDenied(writer, request.request_id, "systemctl_unavailable");
+        try writeDenied(writer, request.request_id, "curl_unavailable");
         try audit(shared, db, "failed", authorization.id);
         return;
     };
-    defer shared.gpa.free(systemctl_executable);
+    defer shared.gpa.free(curl_executable);
     const transition = app_caddy_desired.applyNobRoute(.{
         .io = shared.io,
         .gpa = shared.gpa,
         .db = db,
+        .config = shared.config,
         .write_meta = .{ .actor = shared.actor, .idempotency_key = shared.idempotency_key },
     }, .{
         .operation_id = shared.operation_id,
@@ -303,10 +304,9 @@ fn serveCaddyRoute(
         .operation = operation,
         .host = host,
         .upstream = upstream,
-        .caddyfile_path = shared.config.caddyfile_path,
         .now = @intCast(try core_time.currentEpochSeconds()),
         .caddy_executable = caddy_executable,
-        .systemctl_executable = systemctl_executable,
+        .curl_executable = curl_executable,
     }) catch |err| {
         try writeDenied(writer, request.request_id, @errorName(err));
         try audit(shared, db, "failed", authorization.id);

@@ -26,14 +26,14 @@ fn run(ctx: Context) void {
             continue;
         };
         defer db.close();
-        app_refresh_cycle.run(.{ .io = ctx.io, .gpa = ctx.gpa, .db = &db, .config = ctx.config }) catch |err| {
+        _ = app_refresh_cycle.run(.{ .io = ctx.io, .gpa = ctx.gpa, .db = &db, .config = ctx.config }) catch |err| {
             std.debug.print("cloudio scheduled refresh failed: {s}\n", .{@errorName(err)});
             continue;
         };
         if (!ctx.config.storage_auto_prune) continue;
         const interval_seconds: u64 = @as(u64, ctx.config.maintenance_interval_hours) * 60 * 60;
         if (maintenance_elapsed_seconds < interval_seconds) continue;
-        app_maintenance.prune(.{ .io = ctx.io, .gpa = ctx.gpa, .db = &db }, app_maintenance.Policy.fromConfig(ctx.config)) catch |err| {
+        app_maintenance.pruneScheduled(.{ .io = ctx.io, .gpa = ctx.gpa, .db = &db }, app_maintenance.Policy.fromConfig(ctx.config)) catch |err| {
             std.debug.print("cloudio scheduled maintenance failed: {s}\n", .{@errorName(err)});
             continue;
         };

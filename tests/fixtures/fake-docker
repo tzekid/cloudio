@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_file="${CLOUDIO_FAKE_DOCKER_STATE:?CLOUDIO_FAKE_DOCKER_STATE is required}"
+control_file="${CLOUDIO_FAKE_DOCKER_CONTROL:-}"
+calls_file="${CLOUDIO_FAKE_DOCKER_CALLS:-}"
+
+if [[ -n "$calls_file" ]]; then
+  printf '%q' "$1" >>"$calls_file"
+  for argument in "${@:2}"; do
+    printf ' %q' "$argument" >>"$calls_file"
+  done
+  printf '\n' >>"$calls_file"
+fi
+
+if [[ -n "$control_file" && -f "$control_file" ]] && grep -qx 'daemon-unavailable' "$control_file"; then
+  printf 'Cannot connect to the Docker daemon\n' >&2
+  exit 125
+fi
+
+command_name="${1:-}"
+case "$command_name" in
+  ps)
+    has_all=false
+    for argument in "${@:2}"; do
+      if [[ "$argument" == "-a" || "$argument" == "--all" ]]; then
+        has_all=true
+      fi
+    done
+    if [[ "$has_all" != true ]]; then
+      printf 'fixture requires ps -a\n' >&2
+      exit 64
+    fi
+    awk -F '\t' 'BEGIN { OFS="\t" } NF >= 4 { print $1, $2, $3, $4 }' "$state_file"
+    ;;
+  start|stop|restart)
+    target="${2:-}"
+    if [[ "$target" == "fixture-command-fail" ]]; then
+      printf 'injected lifecycle failure for %s\n' "$target" >&2
+      exit 42
+    fi
+    case "$command_name" in
+      start|restart) next_status='Up 1 second' ;;
+      stop) next_status='Exited (0) 1 second ago' ;;
+    esac
+    next_file="$(mktemp "${state_file}.XXXXXX")"
+    if ! awk -F '\t' -v OFS='\t' -v target="$target" -v status="$next_status" '
+      BEGIN { found=0 }
+      $1 == target { $3=status; found=1 }
+      NF >= 4 { print $1, $2, $3, $4 }
+      END { if (!found) exit 44 }
+    ' "$state_file" >"$next_file"; then
+      rm -f "$next_file"
+      printf 'No such container: %s\n' "$target" >&2
+      exit 44
+    fi
+    mv "$next_file" "$state_file"
+    printf '%s\n' "$target"
+    ;;
+  logs)
+    if [[ "${2:-}" != "--tail" || -z "${3:-}" || -z "${4:-}" ]]; then
+      printf 'invalid logs arguments\n' >&2
+      exit 64
+    fi
+    tail_count="$3"
+    target="$4"
+    if [[ "$target" == "fixture-logs-fail" ]]; then
+      printf 'injected log failure for %s\n' "$target" >&2
+      exit 45
+    fi
+    if ! awk -F '\t' -v target="$target" '$1 == target { found=1 } END { exit found ? 0 : 1 }' "$state_file"; then
+      printf 'No such container: %s\n' "$target" >&2
+      exit 44
+    fi
+    printf '%s log tail=%s\n' "$target" "$tail_count"
+    ;;
+  *)
+    printf 'unsupported fake Docker command: %s\n' "$command_name" >&2
+    exit 64
+    ;;
+esac

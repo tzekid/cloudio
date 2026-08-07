@@ -6,11 +6,47 @@
   <title>Dashboard · Cloudio</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script defer src="/assets/app.js"></script>
-  <script defer src="/assets/pages/dashboard.js"></script>
 </head>
 <body>
   <main id="page-content">
-    <p class="page-intro">A compact view of how public DNS, local routes, services, and containers line up.</p>
+    <p class="page-intro">See what needs attention, how fresh each conclusion is, and which section owns the next step.</p>
+
+    <div id="dashboard-feedback" class="notice hidden" aria-live="polite"></div>
+    <div id="storage-warning" class="notice hidden" aria-live="polite"></div>
+
+    <section id="storage-recovery" class="panel hidden" aria-labelledby="storage-recovery-title">
+      <div class="panel-header"><div><h2 id="storage-recovery-title">Storage recovery steps</h2><p>Destructive maintenance stays in the CLI and always starts with a verified backup.</p></div></div>
+      <div id="storage-recovery-body" class="panel-body stack"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="dashboard-sources-title">
+      <div class="panel-header">
+        <div>
+          <h2 id="dashboard-sources-title">Source observations</h2>
+          <p>Each source keeps its last successful observation when a later refresh fails.</p>
+        </div>
+        <form id="dashboard-refresh-form" method="post" action="/dashboard/refresh">
+          <input id="dashboard-refresh-csrf" name="csrf_token" type="hidden" value="">
+          <input id="dashboard-refresh-idempotency" name="idempotency_key" type="hidden" value="">
+          <button type="submit">Refresh dashboard</button>
+        </form>
+      </div>
+      <div class="table-scroll">
+        <table class="responsive-table">
+          <thead>
+            <tr>
+              <th scope="col">Source</th>
+              <th scope="col">Freshness</th>
+              <th scope="col">Observed</th>
+              <th scope="col">Last collection</th>
+            </tr>
+          </thead>
+          <tbody id="dashboard-sources-body">
+            <tr><td class="empty-state" colspan="4">No source refresh has run yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <section class="panel" aria-labelledby="dashboard-filters-title">
       <div class="panel-header">
@@ -27,15 +63,14 @@
             Issues only
           </label>
           <button id="dashboard-reload" type="submit">Apply view</button>
-          <span id="last-refresh" class="toolbar-meta" aria-live="polite"></span>
         </form>
       </div>
     </section>
 
     <section id="summary-cards" class="summary-grid" aria-label="Topology summary">
       <div class="stat-card">
-        <div class="stat-value">—</div>
-        <div class="stat-label">Loading</div>
+        <div class="stat-value">0</div>
+        <div class="stat-label">Hosts</div>
       </div>
     </section>
 
@@ -47,7 +82,7 @@
         </div>
       </div>
       <div class="table-scroll">
-        <table aria-describedby="topology-title">
+        <table class="responsive-table" aria-describedby="topology-title">
           <thead>
             <tr>
               <th scope="col">Status</th>
@@ -57,11 +92,11 @@
               <th scope="col">Upstream</th>
               <th scope="col">Service</th>
               <th scope="col">Container</th>
-              <th scope="col">Issues</th>
+              <th scope="col">Diagnosis</th>
             </tr>
           </thead>
           <tbody id="topology-body">
-            <tr><td class="empty-state loading-state" colspan="8">Loading topology…</td></tr>
+            <tr><td class="empty-state" colspan="8">No topology has been observed yet.</td></tr>
           </tbody>
         </table>
       </div>

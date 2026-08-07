@@ -721,6 +721,43 @@ pub const migrations = [_]Migration{
         \\  ON project_plans(created_at, state);
         ,
     },
+    .{
+        .version = 19,
+        .name = "browser_run_results",
+        .sql =
+        \\CREATE TABLE browser_runs (
+        \\  id TEXT PRIMARY KEY,
+        \\  account_id TEXT NOT NULL,
+        \\  action TEXT NOT NULL CHECK (action IN ('content','screenshot')),
+        \\  engine TEXT NOT NULL CHECK (engine = 'kitesurf'),
+        \\  target_url TEXT NOT NULL,
+        \\  target_host TEXT NOT NULL,
+        \\  target_sha256 TEXT NOT NULL,
+        \\  state TEXT NOT NULL CHECK (state IN ('running','succeeded','failed','abandoned')),
+        \\  origin_status INTEGER,
+        \\  title TEXT,
+        \\  content_type TEXT,
+        \\  size_bytes INTEGER,
+        \\  browser_ms_used INTEGER,
+        \\  retry_after_seconds INTEGER,
+        \\  cf_ray TEXT,
+        \\  artifact_path TEXT,
+        \\  artifact_sha256 TEXT,
+        \\  error_code TEXT,
+        \\  error_summary TEXT,
+        \\  requested_by TEXT NOT NULL,
+        \\  idempotency_key TEXT,
+        \\  created_at INTEGER NOT NULL,
+        \\  started_at INTEGER NOT NULL,
+        \\  finished_at INTEGER,
+        \\  expires_at INTEGER NOT NULL
+        \\);
+        \\CREATE INDEX idx_browser_runs_created
+        \\  ON browser_runs(created_at DESC, id);
+        \\CREATE INDEX idx_browser_runs_expiry
+        \\  ON browser_runs(expires_at, state);
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;
@@ -818,6 +855,7 @@ test "applies migrations idempotently" {
     try std.testing.expect(try tableExists(handle.?, "deploys"));
     try std.testing.expect(try tableExists(handle.?, "caddy_desired_routes"));
     try std.testing.expect(try tableExists(handle.?, "audit_actions"));
+    try std.testing.expect(try tableExists(handle.?, "browser_runs"));
     try std.testing.expect(try tableExists(handle.?, "mutation_requests"));
     try std.testing.expect(try tableExists(handle.?, "app_operation_locks"));
     try std.testing.expect(try tableExists(handle.?, "topology_state"));

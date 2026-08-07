@@ -8,6 +8,7 @@ pub const Auth = struct {
     token: ?[]const u8 = null,
     email: ?[]const u8 = null,
     key: ?[]const u8 = null,
+    base_url: ?[]const u8 = null,
 
     pub fn isConfigured(self: Auth) bool {
         return self.token != null or (self.email != null and self.key != null);

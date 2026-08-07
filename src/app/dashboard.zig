@@ -62,6 +62,7 @@ pub const Options = struct {
 pub const Context = struct {
     gpa: Allocator,
     db: *Db,
+    fresh_after_seconds: i64 = 120,
 };
 
 pub const Dashboard = struct {
@@ -198,7 +199,7 @@ pub const Dashboard = struct {
         try writer.writeAll(",\"toggles\":");
         try app_actions.writeToggleMetadataJson(writer);
         try writer.writeAll(",\"summary\":");
-        try self.writeSummaryJson(writer);
+        try self.writeSummaryJson(ctx, writer);
         try writer.writeAll(",\"sections\":{");
         try self.writeDomainsSection(writer, shouldInclude(self.options.section, .domains));
         try writer.writeByte(',');
@@ -220,13 +221,15 @@ pub const Dashboard = struct {
         try writer.writeByte('\n');
     }
 
-    fn writeSummaryJson(self: Dashboard, writer: anytype) !void {
+    fn writeSummaryJson(self: Dashboard, ctx: Context, writer: anytype) !void {
         const topology_summary = self.filteredTopologySummary();
         try writer.writeByte('{');
         try writer.writeAll("\"counts\":{");
         try writeOverviewCountsJson(self.overview.counts, self.cloudflare_security_items, writer);
         try writer.writeAll("},\"last_refresh\":");
         try writeLastRefreshJson(self.audit_events.items, writer);
+        try writer.writeAll(",\"sources\":");
+        try writeSourceObservationsJson(ctx, writer);
         try writer.writeAll(",\"topology\":");
         try app_topology.writeSummaryJson(topology_summary, writer);
         try writer.writeByte('}');
@@ -377,7 +380,7 @@ pub const Dashboard = struct {
     }
 
     fn includeTopologyRow(self: Dashboard, row: db_store.TopologyRow) bool {
-        if (self.options.issues_only and !app_topology.rowHasIssues(row)) return false;
+        if (self.options.issues_only and !app_topology.rowHasIncidents(row)) return false;
         const domain = self.options.domain orelse return true;
         return includeDomain(domain, row.host) or includeDomain(domain, row.dns_name);
     }
@@ -469,6 +472,75 @@ fn writeLastRefreshJson(events: []const db_store.AuditEvent, writer: anytype) !v
         return;
     }
     try writer.writeAll("null");
+}
+
+const SourceSpec = struct {
+    name: []const u8,
+    label: []const u8,
+    source_type: []const u8,
+};
+
+const dashboard_sources = [_]SourceSpec{
+    .{ .name = "cloudflare", .label = "Cloudflare", .source_type = "provider" },
+    .{ .name = "hostinger", .label = "Hostinger", .source_type = "provider" },
+    .{ .name = "caddy", .label = "Caddy", .source_type = "local-command" },
+    .{ .name = "system", .label = "System", .source_type = "local-command" },
+    .{ .name = "projects", .label = "Projects", .source_type = "local-command" },
+};
+
+fn writeSourceObservationsJson(ctx: Context, writer: anytype) !void {
+    try writer.writeByte('[');
+    for (dashboard_sources, 0..) |source, index| {
+        if (index != 0) try writer.writeByte(',');
+        const observation_optional = try ctx.db.latestObservation(ctx.gpa, "refresh", source.name);
+        defer if (observation_optional) |observation| observation.deinit(ctx.gpa);
+        const freshness = observationFreshness(observation_optional, ctx.fresh_after_seconds);
+
+        try writer.writeByte('{');
+        try app_render.writeJsonStringField(writer, "name", source.name, true);
+        try app_render.writeJsonStringField(writer, "label", source.label, true);
+        try app_render.writeJsonStringField(writer, "source", source.source_type, true);
+        try app_render.writeJsonStringField(writer, "freshness", freshness, true);
+        try writer.writeAll("\"observed_at\":");
+        if (observation_optional) |observation| {
+            if (observation.hasSuccessfulObservation()) {
+                try app_render.writeJsonString(writer, observation.observed_at);
+            } else {
+                try writer.writeAll("null");
+            }
+        } else {
+            try writer.writeAll("null");
+        }
+        try writer.writeAll(",\"age_seconds\":");
+        if (observation_optional) |observation| {
+            if (observation.age_seconds >= 0) {
+                try writer.print("{d}", .{observation.age_seconds});
+            } else {
+                try writer.writeAll("null");
+            }
+        } else {
+            try writer.writeAll("null");
+        }
+        try writer.writeAll(",\"collection\":{");
+        if (observation_optional) |observation| {
+            try app_render.writeJsonStringField(writer, "status", observation.attempt_status, true);
+            try app_render.writeJsonStringField(writer, "attempted_at", observation.attempted_at, true);
+            try app_render.writeJsonStringField(writer, "summary", observation.attempt_summary, false);
+        } else {
+            try app_render.writeJsonStringField(writer, "status", "unavailable", true);
+            try app_render.writeJsonNullableStringField(writer, "attempted_at", null, true);
+            try app_render.writeJsonStringField(writer, "summary", "No refresh has run for this source.", false);
+        }
+        try writer.writeAll("}}");
+    }
+    try writer.writeByte(']');
+}
+
+fn observationFreshness(observation: ?db_store.Observation, fresh_after_seconds: i64) []const u8 {
+    const value = observation orelse return "unavailable";
+    if (!value.hasSuccessfulObservation()) return "unavailable";
+    if (!std.mem.eql(u8, value.attempt_status, "ok")) return "stale";
+    return if (value.age_seconds >= 0 and value.age_seconds <= @max(fresh_after_seconds, 1)) "current" else "stale";
 }
 
 fn writeCloudflareAccountJson(row: db_store.CloudflareAccountRow, writer: anytype) !void {
@@ -689,6 +761,7 @@ test "dashboard renders stable top-level JSON contract" {
     defer db.close();
     try db.initSchema();
     try db.insertAudit("refresh", "ok", "dashboard refresh complete");
+    _ = try db.insertSnapshot("refresh", "cloudflare", null, "ok", "collection completed", null, null);
     _ = try db.insertSnapshot("cloudflare", "dns", "plosca.ru", "ok", "records", null, null);
     try db.upsertCloudflareAccount("acct-1", "account", "standard", "active", "{}");
     try db.upsertCloudflareZone("zone-1", "plosca.ru", "acct-1", "active", false, "full", "[]", "{}");
@@ -722,6 +795,8 @@ test "dashboard renders stable top-level JSON contract" {
     try std.testing.expect(sections.get("projects").? != .null);
     try std.testing.expect(sections.get("providers").? != .null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"last_refresh\":{\"id\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"sources\":[{\"name\":\"cloudflare\",\"label\":\"Cloudflare\",\"source\":\"provider\",\"freshness\":\"current\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"name\":\"hostinger\",\"label\":\"Hostinger\",\"source\":\"provider\",\"freshness\":\"unavailable\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"projects\":{\"items\":[{\"project\":\"plosca\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"hostinger.vps.snapshot:123\"") != null);
 }

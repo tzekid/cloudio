@@ -54,7 +54,7 @@ const Call = struct {
 // --- Cloudflare helpers ---
 
 pub fn dnsRecordCreate(ctx: Context, zone_id: []const u8, body_json: []const u8, writer: anytype) !void {
-    const url = try cfDnsRecordsUrl(ctx.gpa, zone_id);
+    const url = try cfDnsRecordsUrlAt(ctx.gpa, ctx.config.cloudflare_api_base, zone_id);
     defer ctx.gpa.free(url);
     const call: Call = .{ .method = .POST, .url = url, .body = body_json, .kind = "cf.dns.create", .target = zone_id };
     if (try rejectInvalidBody(ctx, call, body_json, writer)) return;
@@ -62,7 +62,7 @@ pub fn dnsRecordCreate(ctx: Context, zone_id: []const u8, body_json: []const u8,
 }
 
 pub fn dnsRecordUpdate(ctx: Context, zone_id: []const u8, record_id: []const u8, body_json: []const u8, writer: anytype) !void {
-    const url = try cfDnsRecordUrl(ctx.gpa, zone_id, record_id);
+    const url = try cfDnsRecordUrlAt(ctx.gpa, ctx.config.cloudflare_api_base, zone_id, record_id);
     defer ctx.gpa.free(url);
     const call: Call = .{ .method = .PUT, .url = url, .body = body_json, .kind = "cf.dns.update", .target = zone_id };
     if (try rejectInvalidBody(ctx, call, body_json, writer)) return;
@@ -70,20 +70,20 @@ pub fn dnsRecordUpdate(ctx: Context, zone_id: []const u8, record_id: []const u8,
 }
 
 pub fn dnsRecordDelete(ctx: Context, zone_id: []const u8, record_id: []const u8, writer: anytype) !void {
-    const url = try cfDnsRecordUrl(ctx.gpa, zone_id, record_id);
+    const url = try cfDnsRecordUrlAt(ctx.gpa, ctx.config.cloudflare_api_base, zone_id, record_id);
     defer ctx.gpa.free(url);
     try executeCloudflare(ctx, .{ .method = .DELETE, .url = url, .body = null, .kind = "cf.dns.delete", .target = zone_id }, writer);
 }
 
 pub fn cachePurgeEverything(ctx: Context, zone_id: []const u8, writer: anytype) !void {
-    const url = try cfPurgeCacheUrl(ctx.gpa, zone_id);
+    const url = try cfPurgeCacheUrlAt(ctx.gpa, ctx.config.cloudflare_api_base, zone_id);
     defer ctx.gpa.free(url);
     const body = "{\"purge_everything\":true}";
     try executeCloudflare(ctx, .{ .method = .POST, .url = url, .body = body, .kind = "cf.cache.purge", .target = zone_id }, writer);
 }
 
 pub fn zoneSettingUpdate(ctx: Context, zone_id: []const u8, setting: []const u8, value_json: []const u8, writer: anytype) !void {
-    const url = try cfZoneSettingUrl(ctx.gpa, zone_id, setting);
+    const url = try cfZoneSettingUrlAt(ctx.gpa, ctx.config.cloudflare_api_base, zone_id, setting);
     defer ctx.gpa.free(url);
     var probe_call: Call = .{ .method = .PATCH, .url = url, .body = value_json, .kind = "cf.setting.update", .target = zone_id };
     if (try rejectInvalidBody(ctx, probe_call, value_json, writer)) return;
@@ -96,37 +96,9 @@ pub fn zoneSettingUpdate(ctx: Context, zone_id: []const u8, setting: []const u8,
 // --- Hostinger helpers ---
 
 pub fn vpsAction(ctx: Context, vm_id: []const u8, action: VpsAction, writer: anytype) !void {
-    const url = try hostingerVpsActionUrl(ctx.gpa, vm_id, action);
+    const url = try hostingerVpsActionUrlAt(ctx.gpa, ctx.config.hostinger_api_base, vm_id, action);
     defer ctx.gpa.free(url);
     try executeHostinger(ctx, .{ .method = .POST, .url = url, .body = null, .kind = action.auditKind(), .target = vm_id }, writer);
-}
-
-pub fn firewallRuleCreate(ctx: Context, firewall_id: []const u8, body_json: []const u8, writer: anytype) !void {
-    const url = try hostingerFirewallRulesUrl(ctx.gpa, firewall_id);
-    defer ctx.gpa.free(url);
-    const call: Call = .{ .method = .POST, .url = url, .body = body_json, .kind = "hostinger.firewall.rule.create", .target = firewall_id };
-    if (try rejectInvalidBody(ctx, call, body_json, writer)) return;
-    try executeHostinger(ctx, call, writer);
-}
-
-pub fn firewallRuleUpdate(ctx: Context, firewall_id: []const u8, rule_id: []const u8, body_json: []const u8, writer: anytype) !void {
-    const url = try hostingerFirewallRuleUrl(ctx.gpa, firewall_id, rule_id);
-    defer ctx.gpa.free(url);
-    const call: Call = .{ .method = .PUT, .url = url, .body = body_json, .kind = "hostinger.firewall.rule.update", .target = firewall_id };
-    if (try rejectInvalidBody(ctx, call, body_json, writer)) return;
-    try executeHostinger(ctx, call, writer);
-}
-
-pub fn firewallRuleDelete(ctx: Context, firewall_id: []const u8, rule_id: []const u8, writer: anytype) !void {
-    const url = try hostingerFirewallRuleUrl(ctx.gpa, firewall_id, rule_id);
-    defer ctx.gpa.free(url);
-    try executeHostinger(ctx, .{ .method = .DELETE, .url = url, .body = null, .kind = "hostinger.firewall.rule.delete", .target = firewall_id }, writer);
-}
-
-pub fn firewallSync(ctx: Context, firewall_id: []const u8, vm_id: []const u8, writer: anytype) !void {
-    const url = try hostingerFirewallSyncUrl(ctx.gpa, firewall_id, vm_id);
-    defer ctx.gpa.free(url);
-    try executeHostinger(ctx, .{ .method = .POST, .url = url, .body = null, .kind = "hostinger.firewall.sync", .target = firewall_id }, writer);
 }
 
 pub fn hostingerDnsUpdate(ctx: Context, domain: []const u8, body_json: []const u8, writer: anytype) !void {
@@ -148,35 +120,45 @@ pub fn hostingerDnsDelete(ctx: Context, domain: []const u8, body_json: []const u
 // --- URL builders (pure, tested below) ---
 
 pub fn cfDnsRecordsUrl(gpa: Allocator, zone_id: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/dns_records", .{ cloudflare_base, zone_id });
+    return try cfDnsRecordsUrlAt(gpa, cloudflare_base, zone_id);
+}
+
+fn cfDnsRecordsUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8) ![]u8 {
+    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/dns_records", .{ base, zone_id });
 }
 
 pub fn cfDnsRecordUrl(gpa: Allocator, zone_id: []const u8, record_id: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/dns_records/{s}", .{ cloudflare_base, zone_id, record_id });
+    return try cfDnsRecordUrlAt(gpa, cloudflare_base, zone_id, record_id);
+}
+
+fn cfDnsRecordUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8, record_id: []const u8) ![]u8 {
+    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/dns_records/{s}", .{ base, zone_id, record_id });
 }
 
 pub fn cfPurgeCacheUrl(gpa: Allocator, zone_id: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/purge_cache", .{ cloudflare_base, zone_id });
+    return try cfPurgeCacheUrlAt(gpa, cloudflare_base, zone_id);
+}
+
+fn cfPurgeCacheUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8) ![]u8 {
+    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/purge_cache", .{ base, zone_id });
 }
 
 pub fn cfZoneSettingUrl(gpa: Allocator, zone_id: []const u8, setting: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/settings/{s}", .{ cloudflare_base, zone_id, setting });
+    return try cfZoneSettingUrlAt(gpa, cloudflare_base, zone_id, setting);
+}
+
+fn cfZoneSettingUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8, setting: []const u8) ![]u8 {
+    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/settings/{s}", .{ base, zone_id, setting });
 }
 
 pub fn hostingerVpsActionUrl(gpa: Allocator, vm_id: []const u8, action: VpsAction) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/api/vps/v1/virtual-machines/{s}/{s}", .{ hostinger_base, vm_id, action.pathSegment() });
+    return try hostingerVpsActionUrlAt(gpa, hostinger_base, vm_id, action);
 }
 
-pub fn hostingerFirewallRulesUrl(gpa: Allocator, firewall_id: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/api/vps/v1/firewall/{s}/rules", .{ hostinger_base, firewall_id });
-}
-
-pub fn hostingerFirewallRuleUrl(gpa: Allocator, firewall_id: []const u8, rule_id: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/api/vps/v1/firewall/{s}/rules/{s}", .{ hostinger_base, firewall_id, rule_id });
-}
-
-pub fn hostingerFirewallSyncUrl(gpa: Allocator, firewall_id: []const u8, vm_id: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/api/vps/v1/firewall/{s}/sync/{s}", .{ hostinger_base, firewall_id, vm_id });
+fn hostingerVpsActionUrlAt(gpa: Allocator, base: []const u8, vm_id: []const u8, action: VpsAction) ![]u8 {
+    const escaped_id = try @import("provider_hostinger").pathEscape(gpa, vm_id);
+    defer gpa.free(escaped_id);
+    return try std.fmt.allocPrint(gpa, "{s}/api/vps/v1/virtual-machines/{s}/{s}", .{ base, escaped_id, action.pathSegment() });
 }
 
 pub fn hostingerDnsZoneUrl(gpa: Allocator, domain: []const u8) ![]u8 {
@@ -190,6 +172,7 @@ fn cloudflareAuth(config: core_config.Config) cf_transport.Auth {
         .token = config.cloudflare_api_token,
         .email = config.cloudflare_email,
         .key = config.cloudflare_api_key,
+        .base_url = config.cloudflare_api_base,
     };
 }
 
@@ -213,7 +196,7 @@ fn executeCloudflare(ctx: Context, call: Call, writer: anytype) !void {
         return recordFailure(ctx, call, err, writer);
     };
     defer resp.deinit(ctx.gpa);
-    try finish(ctx, call, resp, writer);
+    try finish(ctx, call, resp, net_http.isOk(resp.status) and cloudflareEnvelopeSucceeded(ctx.gpa, resp.body), writer);
 }
 
 fn executeHostinger(ctx: Context, call: Call, writer: anytype) !void {
@@ -222,7 +205,7 @@ fn executeHostinger(ctx: Context, call: Call, writer: anytype) !void {
         return recordFailure(ctx, call, err, writer);
     };
     defer resp.deinit(ctx.gpa);
-    try finish(ctx, call, resp, writer);
+    try finish(ctx, call, resp, net_http.isOk(resp.status), writer);
 }
 
 fn recordFailure(ctx: Context, call: Call, err: anyerror, writer: anytype) !void {
@@ -232,15 +215,17 @@ fn recordFailure(ctx: Context, call: Call, err: anyerror, writer: anytype) !void
     try writeErrorResult(writer, 0, @errorName(err));
 }
 
-fn finish(ctx: Context, call: Call, resp: net_http.Response, writer: anytype) !void {
+fn finish(ctx: Context, call: Call, resp: net_http.Response, ok: bool, writer: anytype) !void {
     const redacted = try core_redact.providerResponse(ctx.gpa, resp.body);
     defer ctx.gpa.free(redacted);
-    const ok = net_http.isOk(resp.status);
-    const detail = try net_http.summary(ctx.gpa, call.kind, resp.status);
+    const detail = if (net_http.isOk(resp.status) and !ok)
+        try std.fmt.allocPrint(ctx.gpa, "{s}: provider rejected the response envelope", .{call.kind})
+    else
+        try net_http.summary(ctx.gpa, call.kind, resp.status);
     defer ctx.gpa.free(detail);
     _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, call.kind, call.target, call.body, if (ok) .ok else .err, detail);
 
-    const status_code: u16 = @intFromEnum(resp.status);
+    const status_code: u16 = @backingInt(resp.status);
     try writer.print("{{\"ok\":{},\"status\":{d},\"result\":", .{ ok, status_code });
     if (redacted.len != 0 and isValidJson(ctx.gpa, redacted)) {
         try writer.writeAll(redacted);
@@ -248,6 +233,14 @@ fn finish(ctx: Context, call: Call, resp: net_http.Response, writer: anytype) !v
         try core_json.writeString(writer, redacted);
     }
     try writer.writeAll("}\n");
+}
+
+fn cloudflareEnvelopeSucceeded(gpa: Allocator, body: []const u8) bool {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return false;
+    defer parsed.deinit();
+    if (parsed.value != .object) return false;
+    const success = parsed.value.object.get("success") orelse return false;
+    return success == .bool and success.bool;
 }
 
 fn writeErrorResult(writer: anytype, status: u16, code: []const u8) !void {
@@ -289,18 +282,6 @@ test "hostinger url builders match the generated route manifest paths" {
     defer allocator.free(restart);
     try std.testing.expectEqualStrings("https://developers.hostinger.com/api/vps/v1/virtual-machines/123/restart", restart);
 
-    const rules = try hostingerFirewallRulesUrl(allocator, "fw-1");
-    defer allocator.free(rules);
-    try std.testing.expectEqualStrings("https://developers.hostinger.com/api/vps/v1/firewall/fw-1/rules", rules);
-
-    const rule = try hostingerFirewallRuleUrl(allocator, "fw-1", "rule-2");
-    defer allocator.free(rule);
-    try std.testing.expectEqualStrings("https://developers.hostinger.com/api/vps/v1/firewall/fw-1/rules/rule-2", rule);
-
-    const sync = try hostingerFirewallSyncUrl(allocator, "fw-1", "123");
-    defer allocator.free(sync);
-    try std.testing.expectEqualStrings("https://developers.hostinger.com/api/vps/v1/firewall/fw-1/sync/123", sync);
-
     const dns = try hostingerDnsZoneUrl(allocator, "example.com");
     defer allocator.free(dns);
     try std.testing.expectEqualStrings("https://developers.hostinger.com/api/dns/v1/zones/example.com", dns);
@@ -312,6 +293,14 @@ test "json validation accepts objects and rejects malformed payloads" {
     try std.testing.expect(isValidJson(allocator, "\"strict\""));
     try std.testing.expect(!isValidJson(allocator, "{not json"));
     try std.testing.expect(!isValidJson(allocator, ""));
+}
+
+test "Cloudflare HTTP success still requires a successful provider envelope" {
+    const allocator = std.testing.allocator;
+    try std.testing.expect(cloudflareEnvelopeSucceeded(allocator, "{\"success\":true,\"result\":{}}"));
+    try std.testing.expect(!cloudflareEnvelopeSucceeded(allocator, "{\"success\":false,\"result\":null}"));
+    try std.testing.expect(!cloudflareEnvelopeSucceeded(allocator, "{\"result\":{}}"));
+    try std.testing.expect(!cloudflareEnvelopeSucceeded(allocator, "not-json"));
 }
 
 test "invalid body json records an error audit row without network access" {
@@ -339,7 +328,7 @@ test "invalid body json records an error audit row without network access" {
 
     var audit = std.Io.Writer.Allocating.init(allocator);
     defer audit.deinit();
-    try app_writes.writeAuditJson(allocator, &db, 10, &audit.writer);
+    try app_writes.writeAuditJson(allocator, &db, .{ .window = .all, .limit = 10 }, &audit.writer);
     const json = audit.written();
     try std.testing.expect(std.mem.indexOf(u8, json, "cf.dns.create") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"target\":\"zone-1\"") != null);
