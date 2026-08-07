@@ -3,6 +3,7 @@ const net_http = @import("net_http");
 pub const transport = @import("provider_cloudflare_transport");
 pub const routes = @import("provider_cloudflare_routes");
 pub const models = @import("provider_cloudflare_models");
+pub const browser_run = @import("provider_cloudflare_browser_run");
 const cf_transport = transport;
 
 const Allocator = std.mem.Allocator;
@@ -366,6 +367,12 @@ pub const Client = struct {
 
     pub fn init(auth: Auth) Client {
         return .{ .auth = auth };
+    }
+
+    /// Returns a borrowed Browser Run client with an explicitly selected
+    /// engine. Kitesurf is never selected as an implicit Chromium fallback.
+    pub fn browserRun(self: Client, account_id: []const u8, engine: browser_run.Engine) !browser_run.Client {
+        return browser_run.Client.init(self.auth, self.base_url_override, account_id, engine);
     }
 
     pub fn getAccounts(self: Client, io: Io, gpa: Allocator) !net_http.Response {
@@ -779,3 +786,12 @@ pub const Client = struct {
         return try cf_transport.requestJson(io, gpa, self.auth, method, url, body);
     }
 };
+
+test "Browser Run clients preserve the configured base URL and explicit engine" {
+    var client = Client.init(.{ .token = "token" });
+    client.base_url_override = "http://127.0.0.1:9000/client/v4";
+    const browser = try client.browserRun("account", .kitesurf);
+    try std.testing.expectEqualStrings("http://127.0.0.1:9000/client/v4", browser.base_url);
+    try std.testing.expectEqualStrings("account", browser.account_id);
+    try std.testing.expectEqual(browser_run.Engine.kitesurf, browser.engine);
+}

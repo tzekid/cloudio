@@ -5,7 +5,9 @@ A small, dependency-free Zig client for the Cloudflare v4 API. It exposes:
 - authenticated raw HTTP requests through `Client`;
 - typed route builders for the API surface used by Cloudio;
 - typed parsers in `cloudflare.models`;
-- API-token and legacy email/key authentication.
+- API-token and legacy email/key authentication;
+- Browser Run Quick Actions and HTTP session lifecycle control, including an
+  explicit Kitesurf beta engine selection.
 
 The package targets Zig 0.16 and is pre-1.0. Its current scope is deliberately
 limited to proven Cloudio callers; additions should follow real use cases.
@@ -46,6 +48,50 @@ pub fn main(init: std.process.Init) !void {
 
 Credentials are caller-owned slices and are never logged by the library.
 Callers must check `response.status` before interpreting response bodies.
+
+## Browser Run and Kitesurf
+
+Kitesurf is Cloudflare's beta, agent-oriented browser engine. Select it
+explicitly; the library never changes engines or falls back to Chromium:
+
+```zig
+const std = @import("std");
+const cloudflare = @import("cloudflare");
+
+pub fn render(io: std.Io, allocator: std.mem.Allocator) !void {
+    const client = cloudflare.Client.init(.{ .token = "replace-me" });
+    const browser = try client.browserRun("account-id", .kitesurf);
+
+    var content = try browser.content(io, allocator, .{
+        .source = .{ .url = "https://example.com" },
+    });
+    defer content.deinit(allocator);
+
+    switch (content) {
+        .ok => |response| std.debug.print("rendered {d} bytes\n", .{response.value.html.len}),
+        .api_error => |failure| std.debug.print("Cloudflare returned HTTP {d}\n", .{@intFromEnum(failure.status)}),
+    }
+}
+```
+
+`browser_run.Client` supports rendered HTML, bounded binary screenshots,
+session create/list/get/close, and target list/create. An API token with
+`Browser Rendering - Edit` permission is required; legacy email/global-key
+authentication is intentionally rejected for these new APIs. Returned values
+own their strings and byte buffers and must be deinitialized with the same
+allocator. Client configuration and request slices are borrowed.
+
+The default target policy rejects non-HTTP schemes, credentials in URLs,
+localhost names, and private/reserved IP literals. It cannot prevent DNS
+rebinding because Cloudflare resolves the destination remotely; applications
+with untrusted URLs should enforce their own hostname allowlist. Quick Action
+caching defaults to `0` to avoid credential- or user-specific response reuse.
+
+The package does not implement CDP WebSockets. It returns Cloudflare's session
+and target WebSocket URLs, which should be treated as secrets and passed to a
+dedicated CDP/WebSocket client. See [the Browser Run guide](docs/browser-run.md)
+for screenshot streaming, errors, session cleanup, beta limitations, and the
+opt-in live verification command.
 
 ## Development
 

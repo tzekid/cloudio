@@ -383,6 +383,20 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_json", .module = core_json_mod },
         },
     });
+    const provider_cloudflare_browser_http_mod = b.createModule(.{
+        .root_source_file = b.path("packages/cloudflare/src/internal/http.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const provider_cloudflare_browser_run_mod = b.createModule(.{
+        .root_source_file = b.path("packages/cloudflare/src/browser_run.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "net_http", .module = provider_cloudflare_browser_http_mod },
+            .{ .name = "provider_cloudflare_transport", .module = provider_cloudflare_transport_mod },
+        },
+    });
     const provider_cloudflare_mod = b.createModule(.{
         .root_source_file = b.path("packages/cloudflare/src/client.zig"),
         .target = target,
@@ -392,6 +406,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_cloudflare_models", .module = provider_cloudflare_models_mod },
             .{ .name = "provider_cloudflare_routes", .module = provider_cloudflare_routes_mod },
             .{ .name = "provider_cloudflare_transport", .module = provider_cloudflare_transport_mod },
+            .{ .name = "provider_cloudflare_browser_run", .module = provider_cloudflare_browser_run_mod },
         },
     });
     const provider_auth_mod = b.createModule(.{
