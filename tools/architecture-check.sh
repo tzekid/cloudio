@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+if ! command -v rg >/dev/null 2>&1; then
+    printf '%s\n' "architecture-check failed: ripgrep (rg) is required" >&2
+    exit 1
+fi
+
 fail=0
 
 check_no_matches() {

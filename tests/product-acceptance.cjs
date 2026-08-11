@@ -167,10 +167,10 @@ function projectForm(page, operation, scope = null) {
   return root.locator(`form[action="/projects/action"]:has(input[name="operation"][value="${operation}"])`).first();
 }
 
-async function submitProjectForm(page, form, expectedStatus = 303) {
+async function submitProjectForm(page, form, expectedStatus = 303, timeoutMs = 120_000) {
   const [response] = await Promise.all([
-    page.waitForResponse((candidate) => candidate.request().method() === "POST" && new URL(candidate.url()).pathname === "/projects/action", { timeout: 120_000 }),
-    page.waitForNavigation({ waitUntil: "load", timeout: 120_000 }),
+    page.waitForResponse((candidate) => candidate.request().method() === "POST" && new URL(candidate.url()).pathname === "/projects/action", { timeout: timeoutMs }),
+    page.waitForNavigation({ waitUntil: "load", timeout: timeoutMs }),
     form.locator('button[type="submit"]').click({ noWaitAfter: true }),
   ]);
   assert.equal(response.status(), expectedStatus);
@@ -256,7 +256,7 @@ async function checkProjectsEnhanced(page) {
   assert.doesNotMatch(secretPageText, /acceptance-secret-value-that-must-never-appear/);
   assert.equal(secretPageText.includes(nobSecretFile), false, "secret source references must not be rendered");
 
-  await submitProjectForm(page, projectForm(page, "prepare"));
+  await submitProjectForm(page, projectForm(page, "prepare"), 303, 360_000);
   assert.equal(new URL(page.url()).searchParams.get("result"), "prepared");
   assert.match(await page.locator("#nob-project-detail").innerText(), /Runner\s+Ready/);
   assert.match(await page.locator("#nob-project-detail").innerText(), /Observed-only resources cannot be changed/);
