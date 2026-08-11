@@ -80,36 +80,45 @@ pub fn collectMetrics(io: Io, gpa: Allocator, db: *Db) !void {
 }
 
 pub fn collectServices(io: Io, gpa: Allocator, db: *Db) !void {
-    try db.clear("services");
     const scopes = [_]struct { scope: []const u8, argv: []const []const u8 }{
         .{ .scope = "system", .argv = &.{ "systemctl", "list-units", "--type=service", "--state=running", "--no-pager", "--plain" } },
         .{ .scope = "user", .argv = &.{ "systemctl", "--user", "list-units", "--type=service", "--state=running", "--no-pager", "--plain" } },
     };
-    for (scopes) |scope| {
-        const result = core_process.run(gpa, io, scope.argv, max_command_bytes) catch continue;
+    var observations: [scopes.len]?[]u8 = @splat(null);
+    defer for (observations) |observation| if (observation) |owned| gpa.free(owned);
+    for (scopes, 0..) |scope, index| {
+        const result = core_process.run(gpa, io, scope.argv, max_command_bytes) catch return error.ServiceObservationUnavailable;
         defer result.deinit(gpa);
-        const redacted = try core_redact.secrets(gpa, result.stdout);
-        defer gpa.free(redacted);
-        _ = try db.insertSnapshot("system", "services", scope.scope, if (result.ok()) "ok" else "error", "running services", null, redacted);
+        if (!result.ok()) return error.ServiceObservationUnavailable;
+        observations[index] = try core_redact.secrets(gpa, result.stdout);
+    }
+
+    try db.exec("BEGIN IMMEDIATE");
+    errdefer db.exec("ROLLBACK") catch {};
+    try db.clear("services");
+    for (scopes, observations) |scope, observation| {
+        const redacted = observation.?;
+        _ = try db.insertSnapshot("system", "services", scope.scope, "ok", "running services", null, redacted);
         var lines = std.mem.splitScalar(u8, redacted, '\n');
         while (lines.next()) |line| try persistServiceLine(db, scope.scope, line);
     }
+    try db.exec("COMMIT");
 }
 
 pub fn collectSockets(io: Io, gpa: Allocator, db: *Db) !void {
-    try db.clear("sockets");
-    const result = core_process.run(gpa, io, &.{ "ss", "-tulpen" }, max_command_bytes) catch |err| {
-        const summary = try std.fmt.allocPrint(gpa, "ss failed: {s}", .{@errorName(err)});
-        defer gpa.free(summary);
-        _ = try db.insertSnapshot("system", "sockets", null, "error", summary, null, null);
-        return;
-    };
+    const result = core_process.run(gpa, io, &.{ "ss", "-tulpen" }, max_command_bytes) catch return error.SocketObservationUnavailable;
     defer result.deinit(gpa);
+    if (!result.ok()) return error.SocketObservationUnavailable;
     const redacted = try core_redact.secrets(gpa, result.stdout);
     defer gpa.free(redacted);
-    _ = try db.insertSnapshot("system", "sockets", null, if (result.ok()) "ok" else "error", "listening sockets", null, redacted);
+
+    try db.exec("BEGIN IMMEDIATE");
+    errdefer db.exec("ROLLBACK") catch {};
+    try db.clear("sockets");
+    _ = try db.insertSnapshot("system", "sockets", null, "ok", "listening sockets", null, redacted);
     var lines = std.mem.splitScalar(u8, redacted, '\n');
     while (lines.next()) |line| try persistSocketLine(db, line);
+    try db.exec("COMMIT");
 }
 
 pub fn collectContainers(io: Io, gpa: Allocator, db: *Db) !void {

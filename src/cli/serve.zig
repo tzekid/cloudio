@@ -4,6 +4,8 @@ const app_dashboard = @import("app_dashboard");
 const server = @import("server");
 const cli_args = @import("cli_args");
 const core_config = @import("core_config");
+const core_fs = @import("core_fs");
+const app_writes = @import("app_writes");
 const runtime_nob_workers = @import("runtime_nob_workers");
 const runtime_scheduler = @import("runtime_scheduler");
 
@@ -18,11 +20,30 @@ pub const Context = struct {
     config: core_config.Config,
 };
 
+const ServeLock = struct {
+    io: Io,
+    file: Io.File,
+
+    fn deinit(self: ServeLock) void {
+        self.file.close(self.io);
+    }
+};
+
 pub fn run(ctx: Context, args: []const []const u8) !void {
     const options = parse(args) catch |err| {
         std.debug.print("invalid serve command: {s}\n", .{@errorName(err)});
         return err;
     };
+    var listener = try server.listen(ctx.io, options);
+    defer listener.deinit(ctx.io);
+    const serve_lock = try acquireServeLock(ctx.io, ctx.gpa, ctx.config.db_path);
+    defer serve_lock.deinit();
+    const interrupted_mutations = try app_writes.recoverInterruptedMutations(ctx.db);
+    if (interrupted_mutations != 0) {
+        const detail = try std.fmt.allocPrint(ctx.gpa, "interrupted={d}", .{interrupted_mutations});
+        defer ctx.gpa.free(detail);
+        try ctx.db.insertAudit("mutation.recover", "ok", detail);
+    }
     if (!options.once and ctx.config.refresh_seconds > 0) {
         runtime_scheduler.start(.{ .io = ctx.io, .gpa = ctx.gpa, .config = ctx.config }) catch |err| {
             std.debug.print("cloudio scheduler spawn failed: {s}\n", .{@errorName(err)});
@@ -33,7 +54,22 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
             std.debug.print("cloudio nob worker spawn failed: {s}\n", .{@errorName(err)});
         };
     }
-    try server.run(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }, options);
+    try server.runPrepared(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }, options, &listener);
+}
+
+fn acquireServeLock(io: Io, gpa: Allocator, db_path: []const u8) !ServeLock {
+    const lock_path = try std.fmt.allocPrint(gpa, "{s}.serve.lock", .{db_path});
+    defer gpa.free(lock_path);
+    try core_fs.ensureParentDir(io, lock_path);
+    const file = Io.Dir.cwd().createFile(io, lock_path, .{
+        .truncate = false,
+        .lock = .exclusive,
+        .lock_nonblocking = true,
+    }) catch |err| switch (err) {
+        error.WouldBlock => return error.ServerAlreadyRunning,
+        else => |other| return other,
+    };
+    return .{ .io = io, .file = file };
 }
 
 pub fn parse(args: []const []const u8) !server.Options {
@@ -83,4 +119,16 @@ test "serve parser accepts local server and dashboard filters" {
     try std.testing.expectEqualStrings("plosca.ru", options.dashboard.domain.?);
     try std.testing.expectEqual(app_dashboard.Section.projects, options.dashboard.section);
     try std.testing.expect(options.once);
+}
+
+test "serve lock excludes a second process owner" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/serve-lock.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+
+    const first = try acquireServeLock(std.testing.io, allocator, db_path);
+    defer first.deinit();
+    try std.testing.expectError(error.ServerAlreadyRunning, acquireServeLock(std.testing.io, allocator, db_path));
 }

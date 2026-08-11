@@ -271,6 +271,10 @@ connection.executemany(
         ("cloudflare.collect", "ok", "fixture provider refresh succeeded"),
     ],
 )
+connection.execute(
+    "INSERT INTO mutation_requests(idempotency_key,request_hash,method,target,actor) VALUES(?,?,?,?,?)",
+    ("fixture-interrupted-mutation", "fixture-hash", "POST", "/api/containers/refresh", "fixture"),
+)
 connection.commit()
 connection.close()
 PY
@@ -312,6 +316,29 @@ fi
 
 : >"$tmp_dir/server.log"
 start_cloudio_server
+
+python3 - "$database" <<'PY'
+import json
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+state, status, body = connection.execute(
+    "SELECT state,http_status,response_json FROM mutation_requests WHERE idempotency_key=?",
+    ("fixture-interrupted-mutation",),
+).fetchone()
+assert state == "completed"
+assert status == 409
+assert json.loads(body) == {"error": "mutation_outcome_unknown", "retry_safe": False}
+connection.close()
+PY
+
+if CLOUDIO_DISABLE_ENV_FILES=1 CLOUDIO_CONFIG="$config" \
+  "$app_bin" serve --host 127.0.0.1 --port "$((port + 10))" >"$tmp_dir/duplicate-server.log" 2>&1; then
+  echo "a second server acquired the same database" >&2
+  exit 1
+fi
+grep -q 'ServerAlreadyRunning' "$tmp_dir/duplicate-server.log"
 
 node tests/product-acceptance.cjs \
   "$origin" \

@@ -1715,9 +1715,11 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "app_dashboard", .module = app_dashboard_mod },
+            .{ .name = "app_writes", .module = app_writes_mod },
             .{ .name = "server", .module = server_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "core_config", .module = core_config_mod },
+            .{ .name = "core_fs", .module = core_fs_mod },
             .{ .name = "runtime_nob_workers", .module = runtime_nob_workers_mod },
             .{ .name = "runtime_scheduler", .module = runtime_scheduler_mod },
         },

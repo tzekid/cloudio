@@ -711,6 +711,19 @@ async function enrollAndCheckEnhanced(browser) {
   assert.equal(await page.locator("#routes-preview-panel").isVisible(), true);
   assert.match(await page.locator("#routes-diff-summary").innerText(), /1 additions/);
 
+  fs.writeFileSync(caddyControlPath, "adapt-fail\n");
+  fs.writeFileSync(fakeCloudflareControlPath, "read-reject\n");
+  await page.goto(`${origin}/`, { waitUntil: "load" });
+  const [failedCaddyRefresh] = await Promise.all([
+    page.waitForResponse((candidate) => candidate.request().method() === "POST" && new URL(candidate.url()).pathname === "/dashboard/refresh"),
+    page.locator('#dashboard-refresh-form button[type="submit"]').click(),
+  ]);
+  assert.equal(failedCaddyRefresh.status(), 207);
+  fs.writeFileSync(caddyControlPath, "");
+  fs.writeFileSync(fakeCloudflareControlPath, "");
+  await page.goto(`${origin}/routes.html`, { waitUntil: "load" });
+  assert.equal(await page.locator('[data-route-host="fixture.example.test"]').count(), 1, "failed Caddy collection must retain last-good routes");
+
   const caddyCallsBeforeInvalid = fs.readFileSync(caddyCallsPath, "utf8");
   const invalidRoute = await apiMutation(page, "/api/caddy/routes", {
     action: "create", host: "INVALID HOST", upstream: "127.0.0.1:9000",

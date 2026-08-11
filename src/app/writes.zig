@@ -130,6 +130,22 @@ pub fn completeMutation(db: *Db, key: []const u8, status: u16, response_json: []
     if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return WriteError.SqliteStep;
 }
 
+/// Converts claims left by an interrupted server into a stable, replayable
+/// response. The caller must hold the process-wide serve lock so no live
+/// request can be reclassified while it is still executing.
+pub fn recoverInterruptedMutations(db: *Db) !usize {
+    const response = "{\"error\":\"mutation_outcome_unknown\",\"retry_safe\":false}\n";
+    const stmt = try db.prepare(
+        \\UPDATE mutation_requests
+        \\SET state = 'completed', http_status = 409, response_json = ?, completed_at = CURRENT_TIMESTAMP
+        \\WHERE state = 'running'
+    );
+    defer _ = sqlite.sqlite3_finalize(stmt);
+    try bindText(stmt, 1, response);
+    if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_DONE) return WriteError.SqliteStep;
+    return @intCast(sqlite.sqlite3_changes(db.handle));
+}
+
 pub const AuditView = enum {
     important,
     all,
@@ -462,4 +478,26 @@ test "mutation idempotency claims replays and rejects key reuse" {
     try std.testing.expectEqualStrings("{\"ok\":true}\n", replay.replay.body);
     const conflict = try beginMutation(allocator, &db, "request-1", "hash-b", "POST", "/api/containers/refresh", "test");
     try std.testing.expectEqual(std.meta.Tag(MutationClaim).conflict, std.meta.activeTag(conflict));
+}
+
+test "interrupted mutation claims become stable unknown outcomes" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/idempotency-recovery.db", .{tmp.sub_path});
+    defer allocator.free(db_path);
+
+    var db = try Db.open(std.testing.io, db_path);
+    defer db.close();
+    try db.initSchema();
+
+    _ = try beginMutation(allocator, &db, "request-interrupted", "hash-a", "POST", "/api/containers/refresh", "test");
+    try std.testing.expectEqual(@as(usize, 1), try recoverInterruptedMutations(&db));
+    try std.testing.expectEqual(@as(usize, 0), try recoverInterruptedMutations(&db));
+
+    var replay = try beginMutation(allocator, &db, "request-interrupted", "hash-a", "POST", "/api/containers/refresh", "test");
+    defer if (std.meta.activeTag(replay) == .replay) replay.replay.deinit(allocator);
+    try std.testing.expectEqual(std.meta.Tag(MutationClaim).replay, std.meta.activeTag(replay));
+    try std.testing.expectEqual(@as(u16, 409), replay.replay.status);
+    try std.testing.expectEqualStrings("{\"error\":\"mutation_outcome_unknown\",\"retry_safe\":false}\n", replay.replay.body);
 }

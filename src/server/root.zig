@@ -17,6 +17,16 @@ pub const Options = struct {
 };
 
 pub fn run(ctx: Context, options: Options) !void {
+    var listener = try listen(ctx.io, options);
+    defer listener.deinit(ctx.io);
+    try runPrepared(ctx, options, &listener);
+}
+
+pub fn listen(io: std.Io, options: Options) !std.Io.net.Server {
+    return try http.server.listen(io, options.host, options.port);
+}
+
+pub fn runPrepared(ctx: Context, options: Options, listener: *std.Io.net.Server) !void {
     var server_ctx = ctx;
     server_ctx.dashboard = options.dashboard;
     server_ctx.trust_proxy_client_ip =
@@ -24,7 +34,7 @@ pub fn run(ctx: Context, options: Options) !void {
         std.mem.eql(u8, options.host, "::1") or
         std.mem.eql(u8, options.host, "localhost");
     std.debug.print("cloudio serve http://{s}:{d}\n", .{ options.host, options.port });
-    try http.server.run(Context, server_ctx, ctx.io, options.host, options.port, options.once, connection);
+    try http.server.runPrepared(Context, server_ctx, ctx.io, listener, options.once, connection);
 }
 
 fn connection(ctx: Context, stream: std.Io.net.Stream) void {
