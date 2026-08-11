@@ -48,7 +48,7 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
             try writeJson(out, 413, "{\"error\":\"payload_too_large\"}\n");
             return;
         },
-        error.BadRequest, error.TooManyHeaders => {
+        error.BadRequest, error.TooManyHeaders, error.StreamTooLong => {
             try writeJson(out, 400, "{\"error\":\"bad_request\"}\n");
             return;
         },
@@ -112,12 +112,13 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
                 try writeJson(out, 500, "{\"error\":\"page_unavailable\"}\n");
                 return;
             };
-            try http.response.write(
+            try http.response.writeRepresentation(
                 out,
                 200,
                 "text/html; charset=utf-8",
                 security_headers,
-                if (std.mem.eql(u8, request.method, "HEAD")) "" else page_body.written(),
+                page_body.written(),
+                std.mem.eql(u8, request.method, "HEAD"),
             );
             return;
         }
@@ -217,12 +218,13 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
                 try writeJson(out, 500, "{\"error\":\"page_unavailable\"}\n");
                 return;
             };
-            try http.response.write(
+            try http.response.writeRepresentation(
                 out,
                 200,
                 "text/html; charset=utf-8",
                 security_headers,
-                if (std.mem.eql(u8, request.method, "HEAD")) "" else page_body.written(),
+                page_body.written(),
+                std.mem.eql(u8, request.method, "HEAD"),
             );
             return;
         }
@@ -233,6 +235,7 @@ pub fn handle(ctx: context.Context, stream: std.Io.net.Stream) !void {
             path,
             http.static.default_max_file_bytes,
             security_headers,
+            std.mem.eql(u8, request.method, "HEAD"),
             out,
         );
         return;

@@ -73,11 +73,13 @@ const PreparedTarget = struct {
     display_url: []u8,
     host: []u8,
     sha256: []u8,
+    request_pattern: []u8,
 
     fn deinit(self: PreparedTarget, allocator: Allocator) void {
         allocator.free(self.display_url);
         allocator.free(self.host);
         allocator.free(self.sha256);
+        allocator.free(self.request_pattern);
     }
 };
 
@@ -124,16 +126,17 @@ pub fn run(ctx: Context, input: Input) !Outcome {
         .base_url = ctx.config.cloudflare_api_base,
     });
     const client = try cloudflare.browserRun(input.account_id, .kitesurf);
+    const request_patterns = [_][]const u8{prepared.request_pattern};
     return switch (input.action) {
-        .content => executeContent(ctx, client, id, input.url, prepared.host),
-        .screenshot => executeScreenshot(ctx, client, id, input.url, prepared.host),
+        .content => executeContent(ctx, client, id, input.url, prepared.host, &request_patterns),
+        .screenshot => executeScreenshot(ctx, client, id, input.url, prepared.host, &request_patterns),
     };
 }
 
-fn executeContent(ctx: Context, client: browser.Client, id: []u8, url: []const u8, host: []const u8) !Outcome {
+fn executeContent(ctx: Context, client: browser.Client, id: []u8, url: []const u8, host: []const u8, request_patterns: []const []const u8) !Outcome {
     var result = client.content(ctx.io, ctx.gpa, .{
         .source = .{ .url = url },
-        .options = defaultOptions(),
+        .options = defaultOptions(request_patterns),
     }) catch |err| return failTransport(ctx, id, host, .content, err);
     defer result.deinit(ctx.gpa);
     switch (result) {
@@ -165,7 +168,7 @@ fn executeContent(ctx: Context, client: browser.Client, id: []u8, url: []const u
     }
 }
 
-fn executeScreenshot(ctx: Context, client: browser.Client, id: []u8, url: []const u8, host: []const u8) !Outcome {
+fn executeScreenshot(ctx: Context, client: browser.Client, id: []u8, url: []const u8, host: []const u8, request_patterns: []const []const u8) !Outcome {
     try ensureStateRoot(ctx);
     const final_path = try artifactPath(ctx.gpa, ctx.config.browser_run_state_root, id, ".png");
     defer ctx.gpa.free(final_path);
@@ -185,7 +188,7 @@ fn executeScreenshot(ctx: Context, client: browser.Client, id: []u8, url: []cons
     var file_writer = file.writerStreaming(ctx.io, &file_buffer);
     var result = client.screenshotTo(ctx.io, ctx.gpa, .{
         .source = .{ .url = url },
-        .options = defaultOptions(),
+        .options = defaultOptions(request_patterns),
         .screenshot = .{ .format = .png },
     }, &file_writer.interface, max_artifact_bytes) catch |err| {
         file.close(ctx.io);
@@ -477,7 +480,9 @@ fn prepareTarget(allocator: Allocator, raw_url: []const u8, allowed_hosts: []con
     const display_url = try allocator.dupe(u8, url[0..display_end]);
     errdefer allocator.free(display_url);
     const sha256 = try hashBytes(allocator, url);
-    return .{ .display_url = display_url, .host = host, .sha256 = sha256 };
+    errdefer allocator.free(sha256);
+    const request_pattern = try allowedRequestPattern(allocator, host);
+    return .{ .display_url = display_url, .host = host, .sha256 = sha256, .request_pattern = request_pattern };
 }
 
 fn hostAllowed(host: []const u8, allowed_hosts: []const []const u8) bool {
@@ -502,12 +507,29 @@ fn accountObserved(ctx: Context, account_id: []const u8) !bool {
     return false;
 }
 
-fn defaultOptions() browser.QuickActionOptions {
+fn allowedRequestPattern(allocator: Allocator, host: []const u8) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(allocator);
+    errdefer out.deinit();
+    try out.writer.writeAll("/^https?:\\/\\/");
+    for (host) |byte| {
+        if (std.ascii.isAlphanumeric(byte) or byte == '-') {
+            try out.writer.writeByte(byte);
+        } else {
+            try out.writer.writeByte('\\');
+            try out.writer.writeByte(byte);
+        }
+    }
+    try out.writer.writeAll("(?::[0-9]+)?(?:\\/|$)");
+    return try out.toOwnedSlice();
+}
+
+fn defaultOptions(request_patterns: []const []const u8) browser.QuickActionOptions {
     return .{
         .cache_ttl_seconds = 0,
         .target_policy = .public_http,
         .action_timeout_ms = 60_000,
         .goto = .{ .timeout_ms = 30_000, .wait_until = .domcontentloaded },
+        .allow_request_patterns = request_patterns,
     };
 }
 
@@ -611,6 +633,12 @@ test "Browser Run host policy is exact unless a wildcard is explicit" {
     try std.testing.expect(hostAllowed("sub.example.com", &.{"*.example.com"}));
     try std.testing.expect(!hostAllowed("example.com", &.{"*.example.com"}));
     try std.testing.expect(hostAllowed("anything.invalid", &.{"*"}));
+}
+
+test "Browser Run remote request policy anchors navigation to the selected host" {
+    const pattern = try allowedRequestPattern(std.testing.allocator, "sub.example.com");
+    defer std.testing.allocator.free(pattern);
+    try std.testing.expectEqualStrings("/^https?:\\/\\/sub\\.example\\.com(?::[0-9]+)?(?:\\/|$)", pattern);
 }
 
 test "Browser Run targets remove query secrets from stored display URLs" {

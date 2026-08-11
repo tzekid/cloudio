@@ -3,6 +3,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+pub const default_timeout_seconds: u64 = 30;
+
 pub const CommandResult = struct {
     stdout: []u8,
     stderr: []u8,
@@ -31,6 +33,7 @@ pub fn run(gpa: Allocator, io: Io, argv: []const []const u8, limit: usize) !Comm
         .expand_arg0 = .expand,
         .stdout_limit = .limited(limit),
         .stderr_limit = .limited(limit),
+        .timeout = .{ .duration = .{ .raw = .fromSeconds(default_timeout_seconds), .clock = .awake } },
     });
     return .{ .stdout = result.stdout, .stderr = result.stderr, .term = result.term };
 }

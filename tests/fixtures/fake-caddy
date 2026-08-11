@@ -42,6 +42,9 @@ adapt_json() {
 
 case "$command_name" in
   adapt)
+    if [[ "$mode" == "adapt-fail" ]]; then
+      exit 1
+    fi
     if [[ "$mode" == "validate-fail" && "$config" == *'.cloudio.tmp.'* ]]; then
       exit 1
     fi

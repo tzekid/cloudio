@@ -109,6 +109,10 @@ pub const QuickActionOptions = struct {
     extra_http_headers: []const Header = &.{},
     user_agent: ?[]const u8 = null,
     javascript_enabled: ?bool = null,
+    /// Cloudflare regex strings applied to every browser request. Applications
+    /// can use these to keep redirects and subresources inside a destination
+    /// policy enforced by the remote browser.
+    allow_request_patterns: []const []const u8 = &.{},
 };
 
 pub const ContentRequest = struct {
@@ -554,6 +558,10 @@ fn validateQuickAction(source: Source, options: QuickActionOptions) !void {
         if (header.name.len == 0 or containsControl(header.name) or containsControl(header.value) or std.mem.indexOfScalar(u8, header.name, ':') != null)
             return error.InvalidTargetHeader;
     }
+    if (options.allow_request_patterns.len > 32) return error.TooManyRequestPatterns;
+    for (options.allow_request_patterns) |pattern| {
+        if (pattern.len == 0 or pattern.len > 512 or containsControl(pattern)) return error.InvalidRequestPattern;
+    }
 }
 
 fn validateScreenshot(options: ScreenshotOptions) !void {
@@ -710,6 +718,15 @@ fn quickActionBody(allocator: Allocator, source: Source, options: QuickActionOpt
     }
     if (options.user_agent) |value| try jsonField(writer, &first, "userAgent", value);
     if (options.javascript_enabled) |value| try jsonField(writer, &first, "setJavaScriptEnabled", value);
+    if (options.allow_request_patterns.len != 0) {
+        try jsonFieldName(writer, &first, "allowRequestPattern");
+        try writer.writeByte('[');
+        for (options.allow_request_patterns, 0..) |pattern, index| {
+            if (index != 0) try writer.writeByte(',');
+            try std.json.Stringify.value(pattern, .{}, writer);
+        }
+        try writer.writeByte(']');
+    }
     if (screenshot) |value| {
         try jsonFieldName(writer, &first, "screenshotOptions");
         try writer.writeByte('{');
@@ -1058,10 +1075,11 @@ test "Quick Action JSON uses documented field names and binary screenshots" {
     const body = try quickActionBody(allocator, .{ .url = "https://example.com" }, .{
         .goto = .{ .timeout_ms = 45_000, .wait_until = .networkidle2 },
         .viewport = .{ .width = 1280, .height = 720 },
+        .allow_request_patterns = &.{"/^https?:\\/\\/example\\.com(?:\\/|$)"},
     }, .{ .format = .webp, .quality = 80, .full_page = true });
     defer allocator.free(body);
     try std.testing.expectEqualStrings(
-        "{\"url\":\"https://example.com\",\"gotoOptions\":{\"timeout\":45000,\"waitUntil\":\"networkidle2\"},\"viewport\":{\"width\":1280,\"height\":720},\"screenshotOptions\":{\"type\":\"webp\",\"encoding\":\"binary\",\"quality\":80,\"fullPage\":true}}",
+        "{\"url\":\"https://example.com\",\"gotoOptions\":{\"timeout\":45000,\"waitUntil\":\"networkidle2\"},\"viewport\":{\"width\":1280,\"height\":720},\"allowRequestPattern\":[\"/^https?:\\\\/\\\\/example\\\\.com(?:\\\\/|$)\"],\"screenshotOptions\":{\"type\":\"webp\",\"encoding\":\"binary\",\"quality\":80,\"fullPage\":true}}",
         body,
     );
 }

@@ -86,6 +86,9 @@ localhost names, and private/reserved IP literals. It cannot prevent DNS
 rebinding because Cloudflare resolves the destination remotely; applications
 with untrusted URLs should enforce their own hostname allowlist. Quick Action
 caching defaults to `0` to avoid credential- or user-specific response reuse.
+Applications can also populate `allow_request_patterns`; Cloudflare applies
+those regexes to navigation redirects and subresource requests in the remote
+browser. Cloudio uses an exact-host pattern for every product Browser Run.
 
 The package does not implement CDP WebSockets. It returns Cloudflare's session
 and target WebSocket URLs, which should be treated as secrets and passed to a

@@ -56,11 +56,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def reject_bad_authorization(self):
+        if self.headers.get("Authorization") == "Bearer fixture-token":
+            return False
+        record(self.command, urlparse(self.path).path)
+        self.send_json(401, {"message": "invalid fixture authorization"})
+        return True
+
     def disconnect(self):
         self.connection.shutdown(1)
         self.connection.close()
 
     def do_GET(self):
+        if self.reject_bad_authorization():
+            return
         path = urlparse(self.path).path
         record("GET", path)
         current_mode = mode()
@@ -106,6 +115,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"message": "not found"})
 
     def do_POST(self):
+        if self.reject_bad_authorization():
+            return
         path = urlparse(self.path).path
         record("POST", path)
         current_mode = mode()

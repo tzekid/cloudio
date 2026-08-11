@@ -52,6 +52,7 @@ pub const RouteInput = struct {
 pub const ApplyOptions = struct {
     caddy_executable: []const u8 = "caddy",
     curl_executable: []const u8 = "curl",
+    commit_existing_transaction: bool = false,
 };
 
 pub const ApplyResult = struct {
@@ -295,12 +296,25 @@ fn applyLocked(ctx: Context, opts: ApplyOptions) !ApplyResult {
         return err;
     };
 
+    finalizeApply(ctx, opts.commit_existing_transaction, rendered) catch |err| {
+        restoreAndReload(ctx, opts, before, previous_runtime) catch return error.CaddyRecoveryFailed;
+        return err;
+    };
+    return .{ .validated = true, .reloaded = true, .verified = true, .bytes = rendered.len, .backup_path = backup_path };
+}
+
+fn finalizeApply(ctx: Context, commit_existing_transaction: bool, rendered: []const u8) !void {
+    if (!commit_existing_transaction) try ctx.db.exec("BEGIN IMMEDIATE");
+    var transaction_open = true;
+    defer if (transaction_open) ctx.db.exec("ROLLBACK") catch {};
+
     try deleteAppliedTombstones(ctx);
     _ = try ctx.db.insertSnapshot("caddy", "owned-fragment", ctx.config.caddy_owned_path, "ok", "Applied and verified the Cloudio-owned Caddy fragment.", null, rendered);
     const detail = try std.fmt.allocPrint(ctx.gpa, "fragment={s}; bytes={d}; validate=ok; reload=ok; verify=ok", .{ ctx.config.caddy_owned_path, rendered.len });
     defer ctx.gpa.free(detail);
     _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, "caddy.apply", ctx.config.caddy_owned_path, null, .ok, detail);
-    return .{ .validated = true, .reloaded = true, .verified = true, .bytes = rendered.len, .backup_path = backup_path };
+    try ctx.db.exec("COMMIT");
+    transaction_open = false;
 }
 
 fn restoreAndReload(ctx: Context, opts: ApplyOptions, before: Fragment, previous_runtime: []const u8) !void {
@@ -955,13 +969,12 @@ pub fn applyNobRoute(ctx: Context, request: NobRouteRequest) !NobRouteTransition
             removed = true;
         },
     }
-    const applied = applyLocked(ctx, .{ .caddy_executable = request.caddy_executable, .curl_executable = request.curl_executable }) catch |err| {
-        try ctx.db.exec("ROLLBACK");
+    const applied = applyLocked(ctx, .{ .caddy_executable = request.caddy_executable, .curl_executable = request.curl_executable, .commit_existing_transaction = true }) catch |err| {
+        ctx.db.exec("ROLLBACK") catch {};
         transaction_open = false;
         return err;
     };
     defer applied.deinit(ctx.gpa);
-    try ctx.db.exec("COMMIT");
     transaction_open = false;
     return .{ .before_enabled = before_enabled, .after_enabled = if (removed) null else request.operation == .enable, .created = created, .removed = removed };
 }

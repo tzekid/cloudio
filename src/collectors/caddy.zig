@@ -42,33 +42,40 @@ pub const Sites = struct {
 };
 
 pub fn collect(io: Io, gpa: Allocator, paths: Paths, db: *Db) !void {
-    try db.clear("caddy_sites");
-    try db.clear("caddy_upstreams");
-
+    var caddyfile_redacted: ?[]u8 = null;
+    defer if (caddyfile_redacted) |owned| gpa.free(owned);
     if (try readFileMaybe(io, gpa, paths.caddyfile_path, max_file_bytes)) |caddyfile| {
         defer gpa.free(caddyfile);
-        const redacted = try core_redact.secrets(gpa, caddyfile);
-        defer gpa.free(redacted);
-        _ = try db.insertSnapshot("caddy", "caddyfile", paths.caddyfile_path, "ok", "root Caddyfile", null, redacted);
+        caddyfile_redacted = try core_redact.secrets(gpa, caddyfile);
     }
 
-    try collectSitesFile(io, gpa, db, paths.caddy_sites_path);
+    var sites = try readSitesFileMaybe(io, gpa, paths.caddy_sites_path);
+    defer if (sites) |*parsed| parsed.deinit(gpa);
+    var owned_sites: ?Sites = null;
+    defer if (owned_sites) |*parsed| parsed.deinit(gpa);
     if (!std.mem.eql(u8, paths.caddy_owned_path, paths.caddy_sites_path)) {
-        try collectSitesFile(io, gpa, db, paths.caddy_owned_path);
+        owned_sites = try readSitesFileMaybe(io, gpa, paths.caddy_owned_path);
     }
 
-    const adapt_result = runCommand(gpa, io, &.{ "caddy", "adapt", "--adapter", "caddyfile", "--config", paths.caddyfile_path, "--pretty" }, max_command_bytes) catch |err| {
-        const summary = try std.fmt.allocPrint(gpa, "caddy adapt failed: {s}", .{@errorName(err)});
-        defer gpa.free(summary);
-        _ = try db.insertSnapshot("caddy", "adapt", paths.caddyfile_path, "error", summary, null, null);
-        return;
-    };
+    const adapt_result = runCommand(gpa, io, &.{ "caddy", "adapt", "--adapter", "caddyfile", "--config", paths.caddyfile_path, "--pretty" }, max_command_bytes) catch return error.CaddyAdaptUnavailable;
     defer adapt_result.deinit(gpa);
+    if (!adapt_result.ok()) return error.CaddyAdaptFailed;
     const adapted = try core_redact.secrets(gpa, adapt_result.stdout);
     defer gpa.free(adapted);
     const adapt_stderr = try core_redact.secrets(gpa, adapt_result.stderr);
     defer gpa.free(adapt_stderr);
-    _ = try db.insertSnapshot("caddy", "adapt", paths.caddyfile_path, if (adapt_result.ok()) "ok" else "error", "adapted Caddy JSON", adapted, adapt_stderr);
+
+    try db.exec("BEGIN IMMEDIATE");
+    errdefer db.exec("ROLLBACK") catch {};
+    try db.clear("caddy_sites");
+    try db.clear("caddy_upstreams");
+    if (caddyfile_redacted) |redacted| {
+        _ = try db.insertSnapshot("caddy", "caddyfile", paths.caddyfile_path, "ok", "root Caddyfile", null, redacted);
+    }
+    if (sites) |*parsed| try persistSites(gpa, db, paths.caddy_sites_path, parsed);
+    if (owned_sites) |*parsed| try persistSites(gpa, db, paths.caddy_owned_path, parsed);
+    _ = try db.insertSnapshot("caddy", "adapt", paths.caddyfile_path, "ok", "adapted Caddy JSON", adapted, adapt_stderr);
+    try db.exec("COMMIT");
 
     const api = runCommand(gpa, io, &.{ "curl", "-sS", "--max-time", "5", "--unix-socket", paths.caddy_admin_socket, "http://localhost/config/" }, max_command_bytes) catch |err| {
         const summary = try std.fmt.allocPrint(gpa, "caddy admin unavailable: {s}", .{@errorName(err)});
@@ -84,11 +91,13 @@ pub fn collect(io: Io, gpa: Allocator, paths: Paths, db: *Db) !void {
     _ = try db.insertSnapshot("caddy", "admin", paths.caddy_admin_socket, if (api.ok()) "ok" else "error", "runtime config from admin socket", api_text, api_stderr);
 }
 
-fn collectSitesFile(io: Io, gpa: Allocator, db: *Db, path: []const u8) !void {
-    const raw = (try readFileMaybe(io, gpa, path, max_file_bytes)) orelse return;
+fn readSitesFileMaybe(io: Io, gpa: Allocator, path: []const u8) !?Sites {
+    const raw = (try readFileMaybe(io, gpa, path, max_file_bytes)) orelse return null;
     defer gpa.free(raw);
-    var sites = try parseSites(gpa, raw);
-    defer sites.deinit(gpa);
+    return try parseSites(gpa, raw);
+}
+
+fn persistSites(gpa: Allocator, db: *Db, path: []const u8, sites: *const Sites) !void {
     for (sites.items) |site| {
         const redacted_block = try core_redact.secrets(gpa, site.raw_block);
         defer gpa.free(redacted_block);

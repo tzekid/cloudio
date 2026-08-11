@@ -55,6 +55,13 @@ class Handler(BaseHTTPRequestHandler):
             with open(calls_path, "a", encoding="utf-8") as handle:
                 handle.write(f"{self.command} {self.path} {body}\n")
 
+    def reject_bad_authorization(self):
+        if self.headers.get("Authorization") == "Bearer fixture-token":
+            return False
+        self.record_call()
+        self.response(401, {"success": False, "errors": [{"message": "invalid fixture authorization"}], "result": None})
+        return True
+
     def response(self, status, payload):
         encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
@@ -99,6 +106,8 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def do_GET(self):
+        if self.reject_bad_authorization():
+            return
         if self.reject_or_disconnect(False):
             return
         parsed = urlparse(self.path)
@@ -126,6 +135,8 @@ class Handler(BaseHTTPRequestHandler):
         self.response(404, {"success": False, "errors": [{"message": "not found"}], "result": None})
 
     def do_POST(self):
+        if self.reject_bad_authorization():
+            return
         if self.reject_or_disconnect(True):
             return
         parsed = urlparse(self.path)
@@ -138,6 +149,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if body.get("url") != "https://example.com/browser-run?fixture=secret":
                 self.response(422, {"success": False, "errors": [{"message": "unexpected target"}], "result": None})
+                return
+            if body.get("allowRequestPattern") != [r"/^https?:\/\/example\.com(?::[0-9]+)?(?:\/|$)"]:
+                self.response(422, {"success": False, "errors": [{"message": "missing destination request policy"}], "result": None})
                 return
             action = parsed.path[len(browser_prefix):]
             if action == "content":
@@ -167,6 +181,8 @@ class Handler(BaseHTTPRequestHandler):
         self.response(200, {"success": True, "errors": [], "messages": [], "result": record})
 
     def do_PUT(self):
+        if self.reject_bad_authorization():
+            return
         if self.reject_or_disconnect(True):
             return
         parsed = urlparse(self.path)
@@ -195,6 +211,8 @@ class Handler(BaseHTTPRequestHandler):
         self.response(200, {"success": True, "errors": [], "messages": [], "result": updated})
 
     def do_DELETE(self):
+        if self.reject_bad_authorization():
+            return
         if self.reject_or_disconnect(True):
             return
         parsed = urlparse(self.path)
