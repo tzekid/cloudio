@@ -27,19 +27,23 @@ pub fn request(gpa: Allocator, io: Io, method: std.http.Method, url: []const u8,
     // emit Content-Length ourselves and write the payload straight to the connection.
     const manual_body = body != null and !method.requestHasBody();
     var content_length_buf: [24]u8 = undefined;
-    var manual_headers: []std.http.Header = &.{};
-    defer if (manual_headers.len != 0) gpa.free(manual_headers);
+    const sensitive_headers = privileged.len != 0 or containsSensitiveHeader(extra);
+    var wire_headers: []std.http.Header = &.{};
+    defer if (wire_headers.len != 0) gpa.free(wire_headers);
+    if (manual_body or privileged.len != 0) {
+        wire_headers = try gpa.alloc(std.http.Header, extra.len + privileged.len + @intFromBool(manual_body));
+        @memcpy(wire_headers[0..extra.len], extra);
+        @memcpy(wire_headers[extra.len .. extra.len + privileged.len], privileged);
+    }
     if (manual_body) {
         const cl = try std.fmt.bufPrint(&content_length_buf, "{d}", .{body.?.len});
-        manual_headers = try gpa.alloc(std.http.Header, extra.len + 1);
-        @memcpy(manual_headers[0..extra.len], extra);
-        manual_headers[extra.len] = .{ .name = "Content-Length", .value = cl };
+        wire_headers[extra.len + privileged.len] = .{ .name = "Content-Length", .value = cl };
     }
     var req = try client.request(method, uri, .{
-        .redirect_behavior = if (manual_body) .unhandled else @enumFromInt(3),
+        .redirect_behavior = if (manual_body or sensitive_headers) .unhandled else @enumFromInt(3),
         .headers = .{ .user_agent = .{ .override = "hostinger-zig/0.1" } },
-        .extra_headers = if (manual_body) manual_headers else extra,
-        .privileged_headers = privileged,
+        .extra_headers = if (wire_headers.len != 0) wire_headers else extra,
+        .privileged_headers = &.{},
     });
     defer req.deinit();
     if (manual_body) {
@@ -58,6 +62,9 @@ pub fn request(gpa: Allocator, io: Io, method: std.http.Method, url: []const u8,
     }
     var redirect_buffer: [8 * 1024]u8 = undefined;
     var response = try req.receiveHead(&redirect_buffer);
+    if (response.head.content_length) |declared| {
+        if (declared > max_body_bytes) return error.ApiResponseTooLarge;
+    }
     var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
     const decompress_buffer: []u8 = switch (response.head.content_encoding) {
@@ -70,14 +77,35 @@ pub fn request(gpa: Allocator, io: Io, method: std.http.Method, url: []const u8,
     var transfer_buffer: [64]u8 = undefined;
     var decompress: std.http.Decompress = undefined;
     const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
-    _ = reader.streamRemaining(&out.writer) catch |err| switch (err) {
+    _ = copyBounded(reader, &out.writer, max_body_bytes) catch |err| switch (err) {
         error.ReadFailed => return response.bodyErr().?,
         else => |e| return e,
     };
     const response_body = try out.toOwnedSlice();
     errdefer gpa.free(response_body);
-    if (response_body.len > max_body_bytes) return error.ApiResponseTooLarge;
     return .{ .status = response.head.status, .body = response_body };
+}
+
+fn containsSensitiveHeader(headers: []const std.http.Header) bool {
+    for (headers) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, "Authorization") or
+            std.ascii.eqlIgnoreCase(header.name, "Cookie") or
+            std.ascii.eqlIgnoreCase(header.name, "X-Auth-Key") or
+            std.ascii.eqlIgnoreCase(header.name, "X-Auth-Email")) return true;
+    }
+    return false;
+}
+
+fn copyBounded(reader: *std.Io.Reader, writer: *std.Io.Writer, max_bytes_allowed: usize) !usize {
+    var total: usize = 0;
+    var buffer: [16 * 1024]u8 = undefined;
+    while (true) {
+        const read = try reader.readSliceShort(&buffer);
+        if (read == 0) return total;
+        if (read > max_bytes_allowed - total) return error.ApiResponseTooLarge;
+        try writer.writeAll(buffer[0..read]);
+        total += read;
+    }
 }
 
 pub fn statusText(status: std.http.Status) []const u8 {
@@ -109,4 +137,17 @@ test "status helpers classify api responses" {
     const text = try summary(std.testing.allocator, "metrics", .ok);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("metrics HTTP 200", text);
+}
+
+test "sensitive headers disable automatic redirect handling" {
+    try std.testing.expect(containsSensitiveHeader(&.{.{ .name = "authorization", .value = "Bearer secret" }}));
+    try std.testing.expect(containsSensitiveHeader(&.{.{ .name = "X-Auth-Key", .value = "secret" }}));
+    try std.testing.expect(!containsSensitiveHeader(&.{.{ .name = "Accept", .value = "application/json" }}));
+}
+
+test "bounded copy rejects bytes beyond the limit" {
+    var source = std.Io.Reader.fixed("12345");
+    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expectError(error.ApiResponseTooLarge, copyBounded(&source, &out.writer, 4));
 }

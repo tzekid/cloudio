@@ -20,3 +20,5 @@ jobs:
         with:
           version: ${{ steps.zig-version.outputs.version }}
       - run: zig build --system zig-pkg check -j2
+      - run: bash tests/setup-browser-e2e.sh
+      - run: zig build --system zig-pkg -Doptimize=ReleaseSafe product-acceptance -j2

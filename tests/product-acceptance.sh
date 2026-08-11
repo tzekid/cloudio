@@ -182,7 +182,7 @@ python3 tests/fixtures/fake-cloudflare.py \
   >"$tmp_dir/cloudflare.log" 2>&1 &
 cloudflare_pid="$!"
 for _ in {1..100}; do
-  if curl -fsS "$cloudflare_origin/client/v4/zones?name=fixture.example.test" >/dev/null 2>&1; then
+  if curl -fsS -H 'Authorization: Bearer fixture-token' "$cloudflare_origin/client/v4/zones?name=fixture.example.test" >/dev/null 2>&1; then
     break
   fi
   if ! kill -0 "$cloudflare_pid" 2>/dev/null; then
@@ -201,7 +201,7 @@ python3 tests/fixtures/fake-hostinger.py \
   >"$tmp_dir/hostinger.log" 2>&1 &
 hostinger_pid="$!"
 for _ in {1..100}; do
-  if curl -fsS "$hostinger_origin/api/vps/v1/virtual-machines" >/dev/null 2>&1; then
+  if curl -fsS -H 'Authorization: Bearer fixture-token' "$hostinger_origin/api/vps/v1/virtual-machines" >/dev/null 2>&1; then
     break
   fi
   if ! kill -0 "$hostinger_pid" 2>/dev/null; then
