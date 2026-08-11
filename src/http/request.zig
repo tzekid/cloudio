@@ -63,6 +63,7 @@ pub fn read(arena: Allocator, reader: *std.Io.Reader, limits: Limits) ReadError!
     var headers = std.ArrayList(Header).empty;
     defer headers.deinit(arena);
     var content_length: ?usize = null;
+    var transfer_encoding = false;
 
     while (true) {
         const header_line = (try reader.takeDelimiter('\n')) orelse return error.BadRequest;
@@ -74,13 +75,22 @@ pub fn read(arena: Allocator, reader: *std.Io.Reader, limits: Limits) ReadError!
         const value = std.mem.trim(u8, trimmed[colon + 1 ..], " \t");
         if (name.len == 0) return error.BadRequest;
         if (std.ascii.eqlIgnoreCase(name, "content-length")) {
-            content_length = std.fmt.parseInt(usize, value, 10) catch return error.BadRequest;
+            const parsed_length = std.fmt.parseInt(usize, value, 10) catch return error.BadRequest;
+            if (content_length) |existing| if (existing != parsed_length) return error.BadRequest;
+            content_length = parsed_length;
+        } else if (std.ascii.eqlIgnoreCase(name, "transfer-encoding")) {
+            // Chunked request decoding is intentionally unsupported. Reject it
+            // explicitly, including Content-Length plus Transfer-Encoding,
+            // rather than letting a proxy and Cloudio disagree about framing.
+            transfer_encoding = true;
         }
         try headers.append(arena, .{
             .name = try arena.dupe(u8, name),
             .value = try arena.dupe(u8, value),
         });
     }
+
+    if (transfer_encoding) return error.BadRequest;
 
     const body = if (content_length) |len| blk: {
         if (len > limits.max_body_bytes) return error.BodyTooLarge;
@@ -105,8 +115,9 @@ fn parseRequestLine(line: []const u8) ?RequestLine {
     const method = items.next() orelse return null;
     const target = items.next() orelse return null;
     const version = items.next() orelse return null;
+    if (items.next() != null) return null;
     if (method.len == 0 or target.len == 0) return null;
-    if (!std.mem.startsWith(u8, version, "HTTP/1.")) return null;
+    if (!std.mem.eql(u8, version, "HTTP/1.0") and !std.mem.eql(u8, version, "HTTP/1.1")) return null;
     return .{ .method = method, .target = target };
 }
 
@@ -135,4 +146,18 @@ test "request parser rejects invalid and oversized requests" {
     try std.testing.expectError(error.BadRequest, read(arena_state.allocator(), &invalid, .{}));
     var large = std.Io.Reader.fixed("POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\n");
     try std.testing.expectError(error.BodyTooLarge, read(arena_state.allocator(), &large, .{ .max_body_bytes = 3 }));
+}
+
+test "request parser rejects ambiguous framing and request lines" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var conflicting = std.Io.Reader.fixed("POST / HTTP/1.1\r\nContent-Length: 2\r\nContent-Length: 3\r\n\r\n{}");
+    try std.testing.expectError(error.BadRequest, read(arena_state.allocator(), &conflicting, .{}));
+    var chunked = std.Io.Reader.fixed("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
+    try std.testing.expectError(error.BadRequest, read(arena_state.allocator(), &chunked, .{}));
+    var both = std.Io.Reader.fixed("POST / HTTP/1.1\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n");
+    try std.testing.expectError(error.BadRequest, read(arena_state.allocator(), &both, .{}));
+    var extra_token = std.Io.Reader.fixed("GET / HTTP/1.1 extra\r\n\r\n");
+    try std.testing.expectError(error.BadRequest, read(arena_state.allocator(), &extra_token, .{}));
 }

@@ -11,7 +11,7 @@ pub fn serve(
     max_file_bytes: usize,
     out: *std.Io.Writer,
 ) !void {
-    return serveWithHeaders(io, gpa, root, request_path, max_file_bytes, "", out);
+    return serveWithHeaders(io, gpa, root, request_path, max_file_bytes, "", false, out);
 }
 
 pub fn serveWithHeaders(
@@ -21,6 +21,7 @@ pub fn serveWithHeaders(
     request_path: []const u8,
     max_file_bytes: usize,
     extra_headers: []const u8,
+    head_only: bool,
     out: *std.Io.Writer,
 ) !void {
     if (!isSafePath(request_path)) {
@@ -38,7 +39,7 @@ pub fn serveWithHeaders(
         else => |e| return e,
     };
     defer gpa.free(data);
-    try response.write(out, 200, contentType(relative), extra_headers, data);
+    try response.writeRepresentation(out, 200, contentType(relative), extra_headers, data, head_only);
 }
 
 pub fn isSafePath(path: []const u8) bool {

@@ -150,6 +150,9 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("url") != "https://example.com/browser-run?fixture=secret":
                 self.response(422, {"success": False, "errors": [{"message": "unexpected target"}], "result": None})
                 return
+            if body.get("allowRequestPattern") != [r"/^https?:\/\/example\.com(?::[0-9]+)?(?:\/|$)"]:
+                self.response(422, {"success": False, "errors": [{"message": "missing destination request policy"}], "result": None})
+                return
             action = parsed.path[len(browser_prefix):]
             if action == "content":
                 payload = {

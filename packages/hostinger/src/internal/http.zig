@@ -1,9 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 pub const max_body_bytes = 12 * 1024 * 1024;
+pub const network_timeout_seconds: isize = 30;
 
 pub const Response = struct {
     status: std.http.Status,
@@ -46,6 +48,7 @@ pub fn request(gpa: Allocator, io: Io, method: std.http.Method, url: []const u8,
         .privileged_headers = &.{},
     });
     defer req.deinit();
+    try configureSocketTimeout(req.connection.?);
     if (manual_body) {
         try req.sendBodiless();
         const conn_writer = req.connection.?.writer();
@@ -105,6 +108,16 @@ fn copyBounded(reader: *std.Io.Reader, writer: *std.Io.Writer, max_bytes_allowed
         if (read > max_bytes_allowed - total) return error.ApiResponseTooLarge;
         try writer.writeAll(buffer[0..read]);
         total += read;
+    }
+}
+
+fn configureSocketTimeout(connection: *std.http.Client.Connection) !void {
+    if (comptime builtin.os.tag != .windows and builtin.os.tag != .wasi) {
+        const timeout: std.posix.timeval = .{ .sec = network_timeout_seconds, .usec = 0 };
+        const bytes = std.mem.asBytes(&timeout);
+        const handle = connection.stream_reader.stream.socket.handle;
+        try std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, bytes);
+        try std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.SNDTIMEO, bytes);
     }
 }
 

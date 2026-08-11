@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -11,6 +12,10 @@ const { chromium } = require(path.join(
 const [origin, setupUrl, storageStatePath, fakeDockerStatePath, fakeDockerControlPath, fakeDockerCallsPath, fakeCloudflareStatePath, fakeCloudflareControlPath, fakeCloudflareCallsPath, fakeHostingerStatePath, fakeHostingerControlPath, fakeHostingerCallsPath, caddyOwnedPath, caddyControlPath, caddyCallsPath, nobProjectRoot, nobSecretFile, databasePath] = process.argv.slice(2);
 if (!origin || !setupUrl || !storageStatePath || !fakeDockerStatePath || !fakeDockerControlPath || !fakeDockerCallsPath || !fakeCloudflareStatePath || !fakeCloudflareControlPath || !fakeCloudflareCallsPath || !fakeHostingerStatePath || !fakeHostingerControlPath || !fakeHostingerCallsPath || !caddyOwnedPath || !caddyControlPath || !caddyCallsPath || !nobProjectRoot || !nobSecretFile || !databasePath) {
   throw new Error("usage: node tests/product-acceptance.cjs ORIGIN SETUP_URL STORAGE_STATE DOCKER_STATE DOCKER_CONTROL DOCKER_CALLS CLOUDFLARE_STATE CLOUDFLARE_CONTROL CLOUDFLARE_CALLS HOSTINGER_STATE HOSTINGER_CONTROL HOSTINGER_CALLS CADDY_OWNED CADDY_CONTROL CADDY_CALLS NOB_PROJECT_ROOT NOB_SECRET_FILE DATABASE");
+}
+
+function sqliteScript(sql) {
+  execFileSync("python3", ["-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.executescript(sys.argv[2]); c.close()", databasePath, sql]);
 }
 
 const browserCandidates = [
@@ -45,7 +50,7 @@ function observePage(page, errors) {
       const expectedHttpRejection =
         (location.url === `${origin}/api/refresh` && message.text().includes("403")) ||
         (location.url.startsWith(`${origin}/api/caddy/routes`) && /\b(400|404|409)\b/.test(message.text())) ||
-        (location.url === `${origin}/api/caddy/apply` && /\b(409|422|502|503)\b/.test(message.text())) ||
+        (location.url === `${origin}/api/caddy/apply` && /\b(409|422|500|502|503)\b/.test(message.text())) ||
         (location.url === `${origin}/routes/apply` && /\b(409|422|428|502|503)\b/.test(message.text())) ||
         (location.url === `${origin}/api/containers/action` && /\b(400|404|409|502)\b/.test(message.text())) ||
         (location.url.startsWith(`${origin}/api/containers/logs?`) && /\b(400|503)\b/.test(message.text())) ||
@@ -571,6 +576,14 @@ async function enrollAndCheckEnhanced(browser) {
     await assertRendered(page, control);
   }
 
+  for (const headPath of ["/", "/assets/app.css"]) {
+    const getResponse = await context.request.get(`${origin}${headPath}`);
+    const headResponse = await context.request.head(`${origin}${headPath}`);
+    assert.equal(headResponse.status(), 200);
+    assert.equal(headResponse.headers()["content-length"], getResponse.headers()["content-length"], `${headPath} HEAD must describe the GET representation`);
+    assert.equal((await headResponse.body()).length, 0, `${headPath} HEAD must not include a response body`);
+  }
+
   await page.goto(`${origin}/`, { waitUntil: "load" });
   assert.match(await page.locator("#storage-warning").innerText(), /disk budget.*safe maintenance/i);
   assert.match(await page.locator("#storage-recovery").innerText(), /cloudio maintenance status/);
@@ -800,6 +813,18 @@ async function enrollAndCheckEnhanced(browser) {
   assert.equal(caddyOwnedText(), activeBeforeFailures, "verification failure must restore the previous fragment");
   assert.equal((await apiMutation(page, "/api/caddy/refresh", {}, "browser-caddy-refresh-after-verify-0001")).status, 200);
 
+  sqliteScript(`
+    CREATE TRIGGER fixture_fail_caddy_apply_bookkeeping
+    BEFORE INSERT ON snapshots
+    WHEN NEW.source='caddy' AND NEW.kind='owned-fragment' AND NEW.summary='Applied and verified the Cloudio-owned Caddy fragment.'
+    BEGIN SELECT RAISE(ABORT, 'fixture bookkeeping failure'); END;
+  `);
+  const bookkeepingFailure = await apiMutation(page, "/api/caddy/apply", {}, "browser-caddy-bookkeeping-fail-0001", true);
+  assert.equal(bookkeepingFailure.status, 500);
+  assert.equal(caddyOwnedText(), activeBeforeFailures, "bookkeeping failure must roll back the live Caddy change");
+  sqliteScript("DROP TRIGGER fixture_fail_caddy_apply_bookkeeping;");
+  assert.equal((await apiMutation(page, "/api/caddy/refresh", {}, "browser-caddy-refresh-after-bookkeeping-0001")).status, 200);
+
   fs.chmodSync(caddyOwnedPath, 0o440);
   await page.goto(`${origin}/routes.html`, { waitUntil: "load" });
   assert.equal(await page.locator('#apply-btn[aria-disabled="true"]').count(), 1);
@@ -808,8 +833,8 @@ async function enrollAndCheckEnhanced(browser) {
   assert.equal(writeDenied.status, 409);
   assert.equal(writeDenied.body.error, "caddy_write_unavailable");
   assert.equal(caddyOwnedText(), activeBeforeFailures);
-  assert.equal(await auditCount(page, "caddy.apply", caddyOwnedPath, "error"), failedApplyAuditBefore + 4,
-    "validation, reload, verification, and permission failures must each be audited once");
+  assert.equal(await auditCount(page, "caddy.apply", caddyOwnedPath, "error"), failedApplyAuditBefore + 5,
+    "validation, reload, verification, bookkeeping, and permission failures must each be audited once");
   fs.chmodSync(caddyOwnedPath, 0o640);
   assert.equal((await apiMutation(page, "/api/caddy/refresh", {}, "browser-caddy-refresh-after-permission-0001")).status, 200);
 
