@@ -103,6 +103,24 @@ pub const Db = struct {
         const rc = sqlite.sqlite3_open_v2(@ptrCast(&path_z), &handle, sqlite.SQLITE_OPEN_READWRITE | sqlite.SQLITE_OPEN_CREATE, null);
         if (rc != sqlite.SQLITE_OK) return DbError.SqliteOpen;
         _ = sqlite.sqlite3_busy_timeout(handle.?, 5000);
+        // WAL lets the request handles read while a writer commits; the
+        // previous rollback-journal mode serialized every writer thread
+        // against every reader on a 5s busy timeout. NORMAL synchronous is
+        // the standard WAL pairing: durable across application crashes,
+        // last-transactions-at-power-loss trade accepted for a control
+        // plane whose state is re-collectable.
+        var journal_error: [*c]u8 = null;
+        if (sqlite.sqlite3_exec(handle.?, "PRAGMA journal_mode=WAL", null, null, &journal_error) != sqlite.SQLITE_OK) {
+            if (journal_error != null) sqlite.sqlite3_free(journal_error);
+            _ = sqlite.sqlite3_close(handle.?);
+            return DbError.SqliteExec;
+        }
+        var synchronous_error: [*c]u8 = null;
+        if (sqlite.sqlite3_exec(handle.?, "PRAGMA synchronous=NORMAL", null, null, &synchronous_error) != sqlite.SQLITE_OK) {
+            if (synchronous_error != null) sqlite.sqlite3_free(synchronous_error);
+            _ = sqlite.sqlite3_close(handle.?);
+            return DbError.SqliteExec;
+        }
         var foreign_key_error: [*c]u8 = null;
         if (sqlite.sqlite3_exec(handle.?, "PRAGMA foreign_keys=ON", null, null, &foreign_key_error) != sqlite.SQLITE_OK) {
             if (foreign_key_error != null) sqlite.sqlite3_free(foreign_key_error);

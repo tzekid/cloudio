@@ -37,15 +37,52 @@ pub fn runPrepared(ctx: Context, options: Options, listener: *std.Io.net.Server)
     try http.server.runPrepared(Context, server_ctx, ctx.io, listener, options.once, connection);
 }
 
+/// A small pool of long-lived handles for the request path. Opening a new
+/// SQLite handle per connection paid page-cache warmup and schema parsing on
+/// every request; with WAL these handles read concurrently.
+const HandlePool = struct {
+    const size = 8;
+    var slots: [size]?db_store.Db = @splat(null);
+    var used: [size]bool = @splat(false);
+    var mutex: std.atomic.Mutex = .unlocked;
+
+    fn acquire(ctx: Context) ?struct { db: *db_store.Db, index: usize } {
+        while (!mutex.tryLock()) std.atomic.spinLoopHint();
+        defer mutex.unlock();
+        for (&slots, &used, 0..) |*slot, *slot_used, index| {
+            if (slot_used.*) continue;
+            if (slot.* == null) {
+                slot.* = db_store.Db.open(ctx.io, ctx.config.db_path) catch return null;
+            }
+            slot_used.* = true;
+            return .{ .db = &slot.*.?, .index = index };
+        }
+        return null;
+    }
+
+    fn release(index: usize) void {
+        while (!mutex.tryLock()) std.atomic.spinLoopHint();
+        defer mutex.unlock();
+        used[index] = false;
+    }
+};
+
 fn connection(ctx: Context, stream: std.Io.net.Stream) void {
-    var db = db_store.Db.open(ctx.io, ctx.config.db_path) catch |err| {
-        std.debug.print("cloudio serve db open failed: {s}\n", .{@errorName(err)});
-        stream.close(ctx.io);
-        return;
+    const pooled = HandlePool.acquire(ctx);
+    var fresh: ?db_store.Db = null;
+    const db: *db_store.Db = if (pooled) |entry| entry.db else blk: {
+        // Pool exhausted (more concurrent connections than slots): fall back
+        // to a per-connection handle rather than queueing behind the pool.
+        fresh = db_store.Db.open(ctx.io, ctx.config.db_path) catch |err| {
+            std.debug.print("cloudio serve db open failed: {s}\n", .{@errorName(err)});
+            stream.close(ctx.io);
+            return;
+        };
+        break :blk &fresh.?;
     };
-    defer db.close();
+    defer if (pooled) |entry| HandlePool.release(entry.index) else if (fresh) |*handle| handle.close();
     var thread_ctx = ctx;
-    thread_ctx.db = &db;
+    thread_ctx.db = db;
     pipeline.handle(thread_ctx, stream) catch |err| {
         std.debug.print("cloudio serve request failed: {s}\n", .{@errorName(err)});
     };
