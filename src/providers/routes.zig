@@ -426,7 +426,7 @@ pub const Route = struct {
     }
 
     pub fn findResponseForStatus(self: Route, status: std.http.Status) ?*const Response {
-        return self.findResponseForStatusCode(@intFromEnum(status));
+        return self.findResponseForStatusCode(@backingInt(status));
     }
 
     pub fn findResponseForStatusCode(self: Route, status_code: u16) ?*const Response {

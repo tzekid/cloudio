@@ -47,7 +47,7 @@ pub const Message = struct {
         return Message{
             .id = id,
             .topic = topic,
-            .message_type = @intFromEnum(MessageType.Undefined),
+            .message_type = @backingInt(MessageType.Undefined),
             .content = content,
             .tx_id = null,
             .headers = Headers.new(null),

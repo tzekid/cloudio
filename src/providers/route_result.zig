@@ -14,7 +14,7 @@ pub const ReadRouteResult = struct {
     }
 
     pub fn statusCode(self: ReadRouteResult) u16 {
-        return @intFromEnum(self.response.status);
+        return @backingInt(self.response.status);
     }
 
     pub fn statusText(self: ReadRouteResult) []const u8 {
@@ -36,7 +36,7 @@ pub const ReadRouteResultView = struct {
     matched_response: ?*const provider_routes.Response,
 
     pub fn statusCode(self: ReadRouteResultView) u16 {
-        return @intFromEnum(self.status);
+        return @backingInt(self.status);
     }
 
     pub fn statusText(self: ReadRouteResultView) []const u8 {

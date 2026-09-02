@@ -178,5 +178,4 @@ pub const Repository = struct {
         try writer.print("sockets={d}\n", .{try self.countTable("sockets")});
         try writer.print("containers={d}\n", .{try self.countTable("containers")});
     }
-
 };

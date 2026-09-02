@@ -841,7 +841,7 @@ pub fn stringify(
         },
         .@"enum" => |enumInfo| {
             if (options.enum_serialization_type == .TextString) {
-                const tmp = @intFromEnum(value);
+                const tmp = @backingInt(value);
                 inline for (enumInfo.fields) |field| {
                     if (field.value == tmp) {
                         v = @as(u64, @intCast(field.name.len));
@@ -851,7 +851,7 @@ pub fn stringify(
                     }
                 }
             } else {
-                const tmp = @intFromEnum(value);
+                const tmp = @backingInt(value);
                 head = if (tmp < 0) 0x20 else 0;
                 v = @as(u64, @intCast(if (tmp < 0) -(tmp + 1) else tmp));
                 try encode(out, head, v);
