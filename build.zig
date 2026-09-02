@@ -1824,9 +1824,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
-    if (@hasField(std.Build, "args")) {
-        if (b.args) |args| run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
     b.step("run", "Run cloudio").dependOn(&run_cmd.step);
 
     const product_acceptance_command = b.addSystemCommand(&.{ "bash", "tests/product-acceptance.sh" });
