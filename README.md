@@ -307,8 +307,10 @@ zig build --system zig-pkg -Doptimize=Debug release-check
 zig build --system zig-pkg -Doptimize=ReleaseSafe release-check
 ```
 
-`check` compiles the executable, runs module tests, checks architectural
-boundaries and web structure, and tests both standalone provider packages.
+`test` runs Cloudio's module/integration tests and both standalone provider
+packages. Provider packages own their internal route/model/transport suites;
+Cloudio retains its adapter, shared dependency, and product integration checks.
+`check` also compiles the executable and checks web structure and script syntax.
 `release-check` adds authenticated browser product acceptance and host-side
 recovery acceptance. There is no separate smoke suite: release confidence
 comes from the real end-to-end workflows.

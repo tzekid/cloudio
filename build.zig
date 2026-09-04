@@ -1832,156 +1832,150 @@ pub fn build(b: *std.Build) void {
     const product_acceptance_step = b.step("product-acceptance", "Run authenticated product acceptance checks");
     product_acceptance_step.dependOn(&product_acceptance_command.step);
 
-    const test_step = b.step("test", "Run unit tests");
-    addModuleTest(b, test_step, cli_root_mod);
-    addModuleTest(b, test_step, cli_args_mod);
-    addModuleTest(b, test_step, cli_render_mod);
-    addModuleTest(b, test_step, cli_coverage_parse_mod);
-    addModuleTest(b, test_step, cli_route_request_mod);
-    addModuleTest(b, test_step, cli_route_mod);
-    addModuleTest(b, test_step, cli_caddy_mod);
-    addModuleTest(b, test_step, cli_cloudflare_options_mod);
-    addModuleTest(b, test_step, cli_cloudflare_mod);
-    addModuleTest(b, test_step, cli_evidence_mod);
-    addModuleTest(b, test_step, cli_hostinger_mod);
-    addModuleTest(b, test_step, cli_inventory_mod);
-    addModuleTest(b, test_step, cli_actions_mod);
-    addModuleTest(b, test_step, cli_dashboard_mod);
-    addModuleTest(b, test_step, cli_projects_mod);
-    addModuleTest(b, test_step, cli_nob_mod);
-    addModuleTest(b, test_step, cli_routes_mod);
-    addModuleTest(b, test_step, cli_security_mod);
-    addModuleTest(b, test_step, cli_auth_mod);
-    addModuleTest(b, test_step, cli_maintenance_mod);
-    addModuleTest(b, test_step, cli_serve_mod);
-    addModuleTest(b, test_step, cli_system_mod);
-    addModuleTest(b, test_step, cli_topology_mod);
-    addModuleTest(b, test_step, app_overview_mod);
-    addModuleTest(b, test_step, app_export_mod);
-    addModuleTest(b, test_step, app_history_mod);
-    addModuleTest(b, test_step, app_coverage_mod);
-    addModuleTest(b, test_step, app_doctor_mod);
-    addModuleTest(b, test_step, app_evidence_common_mod);
-    addModuleTest(b, test_step, app_evidence_mod);
-    addModuleTest(b, test_step, app_evidence_routes_mod);
-    addModuleTest(b, test_step, app_init_mod);
-    addModuleTest(b, test_step, app_log_mod);
-    addModuleTest(b, test_step, app_security_mod);
-    addModuleTest(b, test_step, app_authentication_mod);
-    addModuleTest(b, test_step, app_caddy_mod);
-    addModuleTest(b, test_step, app_projects_mod);
-    addModuleTest(b, test_step, app_nob_projects_mod);
-    addModuleTest(b, test_step, app_nob_secrets_mod);
-    addModuleTest(b, test_step, runtime_nob_workers_mod);
-    addModuleTest(b, test_step, app_system_mod);
-    addModuleTest(b, test_step, app_topology_mod);
-    addModuleTest(b, test_step, app_actions_mod);
-    addModuleTest(b, test_step, app_dashboard_mod);
-    addModuleTest(b, test_step, server_mod);
-    addModuleTest(b, test_step, app_writes_mod);
-    addModuleTest(b, test_step, app_maintenance_mod);
-    addModuleTest(b, test_step, app_caddy_desired_mod);
-    addModuleTest(b, test_step, app_system_control_mod);
-    addModuleTest(b, test_step, app_provider_writes_mod);
-    addModuleTest(b, test_step, app_dns_mod);
-    addModuleTest(b, test_step, app_browser_run_mod);
-    addModuleTest(b, test_step, app_vps_mod);
-    addModuleTest(b, test_step, app_provider_api_mod);
-    addModuleTest(b, test_step, app_provider_family_mod);
-    addModuleTest(b, test_step, app_provider_l1_mod);
-    addModuleTest(b, test_step, app_provider_coverage_actual_captures_mod);
-    addModuleTest(b, test_step, app_provider_coverage_actual_inputs_mod);
-    addModuleTest(b, test_step, app_provider_coverage_candidates_mod);
-    addModuleTest(b, test_step, app_provider_coverage_families_mod);
-    addModuleTest(b, test_step, app_provider_coverage_levels_mod);
-    addModuleTest(b, test_step, app_provider_coverage_render_mod);
-    addModuleTest(b, test_step, app_provider_coverage_rollups_mod);
-    addModuleTest(b, test_step, app_provider_sources_mod);
-    addModuleTest(b, test_step, app_provider_coverage_typed_models_mod);
-    addModuleTest(b, test_step, app_provider_coverage_workplan_mod);
-    addModuleTest(b, test_step, app_provider_coverage_routes_mod);
-    addModuleTest(b, test_step, app_provider_route_plan_mod);
-    addModuleTest(b, test_step, app_provider_route_capture_result_mod);
-    addModuleTest(b, test_step, app_provider_list_mod);
-    addModuleTest(b, test_step, app_render_mod);
-    addModuleTest(b, test_step, app_route_catalog_mod);
-    addModuleTest(b, test_step, app_cloudflare_overview_mod);
-    addModuleTest(b, test_step, app_cloudflare_mod);
-    addModuleTest(b, test_step, app_hostinger_mod);
-    addModuleTest(b, test_step, app_inventory_mod);
-    addModuleTest(b, test_step, app_database_mod);
-    addModuleTest(b, test_step, app_refresh_mod);
-    addModuleTest(b, test_step, app_web_resources_mod);
-    addModuleTest(b, test_step, core_config_mod);
-    addModuleTest(b, test_step, core_fs_mod);
-    addModuleTest(b, test_step, core_json_mod);
-    addModuleTest(b, test_step, core_log_mod);
-    addModuleTest(b, test_step, core_output_mod);
-    addModuleTest(b, test_step, core_process_mod);
-    addModuleTest(b, test_step, core_redact_mod);
-    addModuleTest(b, test_step, core_time_mod);
-    addModuleTest(b, test_step, core_version_mod);
-    addModuleTest(b, test_step, net_http_mod);
-    addModuleTest(b, test_step, http_mod);
-    addModuleTest(b, test_step, net_pagination_mod);
-    addModuleTest(b, test_step, provider_capabilities_mod);
-    addModuleTest(b, test_step, provider_auth_mod);
-    addModuleTest(b, test_step, provider_request_plan_mod);
-    addModuleTest(b, test_step, provider_route_plan_mod);
-    addModuleTest(b, test_step, provider_route_result_mod);
-    addModuleTest(b, test_step, provider_route_safety_mod);
-    addModuleTest(b, test_step, provider_transport_mod);
-    addModuleTest(b, test_step, provider_routes_mod);
-    addModuleTest(b, test_step, provider_typed_routes_mod);
-    addModuleTest(b, test_step, nob_model_mod);
-    addModuleTest(b, test_step, nob_protocol_mod);
-    addModuleTest(b, test_step, nob_id_mod);
-    addModuleTest(b, test_step, nob_subprocess_mod);
-    addModuleTest(b, test_step, nob_source_mod);
-    addModuleTest(b, test_step, nob_bootstrap_mod);
-    addModuleTest(b, test_step, nob_independent_observation_mod);
-    addModuleTest(b, test_step, nob_systemd_mod);
-    addModuleTest(b, test_step, nob_resource_control_mod);
-    addModuleTest(b, test_step, nob_managed_unit_mod);
-    addModuleTest(b, test_step, nob_broker_mod);
-    addModuleTest(b, test_step, provider_cloudflare_routes_mod);
-    addModuleTest(b, test_step, provider_cloudflare_transport_mod);
-    addModuleTest(b, test_step, provider_cloudflare_models_mod);
-    addModuleTest(b, test_step, provider_hostinger_routes_mod);
-    addModuleTest(b, test_step, provider_hostinger_transport_mod);
-    addModuleTest(b, test_step, provider_hostinger_models_mod);
-    addModuleTest(b, test_step, db_schema_mod);
-    addModuleTest(b, test_step, db_store_mod);
-    addModuleTest(b, test_step, security_passkeys_mod);
-    addModuleTest(b, test_step, collector_capture_mod);
-    addModuleTest(b, test_step, collector_capture_normalize_mod);
-    addModuleTest(b, test_step, collector_route_capture_mod);
-    addModuleTest(b, test_step, collector_caddy_mod);
-    addModuleTest(b, test_step, collector_projects_mod);
-    addModuleTest(b, test_step, collector_project_manifests_mod);
-    addModuleTest(b, test_step, collector_system_mod);
-    addModuleTest(b, test_step, collector_cloudflare_mod);
-    addModuleTest(b, test_step, collector_hostinger_mod);
-
-    const architecture_check = b.addSystemCommand(&.{ "sh", "tools/architecture-check.sh" });
-    b.step("architecture-check", "Check internal module boundary invariants").dependOn(&architecture_check.step);
+    const test_step = b.step("test", "Run application integration and standalone provider tests");
+    // Provider internals are tested by their standalone packages below.
+    // These roots retain Cloudio configuration, adapters, and integration tests.
+    inline for (.{
+        cli_root_mod,
+        cli_args_mod,
+        cli_render_mod,
+        cli_coverage_parse_mod,
+        cli_route_request_mod,
+        cli_route_mod,
+        cli_caddy_mod,
+        cli_cloudflare_options_mod,
+        cli_cloudflare_mod,
+        cli_evidence_mod,
+        cli_hostinger_mod,
+        cli_inventory_mod,
+        cli_actions_mod,
+        cli_dashboard_mod,
+        cli_projects_mod,
+        cli_nob_mod,
+        cli_routes_mod,
+        cli_security_mod,
+        cli_auth_mod,
+        cli_maintenance_mod,
+        cli_serve_mod,
+        cli_system_mod,
+        cli_topology_mod,
+        app_overview_mod,
+        app_export_mod,
+        app_history_mod,
+        app_coverage_mod,
+        app_doctor_mod,
+        app_evidence_common_mod,
+        app_evidence_mod,
+        app_evidence_routes_mod,
+        app_init_mod,
+        app_log_mod,
+        app_security_mod,
+        app_authentication_mod,
+        app_caddy_mod,
+        app_projects_mod,
+        app_nob_projects_mod,
+        app_nob_secrets_mod,
+        runtime_nob_workers_mod,
+        app_system_mod,
+        app_topology_mod,
+        app_actions_mod,
+        app_dashboard_mod,
+        server_mod,
+        app_writes_mod,
+        app_maintenance_mod,
+        app_caddy_desired_mod,
+        app_system_control_mod,
+        app_provider_writes_mod,
+        app_dns_mod,
+        app_browser_run_mod,
+        app_vps_mod,
+        app_provider_api_mod,
+        app_provider_family_mod,
+        app_provider_l1_mod,
+        app_provider_coverage_actual_captures_mod,
+        app_provider_coverage_actual_inputs_mod,
+        app_provider_coverage_candidates_mod,
+        app_provider_coverage_families_mod,
+        app_provider_coverage_levels_mod,
+        app_provider_coverage_render_mod,
+        app_provider_coverage_rollups_mod,
+        app_provider_sources_mod,
+        app_provider_coverage_typed_models_mod,
+        app_provider_coverage_workplan_mod,
+        app_provider_coverage_routes_mod,
+        app_provider_route_plan_mod,
+        app_provider_route_capture_result_mod,
+        app_provider_list_mod,
+        app_render_mod,
+        app_route_catalog_mod,
+        app_cloudflare_overview_mod,
+        app_cloudflare_mod,
+        app_hostinger_mod,
+        app_inventory_mod,
+        app_database_mod,
+        app_refresh_mod,
+        app_web_resources_mod,
+        core_config_mod,
+        core_fs_mod,
+        core_json_mod,
+        core_log_mod,
+        core_output_mod,
+        core_process_mod,
+        core_redact_mod,
+        core_time_mod,
+        core_version_mod,
+        net_http_mod,
+        http_mod,
+        net_pagination_mod,
+        provider_capabilities_mod,
+        provider_auth_mod,
+        provider_request_plan_mod,
+        provider_route_plan_mod,
+        provider_route_result_mod,
+        provider_route_safety_mod,
+        provider_transport_mod,
+        provider_routes_mod,
+        provider_typed_routes_mod,
+        nob_model_mod,
+        nob_protocol_mod,
+        nob_id_mod,
+        nob_subprocess_mod,
+        nob_source_mod,
+        nob_bootstrap_mod,
+        nob_independent_observation_mod,
+        nob_systemd_mod,
+        nob_resource_control_mod,
+        nob_managed_unit_mod,
+        nob_broker_mod,
+        db_schema_mod,
+        db_store_mod,
+        security_passkeys_mod,
+        collector_capture_mod,
+        collector_capture_normalize_mod,
+        collector_route_capture_mod,
+        collector_caddy_mod,
+        collector_projects_mod,
+        collector_project_manifests_mod,
+        collector_system_mod,
+        collector_cloudflare_mod,
+        collector_hostinger_mod,
+    }) |module| addModuleTest(b, test_step, module);
 
     const web_ui_check = b.addSystemCommand(&.{ "node", "tools/web-ui-check.mjs" });
     b.step("web-check", "Check frontend structure and JavaScript syntax").dependOn(&web_ui_check.step);
 
-    const check = b.step("check", "Build cloudio and run unit tests");
+    const check = b.step("check", "Build cloudio and run application, provider, and web checks");
     check.dependOn(&exe.step);
     check.dependOn(test_step);
-    check.dependOn(&architecture_check.step);
     check.dependOn(&web_ui_check.step);
 
     const package_optimize_arg = b.fmt("-Doptimize={s}", .{@tagName(optimize)});
     const cloudflare_package_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test", package_optimize_arg });
     cloudflare_package_test.setCwd(b.path("packages/cloudflare"));
-    check.dependOn(&cloudflare_package_test.step);
+    test_step.dependOn(&cloudflare_package_test.step);
     const hostinger_package_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test", package_optimize_arg });
     hostinger_package_test.setCwd(b.path("packages/hostinger"));
-    check.dependOn(&hostinger_package_test.step);
+    test_step.dependOn(&hostinger_package_test.step);
 
     const release_check = b.step("release-check", "Run integrated and authenticated product acceptance checks");
     release_check.dependOn(check);

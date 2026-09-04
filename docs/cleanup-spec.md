@@ -2,6 +2,10 @@
 
 Status: completed and release-qualified, 2026-08-03.
 
+Historical record: the September simplification pass retires source-name and
+filename scans and consolidates provider test ownership. Current verification
+commands are in the README; the checks listed below describe the August pass.
+
 This document records what the anti-churn pass removed, what it deliberately
 kept, and the evidence required before another cleanup expands scope. It is not
 a rolling roadmap. Completed implementation plans are deleted rather than

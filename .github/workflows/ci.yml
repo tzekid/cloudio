@@ -29,7 +29,7 @@ jobs:
             > "$known_hosts_path"
           GIT_SSH_COMMAND="ssh -i $key_path -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts_path" \
             git submodule update --init --recursive
-      - name: Install architecture-check dependency
+      - name: Install verification dependency
         run: sudo apt-get update && sudo apt-get install --yes ripgrep
       - id: zig-version
         run: echo "version=$(cat .zigversion)" >> "$GITHUB_OUTPUT"

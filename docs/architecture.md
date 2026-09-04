@@ -34,7 +34,9 @@ Dependencies point toward smaller owner modules. The executable does not expose
 a public library facade: no supported embedder exists, and maintaining a mirror
 of every internal module would make normal refactors more expensive.
 
-`tools/architecture-check.sh` enforces the important edges:
+The named imports in `build.zig` make dependency direction explicit. Compilation
+checks those imports; application and standalone-package tests exercise their
+contracts. The intended ownership boundaries are:
 
 - `core`, `net`, and reusable `http` do not depend on Cloudio application
   or persistence layers;
@@ -46,8 +48,9 @@ of every internal module would make normal refactors more expensive.
 - app services do not import CLI adapters; and
 - CLI modules do not bypass app services to reach persistence or collectors.
 
-These checks protect ownership boundaries. They are not a demand for one file
-per type or function.
+Review dependency changes against these responsibilities. Historical filename,
+SQL-word, and helper-name scans are retired; they constrained refactoring without
+proving behavior. These boundaries do not demand one file per type or function.
 
 ## Process and adapters
 
@@ -212,8 +215,9 @@ Confidence is layered by production value:
    failure semantics.
 3. Focused module tests protect parsers, security invariants, state machines,
    serializers, and pure policy.
-4. Static architecture and web checks prevent forbidden dependency and
-   rendering regressions.
+4. Web checks cover authored labels, CSP-compatible markup, essential styling,
+   and JavaScript syntax. The build's explicit module imports and standalone
+   package builds check dependency wiring.
 
 There is no separate smoke-test suite. A compile-only test root is not a test;
 the executable compile gate already provides that signal. Every registered

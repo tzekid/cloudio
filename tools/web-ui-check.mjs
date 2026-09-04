@@ -1,10 +1,9 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 const root = resolve(import.meta.dirname, "..");
-const webRoot = join(root, "web");
 const authenticatedPages = [
   "index.html",
   "projects.html",
@@ -35,8 +34,6 @@ function checkHtmlBasics(filename, html) {
   check(!/\sstyle\s*=/i.test(html), `${filename}: style attributes are forbidden`);
   check(!/<script\b(?![^>]*\bsrc\s*=)[^>]*>/i.test(html), `${filename}: inline scripts are forbidden`);
   check(!/\son[a-z]+\s*=/i.test(html), `${filename}: inline event handlers are forbidden`);
-  check(!/data-(signals|bind|show|on|attr)/i.test(html), `${filename}: Datastar attributes are forbidden`);
-  check(!/datastar/i.test(html), `${filename}: Datastar imports are forbidden`);
 
   const controls = html.matchAll(/<(input|select|textarea)\b([^>]*)>/gi);
   for (const match of controls) {
@@ -85,15 +82,12 @@ const pageRenderer = read("src/server/pages.zig");
 const routeSource = read("src/server/routes.zig");
 const routeInventory = read("docs/http-route-inventory.md");
 check(/class="brand" href="\/" aria-label="Cloudio dashboard"/.test(pageRenderer), "pages.zig: Cloudio brand must be an accessible dashboard link");
-check(!/function\s+(renderTable|tableEmpty|createBrand)/.test(appScript), "app.js: obsolete client renderers or shell builders must be removed");
 check(!/\bfetch\s*\(|window\.cloudio|\bdialog\b/.test(appScript), "app.js: shared shell must not own page-specific API or dialog behavior");
 check(!/api\/auth\/session/.test(loginScript), "login.js: authenticated login redirects belong to the server, not a startup session probe");
 check(/id="routes-empty" class="panel-body route-empty-state"/.test(routesHtml), "routes.html: purposeful zero-route state is missing");
 check(/id="routes-adoption-panel" class="panel hidden"/.test(routesHtml), "routes.html: adoption must be hidden until candidates exist");
 check(/id="routes-preview-panel" class="panel hidden"/.test(routesHtml), "routes.html: apply preview must be hidden until changes exist");
 check(/class="route-form-actions span-2"/.test(routesHtml), "routes.html: route actions need a bounded grid column");
-check(/function\s+api/.test(securityScript), "security.js: credential API helper is missing");
-check(/function\s+confirmRevocation/.test(securityScript), "security.js: bounded revoke confirmation is missing");
 check(/X-Cloudio-CSRF/.test(securityScript), "security.js: credential mutations must use the server-rendered CSRF token");
 check(!/window\.cloudio\b|window\.confirm\s*\(/.test(securityScript), "security.js: global app facade and native confirmation fallback are forbidden");
 check(/id="toast-region"/.test(securityHtml), "security.html: credential notification region is missing");
@@ -101,8 +95,6 @@ check(/<dialog\b[^>]*aria-labelledby="revoke-dialog-title"/.test(securityHtml), 
 check(/<form\b[^>]*method="dialog"/.test(securityHtml), "security.html: revoke dialog must use native dialog form behavior");
 check(!/toast-region|confirm-dialog-title/.test(pageRenderer), "pages.zig: shared shell must not inject Security-only controls");
 check(/id="app-shell"/.test(pageRenderer), "pages.zig: server-rendered application shell is missing");
-check(/injectPageData/.test(pageRenderer), "pages.zig: server-rendered first-view data adapter is missing");
-check(/web_html\.text/.test(pageRenderer), "pages.zig: dynamic HTML must use context-safe escaping");
 
 const jsonRoutes = [...routeSource.matchAll(/(?:route|publicRoute|mutation)\("([A-Z]+)", "([^"]+)"/g)];
 check(jsonRoutes.length > 0, "routes.zig: no JSON routes found");
@@ -131,7 +123,6 @@ check(css.includes("html.theme-dark"), "app.css: explicit dark palette is missin
 check(css.includes("html.theme-system"), "app.css: device palette is missing");
 const componentCss = css.slice(css.indexOf("\n* {"));
 check(!/(?:#[0-9a-f]{3,8}|rgba?\()/i.test(componentCss), "app.css: component colors must use semantic palette tokens");
-check(!existsSync(join(webRoot, "assets", "datastar.js")), "web/assets/datastar.js must be removed");
 
 if (errors.length) {
   for (const error of errors) process.stderr.write(`web-ui-check: ${error}\n`);
