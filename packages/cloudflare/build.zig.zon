@@ -1,7 +1,7 @@
 .{
     .name = .cloudflare,
     .version = "0.1.0",
-    .minimum_zig_version = "0.17.0-dev.1963+e00c6c439",
+    .minimum_zig_version = "0.17.0-dev.2085+5e36170b5",
     .paths = .{""},
     .fingerprint = 0x49b5408000e80f4b,
 }
