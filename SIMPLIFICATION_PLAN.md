@@ -162,3 +162,38 @@ layout. Runtime identity, unchanged data/schema/authentication state, live
 routes/assets, fresh logs, post-deployment integrity and rollback evidence are
 recorded in the task checkpoint outside the source tree. The original
 `ecosystem` checkout and untracked plan remain preserved.
+
+### Publication follow-up
+
+- Delivery review pass 4 corrected the external verifier's raw-template equality
+  assumption: Cloudio renders theme/favicon markup. Rendered login controls,
+  exact static assets, protected routes and a real public browser passed;
+  complete functional and operational passes 5 and 6 were clean afterward.
+- Pass 7 found that the mirrored packages' own CI workflows still installed
+  Zig 0.16.0 despite declaring the current 0.17 development compiler. Cloudflare
+  mirror run 35514790281 failed on unsupported builtins; Hostinger happened to
+  pass with the obsolete compiler. Both copied workflows now read the version
+  from their own package manifest, preserving one declared source of truth.
+  Fix publication through these parent-repository package sources. Reset the
+  implementation clean-pass count to zero and require CI on both published
+  mirror commits, as well as Cloudio CI and the publication jobs.
+- The application release at `bfaefd4` is already verified: matching running
+  executable, preserved database/schema/credentials/configuration, public
+  rendered login/assets/auth boundary, clean browser execution and successful
+  post-deployment quick_check. This follow-up changes workflow/documentation
+  only; do not restart a byte-identical runtime to publish a CI repair.
+- Pass 8, complete functional/package review after the CI repair: reviewed the
+  full accumulated change and prior acceptance evidence; extracted each
+  standalone compiler version exactly as CI does and required equality with
+  the unchanged root pin. Both actual package checks passed. Missing manifest
+  versions fail before toolchain setup; no duplicate compiler pin or fallback
+  was added. Runtime/build/source/dependency inputs remain identical to the
+  qualified deployed release. Zero findings; clean pass 1.
+- Pass 9, complete security/ownership/operational review: checked all plan
+  boundaries, exact publication paths and workflow permissions/quoting,
+  independent mirror execution, scanner error handling and safe diagnostics.
+  Reverified the stable deployed PID/hash, zero restarts, successful post-deploy
+  database integrity and original file hashes. Publication uses the existing
+  subtree workflow; no mirror is edited directly, no application pin changes,
+  and no extra restart is needed. Zero findings; clean pass 2. Delivery still
+  requires the new exact-commit parent/publication/standalone CI results.
