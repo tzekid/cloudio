@@ -55,3 +55,110 @@ Reduce repeated test/build wiring, internal duplication, and obsolete migration 
 - ReleaseSafe product and authentication-recovery acceptance passed. The compile-heavy aggregate run was stopped after those succeeded and its remaining `check` resumed with six jobs and cached artifacts: 253/253 steps succeeded, 116/116 newly executed top-level tests passed; other test runs were cached. This is component qualification of the same release gate, not a claim that the interrupted aggregate command exited successfully.
 - `zig fmt --check build.zig`, `git diff --check`, exact registration-set comparison (123 retained, six standalone-owned removed), and unchanged runtime/package/submodule diff checks passed.
 - Push the reviewed commit to `master` and verify its hosted CI before advancing to the next project. The delivery record outside this source commit holds the resulting commit/run identifiers, avoiding a documentation-only CI rerun to record its own hash.
+
+## Follow-up: 2026-09-20
+
+### Current facts and bounded scope
+
+- Refreshed default `origin/master` is `ba4facc`; this clean isolated worktree
+  now follows `master`. Original `/home/kid/Projects/cloudio` remains on
+  `ecosystem` at `af0423b`, including its untracked historical plan and configured
+  data. Preserve that branch, source tree, configuration and dependency pins.
+- Zig is pinned to `0.17.0-dev.2085+5e36170b5`; Nob remains submodule `90da27c`;
+  checked-in web/passkey/CBOR packages remain pinned. The provider package tests
+  still own their internal roots; the obsolete scanner is absent from default.
+- Live PID 3388255 matches the original checkout binary and release `af0423b`
+  (SHA-256 `8713bcf31f14a643d2a4462db658a501dc3e6ccb08aba6b3eeb13d10944315e3`).
+  Local/public login return 200, zero restarts, no Cloudio auto-deploy timer.
+- Concrete reproduction: filling the deployed limiter's table evicts an active
+  exhausted quota and lets it start again. The identical isolated counterexample
+  passes against default's fail-closed limiter. Default also avoids the unrelated
+  process-global handle-pool experiment; preserve experiments without adopting
+  them into default. No documented routes or operator capabilities differ.
+- `provider-package-check.sh` prints matching secret-like lines and treats a
+  failed/unavailable rg as a clean scan. Repair this existing release boundary;
+  do not add another scanner, provider framework or speculative pool.
+
+### Acceptance and implementation
+
+1. Retain a focused regression that proves client churn cannot reset a live
+   authentication quota, and expired windows recover. Keep the production
+   default limiter behavior; do not merge the experimental eviction/pool.
+2. Make the existing provider check silent about matching content and fail on
+   scanner errors. Verify detection and tool failure with disposable generated
+   files, never credentials. Preserve independent provider builds and mirror
+   interfaces; unchanged provider sources need no adoption or version churn.
+3. Run the pinned Debug and ReleaseSafe release-check components, including both
+   standalone provider suites, authenticated browser product workflows and
+   host-side auth recovery on disposable databases/provider fixtures. Preserve
+   CSRF/origin/idempotency, secret redaction, routes/DNS preview/apply/rollback,
+   Docker transitions and Nob project acceptance. No live cloud mutations.
+4. Require two consecutive complete zero-finding implementation passes, then
+   commit only scoped changes and push master. Verify CI and triggered provider
+   mirror workflows for that exact commit; do not recreate mirror repositories.
+5. Deploy the qualified default as an immutable release, retain the current
+   executable and unit for rollback, and change only ExecStart via a unit
+   override. Preserve WorkingDirectory and all relative config/data semantics;
+   never build over the active checkout binary. Verify a SQLite online backup,
+   data inode/integrity, revision/artifact/running hash, local/public login and
+   auth boundaries/assets, stable restarts, fresh logs and rollback identity.
+   Leave original ecosystem files and the untracked plan byte-identical.
+
+### Plan reviews
+
+- Pass 1, delivery and preservation: the historical test-only/no-deploy conclusion
+  would leave the reproduced limiter issue running. Resolved by qualifying and
+  deploying default while preserving the experimental checkout and working
+  directory; a small ExecStart override avoids rebuilding its live binary.
+  Scanner verification must cover nonzero tool errors as well as matches and
+  suppress matched content. Clean-pass count reset to zero.
+- Pass 2, full behavior/package review: compared the two source histories,
+  limiter callers, test ownership, checked-in manifests, package exports and
+  mirror publication script. The plan preserves operator routes and real
+  acceptance, addresses the reproduced quota regression without adopting pool
+  experiments, and repairs the existing package gate. Zero findings; clean pass 1.
+- Pass 3, full security/operational review: traced fixture config isolation,
+  passkey recovery, production working-directory state, release artifact
+  preservation, unit rollback, exact-commit CI/mirror triggers and diagnostics.
+  Verified that provider source/pins need no change and production mutations
+  are limited to backed-up deployment. Zero findings; clean pass 2.
+
+
+### Implementation reviews
+
+- Pass 1, full gate and delivery review: historical hosted provider jobs actually
+  logged `rg: not found` and still passed. Declared ripgrep in both existing
+  mirror jobs; the repaired script rejects missing/erroring scanners and never
+  prints matches. Running it then exposed a harmless literal token-assignment
+  placeholder in Browser Run documentation. Reworded that example to use an
+  already-configured environment variable, retaining the live-test procedure
+  without weakening the scanner. Generated-fixture checks prove clean success,
+  secret rejection without disclosure, missing-tool failure and exit-2 error
+  propagation. Clean-pass count reset to zero.
+- Pass 2, complete functional/diff review: rechecked every scoped change against
+  the plan, original/default branch differences, limiter counterexample and
+  expiry recovery, scanner status/privacy failures, both real provider package
+  checks, and retained product/authentication-recovery journeys. Debug
+  release-check passed all 256 steps; both ReleaseSafe browser journeys have
+  also passed. No runtime source, schema, package API or pin changed relative
+  to default. Zero findings; clean pass 1. The remaining ReleaseSafe aggregate
+  checks are still running and remain a delivery requirement.
+- Pass 3, complete security/ownership/package/operational review: the full
+  ReleaseSafe release-check finished successfully (256/256 steps; 374 executed
+  tests, with product and authentication recovery passing). Rechecked final
+  scope, source/package pins, mirror dependency declaration, no disclosure on
+  scan failure, isolated process/data ownership and default-versus-experimental
+  behavior. The production database passed quick_check; the native online
+  backup completed with integrity_check and mode 0600, without pruning or
+  compaction. Original source/configuration/plan and active binary hashes are
+  preserved. The prepared release changes only the service executable while
+  retaining its working directory and rollback. Zero findings; clean pass 2.
+
+### Follow-up delivery
+
+Push this reviewed default commit, require exact-commit CI and both provider
+mirror jobs, then deploy its ReleaseSafe artifact through the existing release
+layout. Runtime identity, unchanged data/schema/authentication state, live
+routes/assets, fresh logs, post-deployment integrity and rollback evidence are
+recorded in the task checkpoint outside the source tree. The original
+`ecosystem` checkout and untracked plan remain preserved.

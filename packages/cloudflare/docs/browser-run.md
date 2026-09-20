@@ -188,11 +188,12 @@ response ownership, PNG streaming, metadata, rate-limit errors, session and
 target routes, cleanup responses, and allocator leak checks.
 
 The live test is never run by default. It renders inline HTML, validates PNG
-bytes, creates and lists a Kitesurf session and target, and closes the session:
+bytes, creates and lists a Kitesurf session and target, and closes the session.
+Set `CLOUDFLARE_API_TOKEN` in your environment using your usual secret-management
+method, then run:
 
 ```sh
 CLOUDFLARE_BROWSER_RUN_LIVE=1 \
-CLOUDFLARE_API_TOKEN=... \
 CLOUDFLARE_ACCOUNT_ID=... \
 zig build test-browser-run-live
 ```

@@ -61,3 +61,17 @@ test "fixed window limiter denies excess and resets after the window" {
     try std.testing.expect(!allow(key, 2, 60, 102));
     try std.testing.expect(allow(key, 2, 60, 160));
 }
+
+test "client churn cannot reset an active authentication quota" {
+    state = .{};
+    defer state = .{};
+    try std.testing.expect(allow("victim", 1, 600, 100));
+    var storage: [32]u8 = undefined;
+    for (0..max_buckets) |index| {
+        const key = try std.fmt.bufPrint(&storage, "churn-{d}", .{index});
+        _ = allow(key, 1, 600, 101);
+    }
+    try std.testing.expect(!allow("victim", 1, 600, 102));
+    try std.testing.expect(allow("victim", 1, 600, 700));
+    try std.testing.expect(allow("new-client", 1, 600, 701));
+}

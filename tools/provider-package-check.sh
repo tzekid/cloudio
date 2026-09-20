@@ -16,12 +16,17 @@ test -f "$package_dir/build.zig.zon"
 test -f "$package_dir/LICENSE"
 test -f "$package_dir/README.md"
 
+if ! command -v rg >/dev/null 2>&1; then
+    printf '%s\n' "provider-package-check requires ripgrep" >&2
+    exit 1
+fi
+
 (
     cd "$package_dir"
     zig build test
 )
 
-if rg -n --hidden \
+if rg -q --hidden \
     --glob '!zig-cache/**' \
     --glob '!.zig-cache/**' \
     --glob '!README.md' \
@@ -30,6 +35,12 @@ if rg -n --hidden \
     "$package_dir"; then
     printf '%s\n' "provider package contains secret-like material: $name" >&2
     exit 1
+else
+    scan_status=$?
+    if [ "$scan_status" -ne 1 ]; then
+        printf '%s\n' "provider package scan failed: $name" >&2
+        exit "$scan_status"
+    fi
 fi
 
 printf '%s\n' "provider-package-check: $name passed"
