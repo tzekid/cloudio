@@ -480,8 +480,8 @@ fn findRouteGroup(groups: []const RouteGroup, provider: provider_routes.Provider
 }
 
 fn routeGroupLessThan(_: void, lhs: RouteGroup, rhs: RouteGroup) bool {
-    const lhs_provider = @intFromEnum(lhs.provider);
-    const rhs_provider = @intFromEnum(rhs.provider);
+    const lhs_provider = @backingInt(lhs.provider);
+    const rhs_provider = @backingInt(rhs.provider);
     if (lhs_provider != rhs_provider) return lhs_provider < rhs_provider;
     const tag_order = std.mem.order(u8, lhs.tag, rhs.tag);
     if (tag_order != .eq) return tag_order == .lt;

@@ -242,5 +242,4 @@ pub const Repository = struct {
         }
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
-
 };

@@ -43,7 +43,7 @@ pub fn storeResponseWithSnapshotId(gpa: Allocator, db: *Db, input: ResponseCaptu
     const summary = try net_http.summary(gpa, input.summary_label, input.status);
     defer gpa.free(summary);
     const snapshot_id = try db.insertSnapshot(input.provider, input.kind, input.target, net_http.statusText(input.status), summary, redacted, null);
-    try db.insertProviderRaw(input.provider, input.endpoint, @intFromEnum(input.status), redacted);
+    try db.insertProviderRaw(input.provider, input.endpoint, @backingInt(input.status), redacted);
     return .{ .redacted = redacted, .snapshot_id = snapshot_id };
 }
 
@@ -57,7 +57,7 @@ fn emptyBodyDiagnostic(gpa: Allocator, input: ResponseCapture) ![]u8 {
     errdefer out.deinit();
     const writer = &out.writer;
     try writer.writeAll("{\"success\":false,\"errors\":[{\"code\":");
-    try writer.print("{d}", .{@intFromEnum(input.status)});
+    try writer.print("{d}", .{@backingInt(input.status)});
     try writer.writeAll(",\"message\":\"empty response body from provider\"}],\"messages\":[],\"result\":null,\"diagnostic\":{");
     try writer.writeAll("\"provider\":");
     try core_json.writeString(writer, input.provider);
@@ -66,7 +66,7 @@ fn emptyBodyDiagnostic(gpa: Allocator, input: ResponseCapture) ![]u8 {
     try writer.writeAll(",\"endpoint\":");
     try core_json.writeString(writer, input.endpoint);
     try writer.writeAll(",\"http_status\":");
-    try writer.print("{d}", .{@intFromEnum(input.status)});
+    try writer.print("{d}", .{@backingInt(input.status)});
     try writer.writeAll(",\"status\":");
     try core_json.writeString(writer, net_http.statusText(input.status));
     try writer.writeAll("}}\n");
