@@ -1,7 +1,7 @@
 .{
     .name = .cloudio_acceptance_project,
     .version = "0.1.0",
-    .minimum_zig_version = "0.17.0-dev.2307+392b17125",
+    .minimum_zig_version = "0.17.0-dev.2338+b46a7f3a2",
     .dependencies = .{
         .nob = .{ .path = "../../vendor/nob" },
     },
