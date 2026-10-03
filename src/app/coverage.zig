@@ -256,28 +256,12 @@ pub fn writeTypedModelsJsonFromText(gpa: Allocator, cloudflare_text: []const u8,
     try app_provider_coverage_typed_models.writeJson(gpa, report.items, options, writer);
 }
 
-pub fn loadSources(io: Io, gpa: Allocator, paths: Paths) !SourceReport {
-    return try app_provider_sources.load(io, gpa, paths);
-}
-
-pub fn loadSourcesFromText(gpa: Allocator, paths: Paths, metadata_text: []const u8, cloudflare_text: []const u8, hostinger_text: []const u8) !SourceReport {
-    return try app_provider_sources.loadFromText(gpa, paths, metadata_text, cloudflare_text, hostinger_text);
-}
-
 pub fn writeSourcesTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: SourceOptions, writer: anytype) !void {
     try app_provider_sources.writeTextFromFiles(io, gpa, paths, options, writer);
 }
 
 pub fn writeSourcesJsonFromFiles(io: Io, gpa: Allocator, paths: Paths, options: SourceOptions, writer: anytype) !void {
     try app_provider_sources.writeJsonFromFiles(io, gpa, paths, options, writer);
-}
-
-pub fn writeSourcesTextFromText(gpa: Allocator, paths: Paths, metadata_text: []const u8, cloudflare_text: []const u8, hostinger_text: []const u8, options: SourceOptions, writer: anytype) !void {
-    try app_provider_sources.writeTextFromText(gpa, paths, metadata_text, cloudflare_text, hostinger_text, options, writer);
-}
-
-pub fn writeSourcesJsonFromText(gpa: Allocator, paths: Paths, metadata_text: []const u8, cloudflare_text: []const u8, hostinger_text: []const u8, options: SourceOptions, writer: anytype) !void {
-    try app_provider_sources.writeJsonFromText(gpa, paths, metadata_text, cloudflare_text, hostinger_text, options, writer);
 }
 
 pub fn writeWorkplanTextFromFiles(io: Io, gpa: Allocator, paths: Paths, options: WorkplanOptions, writer: anytype) !void {
@@ -310,14 +294,6 @@ pub fn writeWorkplanJsonFromText(gpa: Allocator, cloudflare_text: []const u8, ho
     var bundle_routes = try app_provider_coverage_workplan.loadBundleRoutesFromText(gpa, cloudflare_text, hostinger_text, options);
     defer if (bundle_routes) |*routes| routes.deinit(gpa);
     try app_provider_coverage_workplan.writeJson(gpa, report.items, if (bundle_routes) |routes| routes.items else null, options, writer);
-}
-
-pub fn auditL1(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter) !L1Audit {
-    return try app_provider_l1.auditFromFiles(io, gpa, paths, filter);
-}
-
-pub fn auditL1FromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, filter: ProviderFilter) !L1Audit {
-    return try app_provider_l1.auditFromText(gpa, cloudflare_text, hostinger_text, filter);
 }
 
 pub fn writeL1AuditTextFromFiles(io: Io, gpa: Allocator, paths: Paths, filter: ProviderFilter, writer: anytype) !void {
@@ -416,14 +392,6 @@ pub fn routeDryRunJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInp
     return try app_provider_route_plan.dryRunJson(io, gpa, paths, routePlanInput(input), auth);
 }
 
-pub fn routeDryRunJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, input: RoutePlanInput, auth: Auth) ![]u8 {
-    return try app_provider_route_plan.dryRunJsonFromText(gpa, cloudflare_text, hostinger_text, routePlanInput(input), auth);
-}
-
-pub fn routePlanJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, input: RoutePlanInput) ![]u8 {
-    return try app_provider_route_plan.planJsonFromText(gpa, cloudflare_text, hostinger_text, routePlanInput(input));
-}
-
 fn routePlanInput(input: RoutePlanInput) app_provider_route_plan.RoutePlanInput {
     return .{
         .filter = routePlanFilter(input.filter),
@@ -486,24 +454,12 @@ fn dryRunCandidateRouteFilter(filter: RouteFilter) RouteFilter {
     return app_provider_coverage_candidates.dryRunCandidateRouteFilter(filter);
 }
 
-fn routeIsCaptureCandidate(row: CoverageRoute, options: CaptureCandidateOptions) bool {
-    return app_provider_coverage_candidates.isCaptureCandidate(row, options);
-}
-
-fn routeIsDryRunCandidate(row: CoverageRoute, options: DryRunCandidateOptions) bool {
-    return app_provider_coverage_candidates.isDryRunCandidate(row, options);
-}
-
 fn workplanTagFamily(provider: []const u8, tag: []const u8) ?WorkplanFamily {
     return app_provider_coverage_workplan.tagFamily(provider, tag);
 }
 
 fn writeDryRunCandidateJson(gpa: Allocator, row: CoverageRoute, options: DryRunCandidateOptions, writer: anytype) !void {
     try app_provider_coverage_candidates.writeDryRunCandidateJson(gpa, row, options, writer);
-}
-
-fn routeDryRunPlanJson(gpa: Allocator, route: provider_routes.Route) ![]u8 {
-    return try app_provider_coverage_candidates.dryRunPlanJson(gpa, route);
 }
 
 fn writeCaptureCandidateJson(gpa: Allocator, row: CoverageRoute, options: CaptureCandidateOptions, writer: anytype) !void {

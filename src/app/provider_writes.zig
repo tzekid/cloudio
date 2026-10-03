@@ -75,24 +75,6 @@ pub fn dnsRecordDelete(ctx: Context, zone_id: []const u8, record_id: []const u8,
     try executeCloudflare(ctx, .{ .method = .DELETE, .url = url, .body = null, .kind = "cf.dns.delete", .target = zone_id }, writer);
 }
 
-pub fn cachePurgeEverything(ctx: Context, zone_id: []const u8, writer: anytype) !void {
-    const url = try cfPurgeCacheUrlAt(ctx.gpa, ctx.config.cloudflare_api_base, zone_id);
-    defer ctx.gpa.free(url);
-    const body = "{\"purge_everything\":true}";
-    try executeCloudflare(ctx, .{ .method = .POST, .url = url, .body = body, .kind = "cf.cache.purge", .target = zone_id }, writer);
-}
-
-pub fn zoneSettingUpdate(ctx: Context, zone_id: []const u8, setting: []const u8, value_json: []const u8, writer: anytype) !void {
-    const url = try cfZoneSettingUrlAt(ctx.gpa, ctx.config.cloudflare_api_base, zone_id, setting);
-    defer ctx.gpa.free(url);
-    var probe_call: Call = .{ .method = .PATCH, .url = url, .body = value_json, .kind = "cf.setting.update", .target = zone_id };
-    if (try rejectInvalidBody(ctx, probe_call, value_json, writer)) return;
-    const body = try std.fmt.allocPrint(ctx.gpa, "{{\"value\":{s}}}", .{value_json});
-    defer ctx.gpa.free(body);
-    probe_call.body = body;
-    try executeCloudflare(ctx, probe_call, writer);
-}
-
 // --- Hostinger helpers ---
 
 pub fn vpsAction(ctx: Context, vm_id: []const u8, action: VpsAction, writer: anytype) !void {
@@ -105,14 +87,6 @@ pub fn hostingerDnsUpdate(ctx: Context, domain: []const u8, body_json: []const u
     const url = try hostingerDnsZoneUrl(ctx.gpa, domain);
     defer ctx.gpa.free(url);
     const call: Call = .{ .method = .PUT, .url = url, .body = body_json, .kind = "hostinger.dns.update", .target = domain };
-    if (try rejectInvalidBody(ctx, call, body_json, writer)) return;
-    try executeHostinger(ctx, call, writer);
-}
-
-pub fn hostingerDnsDelete(ctx: Context, domain: []const u8, body_json: []const u8, writer: anytype) !void {
-    const url = try hostingerDnsZoneUrl(ctx.gpa, domain);
-    defer ctx.gpa.free(url);
-    const call: Call = .{ .method = .DELETE, .url = url, .body = body_json, .kind = "hostinger.dns.delete", .target = domain };
     if (try rejectInvalidBody(ctx, call, body_json, writer)) return;
     try executeHostinger(ctx, call, writer);
 }
@@ -133,22 +107,6 @@ pub fn cfDnsRecordUrl(gpa: Allocator, zone_id: []const u8, record_id: []const u8
 
 fn cfDnsRecordUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8, record_id: []const u8) ![]u8 {
     return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/dns_records/{s}", .{ base, zone_id, record_id });
-}
-
-pub fn cfPurgeCacheUrl(gpa: Allocator, zone_id: []const u8) ![]u8 {
-    return try cfPurgeCacheUrlAt(gpa, cloudflare_base, zone_id);
-}
-
-fn cfPurgeCacheUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/purge_cache", .{ base, zone_id });
-}
-
-pub fn cfZoneSettingUrl(gpa: Allocator, zone_id: []const u8, setting: []const u8) ![]u8 {
-    return try cfZoneSettingUrlAt(gpa, cloudflare_base, zone_id, setting);
-}
-
-fn cfZoneSettingUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8, setting: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/settings/{s}", .{ base, zone_id, setting });
 }
 
 pub fn hostingerVpsActionUrl(gpa: Allocator, vm_id: []const u8, action: VpsAction) ![]u8 {
@@ -261,14 +219,6 @@ test "cloudflare url builders match the generated route manifest paths" {
     const update = try cfDnsRecordUrl(allocator, "zone-1", "rec-9");
     defer allocator.free(update);
     try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone-1/dns_records/rec-9", update);
-
-    const purge = try cfPurgeCacheUrl(allocator, "zone-1");
-    defer allocator.free(purge);
-    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone-1/purge_cache", purge);
-
-    const setting = try cfZoneSettingUrl(allocator, "zone-1", "always_use_https");
-    defer allocator.free(setting);
-    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone-1/settings/always_use_https", setting);
 }
 
 test "hostinger url builders match the generated route manifest paths" {

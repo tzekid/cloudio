@@ -83,10 +83,6 @@ pub fn planRouteRequestWithBase(gpa: Allocator, route: provider_routes.Route, re
     };
 }
 
-pub fn planDryRunMutationRequest(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request) !RequestPlan {
-    return try planDryRunMutationRequestWithBase(gpa, route, request, null);
-}
-
 pub fn planDryRunMutationRequestWithBase(gpa: Allocator, route: provider_routes.Route, request: provider_routes.Request, base_url_override: ?[]const u8) !RequestPlan {
     if (!route.isRoutable()) return error.UnsupportedProviderRoute;
     if (route.mode != .dry_run or route.method == .GET or route.method == .HEAD) return error.ProviderRouteIsNotMutation;

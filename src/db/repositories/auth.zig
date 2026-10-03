@@ -209,13 +209,6 @@ pub const Repository = struct {
         try stepDone(stmt);
     }
 
-    pub fn firstUserId(self: Repository, gpa: Allocator) !?[]u8 {
-        const stmt = try self.prepare("SELECT id FROM auth_users ORDER BY created_at LIMIT 1");
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return null;
-        return try dupeColumn(gpa, stmt, 0);
-    }
-
     pub fn insertCredential(self: Repository, credential: Credential) !void {
         const stmt = try self.prepare(
             \\INSERT INTO auth_credentials(

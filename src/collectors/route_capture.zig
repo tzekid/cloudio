@@ -66,20 +66,6 @@ pub const CapturePageRef = union(enum) {
     }
 };
 
-pub fn readRoute(
-    io: Io,
-    gpa: Allocator,
-    db: *Db,
-    auth: Auth,
-    route: provider_routes.Route,
-    request: Request,
-    options: CaptureOptions,
-) !CapturedRoutePage {
-    const result = try callReadRouteResultRequest(io, gpa, auth, route, request, options);
-    defer result.deinit(gpa);
-    return try captureReadResult(gpa, db, route, request, result, options, null);
-}
-
 pub fn readPaginatedRoute(
     io: Io,
     gpa: Allocator,

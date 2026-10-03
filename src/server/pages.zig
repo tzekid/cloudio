@@ -3092,17 +3092,6 @@ fn tone(value: []const u8) ?[]const u8 {
     return null;
 }
 
-fn cellWithDetail(out: *std.Io.Writer, primary: []const u8, secondary: []const u8) !void {
-    try out.writeAll("<td>");
-    try web_html.text(out, if (primary.len > 0) primary else "—");
-    if (secondary.len > 0) {
-        try out.writeAll(" <span class=\"muted\">(");
-        try web_html.text(out, secondary);
-        try out.writeAll(")</span>");
-    }
-    try out.writeAll("</td>");
-}
-
 fn definition(out: *std.Io.Writer, label: []const u8, value: []const u8) !void {
     try out.writeAll("<div class=\"kv-row\"><dt>");
     try web_html.text(out, label);

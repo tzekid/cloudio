@@ -9,55 +9,6 @@ pub const Context = struct {
     fresh_after_seconds: i64 = 600,
 };
 
-pub fn writeDnsRecordsJson(ctx: Context, domain: ?[]const u8, writer: *std.Io.Writer) !void {
-    var zones = try ctx.db.cloudflare().cloudflareZoneRows(ctx.gpa, 50);
-    defer zones.deinit(ctx.gpa);
-    var zone_id: []const u8 = "";
-    if (domain) |wanted| {
-        for (zones.items) |zone| {
-            if (std.mem.eql(u8, zone.name, wanted)) zone_id = zone.id;
-        }
-    } else if (zones.items.len > 0) {
-        zone_id = zones.items[0].id;
-    }
-
-    var rows = try ctx.db.cloudflare().cloudflareDnsRecordRows(ctx.gpa, 1000);
-    defer rows.deinit(ctx.gpa);
-    try writer.writeAll("{\"kind\":\"dns_records\",");
-    try core_json.writeStringField(writer, "zone_id", zone_id, true);
-    try writer.writeAll("\"records\":[");
-    var first = true;
-    for (rows.items) |row| {
-        if (domain) |wanted| {
-            if (!dnsNameMatchesDomain(row.name, wanted)) continue;
-        }
-        if (!first) try writer.writeByte(',');
-        first = false;
-        try writer.writeByte('{');
-        try core_json.writeStringField(writer, "id", row.id, true);
-        try core_json.writeStringField(writer, "zone_id", row.zone_id, true);
-        try core_json.writeStringField(writer, "name", row.name, true);
-        try core_json.writeStringField(writer, "type", row.record_type, true);
-        try core_json.writeStringField(writer, "content", row.content, true);
-        const ttl: ?i64 = std.fmt.parseInt(i64, row.ttl, 10) catch null;
-        try core_json.writeString(writer, "ttl");
-        try writer.writeByte(':');
-        if (ttl) |value| try writer.print("{d}", .{value}) else try writer.writeAll("null");
-        try writer.writeByte(',');
-        try core_json.writeString(writer, "proxied");
-        try writer.writeByte(':');
-        if (std.mem.eql(u8, row.proxied, "true")) {
-            try writer.writeAll("true");
-        } else if (std.mem.eql(u8, row.proxied, "false")) {
-            try writer.writeAll("false");
-        } else {
-            try writer.writeAll("null");
-        }
-        try writer.writeByte('}');
-    }
-    try writer.writeAll("]}\n");
-}
-
 pub fn writeContainersJson(ctx: Context, writer: *std.Io.Writer) !void {
     var rows = try ctx.db.system().containerRows(ctx.gpa, 200);
     defer rows.deinit(ctx.gpa);

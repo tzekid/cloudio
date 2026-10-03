@@ -588,10 +588,6 @@ pub fn persistResourceRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[
     _ = try collector_capture_normalize.persistHostingerResourceRows(gpa, db, kind, target, body);
 }
 
-pub fn persistInventoryRows(gpa: Allocator, db: *Db, kind: []const u8, target: ?[]const u8, body: []const u8) !void {
-    _ = try collector_capture_normalize.persistHostingerInventoryRows(gpa, db, kind, target, body);
-}
-
 fn collectPagedVmEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, vm_id: []const u8, endpoint: VmEndpoint, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const client = clientFromToken(token) catch {

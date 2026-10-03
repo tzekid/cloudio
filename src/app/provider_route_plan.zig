@@ -128,12 +128,6 @@ pub fn planJsonFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_t
     return try provider_route_plan.planRouteJsonRequest(gpa, route.*, input.request);
 }
 
-pub fn loadRouteFromText(gpa: Allocator, cloudflare_text: []const u8, hostinger_text: []const u8, input: RoutePlanInput) !provider_routes.Route {
-    var routes = try loadCandidateRoutesFromText(gpa, cloudflare_text, hostinger_text, input.filter.provider);
-    errdefer routes.deinit(gpa);
-    return try takeSingleRoute(gpa, &routes, input.filter);
-}
-
 pub fn readMetadataJson(io: Io, gpa: Allocator, paths: Paths, input: RoutePlanInput, auth: Auth) ![]u8 {
     var routes = try loadCandidateRoutes(io, gpa, paths, input.filter.provider);
     defer routes.deinit(gpa);
