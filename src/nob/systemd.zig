@@ -300,7 +300,7 @@ test "systemd controller executes only exact scoped argv" {
     defer std.testing.allocator.free(state_home);
     try std.Io.Dir.cwd().createDirPath(std.testing.io, config_home);
     try std.Io.Dir.cwd().createDirPath(std.testing.io, state_home);
-    const fake_bin = try std.Io.Dir.cwd().realPathFileAlloc(std.testing.io, "test/fixtures/fake-bin", std.testing.allocator);
+    const fake_bin = try std.Io.Dir.cwd().realPathFileAlloc(std.testing.io, "tests/fixtures/fake-bin", std.testing.allocator);
     defer std.testing.allocator.free(fake_bin);
     const config = core_config.Config{
         .domains = &.{},
