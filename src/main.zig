@@ -40,7 +40,6 @@ test {
     _ = @import("core/output.zig");
     _ = @import("core/process.zig");
     _ = @import("core/redact.zig");
-    _ = @import("core/time.zig");
     _ = @import("core/url.zig");
     _ = @import("core/version.zig");
     _ = @import("db/schema.zig");
