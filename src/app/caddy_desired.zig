@@ -6,6 +6,7 @@ const core_config = @import("../core/config.zig");
 const core_json = @import("../core/json.zig");
 const core_process = @import("../core/process.zig");
 const db_store = @import("../db/store.zig");
+const observation = @import("observation.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -131,7 +132,7 @@ const Fragment = struct {
     }
 };
 
-const DiffKind = enum { addition, change, removal, unchanged, unadopted };
+pub const DiffKind = enum { addition, change, removal, unchanged, unadopted };
 
 pub const NobRouteOwnership = enum { managed, adopted };
 pub const NobRouteOperation = enum { enable, disable, remove };
@@ -358,75 +359,133 @@ pub fn render(ctx: Context, gpa: Allocator) ![]u8 {
     return try out.toOwnedSlice();
 }
 
-pub fn writeJson(ctx: Context, writer: anytype) !void {
-    var desired = try loadDesired(ctx);
-    defer desired.deinit(ctx.gpa);
-    const observed_text = try latestObservedText(ctx);
-    defer if (observed_text) |text| ctx.gpa.free(text);
-    var observed = try parseObservedOrEmpty(ctx.gpa, observed_text orelse "");
-    defer observed.deinit(ctx.gpa);
-    const observation = try ctx.db.latestObservationForTarget(ctx.gpa, "caddy", "owned-fragment", ctx.config.caddy_owned_path);
-    defer if (observation) |value| value.deinit(ctx.gpa);
-    const capability = try evaluateCapability(ctx);
+pub const Route = struct {
+    host: []const u8,
+    upstream: []const u8,
+    /// `project` routes belong to a Nob project; `cloudio` routes to this page.
+    ownership: []const u8,
+    state: []const u8,
+    enabled: bool,
+    editable: bool,
+    updated_at: []const u8,
+};
 
-    try writer.writeAll("{\"kind\":\"caddy_owned_fragment\",\"ownership\":{");
-    try core_json.writeStringField(writer, "root", ctx.config.caddyfile_path, true);
-    try core_json.writeStringField(writer, "fragment", ctx.config.caddy_owned_path, true);
-    try core_json.writeStringField(writer, "admin_socket", ctx.config.caddy_admin_socket, false);
-    try writer.writeAll("},");
-    try core_json.writeStringField(writer, "freshness", if (capability.write) "current" else if (observation != null and observation.?.hasSuccessfulObservation()) "stale" else "unavailable", true);
-    try writer.writeAll("\"observation\":{");
-    if (observation) |value| {
-        try core_json.writeStringField(writer, "status", value.attempt_status, true);
-        try core_json.writeStringField(writer, "attempted_at", value.attempted_at, true);
-        try core_json.writeStringField(writer, "observed_at", value.observed_at, true);
-        try core_json.writeStringField(writer, "summary", value.attempt_summary, false);
-    } else {
-        try core_json.writeStringField(writer, "status", "unavailable", true);
-        try core_json.writeNullableStringField(writer, "attempted_at", null, true);
-        try core_json.writeNullableStringField(writer, "observed_at", null, true);
-        try core_json.writeStringField(writer, "summary", "The owned fragment has not been refreshed.", false);
-    }
-    try writer.writeAll("},\"capability\":");
-    try writeCapabilityJson(capability, writer);
-    try writer.writeAll(",\"routes\":[");
-    for (desired.items, 0..) |route, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.writeByte('{');
-        try core_json.writeStringField(writer, "host", route.host, true);
-        try core_json.writeStringField(writer, "upstream", route.upstream, true);
-        try core_json.writeStringField(writer, "ownership", if (std.mem.eql(u8, route.kind, "nob")) "project" else "cloudio", true);
-        try core_json.writeStringField(writer, "state", if (std.mem.endsWith(u8, route.kind, "-delete")) "pending_delete" else if (route.enabled) "enabled" else "disabled", true);
-        try core_json.writeBoolField(writer, "enabled", route.enabled, true);
-        try core_json.writeBoolField(writer, "editable", std.mem.eql(u8, route.kind, "manual") and capability.write, true);
-        try core_json.writeStringField(writer, "updated_at", route.updated_at, false);
-        try writer.writeByte('}');
-    }
-    try writer.writeAll("],\"adopt_candidates\":[");
-    var first = true;
-    for (observed.items) |route| {
-        if (findDesired(desired.items, route.host) != null) continue;
-        if (!first) try writer.writeByte(',');
-        first = false;
-        try writer.writeByte('{');
-        try core_json.writeStringField(writer, "host", route.host, true);
-        try core_json.writeStringField(writer, "upstream", route.upstream, false);
-        try writer.writeByte('}');
-    }
-    try writer.writeAll("],\"diff\":");
-    try writeDiffJson(desired.items, observed.items, writer);
-    try writer.writeAll("}\n");
-}
+pub const Candidate = struct {
+    host: []const u8,
+    upstream: []const u8,
+};
 
-pub fn writeCapabilityJson(capability: Capability, writer: anytype) !void {
-    try writer.writeByte('{');
-    try core_json.writeBoolField(writer, "refresh", capability.refresh, true);
-    try core_json.writeBoolField(writer, "write", capability.write, true);
-    try core_json.writeBoolField(writer, "apply", capability.apply, true);
-    try core_json.writeStringField(writer, "code", capability.code, true);
-    try core_json.writeStringField(writer, "reason", capability.reason, false);
-    try writer.writeByte('}');
-}
+pub const DiffItem = struct {
+    kind: DiffKind,
+    host: []const u8,
+    desired_upstream: []const u8,
+    observed_upstream: []const u8,
+    ownership: []const u8,
+};
+
+pub const DiffSummary = struct {
+    additions: usize = 0,
+    changes: usize = 0,
+    removals: usize = 0,
+    unchanged: usize = 0,
+    unadopted: usize = 0,
+
+    pub fn pending(self: DiffSummary) bool {
+        return self.additions + self.changes + self.removals != 0;
+    }
+};
+
+/// What the Routes page shows: desired routes, observed routes awaiting
+/// adoption, and the diff Apply would make to the owned fragment.
+pub const View = struct {
+    capability: Capability,
+    freshness: observation.Freshness,
+    latest: ?db_store.Observation,
+    routes: []Route,
+    candidates: []Candidate,
+    diff: []DiffItem,
+    summary: DiffSummary,
+    desired: DesiredRoutes,
+    observed: ObservedRoutes,
+
+    pub fn load(ctx: Context) !View {
+        var desired = try loadDesired(ctx);
+        errdefer desired.deinit(ctx.gpa);
+        const observed_text = try latestObservedText(ctx);
+        defer if (observed_text) |text| ctx.gpa.free(text);
+        var observed = try parseObservedOrEmpty(ctx.gpa, observed_text orelse "");
+        errdefer observed.deinit(ctx.gpa);
+        const latest = try ctx.db.latestObservationForTarget(ctx.gpa, "caddy", "owned-fragment", ctx.config.caddy_owned_path);
+        errdefer if (latest) |value| value.deinit(ctx.gpa);
+        const capability = try evaluateCapability(ctx);
+
+        const routes = try ctx.gpa.alloc(Route, desired.items.len);
+        errdefer ctx.gpa.free(routes);
+        var diff: std.ArrayList(DiffItem) = .empty;
+        errdefer diff.deinit(ctx.gpa);
+        var candidates: std.ArrayList(Candidate) = .empty;
+        errdefer candidates.deinit(ctx.gpa);
+        var summary: DiffSummary = .{};
+        for (desired.items, routes) |desired_route, *row| {
+            const ownership: []const u8 = if (std.mem.eql(u8, desired_route.kind, "nob")) "project" else "cloudio";
+            row.* = .{
+                .host = desired_route.host,
+                .upstream = desired_route.upstream,
+                .ownership = ownership,
+                .state = if (std.mem.endsWith(u8, desired_route.kind, "-delete")) "pending_delete" else if (desired_route.enabled) "enabled" else "disabled",
+                .enabled = desired_route.enabled,
+                .editable = std.mem.eql(u8, desired_route.kind, "manual") and capability.write,
+                .updated_at = desired_route.updated_at,
+            };
+            const kind = diffForDesired(desired_route, observed.items);
+            switch (kind) {
+                .addition => summary.additions += 1,
+                .change => summary.changes += 1,
+                .removal => summary.removals += 1,
+                .unchanged => summary.unchanged += 1,
+                .unadopted => unreachable,
+            }
+            try diff.append(ctx.gpa, .{
+                .kind = kind,
+                .host = desired_route.host,
+                .desired_upstream = desired_route.upstream,
+                .observed_upstream = if (findObserved(observed.items, desired_route.host)) |value| value.upstream else "",
+                .ownership = ownership,
+            });
+        }
+        for (observed.items) |observed_route| {
+            if (findDesired(desired.items, observed_route.host) != null) continue;
+            summary.unadopted += 1;
+            try candidates.append(ctx.gpa, .{ .host = observed_route.host, .upstream = observed_route.upstream });
+            try diff.append(ctx.gpa, .{ .kind = .unadopted, .host = observed_route.host, .desired_upstream = "", .observed_upstream = observed_route.upstream, .ownership = "unadopted" });
+        }
+        return .{
+            .capability = capability,
+            .freshness = if (capability.write) .current else if (latest != null and latest.?.hasSuccessfulObservation()) .stale else .unavailable,
+            .latest = latest,
+            .routes = routes,
+            .candidates = try candidates.toOwnedSlice(ctx.gpa),
+            .diff = try diff.toOwnedSlice(ctx.gpa),
+            .summary = summary,
+            .desired = desired,
+            .observed = observed,
+        };
+    }
+
+    pub fn deinit(self: *View, gpa: Allocator) void {
+        gpa.free(self.diff);
+        gpa.free(self.candidates);
+        gpa.free(self.routes);
+        if (self.latest) |value| value.deinit(gpa);
+        self.observed.deinit(gpa);
+        self.desired.deinit(gpa);
+    }
+
+    pub fn route(self: View, host: []const u8) ?Route {
+        for (self.routes) |item| if (std.mem.eql(u8, item.host, host)) return item;
+        return null;
+    }
+};
 
 fn evaluateCapability(ctx: Context) !Capability {
     if (std.mem.eql(u8, ctx.config.caddyfile_path, ctx.config.caddy_owned_path) or
@@ -465,12 +524,12 @@ fn evaluateCapability(ctx: Context) !Capability {
     if (!desiredRoutesSupported(desired.items)) {
         return blocked(true, "unsupported_desired_route", "Stored desired state contains a route outside the owned fragment contract.");
     }
-    const observation = try ctx.db.latestObservationForTarget(ctx.gpa, "caddy", "owned-fragment", ctx.config.caddy_owned_path);
-    defer if (observation) |value| value.deinit(ctx.gpa);
-    if (observation == null or !observation.?.hasSuccessfulObservation()) {
+    const latest = try ctx.db.latestObservationForTarget(ctx.gpa, "caddy", "owned-fragment", ctx.config.caddy_owned_path);
+    defer if (latest) |value| value.deinit(ctx.gpa);
+    if (latest == null or !latest.?.hasSuccessfulObservation()) {
         return blocked(true, "observation_required", "Refresh the owned fragment before changing desired state.");
     }
-    if (!std.mem.eql(u8, observation.?.attempt_status, "ok")) {
+    if (!std.mem.eql(u8, latest.?.attempt_status, "ok")) {
         return blocked(true, "latest_observation_failed", "The latest fragment refresh failed; recover it and refresh again.");
     }
     const observed_text = (try latestObservedText(ctx)) orelse
@@ -508,54 +567,7 @@ fn requireWriteCapability(ctx: Context) !void {
     if (!capability.write) return error.CaddyWriteUnavailable;
 }
 
-fn writeDiffJson(desired: []const DesiredRoute, observed: []const ObservedRoute, writer: anytype) !void {
-    var additions: usize = 0;
-    var changes: usize = 0;
-    var removals: usize = 0;
-    var unchanged: usize = 0;
-    var unadopted: usize = 0;
-    for (desired) |route| switch (diffForDesired(route, observed)) {
-        .addition => additions += 1,
-        .change => changes += 1,
-        .removal => removals += 1,
-        .unchanged => unchanged += 1,
-        .unadopted => unreachable,
-    };
-    for (observed) |route| if (findDesired(desired, route.host) == null) {
-        unadopted += 1;
-    };
-    try writer.writeByte('{');
-    try core_json.writeIntField(writer, "additions", additions, true);
-    try core_json.writeIntField(writer, "changes", changes, true);
-    try core_json.writeIntField(writer, "removals", removals, true);
-    try core_json.writeIntField(writer, "unchanged", unchanged, true);
-    try core_json.writeIntField(writer, "unadopted", unadopted, true);
-    try writer.writeAll("\"items\":[");
-    var first = true;
-    for (desired) |route| {
-        const kind = diffForDesired(route, observed);
-        if (!first) try writer.writeByte(',');
-        first = false;
-        try writeDiffItem(writer, @tagName(kind), route.host, route.upstream, if (findObserved(observed, route.host)) |value| value.upstream else null, if (std.mem.eql(u8, route.kind, "nob")) "project" else "cloudio");
-    }
-    for (observed) |route| {
-        if (findDesired(desired, route.host) != null) continue;
-        if (!first) try writer.writeByte(',');
-        first = false;
-        try writeDiffItem(writer, "unadopted", route.host, null, route.upstream, "unadopted");
-    }
-    try writer.writeAll("]}");
-}
 
-fn writeDiffItem(writer: anytype, state: []const u8, host: []const u8, desired: ?[]const u8, observed: ?[]const u8, ownership: []const u8) !void {
-    try writer.writeByte('{');
-    try core_json.writeStringField(writer, "state", state, true);
-    try core_json.writeStringField(writer, "host", host, true);
-    try core_json.writeNullableStringField(writer, "desired_upstream", desired, true);
-    try core_json.writeNullableStringField(writer, "observed_upstream", observed, true);
-    try core_json.writeStringField(writer, "ownership", ownership, false);
-    try writer.writeByte('}');
-}
 
 fn diffForDesired(route: DesiredRoute, observed: []const ObservedRoute) DiffKind {
     const current = findObserved(observed, route.host);

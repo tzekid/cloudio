@@ -6,34 +6,25 @@ const std = @import("std");
 const web_html = @import("web_html");
 
 pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
-    var json = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer json.deinit();
-    try app_authentication.writeCredentials(.{
-        .io = ctx.io,
-        .gpa = ctx.gpa,
-        .db = ctx.db,
-        .origin = ctx.config.auth_origin,
-        .rp_id = ctx.config.auth_rp_id,
-    }, &json.writer);
-    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, json.written(), .{});
-    defer parsed.deinit();
-    const credentials = html.arrayItems(html.member(parsed.value, "credentials"));
+    var all = try ctx.db.auth().listCredentials(ctx.gpa);
+    defer all.deinit(ctx.gpa);
+    var active: usize = 0;
 
     var rows = std.Io.Writer.Allocating.init(ctx.gpa);
     defer rows.deinit();
-    if (credentials.len == 0) {
-        try html.emptyRow(&rows.writer, 5, "No passkeys are enrolled.");
-    } else for (credentials) |credential| {
+    for (all.items) |credential| {
+        if (credential.revoked_at != null) continue;
+        active += 1;
         try rows.writer.writeAll("<tr><td><strong>");
-        try web_html.text(&rows.writer, html.strField(credential, "label"));
+        try web_html.text(&rows.writer, credential.label);
         try rows.writer.writeAll("</strong></td>");
-        try html.cellBadge(&rows.writer, if (html.boolField(credential, "backup_eligible")) "Synced" else "Security key");
-        try html.cellValue(&rows.writer, html.member(credential, "created_at"), "mono");
-        if (html.member(credential, "last_used_at")) |last_used| {
-            if (last_used == .null) try html.cellText(&rows.writer, "Never", "muted") else try html.cellValue(&rows.writer, last_used, "mono");
+        try html.cellBadge(&rows.writer, if (credential.backup_eligible) "Synced" else "Security key");
+        try rows.writer.print("<td class=\"mono\">{d}</td>", .{credential.created_at});
+        if (credential.last_used_at) |last_used| {
+            try rows.writer.print("<td class=\"mono\">{d}</td>", .{last_used});
         } else try html.cellText(&rows.writer, "Never", "muted");
-        const credential_id = html.strField(credential, "id");
-        const credential_label = html.strField(credential, "label");
+        const credential_id = credential.credential_id;
+        const credential_label = credential.label;
         try rows.writer.writeAll("<td class=\"cell-actions\"><div class=\"table-actions\"><button type=\"button\" class=\"button button-small\" data-action=\"rename\" data-id=\"");
         try web_html.attribute(&rows.writer, credential_id);
         try rows.writer.writeAll("\">Rename</button><button type=\"button\" class=\"button button-small button-danger\" data-action=\"revoke\" data-id=\"");
@@ -42,9 +33,10 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
         try web_html.attribute(&rows.writer, credential_label);
         try rows.writer.writeAll("\">Revoke</button></div></td></tr>");
     }
+    if (active == 0) try html.emptyRow(&rows.writer, 5, "No passkeys are enrolled.");
     try html.replaceElementInner(ctx.gpa, main, "passkeys-body", "tbody", rows.written());
     var count_buffer: [32]u8 = undefined;
-    const count = try std.fmt.bufPrint(&count_buffer, "{d}", .{credentials.len});
+    const count = try std.fmt.bufPrint(&count_buffer, "{d}", .{active});
     try html.replaceElementInner(ctx.gpa, main, "passkey-count", "div", count);
 
     var csrf_input = std.Io.Writer.Allocating.init(ctx.gpa);
@@ -69,7 +61,7 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
             .{ .tone = "success", .text = "Passkey renamed." }
         else if (std.mem.eql(u8, result, "revoked"))
             .{ .tone = "success", .text = "Passkey revoked." }
-        else if (credentials.len < 2)
+        else if (active < 2)
             .{ .tone = "warning", .text = "Add a second passkey before you need it. A phone plus a laptop or hardware key is a practical recovery pair." }
         else
             null;

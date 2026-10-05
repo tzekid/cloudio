@@ -394,38 +394,37 @@ fn renderProjectSecrets(ctx: context.Context, project: db_store.NobProject, out:
         try out.writeAll("</tbody></table></div></section>");
         return;
     }
-    var json = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer json.deinit();
     var project_reference_buffer: [32]u8 = undefined;
     const project_reference = try std.fmt.bufPrint(&project_reference_buffer, "{d}", .{project.id});
-    app_nob_secrets.writeJson(context.nobSecrets(ctx), project_reference, &json.writer) catch |err| {
+    var secrets = app_nob_secrets.statuses(context.nobSecrets(ctx), project_reference) catch |err| {
         try html.emptyRow(out, 4, @errorName(err));
         try out.writeAll("</tbody></table></div></section>");
         return;
     };
-    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, json.written(), .{});
-    defer parsed.deinit();
-    const secrets = html.arrayItems(html.member(parsed.value, "items"));
-    if (secrets.len == 0) try html.emptyRow(out, 4, "This project declares no secrets.");
-    for (secrets) |secret| {
-        const secret_id = html.strField(secret, "secret_id");
+    defer secrets.deinit(ctx.gpa);
+    if (secrets.items.len == 0) try html.emptyRow(out, 4, "This project declares no secrets.");
+    for (secrets.items) |secret| {
+        const secret_id = secret.secret.id;
         try out.writeAll("<tr><td data-label=\"Secret\"><strong class=\"mono\">");
         try web_html.text(out, secret_id);
         try out.writeAll("</strong><div class=\"muted\">");
-        try web_html.text(out, html.strField(secret, "purpose"));
+        try web_html.text(out, secret.secret.purpose);
         try out.writeAll("</div></td><td data-label=\"Required for\">");
-        try writeStringArray(out, html.arrayItems(html.member(secret, "required_for")));
+        if (secret.secret.required_for.len == 0) try out.writeAll("<span class=\"muted\">None</span>");
+        for (secret.secret.required_for, 0..) |action_id, index| {
+            if (index != 0) try out.writeAll(", ");
+            try web_html.text(out, action_id);
+        }
         try out.writeAll("</td><td data-label=\"Status\">");
-        try html.writeBadge(out, if (html.boolField(secret, "bound")) if (html.boolField(secret, "present")) "present" else "unavailable" else "unbound");
-        const source_kind = html.nullableString(html.member(secret, "source_kind"));
-        if (source_kind.len > 0) {
+        try html.writeBadge(out, secret.label());
+        if (secret.binding) |binding| {
             try out.writeAll("<div class=\"muted\">Source: ");
-            try web_html.text(out, source_kind);
+            try web_html.text(out, binding.source_kind);
             try out.writeAll("</div>");
         }
         try out.writeAll("</td><td data-label=\"Manage\"><div class=\"stack\">");
         try secretBindForm(ctx, out, project.id, secret_id);
-        if (html.boolField(secret, "bound")) {
+        if (secret.binding != null) {
             var fields = [_]FormField{.{ "secret_id", secret_id }};
             try projectSimpleForm(ctx, out, project.id, "secret-unbind", "Unbind", "button-danger", &fields);
         }

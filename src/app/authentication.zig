@@ -377,29 +377,6 @@ pub fn updateCredentialLabel(ctx: Context, credential_id: []const u8, label: []c
     committed = true;
 }
 
-pub fn writeCredentials(ctx: Context, writer: anytype) !void {
-    var rows = try ctx.db.auth().listCredentials(ctx.gpa);
-    defer rows.deinit(ctx.gpa);
-    try writer.writeAll("{\"credentials\":[");
-    var first = true;
-    for (rows.items) |row| {
-        if (row.revoked_at != null) continue;
-        if (!first) try writer.writeByte(',');
-        first = false;
-        try writer.writeByte('{');
-        try core_json.writeStringField(writer, "id", row.credential_id, true);
-        try core_json.writeStringField(writer, "label", row.label, true);
-        try core_json.writeStringField(writer, "transports", row.transports, true);
-        try core_json.writeIntField(writer, "created_at", row.created_at, true);
-        try writer.writeAll("\"last_used_at\":");
-        if (row.last_used_at) |value| try writer.print("{d}", .{value}) else try writer.writeAll("null");
-        try writer.writeByte(',');
-        try core_json.writeBoolField(writer, "backup_eligible", row.backup_eligible, true);
-        try core_json.writeBoolField(writer, "backup_state", row.backup_state, false);
-        try writer.writeByte('}');
-    }
-    try writer.writeAll("]}\n");
-}
 
 pub fn revokeCredential(ctx: Context, credential_id: []const u8) !void {
     try ctx.db.exec("BEGIN IMMEDIATE");

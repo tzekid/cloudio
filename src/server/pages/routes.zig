@@ -11,38 +11,29 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
     var draft_arena = std.heap.ArenaAllocator.init(ctx.gpa);
     defer draft_arena.deinit();
     const draft = parseRoutesDraft(draft_arena.allocator(), request);
-    var json = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer json.deinit();
-    try app_caddy_desired.writeJson(context.caddy(ctx), &json.writer);
-    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, json.written(), .{});
-    defer parsed.deinit();
-    const routes = html.arrayItems(html.member(parsed.value, "routes"));
-    const candidates = html.arrayItems(html.member(parsed.value, "adopt_candidates"));
-    const ownership = html.member(parsed.value, "ownership") orelse .null;
-    const observation = html.member(parsed.value, "observation") orelse .null;
-    const capability = html.member(parsed.value, "capability") orelse .null;
-    const diff = html.member(parsed.value, "diff") orelse .null;
-    const diff_items = html.arrayItems(html.member(diff, "items"));
+    var view = try app_caddy_desired.View.load(context.caddy(ctx));
+    defer view.deinit(ctx.gpa);
+    const capability = view.capability;
 
-    try html.replaceEscapedElement(ctx.gpa, main, "routes-root", "dd", html.strField(ownership, "root"));
-    try html.replaceEscapedElement(ctx.gpa, main, "routes-fragment", "dd", html.strField(ownership, "fragment"));
+    try html.replaceEscapedElement(ctx.gpa, main, "routes-root", "dd", ctx.config.caddyfile_path);
+    try html.replaceEscapedElement(ctx.gpa, main, "routes-fragment", "dd", ctx.config.caddy_owned_path);
     var freshness = std.Io.Writer.Allocating.init(ctx.gpa);
     defer freshness.deinit();
-    try html.writeStatus(&freshness.writer, html.freshnessLabel(html.strField(parsed.value, "freshness")));
+    try html.writeStatus(&freshness.writer, view.freshness.label());
     try html.replaceElementInner(ctx.gpa, main, "routes-freshness", "dd", freshness.written());
-    const observed_at = html.nullableString(html.member(observation, "observed_at"));
+    const observed_at = if (view.latest) |value| value.observed_at else "";
     try html.replaceEscapedElement(ctx.gpa, main, "routes-observed-at", "dd", if (observed_at.len > 0) observed_at else "Never");
     var attempt = std.Io.Writer.Allocating.init(ctx.gpa);
     defer attempt.deinit();
-    try web_html.text(&attempt.writer, html.collectionStatusLabel(html.strField(observation, "status")));
-    const attempted_at = html.nullableString(html.member(observation, "attempted_at"));
+    try web_html.text(&attempt.writer, html.collectionStatusLabel(if (view.latest) |value| value.attempt_status else ""));
+    const attempted_at = if (view.latest) |value| value.attempted_at else "";
     if (attempted_at.len > 0) {
         try attempt.writer.writeAll(" · ");
         try web_html.text(&attempt.writer, attempted_at);
     }
     try html.replaceElementInner(ctx.gpa, main, "routes-attempt", "dd", attempt.written());
-    const capability_ready = std.mem.eql(u8, html.strField(capability, "code"), "ready");
-    try html.replaceEscapedElement(ctx.gpa, main, "caddy-apply-capability", "p", if (capability_ready) "Ready to manage routes." else html.strField(capability, "reason"));
+    const capability_ready = std.mem.eql(u8, capability.code, "ready");
+    try html.replaceEscapedElement(ctx.gpa, main, "caddy-apply-capability", "p", if (capability_ready) "Ready to manage routes." else capability.reason);
     if (capability_ready) {
         try html.replaceExact(ctx.gpa, main, "id=\"caddy-apply-capability\" class=\"notice tone-warning\"", "id=\"caddy-apply-capability\" class=\"notice tone-success\"");
     }
@@ -54,21 +45,21 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
 
     var rows = std.Io.Writer.Allocating.init(ctx.gpa);
     defer rows.deinit();
-    if (routes.len != 0) {
-        for (routes) |route| {
-            const host = html.strField(route, "host");
-            const enabled = html.boolField(route, "enabled");
-            const editable = html.boolField(route, "editable");
-            const state = html.strField(route, "state");
+    if (view.routes.len != 0) {
+        for (view.routes) |route| {
+            const host = route.host;
+            const enabled = route.enabled;
+            const editable = route.editable;
+            const state = route.state;
             try rows.writer.writeAll("<tr data-route-host=\"");
             try web_html.attribute(&rows.writer, host);
             try rows.writer.writeAll("\"><td data-label=\"State\">");
             try html.writeBadge(&rows.writer, state);
             try rows.writer.writeAll("</td>");
             try html.cellText(&rows.writer, host, "mono breakable");
-            try html.cellText(&rows.writer, html.strField(route, "upstream"), "mono breakable");
-            try html.cellBadge(&rows.writer, html.strField(route, "ownership"));
-            try html.cellText(&rows.writer, html.strField(route, "updated_at"), "muted");
+            try html.cellText(&rows.writer, route.upstream, "mono breakable");
+            try html.cellBadge(&rows.writer, route.ownership);
+            try html.cellText(&rows.writer, route.updated_at, "muted");
             try rows.writer.writeAll("<td data-label=\"Actions\" class=\"cell-actions\"><div class=\"cluster\">");
             if (editable) {
                 var toggle_key_buffer: [80]u8 = undefined;
@@ -95,8 +86,8 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
         }
     }
     try html.replaceElementInner(ctx.gpa, main, "routes-body", "tbody", rows.written());
-    try html.replaceCountLabel(ctx.gpa, main, "routes-count", "span", routes.len, "route", "routes");
-    if (routes.len != 0) {
+    try html.replaceCountLabel(ctx.gpa, main, "routes-count", "span", view.routes.len, "route", "routes");
+    if (view.routes.len != 0) {
         try html.replaceExact(ctx.gpa, main, "id=\"routes-empty\" class=\"panel-body route-empty-state\"", "id=\"routes-empty\" class=\"panel-body route-empty-state hidden\"");
         try html.replaceExact(ctx.gpa, main, "id=\"routes-table\" class=\"table-scroll hidden\"", "id=\"routes-table\" class=\"table-scroll\"");
     }
@@ -106,76 +97,76 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
     try html.replaceHiddenInput(ctx.gpa, main, "route-csrf", "csrf_token", ctx.auth_csrf_token orelse "");
     try html.replaceHiddenInput(ctx.gpa, main, "route-idempotency", "idempotency_key", route_key);
     const edit_host = request.query("edit") orelse if (std.mem.eql(u8, request.query("action") orelse "", "update")) request.query("host") orelse "" else "";
-    const edit_route = findJsonRoute(routes, edit_host);
+    const edit_route = view.route(edit_host);
     if (edit_route) |route| {
         try html.replaceEscapedElement(ctx.gpa, main, "route-form-title", "h2", "Edit route");
         try html.setInputValue(ctx.gpa, main, "route-action", "update");
         try html.setInputValue(ctx.gpa, main, "route-host", edit_host);
-        try html.setInputValue(ctx.gpa, main, "route-upstream", if (draft) |value| if (std.mem.eql(u8, value.action, "update")) value.upstream else html.strField(route, "upstream") else html.strField(route, "upstream"));
+        try html.setInputValue(ctx.gpa, main, "route-upstream", if (draft) |value| if (std.mem.eql(u8, value.action, "update")) value.upstream else route.upstream else route.upstream);
         try html.replaceExact(ctx.gpa, main, "id=\"route-form-cancel\" class=\"button hidden\"", "id=\"route-form-cancel\" class=\"button\"");
     } else if (draft) |value| if (std.mem.eql(u8, value.action, "create")) {
         try html.setInputValue(ctx.gpa, main, "route-host", value.host);
         try html.setInputValue(ctx.gpa, main, "route-upstream", value.upstream);
     };
-    if (html.boolField(capability, "write")) {
+    if (capability.write) {
         try html.replaceExact(ctx.gpa, main, "<button id=\"add-route\" class=\"button-primary\" type=\"submit\" disabled>Save route</button>", "<button id=\"add-route\" class=\"button-primary\" type=\"submit\">Save route</button>");
     }
 
     var adoption = std.Io.Writer.Allocating.init(ctx.gpa);
     defer adoption.deinit();
-    if (candidates.len != 0) {
-        for (candidates) |candidate| {
+    if (view.candidates.len != 0) {
+        for (view.candidates) |candidate| {
             var adopt_key_buffer: [80]u8 = undefined;
             const adopt_key = try html.formIdempotencyKey(ctx.io, &adopt_key_buffer, "route-adopt");
             try adoption.writer.writeAll("<form class=\"toolbar\" method=\"post\" action=\"/routes/adopt\"><span><code>");
-            try web_html.text(&adoption.writer, html.strField(candidate, "host"));
+            try web_html.text(&adoption.writer, candidate.host);
             try adoption.writer.writeAll("</code> → <code>");
-            try web_html.text(&adoption.writer, html.strField(candidate, "upstream"));
+            try web_html.text(&adoption.writer, candidate.upstream);
             try adoption.writer.writeAll("</code></span>");
             try html.writeHiddenInput(&adoption.writer, "csrf_token", ctx.auth_csrf_token orelse "");
             try html.writeHiddenInput(&adoption.writer, "idempotency_key", adopt_key);
-            try html.writeHiddenInput(&adoption.writer, "host", html.strField(candidate, "host"));
+            try html.writeHiddenInput(&adoption.writer, "host", candidate.host);
             try adoption.writer.writeAll("<button class=\"button-primary\" type=\"submit\">Adopt exact route</button></form>");
         }
     }
     try html.replaceElementInner(ctx.gpa, main, "adopt-routes", "div", adoption.written());
-    if (candidates.len != 0) {
+    if (view.candidates.len != 0) {
         try html.replaceExact(ctx.gpa, main, "id=\"routes-adoption-panel\" class=\"panel hidden\"", "id=\"routes-adoption-panel\" class=\"panel\"");
     }
 
     var diff_rows = std.Io.Writer.Allocating.init(ctx.gpa);
     defer diff_rows.deinit();
-    if (diff_items.len != 0) {
-        for (diff_items) |item| {
+    if (view.diff.len != 0) {
+        for (view.diff) |item| {
             try diff_rows.writer.writeAll("<tr><td data-label=\"Change\">");
-            try html.writeBadge(&diff_rows.writer, html.strField(item, "state"));
+            try html.writeBadge(&diff_rows.writer, @tagName(item.kind));
             try diff_rows.writer.writeAll("</td>");
-            try html.dashboardCellText(&diff_rows.writer, "Host", html.strField(item, "host"), "mono breakable", "—");
-            try html.dashboardCellText(&diff_rows.writer, "Desired", html.nullableString(html.member(item, "desired_upstream")), "mono breakable", "—");
-            try html.dashboardCellText(&diff_rows.writer, "Observed", html.nullableString(html.member(item, "observed_upstream")), "mono breakable", "—");
-            try html.dashboardCellText(&diff_rows.writer, "Ownership", html.strField(item, "ownership"), "", "—");
+            try html.dashboardCellText(&diff_rows.writer, "Host", item.host, "mono breakable", "—");
+            try html.dashboardCellText(&diff_rows.writer, "Desired", item.desired_upstream, "mono breakable", "—");
+            try html.dashboardCellText(&diff_rows.writer, "Observed", item.observed_upstream, "mono breakable", "—");
+            try html.dashboardCellText(&diff_rows.writer, "Ownership", item.ownership, "", "—");
             try diff_rows.writer.writeAll("</tr>");
         }
     }
     try html.replaceElementInner(ctx.gpa, main, "routes-diff-body", "tbody", diff_rows.written());
-    const pending_changes = html.intField(diff, "additions") + html.intField(diff, "changes") + html.intField(diff, "removals");
-    const has_pending_changes = pending_changes != 0;
+    const counts = view.summary;
+    const has_pending_changes = counts.pending();
     if (has_pending_changes) {
         try html.replaceExact(ctx.gpa, main, "id=\"routes-preview-panel\" class=\"panel hidden\"", "id=\"routes-preview-panel\" class=\"panel\"");
     }
     var diff_summary_buffer: [192]u8 = undefined;
     const diff_summary = try std.fmt.bufPrint(&diff_summary_buffer, "{d} additions · {d} changes · {d} removals · {d} unchanged · {d} requiring adoption", .{
-        html.intField(diff, "additions"), html.intField(diff, "changes"), html.intField(diff, "removals"), html.intField(diff, "unchanged"), html.intField(diff, "unadopted"),
+        counts.additions, counts.changes, counts.removals, counts.unchanged, counts.unadopted,
     });
     try html.replaceEscapedElement(ctx.gpa, main, "routes-diff-summary", "p", diff_summary);
     const rendered = try app_caddy_desired.render(context.caddy(ctx), ctx.gpa);
     defer ctx.gpa.free(rendered);
     try html.replaceEscapedElement(ctx.gpa, main, "preview-output", "pre", rendered);
-    if (!html.boolField(capability, "apply")) {
+    if (!capability.apply) {
         try html.replaceExact(ctx.gpa, main, "<a id=\"apply-btn\" class=\"button button-primary\" href=\"/routes.html?confirm=apply\" aria-describedby=\"caddy-apply-capability\">Review Apply</a>", "<span id=\"apply-btn\" class=\"button button-primary\" aria-disabled=\"true\" aria-describedby=\"caddy-apply-capability\">Review Apply</span>");
     }
 
-    try injectRouteDeleteConfirmation(ctx, request, routes, draft, main);
+    try injectRouteDeleteConfirmation(ctx, request, view, draft, main);
     try injectRouteApplyConfirmation(ctx, request, draft, capability, has_pending_changes, main);
     if (routesFeedback(request)) |feedback| {
         try html.replaceEscapedElement(ctx.gpa, main, "routes-feedback", "div", feedback.message);
@@ -195,15 +186,11 @@ fn parseRoutesDraft(arena: std.mem.Allocator, request: http.Request) ?RoutesDraf
         .confirmation = fields.get("confirmation") catch "",
     };
 }
-fn findJsonRoute(routes: []const std.json.Value, host: []const u8) ?std.json.Value {
-    for (routes) |route| if (std.mem.eql(u8, html.strField(route, "host"), host)) return route;
-    return null;
-}
-fn injectRouteDeleteConfirmation(ctx: context.Context, request: http.Request, routes: []const std.json.Value, draft: ?RoutesDraft, main: *[]u8) !void {
+fn injectRouteDeleteConfirmation(ctx: context.Context, request: http.Request, view: app_caddy_desired.View, draft: ?RoutesDraft, main: *[]u8) !void {
     if (!std.mem.eql(u8, request.query("confirm") orelse request.query("action") orelse "", "delete")) return;
     const host = request.query("host") orelse return;
-    const route = findJsonRoute(routes, host) orelse return;
-    if (!html.boolField(route, "editable")) return;
+    const route = view.route(host) orelse return;
+    if (!route.editable) return;
     var key_buffer: [80]u8 = undefined;
     const key = try html.formIdempotencyKey(ctx.io, &key_buffer, "route-delete");
     try html.replaceHiddenInput(ctx.gpa, main, "route-delete-csrf", "csrf_token", ctx.auth_csrf_token orelse "");
@@ -213,10 +200,10 @@ fn injectRouteDeleteConfirmation(ctx: context.Context, request: http.Request, ro
     if (draft) |value| if (std.mem.eql(u8, value.action, "delete") and std.mem.eql(u8, value.host, host)) try html.setInputValue(ctx.gpa, main, "route-delete-confirmation", value.confirmation);
     try html.replaceExact(ctx.gpa, main, "id=\"route-confirmation-panel\" class=\"panel hidden\"", "id=\"route-confirmation-panel\" class=\"panel\"");
 }
-fn injectRouteApplyConfirmation(ctx: context.Context, request: http.Request, draft: ?RoutesDraft, capability: std.json.Value, has_pending_changes: bool, main: *[]u8) !void {
+fn injectRouteApplyConfirmation(ctx: context.Context, request: http.Request, draft: ?RoutesDraft, capability: app_caddy_desired.Capability, has_pending_changes: bool, main: *[]u8) !void {
     const requested = std.mem.eql(u8, request.query("confirm") orelse "", "apply") or
         (std.mem.eql(u8, request.query("error") orelse "", "confirmation") and request.query("host") == null);
-    if (!requested or !has_pending_changes or !html.boolField(capability, "apply")) return;
+    if (!requested or !has_pending_changes or !capability.apply) return;
     var key_buffer: [80]u8 = undefined;
     const key = try html.formIdempotencyKey(ctx.io, &key_buffer, "routes-apply");
     try html.replaceHiddenInput(ctx.gpa, main, "routes-apply-csrf", "csrf_token", ctx.auth_csrf_token orelse "");

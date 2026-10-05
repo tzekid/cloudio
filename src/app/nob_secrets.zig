@@ -4,6 +4,7 @@ const core_config = @import("../core/config.zig");
 const core_time = @import("../core/time.zig");
 const db_store = @import("../db/store.zig");
 const nob = @import("nob");
+const nob_model = @import("../nob/model.zig");
 
 const Allocator = std.mem.Allocator;
 const max_secret_bytes = 64 * 1024;
@@ -99,53 +100,75 @@ pub fn unbind(ctx: Context, project_reference: []const u8, secret_id: []const u8
     try ctx.db.insertAudit("nob.secret.unbind", "ok", detail);
 }
 
-pub fn writeJson(ctx: Context, project_reference: []const u8, writer: *std.Io.Writer) !void {
+pub const Status = struct {
+    secret: nob.types.Secret,
+    binding: ?db_store.NobSecretBinding,
+
+    pub fn label(self: Status) []const u8 {
+        const binding = self.binding orelse return "unbound";
+        return if (binding.present) "present" else "unavailable";
+    }
+};
+
+/// Every secret the trusted manifest declares, with its binding if any.
+/// Source references stay inside the bindings and are never rendered.
+pub const Statuses = struct {
+    manifest: nob.ManifestDocument,
+    bindings: nob_model.SecretBindings,
+    items: []Status,
+
+    pub fn deinit(self: *Statuses, gpa: Allocator) void {
+        gpa.free(self.items);
+        self.bindings.deinit(gpa);
+        self.manifest.deinit();
+    }
+};
+
+pub fn statuses(ctx: Context, project_reference: []const u8) !Statuses {
     const project = (try app_nob_projects.find(projectContext(ctx), project_reference)) orelse return error.ProjectNotFound;
     defer project.deinit(ctx.gpa);
-    var manifest_document = try trustedManifest(ctx, project);
-    defer manifest_document.deinit();
+    var manifest = try trustedManifest(ctx, project);
+    errdefer manifest.deinit();
     var bindings = try ctx.db.nob().listSecretBindings(ctx.gpa, project.id);
-    defer bindings.deinit(ctx.gpa);
+    errdefer bindings.deinit(ctx.gpa);
+    const secrets = manifest.value().secrets;
+    const items = try ctx.gpa.alloc(Status, secrets.len);
+    for (secrets, items) |secret, *item| item.* = .{ .secret = secret, .binding = if (findBinding(bindings.items, secret.id)) |binding| binding.* else null };
+    return .{ .manifest = manifest, .bindings = bindings, .items = items };
+}
+
+pub fn writeJson(ctx: Context, project_reference: []const u8, writer: *std.Io.Writer) !void {
+    var all = try statuses(ctx, project_reference);
+    defer all.deinit(ctx.gpa);
     try writer.writeAll("{\"kind\":\"nob_secret_bindings\",\"items\":[");
-    for (manifest_document.value().secrets, 0..) |secret, index| {
+    for (all.items, 0..) |item, index| {
         if (index != 0) try writer.writeByte(',');
-        const binding = findBinding(bindings.items, secret.id);
-        try writer.writeAll("{\"secret_id\":");
-        try std.json.Stringify.value(secret.id, .{}, writer);
-        try writer.writeAll(",\"purpose\":");
-        try std.json.Stringify.value(secret.purpose, .{}, writer);
-        try writer.writeAll(",\"required_for\":");
-        try std.json.Stringify.value(secret.required_for, .{}, writer);
-        try writer.writeAll(",\"delivery\":\"file\",\"bound\":");
-        try writer.writeAll(if (binding != null) "true" else "false");
-        try writer.writeAll(",\"source_kind\":");
-        try std.json.Stringify.value(if (binding) |value| value.source_kind else null, .{}, writer);
-        try writer.writeAll(",\"present\":");
-        try writer.writeAll(if (binding) |value| if (value.present) "true" else "false" else "false");
-        try writer.writeAll(",\"checked_at\":");
-        try std.json.Stringify.value(if (binding) |value| value.checked_at else null, .{}, writer);
-        try writer.writeByte('}');
+        try std.json.Stringify.value(.{
+            .secret_id = item.secret.id,
+            .purpose = item.secret.purpose,
+            .required_for = item.secret.required_for,
+            .delivery = "file",
+            .bound = item.binding != null,
+            .source_kind = if (item.binding) |value| value.source_kind else null,
+            .present = if (item.binding) |value| value.present else false,
+            .checked_at = if (item.binding) |value| value.checked_at else null,
+        }, .{}, writer);
     }
     try writer.writeAll("]}\n");
 }
 
 pub fn writeText(ctx: Context, project_reference: []const u8, writer: *std.Io.Writer) !void {
-    const project = (try app_nob_projects.find(projectContext(ctx), project_reference)) orelse return error.ProjectNotFound;
-    defer project.deinit(ctx.gpa);
-    var manifest_document = try trustedManifest(ctx, project);
-    defer manifest_document.deinit();
-    var bindings = try ctx.db.nob().listSecretBindings(ctx.gpa, project.id);
-    defer bindings.deinit(ctx.gpa);
-    for (manifest_document.value().secrets) |secret| {
-        const binding = findBinding(bindings.items, secret.id);
+    var all = try statuses(ctx, project_reference);
+    defer all.deinit(ctx.gpa);
+    for (all.items) |item| {
         try writer.print("{s}  {s}  {s}  {s}\n", .{
-            secret.id,
-            if (binding == null) "unbound" else if (binding.?.present) "present" else "unavailable",
-            if (binding) |value| value.source_kind else "-",
-            secret.purpose,
+            item.secret.id,
+            item.label(),
+            if (item.binding) |value| value.source_kind else "-",
+            item.secret.purpose,
         });
     }
-    if (manifest_document.value().secrets.len == 0) try writer.writeAll("this project declares no secrets\n");
+    if (all.items.len == 0) try writer.writeAll("this project declares no secrets\n");
 }
 
 pub fn resolve(ctx: Context, project_id: i64, manifest: *const nob.types.Manifest) !Resolution {

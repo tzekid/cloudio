@@ -20,12 +20,9 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
     try html.replaceTextInputValue(ctx.gpa, main, "audit-target", "target", options.target orelse "");
     try html.replaceTextInputValue(ctx.gpa, main, "audit-actor", "actor", options.actor orelse "");
 
-    var json = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer json.deinit();
-    try app_writes.writeAuditJson(ctx.gpa, ctx.db, options, &json.writer);
-    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, json.written(), .{});
-    defer parsed.deinit();
-    const entries = html.arrayItems(html.member(parsed.value, "entries"));
+    var audit = try app_writes.auditEntries(ctx.gpa, ctx.db, options);
+    defer audit.deinit();
+    const entries = audit.items;
 
     var rows = std.Io.Writer.Allocating.init(ctx.gpa);
     defer rows.deinit();
@@ -33,36 +30,36 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
         try html.emptyRow(&rows.writer, 6, "No entries match this view.");
     } else for (entries) |entry| {
         try rows.writer.writeAll("<tr data-audit-source=\"");
-        try web_html.attribute(&rows.writer, html.strField(entry, "source"));
+        try web_html.attribute(&rows.writer, entry.source);
         try rows.writer.writeAll("\" data-audit-category=\"");
-        try web_html.attribute(&rows.writer, html.strField(entry, "category"));
+        try web_html.attribute(&rows.writer, entry.category);
         try rows.writer.writeAll("\">");
-        try html.dashboardCellText(&rows.writer, "Time", html.strField(entry, "created_at"), "mono cell-nowrap", "—");
-        try html.dashboardCellText(&rows.writer, "Actor", html.strField(entry, "actor"), "mono", "system");
+        try html.dashboardCellText(&rows.writer, "Time", entry.created_at, "mono cell-nowrap", "—");
+        try html.dashboardCellText(&rows.writer, "Actor", entry.actor, "mono", "system");
         try rows.writer.writeAll("<td data-label=\"Action\"><div>");
         try writeAuditOwnerLink(&rows.writer, entry);
         try rows.writer.writeAll("</div><span class=\"muted\">");
-        try web_html.text(&rows.writer, auditCategoryLabel(html.strField(entry, "category")));
+        try web_html.text(&rows.writer, auditCategoryLabel(entry.category));
         try rows.writer.writeAll(" · ");
-        try web_html.text(&rows.writer, if (std.mem.eql(u8, html.strField(entry, "source"), "mutation")) "Mutation" else "Event");
+        try web_html.text(&rows.writer, if (std.mem.eql(u8, entry.source, "mutation")) "Mutation" else "Event");
         try rows.writer.writeAll("</span></td>");
-        try html.dashboardCellText(&rows.writer, "Target", html.strField(entry, "target"), "mono breakable", "—");
+        try html.dashboardCellText(&rows.writer, "Target", entry.target, "mono breakable", "—");
         try rows.writer.writeAll("<td data-label=\"Result\">");
-        try html.writeStatus(&rows.writer, html.strField(entry, "result"));
+        try html.writeStatus(&rows.writer, entry.result);
         try rows.writer.writeAll("</td><td data-label=\"Detail\"><details><summary>View details</summary>");
-        try html.detail(&rows.writer, "Request", html.strField(entry, "request"));
-        try html.detail(&rows.writer, "Detail", html.strField(entry, "detail"));
-        try html.detail(&rows.writer, "Idempotency key", html.strField(entry, "idempotency_key"));
-        try html.detail(&rows.writer, "Entry identity", html.strField(entry, "id"));
+        try html.detail(&rows.writer, "Request", entry.request);
+        try html.detail(&rows.writer, "Detail", entry.detail);
+        try html.detail(&rows.writer, "Idempotency key", entry.idempotency_key);
+        try html.detail(&rows.writer, "Entry identity", entry.id);
         try rows.writer.writeAll("</details></td></tr>");
     }
     try html.replaceElementInner(ctx.gpa, main, "audit-body", "tbody", rows.written());
     try html.replaceCountLabel(ctx.gpa, main, "audit-count", "span", entries.len, "entry", "entries");
 }
-fn writeAuditOwnerLink(out: *std.Io.Writer, entry: std.json.Value) !void {
-    const action = html.strField(entry, "action");
-    const target = html.strField(entry, "target");
-    const category = html.strField(entry, "category");
+fn writeAuditOwnerLink(out: *std.Io.Writer, entry: app_writes.AuditEntry) !void {
+    const action = entry.action;
+    const target = entry.target;
+    const category = entry.category;
     if (std.mem.eql(u8, category, "dashboard"))
         return html.link(out, "/", "", "", action);
     if (std.mem.eql(u8, category, "projects"))

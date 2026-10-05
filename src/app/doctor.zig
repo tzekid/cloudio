@@ -1,5 +1,5 @@
 const std = @import("std");
-const app_render = @import("render.zig");
+const core_json = @import("../core/json.zig");
 const core_config = @import("../core/config.zig");
 const core_fs = @import("../core/fs.zig");
 const core_process = @import("../core/process.zig");
@@ -113,54 +113,54 @@ pub const Report = struct {
 
     pub fn writeJson(self: Report, writer: anytype) !void {
         try writer.writeAll("{\"kind\":\"doctor\",");
-        try app_render.writeJsonStringField(writer, "version", self.version, true);
+        try core_json.writeStringField(writer, "version", self.version, true);
         try writer.writeAll("\"paths\":{");
-        try app_render.writeJsonStringField(writer, "db", self.db_path, true);
+        try core_json.writeStringField(writer, "db", self.db_path, true);
         try writer.writeAll("\"config\":{");
-        try app_render.writeJsonStringField(writer, "path", self.config_path, true);
-        try app_render.writeJsonBoolField(writer, "present", self.config_present, false);
+        try core_json.writeStringField(writer, "path", self.config_path, true);
+        try core_json.writeBoolField(writer, "present", self.config_present, false);
         try writer.writeAll("},\"caddyfile\":{");
-        try app_render.writeJsonStringField(writer, "path", self.caddyfile_path, true);
-        try app_render.writeJsonBoolField(writer, "present", self.caddyfile_present, false);
+        try core_json.writeStringField(writer, "path", self.caddyfile_path, true);
+        try core_json.writeBoolField(writer, "present", self.caddyfile_present, false);
         try writer.writeAll("},\"caddy_sites\":{");
-        try app_render.writeJsonStringField(writer, "path", self.caddy_sites_path, true);
-        try app_render.writeJsonBoolField(writer, "present", self.caddy_sites_present, false);
+        try core_json.writeStringField(writer, "path", self.caddy_sites_path, true);
+        try core_json.writeBoolField(writer, "present", self.caddy_sites_present, false);
         try writer.writeAll("},\"caddy_admin_socket\":{");
-        try app_render.writeJsonStringField(writer, "path", self.caddy_admin_socket, true);
-        try app_render.writeJsonBoolField(writer, "present", self.caddy_admin_socket_present, false);
+        try core_json.writeStringField(writer, "path", self.caddy_admin_socket, true);
+        try core_json.writeBoolField(writer, "present", self.caddy_admin_socket_present, false);
         try writer.writeAll("}},\"env\":{");
-        try app_render.writeJsonBoolField(writer, "dotenv_loaded", self.loaded_dotenv, true);
-        try app_render.writeJsonBoolField(writer, "fish_env_loaded", self.loaded_fish_env, false);
+        try core_json.writeBoolField(writer, "dotenv_loaded", self.loaded_dotenv, true);
+        try core_json.writeBoolField(writer, "fish_env_loaded", self.loaded_fish_env, false);
         try writer.writeAll("},\"auth\":{");
-        try app_render.writeJsonBoolField(writer, "cloudflare", self.cloudflare_auth, true);
-        try app_render.writeJsonBoolField(writer, "hostinger", self.hostinger_auth, false);
+        try core_json.writeBoolField(writer, "cloudflare", self.cloudflare_auth, true);
+        try core_json.writeBoolField(writer, "hostinger", self.hostinger_auth, false);
         try writer.writeAll("},\"sqlite\":{");
-        try app_render.writeJsonIntField(writer, "snapshots", self.snapshot_count, false);
+        try core_json.writeIntField(writer, "snapshots", self.snapshot_count, false);
         try writer.writeAll("},\"domains\":");
-        try app_render.writeJsonStringArray(writer, self.domains);
+        try core_json.writeStringArray(writer, self.domains);
         try writer.writeAll(",\"tools\":[");
         for (self.tool_checks, 0..) |check, index| {
             if (index != 0) try writer.writeByte(',');
             try writer.writeByte('{');
-            try app_render.writeJsonStringField(writer, "name", check.name, true);
-            try app_render.writeJsonStringField(writer, "status", check.status, false);
+            try core_json.writeStringField(writer, "name", check.name, true);
+            try core_json.writeStringField(writer, "status", check.status, false);
             try writer.writeByte('}');
         }
         try writer.writeAll("],\"nob\":{");
-        try app_render.writeJsonBoolField(writer, "enabled", self.nob_enabled, true);
-        try app_render.writeJsonBoolField(writer, "ready", self.nob_ready, true);
-        try app_render.writeJsonBoolField(writer, "system_mutation", self.nob_allow_system_mutation, true);
+        try core_json.writeBoolField(writer, "enabled", self.nob_enabled, true);
+        try core_json.writeBoolField(writer, "ready", self.nob_ready, true);
+        try core_json.writeBoolField(writer, "system_mutation", self.nob_allow_system_mutation, true);
         try writer.writeAll("\"paths\":{");
-        try app_render.writeJsonStringField(writer, "state_root", self.nob_state_root, true);
-        try app_render.writeJsonStringField(writer, "cache_root", self.nob_cache_root, true);
-        try app_render.writeJsonStringField(writer, "toolchains_file", self.nob_toolchains_file, false);
+        try core_json.writeStringField(writer, "state_root", self.nob_state_root, true);
+        try core_json.writeStringField(writer, "cache_root", self.nob_cache_root, true);
+        try core_json.writeStringField(writer, "toolchains_file", self.nob_toolchains_file, false);
         try writer.writeAll("},\"checks\":[");
         for (self.nob_checks, 0..) |check, index| {
             if (index != 0) try writer.writeByte(',');
             try writer.writeByte('{');
-            try app_render.writeJsonStringField(writer, "name", check.name, true);
-            try app_render.writeJsonStringField(writer, "state", @tagName(check.state), true);
-            try app_render.writeJsonStringField(writer, "detail", check.detail, false);
+            try core_json.writeStringField(writer, "name", check.name, true);
+            try core_json.writeStringField(writer, "state", @tagName(check.state), true);
+            try core_json.writeStringField(writer, "detail", check.detail, false);
             try writer.writeByte('}');
         }
         try writer.writeAll("]}}");

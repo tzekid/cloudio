@@ -74,19 +74,8 @@ pub fn arrayItems(value: ?std.json.Value) []const std.json.Value {
 pub fn asString(value: std.json.Value) []const u8 {
     return if (value == .string) value.string else "";
 }
-pub fn nullableString(value: ?std.json.Value) []const u8 {
-    const present = value orelse return "";
-    return asString(present);
-}
 pub fn strField(value: std.json.Value, name: []const u8) []const u8 {
     return asString(member(value, name) orelse .null);
-}
-pub fn firstString(value: std.json.Value, names: []const []const u8) []const u8 {
-    for (names) |name| {
-        const text = strField(value, name);
-        if (text.len > 0) return text;
-    }
-    return "—";
 }
 pub fn asInt(value: std.json.Value) i64 {
     return switch (value) {
@@ -101,11 +90,6 @@ pub fn intField(value: std.json.Value, name: []const u8) i64 {
 pub fn boolField(value: std.json.Value, name: []const u8) bool {
     const present = member(value, name) orelse return false;
     return present == .bool and present.bool;
-}
-pub fn freshnessLabel(value: []const u8) []const u8 {
-    if (std.mem.eql(u8, value, "current")) return "Current";
-    if (std.mem.eql(u8, value, "stale")) return "Stale";
-    return "Unavailable";
 }
 pub fn collectionStatusLabel(value: []const u8) []const u8 {
     if (std.mem.eql(u8, value, "ok")) return "Succeeded";
@@ -141,19 +125,6 @@ pub fn cellText(out: *std.Io.Writer, value: []const u8, class: []const u8) !void
     }
     try out.writeByte('>');
     try web_html.text(out, if (value.len > 0) value else "—");
-    try out.writeAll("</td>");
-}
-pub fn cellValue(out: *std.Io.Writer, value: ?std.json.Value, class: []const u8) !void {
-    try out.writeAll("<td");
-    if (class.len > 0) try out.print(" class=\"{s}\"", .{class});
-    try out.writeByte('>');
-    if (value) |present| switch (present) {
-        .string => |text| try web_html.text(out, text),
-        .integer => |integer| try out.print("{d}", .{integer}),
-        .float => |float| try out.print("{d}", .{float}),
-        .bool => |boolean| try out.writeAll(if (boolean) "yes" else "no"),
-        else => try out.writeAll("—"),
-    } else try out.writeAll("—");
     try out.writeAll("</td>");
 }
 pub fn cellStatus(out: *std.Io.Writer, value: []const u8) !void {

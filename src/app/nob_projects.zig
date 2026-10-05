@@ -1,5 +1,5 @@
 const std = @import("std");
-const app_render = @import("render.zig");
+const core_json = @import("../core/json.zig");
 const collector_project_manifests = @import("../collectors/project_manifests.zig");
 const core_time = @import("../core/time.zig");
 const db_store = @import("../db/store.zig");
@@ -126,12 +126,12 @@ pub fn writeListText(ctx: Context, writer: anytype) !void {
     }
     for (projects.items) |project| {
         try writer.print("{d}\t{s}", .{ project.id, project.display_name });
-        if (project.declared_id) |declared_id| try app_render.writeTextField(writer, "project_id", declared_id);
-        try app_render.writeTextField(writer, "kind", project.kind);
-        try app_render.writeTextField(writer, "discovery", project.discovery_state.text());
-        try app_render.writeTextField(writer, "trust", project.trust_state.text());
-        try app_render.writeTextField(writer, "status", project.status.text());
-        try app_render.writeTextField(writer, "root", project.root_path);
+        if (project.declared_id) |declared_id| try writeTextField(writer, "project_id", declared_id);
+        try writeTextField(writer, "kind", project.kind);
+        try writeTextField(writer, "discovery", project.discovery_state.text());
+        try writeTextField(writer, "trust", project.trust_state.text());
+        try writeTextField(writer, "status", project.status.text());
+        try writeTextField(writer, "root", project.root_path);
         try writer.writeByte('\n');
     }
 }
@@ -194,12 +194,12 @@ pub fn writeShowJson(ctx: Context, reference: []const u8, writer: anytype) !void
     for (details.resources.items, 0..) |resource, index| {
         if (index != 0) try writer.writeByte(',');
         try writer.writeByte('{');
-        try app_render.writeJsonStringField(writer, "id", resource.resource_id, true);
-        try app_render.writeJsonStringField(writer, "kind", resource.kind, true);
-        try app_render.writeJsonStringField(writer, "label", resource.label, true);
-        try app_render.writeJsonStringField(writer, "ownership", resource.ownership, true);
-        try app_render.writeJsonStringField(writer, "status", resource.effective_status.text(), true);
-        try app_render.writeJsonNullableStringField(writer, "summary", resource.status_summary, true);
+        try core_json.writeStringField(writer, "id", resource.resource_id, true);
+        try core_json.writeStringField(writer, "kind", resource.kind, true);
+        try core_json.writeStringField(writer, "label", resource.label, true);
+        try core_json.writeStringField(writer, "ownership", resource.ownership, true);
+        try core_json.writeStringField(writer, "status", resource.effective_status.text(), true);
+        try core_json.writeNullableStringField(writer, "summary", resource.status_summary, true);
         try writer.writeAll("\"controls\":");
         try writer.writeAll(resource.controls_json);
         try writer.writeAll(",\"declaration\":");
@@ -215,12 +215,12 @@ pub fn writeShowJson(ctx: Context, reference: []const u8, writer: anytype) !void
     for (details.actions.items, 0..) |action, index| {
         if (index != 0) try writer.writeByte(',');
         try writer.writeByte('{');
-        try app_render.writeJsonStringField(writer, "id", action.action_id, true);
-        try app_render.writeJsonStringField(writer, "label", action.label, true);
-        try app_render.writeJsonStringField(writer, "effect", action.effect, true);
-        try app_render.writeJsonStringField(writer, "confirmation", action.confirmation, true);
-        try app_render.writeJsonBoolField(writer, "available", action.available, true);
-        try app_render.writeJsonNullableStringField(writer, "unavailable_reason", action.unavailable_reason, true);
+        try core_json.writeStringField(writer, "id", action.action_id, true);
+        try core_json.writeStringField(writer, "label", action.label, true);
+        try core_json.writeStringField(writer, "effect", action.effect, true);
+        try core_json.writeStringField(writer, "confirmation", action.confirmation, true);
+        try core_json.writeBoolField(writer, "available", action.available, true);
+        try core_json.writeNullableStringField(writer, "unavailable_reason", action.unavailable_reason, true);
         try writer.writeAll("\"declaration\":");
         try writer.writeAll(action.declaration_json);
         try writer.writeByte('}');
@@ -237,26 +237,26 @@ fn resolve(ctx: Context, reference: []const u8) !?db_store.NobProject {
 
 fn writeProjectJson(project: db_store.NobProject, writer: anytype) !void {
     try writer.writeByte('{');
-    try app_render.writeJsonIntField(writer, "id", project.id, true);
-    try app_render.writeJsonNullableStringField(writer, "project_id", project.declared_id, true);
-    try app_render.writeJsonStringField(writer, "display_name", project.display_name, true);
-    try app_render.writeJsonStringField(writer, "kind", project.kind, true);
-    try app_render.writeJsonStringField(writer, "root_path", project.root_path, true);
-    try app_render.writeJsonNullableStringField(writer, "manifest_sha256", project.manifest_sha256, true);
-    try app_render.writeJsonNullableStringField(writer, "trusted_manifest_sha256", project.trusted_manifest_sha256, true);
-    try app_render.writeJsonStringField(writer, "discovery_state", project.discovery_state.text(), true);
-    try app_render.writeJsonStringField(writer, "last_scan_state", project.last_scan_state.text(), true);
-    try app_render.writeJsonStringField(writer, "trust_state", project.trust_state.text(), true);
-    try app_render.writeJsonStringField(writer, "status", project.status.text(), true);
-    try app_render.writeJsonNullableStringField(writer, "status_summary", project.status_summary, true);
-    try app_render.writeJsonStringField(writer, "runner_state", project.runner_state.text(), true);
-    try app_render.writeJsonNullableStringField(writer, "runner_sha256", project.runner_sha256, true);
-    try app_render.writeJsonNullableStringField(writer, "repository_kind", project.repository_kind, true);
-    try app_render.writeJsonNullableStringField(writer, "repository_identity", project.repository_identity, true);
-    try app_render.writeJsonNullableStringField(writer, "head_revision", project.head_revision, true);
-    try app_render.writeJsonNullableStringField(writer, "source_fingerprint", project.source_fingerprint, true);
+    try core_json.writeIntField(writer, "id", project.id, true);
+    try core_json.writeNullableStringField(writer, "project_id", project.declared_id, true);
+    try core_json.writeStringField(writer, "display_name", project.display_name, true);
+    try core_json.writeStringField(writer, "kind", project.kind, true);
+    try core_json.writeStringField(writer, "root_path", project.root_path, true);
+    try core_json.writeNullableStringField(writer, "manifest_sha256", project.manifest_sha256, true);
+    try core_json.writeNullableStringField(writer, "trusted_manifest_sha256", project.trusted_manifest_sha256, true);
+    try core_json.writeStringField(writer, "discovery_state", project.discovery_state.text(), true);
+    try core_json.writeStringField(writer, "last_scan_state", project.last_scan_state.text(), true);
+    try core_json.writeStringField(writer, "trust_state", project.trust_state.text(), true);
+    try core_json.writeStringField(writer, "status", project.status.text(), true);
+    try core_json.writeNullableStringField(writer, "status_summary", project.status_summary, true);
+    try core_json.writeStringField(writer, "runner_state", project.runner_state.text(), true);
+    try core_json.writeNullableStringField(writer, "runner_sha256", project.runner_sha256, true);
+    try core_json.writeNullableStringField(writer, "repository_kind", project.repository_kind, true);
+    try core_json.writeNullableStringField(writer, "repository_identity", project.repository_identity, true);
+    try core_json.writeNullableStringField(writer, "head_revision", project.head_revision, true);
+    try core_json.writeNullableStringField(writer, "source_fingerprint", project.source_fingerprint, true);
     if (project.source_dirty) |dirty| {
-        try app_render.writeJsonBoolField(writer, "source_dirty", dirty, false);
+        try core_json.writeBoolField(writer, "source_dirty", dirty, false);
     } else {
         try writer.writeAll("\"source_dirty\":null");
     }
@@ -449,4 +449,9 @@ test "forget tombstones rescans and retains history and host resources" {
     project = (try db.nob().getProject(allocator, project_id)).?;
     try std.testing.expectEqual(db_store.NobDiscoveryState.valid, project.discovery_state);
     try std.testing.expectEqual(db_store.NobTrustState.trusted, project.trust_state);
+}
+
+fn writeTextField(writer: anytype, label: []const u8, value: []const u8) !void {
+    if (value.len == 0) return;
+    try writer.print("\t{s}={s}", .{ label, value });
 }

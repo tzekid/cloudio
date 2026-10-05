@@ -231,9 +231,34 @@ pub const AuditOptions = struct {
 
 const audit_query_limit = 10_000;
 
-/// Write one bounded, normalized history over mutations and control-plane
-/// events. The existing stores keep their distinct write/retention behavior.
-pub fn writeAuditJson(gpa: Allocator, db: *Db, options_input: AuditOptions, writer: anytype) !void {
+pub const AuditEntry = struct {
+    /// `mutation` for audited writes, `event` for control-plane events.
+    source: []const u8,
+    id: []const u8,
+    category: []const u8,
+    action: []const u8,
+    target: []const u8,
+    request: []const u8,
+    result: []const u8,
+    detail: []const u8,
+    actor: []const u8,
+    idempotency_key: []const u8,
+    created_at: []const u8,
+};
+
+pub const AuditEntries = struct {
+    arena: std.heap.ArenaAllocator,
+    items: []AuditEntry,
+
+    pub fn deinit(self: *AuditEntries) void {
+        self.arena.deinit();
+    }
+};
+
+/// One bounded, normalized history over mutations and control-plane events,
+/// with secrets redacted. The two stores keep their own write and retention
+/// behavior.
+pub fn auditEntries(gpa: Allocator, db: *Db, options_input: AuditOptions) !AuditEntries {
     const options = options_input.normalized();
     const stmt = try db.prepare(
         \\SELECT source, row_id, action, target, request_json, result, detail, actor, idempotency_key, created_at
@@ -259,17 +284,10 @@ pub fn writeAuditJson(gpa: Allocator, db: *Db, options_input: AuditOptions, writ
     try bindText(stmt, 2, options.window.sqliteModifier());
     if (sqlite.sqlite3_bind_int64(stmt, 3, audit_query_limit) != sqlite.SQLITE_OK) return WriteError.SqliteBind;
 
-    try writer.writeAll("{\"kind\":\"audit\",\"filters\":{");
-    try core_json.writeStringField(writer, "view", @tagName(options.view), true);
-    try core_json.writeNullableStringField(writer, "category", options.category, true);
-    try core_json.writeStringField(writer, "result", @tagName(options.result), true);
-    try core_json.writeNullableStringField(writer, "target", options.target, true);
-    try core_json.writeNullableStringField(writer, "actor", options.actor, true);
-    try core_json.writeStringField(writer, "window", options.window.value(), true);
-    try core_json.writeIntField(writer, "limit", options.limit, false);
-    try writer.writeAll("},\"entries\":[");
-    var first = true;
-    var returned: i64 = 0;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    errdefer arena.deinit();
+    const a = arena.allocator();
+    var items: std.ArrayList(AuditEntry) = .empty;
     while (true) {
         const rc = sqlite.sqlite3_step(stmt);
         if (rc == sqlite.SQLITE_DONE) break;
@@ -285,40 +303,22 @@ pub fn writeAuditJson(gpa: Allocator, db: *Db, options_input: AuditOptions, writ
         if (!auditResultMatches(result, options.result)) continue;
         if (options.target) |search| if (!containsIgnoreCase(target_raw, search)) continue;
         if (options.actor) |search| if (!containsIgnoreCase(actor, search)) continue;
-        if (returned >= options.limit) break;
-
-        const target = if (target_raw.len > 0) try redactAuditValue(gpa, target_raw) else null;
-        defer if (target) |value| gpa.free(value);
-        const request_raw = columnText(stmt, 4) orelse "";
-        const request = if (request_raw.len > 0) try redactAuditValue(gpa, request_raw) else null;
-        defer if (request) |value| gpa.free(value);
-        const detail_raw = columnText(stmt, 6) orelse "";
-        const redacted_detail = if (detail_raw.len > 0) try redactAuditValue(gpa, detail_raw) else null;
-        defer if (redacted_detail) |value| gpa.free(value);
-
-        if (!first) try writer.writeByte(',');
-        first = false;
-        try writer.writeByte('{');
-        var id_buffer: [64]u8 = undefined;
-        const id = try std.fmt.bufPrint(&id_buffer, "{s}:{d}", .{ source, sqlite.sqlite3_column_int64(stmt, 1) });
-        try core_json.writeStringField(writer, "id", id, true);
-        try core_json.writeStringField(writer, "source", source, true);
-        try core_json.writeStringField(writer, "category", category, true);
-        try core_json.writeStringField(writer, "action", action, true);
-        try core_json.writeNullableStringField(writer, "target", target, true);
-        try core_json.writeNullableStringField(writer, "request", request, true);
-        try core_json.writeStringField(writer, "result", result, true);
-        try core_json.writeNullableStringField(writer, "detail", redacted_detail, true);
-        try core_json.writeStringField(writer, "actor", actor, true);
-        const idempotency_key = columnText(stmt, 8) orelse "";
-        try core_json.writeNullableStringField(writer, "idempotency_key", if (idempotency_key.len > 0) idempotency_key else null, true);
-        try core_json.writeStringField(writer, "created_at", columnText(stmt, 9) orelse "", false);
-        try writer.writeByte('}');
-        returned += 1;
+        if (items.items.len >= options.limit) break;
+        try items.append(a, .{
+            .source = try a.dupe(u8, source),
+            .id = try std.fmt.allocPrint(a, "{s}:{d}", .{ source, sqlite.sqlite3_column_int64(stmt, 1) }),
+            .category = category,
+            .action = try a.dupe(u8, action),
+            .target = try redactAuditValue(a, target_raw),
+            .request = try redactAuditValue(a, columnText(stmt, 4) orelse ""),
+            .result = try a.dupe(u8, result),
+            .detail = try redactAuditValue(a, columnText(stmt, 6) orelse ""),
+            .actor = try a.dupe(u8, actor),
+            .idempotency_key = try a.dupe(u8, columnText(stmt, 8) orelse ""),
+            .created_at = try a.dupe(u8, columnText(stmt, 9) orelse ""),
+        });
     }
-    try writer.writeAll("],");
-    try core_json.writeIntField(writer, "returned", returned, false);
-    try writer.writeAll("}\n");
+    return .{ .arena = arena, .items = items.items };
 }
 
 fn normalizeAuditCategory(value: ?[]const u8) ?[]const u8 {
@@ -424,22 +424,23 @@ test "record inserts redacted audit action and lists it" {
     try db.insertAudit("cloudflare.collect", "ok", "provider refresh succeeded");
     try db.insertAudit("cloudflare.collect", "error", "{\"api_token\":\"event-secret\",\"reason\":\"permission denied\"}");
 
-    var out = std.Io.Writer.Allocating.init(allocator);
-    defer out.deinit();
-    try writeAuditJson(allocator, &db, .{ .window = .all, .limit = 10 }, &out.writer);
-    const json = out.written();
-    try std.testing.expect(std.mem.indexOf(u8, json, "caddy.reload") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "supersecret") == null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "event-secret") == null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "permission denied") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"actor\":\"ops@example\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"idempotency_key\":\"request-1234\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"source\":\"event\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "provider refresh succeeded") == null);
+    var important = try auditEntries(allocator, &db, .{ .window = .all, .limit = 10 });
+    defer important.deinit();
+    var saw_reload = false;
+    var saw_failed_event = false;
+    var saw_docker_actor = false;
+    for (important.items) |entry| {
+        try std.testing.expect(std.mem.indexOf(u8, entry.request, "supersecret") == null);
+        try std.testing.expect(std.mem.indexOf(u8, entry.detail, "supersecret") == null);
+        try std.testing.expect(std.mem.indexOf(u8, entry.detail, "event-secret") == null);
+        try std.testing.expect(std.mem.indexOf(u8, entry.detail, "provider refresh succeeded") == null);
+        saw_reload = saw_reload or std.mem.eql(u8, entry.action, "caddy.reload");
+        saw_failed_event = saw_failed_event or (std.mem.eql(u8, entry.source, "event") and std.mem.indexOf(u8, entry.detail, "permission denied") != null);
+        saw_docker_actor = saw_docker_actor or (std.mem.eql(u8, entry.actor, "ops@example") and std.mem.eql(u8, entry.idempotency_key, "request-1234"));
+    }
+    try std.testing.expect(saw_reload and saw_failed_event and saw_docker_actor);
 
-    var filtered = std.Io.Writer.Allocating.init(allocator);
-    defer filtered.deinit();
-    try writeAuditJson(allocator, &db, .{
+    var filtered = try auditEntries(allocator, &db, .{
         .view = .all,
         .category = "docker",
         .result = .success,
@@ -447,11 +448,10 @@ test "record inserts redacted audit action and lists it" {
         .actor = "OPS@",
         .window = .all,
         .limit = 1_000,
-    }, &filtered.writer);
-    try std.testing.expect(std.mem.indexOf(u8, filtered.written(), "docker.restart") != null);
-    try std.testing.expect(std.mem.indexOf(u8, filtered.written(), "caddy.reload") == null);
-    try std.testing.expect(std.mem.indexOf(u8, filtered.written(), "\"limit\":500") != null);
-    try std.testing.expect(std.mem.indexOf(u8, filtered.written(), "\"returned\":1") != null);
+    });
+    defer filtered.deinit();
+    try std.testing.expectEqual(@as(usize, 1), filtered.items.len);
+    try std.testing.expectEqualStrings("docker.restart", filtered.items[0].action);
 }
 
 test "mutation idempotency claims replays and rejects key reuse" {
