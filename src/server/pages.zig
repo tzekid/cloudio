@@ -2890,15 +2890,6 @@ fn writeDashboardLink(
     try out.writeAll("</a>");
 }
 
-
-fn firstNonEmpty(value: std.json.Value, names: []const []const u8) []const u8 {
-    for (names) |name| {
-        const text = strField(value, name);
-        if (text.len > 0) return text;
-    }
-    return "";
-}
-
 fn cellText(out: *std.Io.Writer, value: []const u8, class: []const u8) !void {
     try out.writeAll("<td");
     if (class.len > 0) {

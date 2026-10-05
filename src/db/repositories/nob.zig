@@ -872,14 +872,6 @@ pub const Repository = struct {
         , operation_id, null, null);
     }
 
-    pub fn listRunEventsAfter(self: Repository, allocator: Allocator, operation_id: []const u8, after_seq: i64, limit: i64) !model.RunEvents {
-        return self.listRunEventsQuery(allocator,
-            \\SELECT operation_id, seq, event_type, level, payload_json, received_at
-            \\FROM project_operation_events
-            \\WHERE operation_id=? AND seq>? ORDER BY seq LIMIT ?
-        , operation_id, after_seq, limit);
-    }
-
     pub fn listRecentRunEvents(self: Repository, allocator: Allocator, operation_id: []const u8, limit: i64) !model.RunEvents {
         const rows = try self.listRunEventsQuery(allocator,
             \\SELECT operation_id, seq, event_type, level, payload_json, received_at

@@ -51,13 +51,6 @@ pub fn writeRefreshHeader(writer: *std.Io.Writer, header: RefreshHeader) !void {
     });
 }
 
-pub fn writeRedactedFile(io: Io, allocator: Allocator, path: []const u8, bytes: []const u8) !void {
-    try core_fs.ensureParentDir(io, path);
-    const redacted = try redact.secrets(allocator, bytes);
-    defer allocator.free(redacted);
-    try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = redacted });
-}
-
 fn loadedLabel(value: bool) []const u8 {
     return if (value) "loaded" else "missing";
 }

@@ -190,25 +190,6 @@ pub const Repository = struct {
         try stepDone(stmt);
     }
 
-    pub fn upsertCloudflareResource(self: Repository, key: []const u8, kind: []const u8, resource_id: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, name: ?[]const u8, status: ?[]const u8, resource_type: ?[]const u8, raw: []const u8) !void {
-        const stmt = try self.prepare(
-            \\INSERT INTO cloudflare_resources(key, kind, resource_id, scope, scope_id, name, status, resource_type, raw_json, updated_at)
-            \\VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            \\ON CONFLICT(key) DO UPDATE SET kind=excluded.kind, resource_id=excluded.resource_id, scope=excluded.scope, scope_id=excluded.scope_id, name=excluded.name, status=excluded.status, resource_type=excluded.resource_type, raw_json=excluded.raw_json, updated_at=CURRENT_TIMESTAMP
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, key);
-        try bindText(stmt, 2, kind);
-        try bindText(stmt, 3, resource_id);
-        try bindTextOpt(stmt, 4, scope);
-        try bindTextOpt(stmt, 5, scope_id);
-        try bindTextOpt(stmt, 6, name);
-        try bindTextOpt(stmt, 7, status);
-        try bindTextOpt(stmt, 8, resource_type);
-        try bindText(stmt, 9, raw);
-        try stepDone(stmt);
-    }
-
     pub fn upsertCloudflareInventoryItem(
         self: Repository,
         key: []const u8,
@@ -253,76 +234,6 @@ pub const Repository = struct {
         try bindTextOpt(stmt, 16, expires_at_source);
         try bindText(stmt, 17, raw);
         try stepDone(stmt);
-    }
-
-    pub fn upsertCloudflareSecurityItem(
-        self: Repository,
-        key: []const u8,
-        kind: []const u8,
-        resource_id: []const u8,
-        scope: ?[]const u8,
-        scope_id: ?[]const u8,
-        display_name: ?[]const u8,
-        status: ?[]const u8,
-        category: ?[]const u8,
-        severity: ?[]const u8,
-        action: ?[]const u8,
-        domain: ?[]const u8,
-        account_id: ?[]const u8,
-        zone_id: ?[]const u8,
-        related_id: ?[]const u8,
-        flag: ?[]const u8,
-        created_at_source: ?[]const u8,
-        updated_at_source: ?[]const u8,
-        expires_at_source: ?[]const u8,
-        raw: []const u8,
-    ) !void {
-        const stmt = try self.prepare(
-            \\INSERT INTO cloudflare_security_items(key, kind, resource_id, scope, scope_id, display_name, status, category, severity, action, domain, account_id, zone_id, related_id, flag, created_at_source, updated_at_source, expires_at_source, raw_json, updated_at)
-            \\VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            \\ON CONFLICT(key) DO UPDATE SET kind=excluded.kind, resource_id=excluded.resource_id, scope=excluded.scope, scope_id=excluded.scope_id, display_name=excluded.display_name, status=excluded.status, category=excluded.category, severity=excluded.severity, action=excluded.action, domain=excluded.domain, account_id=excluded.account_id, zone_id=excluded.zone_id, related_id=excluded.related_id, flag=excluded.flag, created_at_source=excluded.created_at_source, updated_at_source=excluded.updated_at_source, expires_at_source=excluded.expires_at_source, raw_json=excluded.raw_json, updated_at=CURRENT_TIMESTAMP
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, key);
-        try bindText(stmt, 2, kind);
-        try bindText(stmt, 3, resource_id);
-        try bindTextOpt(stmt, 4, scope);
-        try bindTextOpt(stmt, 5, scope_id);
-        try bindTextOpt(stmt, 6, display_name);
-        try bindTextOpt(stmt, 7, status);
-        try bindTextOpt(stmt, 8, category);
-        try bindTextOpt(stmt, 9, severity);
-        try bindTextOpt(stmt, 10, action);
-        try bindTextOpt(stmt, 11, domain);
-        try bindTextOpt(stmt, 12, account_id);
-        try bindTextOpt(stmt, 13, zone_id);
-        try bindTextOpt(stmt, 14, related_id);
-        try bindTextOpt(stmt, 15, flag);
-        try bindTextOpt(stmt, 16, created_at_source);
-        try bindTextOpt(stmt, 17, updated_at_source);
-        try bindTextOpt(stmt, 18, expires_at_source);
-        try bindText(stmt, 19, raw);
-        try stepDone(stmt);
-    }
-
-    pub fn cloudflareResourceList(self: Repository, gpa: Allocator) !NameValueRows {
-        return try self.nameValueRows(gpa,
-            \\SELECT kind || '/' || resource_id,
-            \\       trim(COALESCE(scope,'') || ' ' || COALESCE(scope_id,'') || ' ' || COALESCE(status,'') || ' ' || COALESCE(resource_type,'') || ' ' || COALESCE(name,''))
-            \\FROM cloudflare_resources
-            \\ORDER BY updated_at DESC, kind, resource_id
-            \\LIMIT 200
-        );
-    }
-
-    pub fn cloudflareInventoryItemList(self: Repository, gpa: Allocator) !NameValueRows {
-        return try self.nameValueRows(gpa,
-            \\SELECT kind || '/' || resource_id,
-            \\       trim(COALESCE(scope,'') || ' ' || COALESCE(scope_id,'') || ' ' || COALESCE(status,'') || ' ' || COALESCE(flag,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(domain,'') || ' ' || COALESCE(display_name,'') || ' ' || COALESCE(related_id,''))
-            \\FROM cloudflare_inventory_items
-            \\ORDER BY updated_at DESC, kind, resource_id
-            \\LIMIT 200
-        );
     }
 
     pub fn cloudflareAccountRows(self: Repository, gpa: Allocator, limit: i64) !CloudflareAccountRows {
@@ -385,96 +296,6 @@ pub const Repository = struct {
         errdefer deinitCloudflareDnsRecordRowList(&rows, gpa);
         while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
             var row = try cloudflareDnsRecordRowFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    pub fn cloudflareResourceHints(self: Repository, gpa: Allocator, limit: i64) !CloudflareResourceHintRows {
-        const stmt = try self.prepare(
-            \\SELECT kind, resource_id, COALESCE(scope,''), COALESCE(scope_id,''), COALESCE(name,''), COALESCE(status,''), COALESCE(resource_type,''), updated_at
-            \\FROM cloudflare_resources
-            \\WHERE resource_id != ''
-            \\ORDER BY updated_at DESC, kind, resource_id DESC
-            \\LIMIT ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, positiveLimit(limit, 5000));
-        var rows = std.ArrayList(CloudflareResourceHintRow).empty;
-        errdefer deinitCloudflareResourceHintRowList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try cloudflareResourceHintRowFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    pub fn cloudflareInventoryHints(self: Repository, gpa: Allocator, limit: i64) !CloudflareInventoryHintRows {
-        const stmt = try self.prepare(
-            \\SELECT kind, resource_id, COALESCE(scope,''), COALESCE(scope_id,''), COALESCE(display_name,''), COALESCE(status,''), COALESCE(category,''), COALESCE(domain,''), COALESCE(account_id,''), COALESCE(zone_id,''), COALESCE(related_id,''), COALESCE(flag,''), COALESCE(updated_at_source, updated_at)
-            \\FROM cloudflare_inventory_items
-            \\WHERE resource_id != '' OR COALESCE(scope_id,'') != '' OR COALESCE(domain,'') != '' OR COALESCE(account_id,'') != '' OR COALESCE(zone_id,'') != '' OR COALESCE(related_id,'') != ''
-            \\ORDER BY updated_at DESC, kind, resource_id DESC
-            \\LIMIT ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, positiveLimit(limit, 5000));
-        var rows = std.ArrayList(CloudflareInventoryHintRow).empty;
-        errdefer deinitCloudflareInventoryHintRowList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try cloudflareInventoryHintRowFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    pub fn cloudflareResourceKindCounts(self: Repository, gpa: Allocator, limit: i64) !CloudflareKindCounts {
-        return try self.cloudflareKindCounts(gpa,
-            \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
-            \\FROM cloudflare_resources
-            \\GROUP BY kind
-            \\ORDER BY item_count DESC, kind
-            \\LIMIT ?
-        , limit);
-    }
-
-    pub fn cloudflareInventoryKindCounts(self: Repository, gpa: Allocator, limit: i64) !CloudflareKindCounts {
-        return try self.cloudflareKindCounts(gpa,
-            \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
-            \\FROM cloudflare_inventory_items
-            \\GROUP BY kind
-            \\ORDER BY item_count DESC, kind
-            \\LIMIT ?
-        , limit);
-    }
-
-    pub fn cloudflareSecurityKindCounts(self: Repository, gpa: Allocator, limit: i64) !CloudflareKindCounts {
-        return try self.cloudflareKindCounts(gpa,
-            \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
-            \\FROM cloudflare_security_items
-            \\GROUP BY kind
-            \\ORDER BY item_count DESC, kind
-            \\LIMIT ?
-        , limit);
-    }
-
-    fn cloudflareKindCounts(self: Repository, gpa: Allocator, sql: []const u8, limit: i64) !CloudflareKindCounts {
-        const stmt = try self.prepare(sql);
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, positiveLimit(limit, 200));
-        var rows = std.ArrayList(CloudflareKindCount).empty;
-        errdefer deinitCloudflareKindCountList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try cloudflareKindCountFromStmt(gpa, stmt);
             rows.append(gpa, row) catch |err| {
                 row.deinit(gpa);
                 return err;

@@ -158,9 +158,6 @@ pub const Db = struct {
     pub fn countSecretNeedle(self: *Db, surface: SecretScanSurface, needle: []const u8) !i64 {
         return self.maintenance().countSecretNeedle(surface, needle);
     }
-    pub fn latestSnapshotId(self: *Db) !i64 {
-        return self.captures().latestSnapshotId();
-    }
     pub fn upsertCloudflareAccount(self: *Db, id: []const u8, name: ?[]const u8, typ: ?[]const u8, status: ?[]const u8, raw: []const u8) !void {
         return self.cloudflare().upsertCloudflareAccount(id, name, typ, status, raw);
     }
@@ -169,9 +166,6 @@ pub const Db = struct {
     }
     pub fn upsertDnsRecord(self: *Db, id: []const u8, zone_id: []const u8, name: ?[]const u8, typ: ?[]const u8, content: ?[]const u8, ttl: ?i64, proxied: ?bool, raw: []const u8) !void {
         return self.cloudflare().upsertDnsRecord(id, zone_id, name, typ, content, ttl, proxied, raw);
-    }
-    pub fn upsertCloudflareResource(self: *Db, key: []const u8, kind: []const u8, resource_id: []const u8, scope: ?[]const u8, scope_id: ?[]const u8, name: ?[]const u8, status: ?[]const u8, resource_type: ?[]const u8, raw: []const u8) !void {
-        return self.cloudflare().upsertCloudflareResource(key, kind, resource_id, scope, scope_id, name, status, resource_type, raw);
     }
     pub fn upsertCloudflareInventoryItem(
         self: *Db,
@@ -195,38 +189,8 @@ pub const Db = struct {
     ) !void {
         return self.cloudflare().upsertCloudflareInventoryItem(key, kind, resource_id, scope, scope_id, display_name, status, category, domain, account_id, zone_id, related_id, flag, created_at_source, updated_at_source, expires_at_source, raw);
     }
-    pub fn upsertCloudflareSecurityItem(
-        self: *Db,
-        key: []const u8,
-        kind: []const u8,
-        resource_id: []const u8,
-        scope: ?[]const u8,
-        scope_id: ?[]const u8,
-        display_name: ?[]const u8,
-        status: ?[]const u8,
-        category: ?[]const u8,
-        severity: ?[]const u8,
-        action: ?[]const u8,
-        domain: ?[]const u8,
-        account_id: ?[]const u8,
-        zone_id: ?[]const u8,
-        related_id: ?[]const u8,
-        flag: ?[]const u8,
-        created_at_source: ?[]const u8,
-        updated_at_source: ?[]const u8,
-        expires_at_source: ?[]const u8,
-        raw: []const u8,
-    ) !void {
-        return self.cloudflare().upsertCloudflareSecurityItem(key, kind, resource_id, scope, scope_id, display_name, status, category, severity, action, domain, account_id, zone_id, related_id, flag, created_at_source, updated_at_source, expires_at_source, raw);
-    }
     pub fn upsertHostingerVps(self: *Db, id: []const u8, name: ?[]const u8, status: ?[]const u8, ipv4: ?[]const u8, plan: ?[]const u8, raw: []const u8) !void {
         return self.hostinger().upsertHostingerVps(id, name, status, ipv4, plan, raw);
-    }
-    pub fn insertHostingerMetric(self: *Db, vm_id: []const u8, metric: []const u8, value: ?[]const u8, raw: []const u8) !void {
-        return self.hostinger().insertHostingerMetric(vm_id, metric, value, raw);
-    }
-    pub fn upsertHostingerResource(self: *Db, key: []const u8, kind: []const u8, resource_id: []const u8, target: ?[]const u8, name: ?[]const u8, status: ?[]const u8, domain: ?[]const u8, raw: []const u8) !void {
-        return self.hostinger().upsertHostingerResource(key, kind, resource_id, target, name, status, domain, raw);
     }
     pub fn upsertHostingerInventoryItem(
         self: *Db,
@@ -268,35 +232,17 @@ pub const Db = struct {
     pub fn upsertContainer(self: *Db, name: []const u8, image: ?[]const u8, status: ?[]const u8, ports: ?[]const u8, raw: []const u8) !void {
         return self.system().upsertContainer(name, image, status, ports, raw);
     }
-    pub fn writeOverviewCounts(self: *Db, writer: anytype) !void {
-        return self.maintenance().writeOverviewCounts(writer);
-    }
-    pub fn recentSnapshots(self: *Db, gpa: Allocator, limit: i64) !SnapshotSummaries {
-        return self.captures().recentSnapshots(gpa, limit);
-    }
-    pub fn snapshotsForSource(self: *Db, gpa: Allocator, source: []const u8, limit: i64) !SnapshotSummaries {
-        return self.captures().snapshotsForSource(gpa, source, limit);
-    }
     pub fn latestObservation(self: *Db, gpa: Allocator, source: []const u8, kind: []const u8) !?Observation {
         return self.captures().latestObservation(gpa, source, kind);
     }
     pub fn latestObservationForTarget(self: *Db, gpa: Allocator, source: []const u8, kind: []const u8, target: []const u8) !?Observation {
         return self.captures().latestObservationForTarget(gpa, source, kind, target);
     }
-    pub fn projectList(self: *Db, gpa: Allocator) !NameValueRows {
-        return self.system().projectList(gpa);
-    }
-    pub fn projectCorrelations(self: *Db, gpa: Allocator, limit: i64) !ProjectCorrelations {
-        return self.system().projectCorrelations(gpa, limit);
-    }
     pub fn topologyRows(self: *Db, gpa: Allocator, limit: i64) !TopologyRows {
         return self.system().topologyRows(gpa, limit);
     }
     pub fn serviceList(self: *Db, gpa: Allocator) !NameValueRows {
         return self.system().serviceList(gpa);
-    }
-    pub fn socketList(self: *Db, gpa: Allocator) !NameValueRows {
-        return self.system().socketList(gpa);
     }
     pub fn containerRows(self: *Db, gpa: Allocator, limit: i64) !ContainerRows {
         return self.system().containerRows(gpa, limit);
@@ -307,12 +253,6 @@ pub const Db = struct {
     pub fn containerList(self: *Db, gpa: Allocator) !NameValueRows {
         return self.system().containerList(gpa);
     }
-    pub fn cloudflareResourceList(self: *Db, gpa: Allocator) !NameValueRows {
-        return self.cloudflare().cloudflareResourceList(gpa);
-    }
-    pub fn cloudflareInventoryItemList(self: *Db, gpa: Allocator) !NameValueRows {
-        return self.cloudflare().cloudflareInventoryItemList(gpa);
-    }
     pub fn cloudflareAccountRows(self: *Db, gpa: Allocator, limit: i64) !CloudflareAccountRows {
         return self.cloudflare().cloudflareAccountRows(gpa, limit);
     }
@@ -322,59 +262,17 @@ pub const Db = struct {
     pub fn cloudflareDnsRecordRows(self: *Db, gpa: Allocator, limit: i64) !CloudflareDnsRecordRows {
         return self.cloudflare().cloudflareDnsRecordRows(gpa, limit);
     }
-    pub fn cloudflareResourceHints(self: *Db, gpa: Allocator, limit: i64) !CloudflareResourceHintRows {
-        return self.cloudflare().cloudflareResourceHints(gpa, limit);
-    }
-    pub fn cloudflareInventoryHints(self: *Db, gpa: Allocator, limit: i64) !CloudflareInventoryHintRows {
-        return self.cloudflare().cloudflareInventoryHints(gpa, limit);
-    }
-    pub fn cloudflareResourceKindCounts(self: *Db, gpa: Allocator, limit: i64) !CloudflareKindCounts {
-        return self.cloudflare().cloudflareResourceKindCounts(gpa, limit);
-    }
-    pub fn cloudflareInventoryKindCounts(self: *Db, gpa: Allocator, limit: i64) !CloudflareKindCounts {
-        return self.cloudflare().cloudflareInventoryKindCounts(gpa, limit);
-    }
-    pub fn cloudflareSecurityKindCounts(self: *Db, gpa: Allocator, limit: i64) !CloudflareKindCounts {
-        return self.cloudflare().cloudflareSecurityKindCounts(gpa, limit);
-    }
-    pub fn hostingerResourceList(self: *Db, gpa: Allocator) !NameValueRows {
-        return self.hostinger().hostingerResourceList(gpa);
-    }
-    pub fn hostingerInventoryItemList(self: *Db, gpa: Allocator) !NameValueRows {
-        return self.hostinger().hostingerInventoryItemList(gpa);
-    }
     pub fn hostingerVpsRows(self: *Db, gpa: Allocator, limit: i64) !HostingerVpsRows {
         return self.hostinger().hostingerVpsRows(gpa, limit);
     }
-    pub fn hostingerResourceHints(self: *Db, gpa: Allocator, limit: i64) !HostingerResourceHintRows {
-        return self.hostinger().hostingerResourceHints(gpa, limit);
-    }
-    pub fn hostingerInventoryHints(self: *Db, gpa: Allocator, limit: i64) !HostingerInventoryHintRows {
-        return self.hostinger().hostingerInventoryHints(gpa, limit);
-    }
-    pub fn hostingerResourceKindCounts(self: *Db, gpa: Allocator, limit: i64) !HostingerKindCounts {
-        return self.hostinger().hostingerResourceKindCounts(gpa, limit);
-    }
-    pub fn hostingerInventoryKindCounts(self: *Db, gpa: Allocator, limit: i64) !HostingerKindCounts {
-        return self.hostinger().hostingerInventoryKindCounts(gpa, limit);
-    }
     pub fn hostingerMetricSummaries(self: *Db, gpa: Allocator, limit: i64) !HostingerMetricSummaries {
         return self.hostinger().hostingerMetricSummaries(gpa, limit);
-    }
-    pub fn hostingerVpsFamilySummaries(self: *Db, gpa: Allocator, limit: i64) !HostingerVpsFamilySummaries {
-        return self.hostinger().hostingerVpsFamilySummaries(gpa, limit);
     }
     pub fn inventoryItems(self: *Db, gpa: Allocator, filter: InventoryFilter) !InventoryItems {
         return self.inventory().inventoryItems(gpa, filter);
     }
     pub fn inventoryFacets(self: *Db, gpa: Allocator, filter: InventoryFilter) !InventoryFacets {
         return self.inventory().inventoryFacets(gpa, filter);
-    }
-    pub fn caddyUpstreams(self: *Db, gpa: Allocator) !NameValueRows {
-        return self.system().caddyUpstreams(gpa);
-    }
-    pub fn recentMetrics(self: *Db, gpa: Allocator, limit: i64) !MetricRows {
-        return self.system().recentMetrics(gpa, limit);
     }
     pub fn recentAuditEvents(self: *Db, gpa: Allocator, limit: i64) !AuditEvents {
         return self.audit().recentAuditEvents(gpa, limit);
@@ -390,11 +288,5 @@ pub const Db = struct {
     }
     pub fn routeSourceEvidence(self: *Db, gpa: Allocator, filter: RouteCaptureEvidenceFilter) !RouteSourceEvidenceRows {
         return self.audit().routeSourceEvidence(gpa, filter);
-    }
-    pub fn projectDetails(self: *Db, gpa: Allocator, name: []const u8) !?ProjectDetails {
-        return self.system().projectDetails(gpa, name);
-    }
-    pub fn writeSnapshotsAfter(self: *Db, writer: anytype, after_id: i64) !void {
-        return self.captures().writeSnapshotsAfter(writer, after_id);
     }
 };

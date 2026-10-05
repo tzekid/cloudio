@@ -182,15 +182,6 @@ pub fn mutate(ctx: Context, vm_id: []const u8, action: Action) !MutationResult {
     return .{ .outcome = .accepted_pending, .provider_job_id = job_id, .observed_state = observed_state };
 }
 
-pub fn writeMutationJson(result: MutationResult, writer: anytype) !void {
-    try writer.writeAll("{\"ok\":true,");
-    try core_json.writeStringField(writer, "result", if (result.outcome == .confirmed) "confirmed" else "accepted_pending", true);
-    try core_json.writeBoolField(writer, "reconciled", result.outcome == .confirmed, true);
-    try core_json.writeNullableStringField(writer, "provider_job_id", result.provider_job_id, true);
-    try core_json.writeNullableStringField(writer, "state", result.observed_state, false);
-    try writer.writeAll("}\n");
-}
-
 fn refreshLocked(ctx: Context) !void {
     const token = ctx.config.hostinger_api_token orelse {
         try recordListAttempt(ctx, "error", "Hostinger credentials are not configured.", null);

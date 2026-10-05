@@ -222,13 +222,6 @@ pub fn mutate(
     return .confirmed;
 }
 
-pub fn writeMutationJson(outcome: MutationOutcome, writer: anytype) !void {
-    try writer.writeAll("{\"ok\":true,");
-    try core_json.writeStringField(writer, "result", if (outcome == .confirmed) "confirmed" else "accepted_unconfirmed", true);
-    try core_json.writeBoolField(writer, "reconciled", outcome == .confirmed, false);
-    try writer.writeAll("}\n");
-}
-
 pub fn observedRecordName(ctx: Context, domain_input: []const u8, record_id: []const u8) !?[]u8 {
     const domain = configuredDomain(ctx.config.domains, domain_input) orelse return error.DnsZoneNotConfigured;
     var zones = try ctx.db.cloudflare().cloudflareZoneRows(ctx.gpa, 200);

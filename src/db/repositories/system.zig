@@ -223,79 +223,6 @@ pub const Repository = struct {
         try stepDone(stmt);
     }
 
-    pub fn projectList(self: Repository, gpa: Allocator) !NameValueRows {
-        return try self.nameValueRows(gpa, "SELECT name, source FROM projects ORDER BY name LIMIT 200");
-    }
-
-    pub fn projectCorrelations(self: Repository, gpa: Allocator, limit: i64) !ProjectCorrelations {
-        const stmt = try self.prepare(
-            \\WITH rows AS (
-            \\  SELECT DISTINCT p.name AS project,
-            \\         p.source AS source,
-            \\         COALESCE(p.path, '') AS path,
-            \\         COALESCE(NULLIF(p.host, ''), cu.host, '') AS host,
-            \\         COALESCE(NULLIF(cu.upstream, ''), p.upstream, '') AS upstream,
-            \\         COALESCE(p.service, '') AS service,
-            \\         COALESCE(p.container, '') AS container
-            \\  FROM projects p
-            \\  LEFT JOIN caddy_upstreams cu
-            \\    ON (p.host IS NOT NULL AND p.host != '' AND cu.host = p.host)
-            \\    OR (p.upstream IS NOT NULL AND p.upstream != '' AND cu.upstream = p.upstream)
-            \\  UNION ALL
-            \\  SELECT DISTINCT '' AS project,
-            \\         'caddy' AS source,
-            \\         '' AS path,
-            \\         cu.host AS host,
-            \\         cu.upstream AS upstream,
-            \\         '' AS service,
-            \\         '' AS container
-            \\  FROM caddy_upstreams cu
-            \\  WHERE NOT EXISTS (
-            \\    SELECT 1 FROM projects p
-            \\    WHERE (p.host IS NOT NULL AND p.host != '' AND p.host = cu.host)
-            \\       OR (p.upstream IS NOT NULL AND p.upstream != '' AND p.upstream = cu.upstream)
-            \\  )
-            \\)
-            \\SELECT rows.project,
-            \\       rows.source,
-            \\       rows.path,
-            \\       rows.host,
-            \\       COALESCE(cs.source_path, '') AS caddy_source,
-            \\       rows.upstream,
-            \\       COALESCE(sock.state, '') AS socket_state,
-            \\       COALESCE(sock.process, '') AS socket_process,
-            \\       rows.service,
-            \\       COALESCE(svc.state, '') AS service_state,
-            \\       rows.container,
-            \\       COALESCE(ct.status, '') AS container_status
-            \\FROM rows
-            \\LEFT JOIN caddy_sites cs ON cs.host = rows.host
-            \\LEFT JOIN sockets sock
-            \\  ON rows.upstream != ''
-            \\ AND (sock.local_address = rows.upstream OR rows.upstream LIKE '%' || sock.local_address)
-            \\LEFT JOIN services svc
-            \\  ON rows.service != ''
-            \\ AND svc.name = rows.service
-            \\LEFT JOIN containers ct
-            \\  ON rows.container != ''
-            \\ AND ct.name = rows.container
-            \\ORDER BY rows.project = '', rows.project, rows.host, rows.upstream
-            \\LIMIT ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, positiveLimit(limit, 200));
-        var rows = std.ArrayList(ProjectCorrelation).empty;
-        errdefer deinitProjectCorrelationList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try projectCorrelationFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
     pub fn topologyRows(self: Repository, gpa: Allocator, limit: i64) !TopologyRows {
         const stmt = try self.prepare(
             \\WITH rows AS (
@@ -451,10 +378,6 @@ pub const Repository = struct {
         return try self.nameValueRows(gpa, "SELECT COALESCE(name,''), COALESCE(state,'') FROM services ORDER BY 1 LIMIT 200");
     }
 
-    pub fn socketList(self: Repository, gpa: Allocator) !NameValueRows {
-        return try self.nameValueRows(gpa, "SELECT COALESCE(local_address,''), COALESCE(process,'') FROM sockets ORDER BY 1 LIMIT 200");
-    }
-
     pub fn containerRows(self: Repository, gpa: Allocator, limit: i64) !ContainerRows {
         const stmt = try self.prepare(
             \\SELECT COALESCE(name,''), COALESCE(image,''), COALESCE(status,''), COALESCE(ports,''), updated_at
@@ -515,40 +438,6 @@ pub const Repository = struct {
 
     pub fn containerList(self: Repository, gpa: Allocator) !NameValueRows {
         return try self.nameValueRows(gpa, "SELECT COALESCE(name,''), COALESCE(status,'') FROM containers ORDER BY 1 LIMIT 200");
-    }
-
-    pub fn caddyUpstreams(self: Repository, gpa: Allocator) !NameValueRows {
-        return try self.nameValueRows(gpa, "SELECT DISTINCT host, upstream FROM caddy_upstreams ORDER BY host, upstream");
-    }
-
-    pub fn recentMetrics(self: Repository, gpa: Allocator, limit: i64) !MetricRows {
-        const stmt = try self.prepare(
-            \\SELECT metric, COALESCE(value,''), COALESCE(unit,''), captured_at
-            \\FROM system_metrics WHERE value IS NOT NULL AND value != '' ORDER BY id DESC LIMIT ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, limit);
-        var rows = std.ArrayList(MetricRow).empty;
-        errdefer deinitMetricList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try metricRowFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    pub fn projectDetails(self: Repository, gpa: Allocator, name: []const u8) !?ProjectDetails {
-        const stmt = try self.prepare(
-            \\SELECT name, source, COALESCE(path,''), COALESCE(host,''), COALESCE(upstream,''), COALESCE(service,''), COALESCE(container,'')
-            \\FROM projects WHERE name = ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, name);
-        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return null;
-        return try projectDetailsFromStmt(gpa, stmt);
     }
 
     fn nameValueRows(self: Repository, gpa: Allocator, sql: []const u8) !NameValueRows {

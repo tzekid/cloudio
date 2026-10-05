@@ -14,11 +14,6 @@ pub fn text(allocator: Allocator, value: []const u8) !Output {
     return .{ .text = try allocator.dupe(u8, value) };
 }
 
-pub fn maybeText(allocator: Allocator, enabled: bool, value: []const u8) !Output {
-    if (!enabled) return .{};
-    return try text(allocator, value);
-}
-
 test "output owns optional text" {
     const allocator = std.testing.allocator;
     const out = try text(allocator, "ok");

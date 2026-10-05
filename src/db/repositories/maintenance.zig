@@ -160,22 +160,4 @@ pub const Repository = struct {
         return sqlite.sqlite3_column_int64(stmt, 0);
     }
 
-    pub fn writeOverviewCounts(self: Repository, writer: anytype) !void {
-        try writer.print("snapshots={d}\n", .{try self.countTable("snapshots")});
-        try writer.print("cloudflare_accounts={d}\n", .{try self.countTable("cloudflare_accounts")});
-        try writer.print("cloudflare_zones={d}\n", .{try self.countTable("cloudflare_zones")});
-        try writer.print("cloudflare_dns_records={d}\n", .{try self.countTable("cloudflare_dns_records")});
-        try writer.print("cloudflare_resources={d}\n", .{try self.countTable("cloudflare_resources")});
-        try writer.print("cloudflare_inventory_items={d}\n", .{try self.countTable("cloudflare_inventory_items")});
-        try writer.print("cloudflare_security_items={d}\n", .{try self.countTable("cloudflare_security_items")});
-        try writer.print("hostinger_vps={d}\n", .{try self.countTable("hostinger_vps")});
-        try writer.print("hostinger_resources={d}\n", .{try self.countTable("hostinger_resources")});
-        try writer.print("hostinger_inventory_items={d}\n", .{try self.countTable("hostinger_inventory_items")});
-        try writer.print("caddy_sites={d}\n", .{try self.countTable("caddy_sites")});
-        try writer.print("caddy_upstreams={d}\n", .{try self.countTable("caddy_upstreams")});
-        try writer.print("projects={d}\n", .{try self.countTable("projects")});
-        try writer.print("services={d}\n", .{try self.countTable("services")});
-        try writer.print("sockets={d}\n", .{try self.countTable("sockets")});
-        try writer.print("containers={d}\n", .{try self.countTable("containers")});
-    }
 };

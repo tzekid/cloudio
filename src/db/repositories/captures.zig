@@ -160,43 +160,6 @@ pub const Repository = struct {
         try stepDone(stmt);
     }
 
-    pub fn latestSnapshotId(self: Repository) !i64 {
-        const stmt = try self.prepare("SELECT COALESCE(MAX(id), 0) FROM snapshots");
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return DbError.SqliteStep;
-        return sqlite.sqlite3_column_int64(stmt, 0);
-    }
-
-    pub fn recentSnapshots(self: Repository, gpa: Allocator, limit: i64) !SnapshotSummaries {
-        const stmt = try self.prepare(
-            \\SELECT id, source, kind, COALESCE(target,''), status, COALESCE(summary,''), captured_at
-            \\FROM snapshots ORDER BY id DESC LIMIT ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, limit);
-        var rows = std.ArrayList(SnapshotSummary).empty;
-        errdefer deinitSnapshotList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try snapshotSummaryFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    pub fn snapshotsForSource(self: Repository, gpa: Allocator, source: []const u8, limit: i64) !SnapshotSummaries {
-        const stmt = try self.prepare(
-            \\SELECT id, source, kind, COALESCE(target,''), status, COALESCE(summary,''), captured_at
-            \\FROM snapshots WHERE source = ? ORDER BY id DESC LIMIT ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, source);
-        try bindI64(stmt, 2, limit);
-        return try self.snapshotRowsFromStmt(gpa, stmt);
-    }
-
     pub fn latestObservation(self: Repository, gpa: Allocator, source: []const u8, kind: []const u8) !?Observation {
         const stmt = try self.prepare(
             \\SELECT latest.source,
@@ -324,36 +287,4 @@ pub const Repository = struct {
         };
     }
 
-    fn snapshotRowsFromStmt(self: Repository, gpa: Allocator, stmt: *sqlite.sqlite3_stmt) !SnapshotSummaries {
-        _ = self;
-        var rows = std.ArrayList(SnapshotSummary).empty;
-        errdefer deinitSnapshotList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try snapshotSummaryFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    pub fn writeSnapshotsAfter(self: Repository, writer: anytype, after_id: i64) !void {
-        const stmt = try self.prepare(
-            \\SELECT source, kind, COALESCE(target,''), status, COALESCE(summary,''), captured_at
-            \\FROM snapshots WHERE id > ? ORDER BY id DESC
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, after_id);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            try writer.print("{s}/{s}\t{s}\t[{s}]\t{s}\t{s}\n", .{
-                columnText(stmt, 0) orelse "",
-                columnText(stmt, 1) orelse "",
-                columnText(stmt, 2) orelse "",
-                columnText(stmt, 3) orelse "",
-                columnText(stmt, 4) orelse "",
-                columnText(stmt, 5) orelse "",
-            });
-        }
-    }
 };

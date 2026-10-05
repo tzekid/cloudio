@@ -148,34 +148,6 @@ pub const Repository = struct {
         try stepDone(stmt);
     }
 
-    pub fn insertHostingerMetric(self: Repository, vm_id: []const u8, metric: []const u8, value: ?[]const u8, raw: []const u8) !void {
-        const stmt = try self.prepare("INSERT INTO hostinger_metrics(vm_id, metric, value, raw_json) VALUES (?, ?, ?, ?)");
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, vm_id);
-        try bindText(stmt, 2, metric);
-        try bindTextOpt(stmt, 3, value);
-        try bindText(stmt, 4, raw);
-        try stepDone(stmt);
-    }
-
-    pub fn upsertHostingerResource(self: Repository, key: []const u8, kind: []const u8, resource_id: []const u8, target: ?[]const u8, name: ?[]const u8, status: ?[]const u8, domain: ?[]const u8, raw: []const u8) !void {
-        const stmt = try self.prepare(
-            \\INSERT INTO hostinger_resources(key, kind, resource_id, target, name, status, domain, raw_json, updated_at)
-            \\VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            \\ON CONFLICT(key) DO UPDATE SET kind=excluded.kind, resource_id=excluded.resource_id, target=excluded.target, name=excluded.name, status=excluded.status, domain=excluded.domain, raw_json=excluded.raw_json, updated_at=CURRENT_TIMESTAMP
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, key);
-        try bindText(stmt, 2, kind);
-        try bindText(stmt, 3, resource_id);
-        try bindTextOpt(stmt, 4, target);
-        try bindTextOpt(stmt, 5, name);
-        try bindTextOpt(stmt, 6, status);
-        try bindTextOpt(stmt, 7, domain);
-        try bindText(stmt, 8, raw);
-        try stepDone(stmt);
-    }
-
     pub fn upsertHostingerInventoryItem(
         self: Repository,
         key: []const u8,
@@ -216,26 +188,6 @@ pub const Repository = struct {
         try stepDone(stmt);
     }
 
-    pub fn hostingerResourceList(self: Repository, gpa: Allocator) !NameValueRows {
-        return try self.nameValueRows(gpa,
-            \\SELECT kind || '/' || resource_id,
-            \\       trim(COALESCE(status,'') || ' ' || COALESCE(domain,'') || ' ' || COALESCE(name,''))
-            \\FROM hostinger_resources
-            \\ORDER BY updated_at DESC, kind, resource_id
-            \\LIMIT 200
-        );
-    }
-
-    pub fn hostingerInventoryItemList(self: Repository, gpa: Allocator) !NameValueRows {
-        return try self.nameValueRows(gpa,
-            \\SELECT kind || '/' || resource_id,
-            \\       trim(COALESCE(status,'') || ' ' || COALESCE(flag,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(domain,'') || ' ' || COALESCE(username,'') || ' ' || COALESCE(display_name,'') || ' ' || COALESCE(related_id,''))
-            \\FROM hostinger_inventory_items
-            \\ORDER BY updated_at DESC, kind, resource_id
-            \\LIMIT 200
-        );
-    }
-
     pub fn hostingerVpsRows(self: Repository, gpa: Allocator, limit: i64) !HostingerVpsRows {
         const stmt = try self.prepare(
             \\SELECT id, COALESCE(name,''), COALESCE(status,''), COALESCE(ipv4,''), COALESCE(plan,''), updated_at
@@ -257,70 +209,6 @@ pub const Repository = struct {
         return .{ .items = try rows.toOwnedSlice(gpa) };
     }
 
-    pub fn hostingerResourceHints(self: Repository, gpa: Allocator, limit: i64) !HostingerResourceHintRows {
-        const stmt = try self.prepare(
-            \\SELECT kind, resource_id, COALESCE(target,''), COALESCE(name,''), COALESCE(status,''), COALESCE(domain,''), updated_at
-            \\FROM hostinger_resources
-            \\WHERE resource_id != ''
-            \\ORDER BY updated_at DESC, kind, resource_id DESC
-            \\LIMIT ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, positiveLimit(limit, 5000));
-        var rows = std.ArrayList(HostingerResourceHintRow).empty;
-        errdefer deinitHostingerResourceHintRowList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try hostingerResourceHintRowFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    pub fn hostingerInventoryHints(self: Repository, gpa: Allocator, limit: i64) !HostingerInventoryHintRows {
-        const stmt = try self.prepare(
-            \\SELECT kind, resource_id, COALESCE(display_name,''), COALESCE(status,''), COALESCE(category,''), COALESCE(domain,''), COALESCE(username,''), COALESCE(related_id,''), COALESCE(flag,''), updated_at
-            \\FROM hostinger_inventory_items
-            \\WHERE resource_id != '' OR COALESCE(domain,'') != '' OR COALESCE(username,'') != '' OR COALESCE(related_id,'') != ''
-            \\ORDER BY updated_at DESC, kind, resource_id DESC
-            \\LIMIT ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, positiveLimit(limit, 5000));
-        var rows = std.ArrayList(HostingerInventoryHintRow).empty;
-        errdefer deinitHostingerInventoryHintRowList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try hostingerInventoryHintRowFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    pub fn hostingerResourceKindCounts(self: Repository, gpa: Allocator, limit: i64) !HostingerKindCounts {
-        return try self.hostingerKindCounts(gpa,
-            \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
-            \\FROM hostinger_resources
-            \\GROUP BY kind
-            \\ORDER BY item_count DESC, kind
-            \\LIMIT ?
-        , limit);
-    }
-
-    pub fn hostingerInventoryKindCounts(self: Repository, gpa: Allocator, limit: i64) !HostingerKindCounts {
-        return try self.hostingerKindCounts(gpa,
-            \\SELECT kind, COUNT(*) AS item_count, COALESCE(MAX(updated_at), '') AS latest_updated
-            \\FROM hostinger_inventory_items
-            \\GROUP BY kind
-            \\ORDER BY item_count DESC, kind
-            \\LIMIT ?
-        , limit);
-    }
-
     pub fn hostingerMetricSummaries(self: Repository, gpa: Allocator, limit: i64) !HostingerMetricSummaries {
         const stmt = try self.prepare(
             \\SELECT COALESCE(vm_id,''), metric, COUNT(*) AS sample_count, COALESCE(MAX(captured_at), '') AS latest_captured
@@ -335,74 +223,6 @@ pub const Repository = struct {
         errdefer deinitHostingerMetricSummaryList(&rows, gpa);
         while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
             var row = try hostingerMetricSummaryFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    pub fn hostingerVpsFamilySummaries(self: Repository, gpa: Allocator, limit: i64) !HostingerVpsFamilySummaries {
-        const stmt = try self.prepare(
-            \\WITH rows AS (
-            \\  SELECT v.id AS vm_id,
-            \\         'resource' AS source,
-            \\         r.kind AS kind,
-            \\         COUNT(*) AS item_count,
-            \\         COALESCE(MAX(r.updated_at), '') AS latest_updated
-            \\  FROM hostinger_vps v
-            \\  JOIN hostinger_resources r
-            \\    ON r.target = v.id OR r.target LIKE v.id || '/%'
-            \\  GROUP BY v.id, r.kind
-            \\  UNION ALL
-            \\  SELECT v.id AS vm_id,
-            \\         'inventory' AS source,
-            \\         i.kind AS kind,
-            \\         COUNT(*) AS item_count,
-            \\         COALESCE(MAX(i.updated_at), '') AS latest_updated
-            \\  FROM hostinger_vps v
-            \\  JOIN hostinger_inventory_items i
-            \\    ON i.key LIKE i.kind || '|' || v.id || '|%'
-            \\    OR i.key LIKE i.kind || '|' || v.id || '/%'
-            \\  GROUP BY v.id, i.kind
-            \\  UNION ALL
-            \\  SELECT v.id AS vm_id,
-            \\         'metric' AS source,
-            \\         m.metric AS kind,
-            \\         COUNT(*) AS item_count,
-            \\         COALESCE(MAX(m.captured_at), '') AS latest_updated
-            \\  FROM hostinger_vps v
-            \\  JOIN hostinger_metrics m ON m.vm_id = v.id
-            \\  GROUP BY v.id, m.metric
-            \\)
-            \\SELECT vm_id, source, kind, item_count, latest_updated
-            \\FROM rows
-            \\ORDER BY vm_id, source, kind
-            \\LIMIT ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, positiveLimit(limit, 200));
-        var rows = std.ArrayList(HostingerVpsFamilySummary).empty;
-        errdefer deinitHostingerVpsFamilySummaryList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try hostingerVpsFamilySummaryFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    fn hostingerKindCounts(self: Repository, gpa: Allocator, sql: []const u8, limit: i64) !HostingerKindCounts {
-        const stmt = try self.prepare(sql);
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, positiveLimit(limit, 200));
-        var rows = std.ArrayList(HostingerKindCount).empty;
-        errdefer deinitHostingerKindCountList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try hostingerKindCountFromStmt(gpa, stmt);
             rows.append(gpa, row) catch |err| {
                 row.deinit(gpa);
                 return err;

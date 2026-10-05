@@ -37,23 +37,6 @@ pub fn parseRequiredValueArg(args: []const []const u8, index: *usize, comptime n
     };
 }
 
-pub fn parseSignedI64(value: []const u8, invalid_error: anyerror) !i64 {
-    return std.fmt.parseInt(i64, value, 10) catch invalid_error;
-}
-
-pub fn parsePositiveI64(value: []const u8, invalid_error: anyerror) !i64 {
-    const parsed = try parseSignedI64(value, invalid_error);
-    if (parsed < 1) return invalid_error;
-    return parsed;
-}
-
-pub fn parsePositiveI64Arg(args: []const []const u8, index: *usize, comptime names: anytype, missing_error: anyerror, invalid_error: anyerror) !?i64 {
-    if (try parseRequiredValueArg(args, index, names, missing_error)) |value| {
-        return try parsePositiveI64(value, invalid_error);
-    }
-    return null;
-}
-
 pub fn parseFormatOption(args: []const []const u8, index: *usize, format: *cli_render.RenderFormat, missing_error: anyerror, invalid_error: anyerror) !bool {
     switch (cli_render.parseFormatArg(args, index)) {
         .matched => |parsed| {
