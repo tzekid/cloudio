@@ -133,8 +133,12 @@ pub fn completeMutation(db: *Db, key: []const u8, status: u16, response_json: []
 /// Converts claims left by an interrupted server into a stable, replayable
 /// response. The caller must hold the process-wide serve lock so no live
 /// request can be reclassified while it is still executing.
+/// Stored response for a mutation that was running when the server stopped.
+/// Its outcome is unknown, so replays report it instead of re-running it.
+pub const interrupted_response = "interrupted";
+
 pub fn recoverInterruptedMutations(db: *Db) !usize {
-    const response = "{\"error\":\"mutation_outcome_unknown\",\"retry_safe\":false}\n";
+    const response = interrupted_response;
     const stmt = try db.prepare(
         \\UPDATE mutation_requests
         \\SET state = 'completed', http_status = 409, response_json = ?, completed_at = CURRENT_TIMESTAMP
@@ -499,5 +503,5 @@ test "interrupted mutation claims become stable unknown outcomes" {
     defer if (std.meta.activeTag(replay) == .replay) replay.replay.deinit(allocator);
     try std.testing.expectEqual(std.meta.Tag(MutationClaim).replay, std.meta.activeTag(replay));
     try std.testing.expectEqual(@as(u16, 409), replay.replay.status);
-    try std.testing.expectEqualStrings("{\"error\":\"mutation_outcome_unknown\",\"retry_safe\":false}\n", replay.replay.body);
+    try std.testing.expectEqualStrings(interrupted_response, replay.replay.body);
 }

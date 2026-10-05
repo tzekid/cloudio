@@ -327,7 +327,7 @@ state, status, body = connection.execute(
 ).fetchone()
 assert state == "completed"
 assert status == 409
-assert json.loads(body) == {"error": "mutation_outcome_unknown", "retry_safe": False}
+assert body == "interrupted"
 connection.close()
 PY
 

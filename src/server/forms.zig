@@ -146,7 +146,11 @@ const Submission = struct {
             .execute => return true,
             .replay => |stored| {
                 defer stored.deinit(self.ctx.gpa);
-                try self.write(stored.status, stored.body, true);
+                if (std.mem.eql(u8, stored.body, app_writes.interrupted_response)) {
+                    try self.reject(409, "interrupted");
+                } else {
+                    try self.write(stored.status, stored.body, true);
+                }
             },
             .in_progress => try self.reject(409, busy_code),
             .conflict => try self.reject(409, "idempotency"),
@@ -703,4 +707,16 @@ test "docker forms enforce origin fields csrf and exact confirmation before comm
     try expectResponse(ctx, testPost("/docker/refresh", "wrong", "csrf_token=known-csrf&idempotency_key=test-native-key-0002"), "HTTP/1.1 403 Forbidden\r\n", null);
     try expectResponse(ctx, testPost("/docker/refresh", good, "csrf_token=known-csrf&idempotency_key=test-native-key-0003&surprise=1"), "HTTP/1.1 400 Bad Request\r\n", null);
     try std.testing.expectEqual(@as(i64, 0), try fixture.db.countTable("mutation_requests"));
+}
+
+test "a mutation interrupted by a restart replays as a conflict instead of running again" {
+    var fixture = try testDb("forms-interrupted.db");
+    defer fixture.tmp.cleanup();
+    defer fixture.db.close();
+    const ctx = testContext(&fixture.db);
+    const request = testPost("/docker/refresh", "https://cloudio.example.test", "csrf_token=known-csrf&idempotency_key=interrupted-key-0001");
+    const fingerprint = auth.mutationFingerprint(request);
+    _ = try app_writes.beginMutation(std.testing.allocator, &fixture.db, "interrupted-key-0001", &fingerprint, "POST", "/docker/refresh", "owner");
+    try std.testing.expectEqual(@as(usize, 1), try app_writes.recoverInterruptedMutations(&fixture.db));
+    try expectResponse(ctx, request, "HTTP/1.1 409 Conflict\r\n", "id=\"docker-feedback\"");
 }
