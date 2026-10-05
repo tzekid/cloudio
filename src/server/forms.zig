@@ -3,19 +3,20 @@
 //! claim, then post/redirect/get or a re-rendered page with the outcome.
 
 const std = @import("std");
-const app_authentication = @import("app_authentication");
-const app_browser_run = @import("app_browser_run");
-const app_caddy_desired = @import("app_caddy_desired");
-const app_dns = @import("app_dns");
-const app_nob_actions = @import("app_nob_actions");
-const app_nob_projects = @import("app_nob_projects");
-const app_nob_runtime = @import("app_nob_runtime");
-const app_nob_secrets = @import("app_nob_secrets");
-const app_refresh_cycle = @import("app_refresh_cycle");
-const app_system_control = @import("app_system_control");
-const app_vps = @import("app_vps");
-const app_writes = @import("app_writes");
-const http = @import("http");
+const percent = @import("../core/url.zig");
+const app_authentication = @import("../app/authentication.zig");
+const app_browser_run = @import("../app/browser_run.zig");
+const app_caddy_desired = @import("../app/caddy_desired.zig");
+const app_dns = @import("../app/dns.zig");
+const app_nob_actions = @import("../app/nob_actions.zig");
+const app_nob_projects = @import("../app/nob_projects.zig");
+const app_nob_runtime = @import("../app/nob_runtime.zig");
+const app_nob_secrets = @import("../app/nob_secrets.zig");
+const app_refresh = @import("../app/refresh.zig");
+const app_system_control = @import("../app/system_control.zig");
+const app_vps = @import("../app/vps.zig");
+const app_writes = @import("../app/writes.zig");
+const http = @import("../http/root.zig");
 const auth = @import("auth.zig");
 const common = @import("common.zig");
 const context = @import("context.zig");
@@ -219,18 +220,7 @@ fn contains(names: []const []const u8, name: []const u8) bool {
 }
 
 fn escape(arena: std.mem.Allocator, value: []const u8) ![]const u8 {
-    var out = std.Io.Writer.Allocating.init(arena);
-    const hex = "0123456789ABCDEF";
-    for (value) |byte| {
-        if (std.ascii.isAlphanumeric(byte) or byte == '-' or byte == '.' or byte == '_' or byte == '~') {
-            try out.writer.writeByte(byte);
-        } else {
-            try out.writer.writeByte('%');
-            try out.writer.writeByte(hex[byte >> 4]);
-            try out.writer.writeByte(hex[byte & 0x0f]);
-        }
-    }
-    return out.written();
+    return percent.component(arena, value);
 }
 
 fn themeSettings(s: *Submission) !void {
@@ -261,7 +251,7 @@ fn dashboardRefresh(s: *Submission) !void {
     s.error_key = "refresh";
     if (!try s.begin(&.{}, "request")) return;
     if (!try s.claim("in_progress")) return;
-    const result = app_refresh_cycle.runDashboard(.{
+    const result = app_refresh.run(.{
         .io = s.ctx.io,
         .gpa = s.ctx.gpa,
         .db = s.ctx.db,
@@ -631,7 +621,7 @@ fn docker(s: *Submission) !void {
     try s.finish(303, try s.url("/docker.html?result={s}&container={s}", .{ @tagName(action), name }));
 }
 
-fn testContext(db: *@import("db_store").Db) context.Context {
+fn testContext(db: *@import("../db/store.zig").Db) context.Context {
     return .{
         .io = std.testing.io,
         .gpa = std.testing.allocator,
@@ -661,12 +651,12 @@ fn testPost(target: []const u8, origin: []const u8, body: []const u8) http.Reque
     };
 }
 
-fn testDb(name: []const u8) !struct { tmp: std.testing.TmpDir, db: @import("db_store").Db } {
+fn testDb(name: []const u8) !struct { tmp: std.testing.TmpDir, db: @import("../db/store.zig").Db } {
     var tmp = std.testing.tmpDir(.{});
     errdefer tmp.cleanup();
     var path_buffer: [256]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buffer, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, name });
-    var db = try @import("db_store").Db.open(std.testing.io, path);
+    var db = try @import("../db/store.zig").Db.open(std.testing.io, path);
     try db.initSchema();
     return .{ .tmp = tmp, .db = db };
 }

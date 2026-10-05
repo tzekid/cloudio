@@ -6,6 +6,7 @@ pub const Auth = client.Auth;
 pub const Response = net_http.Response;
 pub const models = @import("provider_cloudflare_models");
 pub const routes = @import("provider_cloudflare_routes");
+pub const transport = @import("provider_cloudflare_transport");
 pub const browser_run = @import("provider_cloudflare_browser_run");
 
 test {
@@ -14,5 +15,6 @@ test {
     _ = Response;
     _ = models;
     _ = routes;
+    _ = transport;
     _ = browser_run;
 }

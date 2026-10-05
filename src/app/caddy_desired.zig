@@ -1,11 +1,11 @@
 //! Cloudio-owned Caddy fragment desired state and fail-safe apply workflow.
 const std = @import("std");
 const sqlite = @import("sqlite");
-const app_writes = @import("app_writes");
-const core_config = @import("core_config");
-const core_json = @import("core_json");
-const core_process = @import("core_process");
-const db_store = @import("db_store");
+const app_writes = @import("writes.zig");
+const core_config = @import("../core/config.zig");
+const core_json = @import("../core/json.zig");
+const core_process = @import("../core/process.zig");
+const db_store = @import("../db/store.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;

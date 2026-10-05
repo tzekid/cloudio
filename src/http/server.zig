@@ -5,33 +5,18 @@ pub const max_active_connections: usize = 64;
 pub const socket_timeout_seconds: isize = 30;
 var active_connections: std.atomic.Value(usize) = .init(0);
 
-/// Owns the socket accept/connection lifecycle while leaving application
-/// request handling to a caller-provided callback.
-pub fn run(
-    comptime Context: type,
-    ctx: Context,
-    io: std.Io,
-    host: []const u8,
-    port: u16,
-    once: bool,
-    comptime handle: anytype,
-) !void {
-    var listener = try listen(io, host, port);
-    defer listener.deinit(io);
-    try runPrepared(Context, ctx, io, &listener, once, handle);
-}
-
 pub fn listen(io: std.Io, host: []const u8, port: u16) !std.Io.net.Server {
     var address = try std.Io.net.IpAddress.parse(host, port);
     return try address.listen(io, .{ .reuse_address = true });
 }
 
-pub fn runPrepared(
+/// Owns the accept and connection lifecycle; `handle` serves one stream on
+/// its own thread, bounded by `max_active_connections`.
+pub fn serve(
     comptime Context: type,
     ctx: Context,
     io: std.Io,
     listener: *std.Io.net.Server,
-    once: bool,
     comptime handle: anytype,
 ) !void {
     while (true) {
@@ -40,10 +25,6 @@ pub fn runPrepared(
             stream.close(io);
             continue;
         };
-        if (once) {
-            handle(ctx, stream);
-            return;
-        }
         if (!tryAcquireConnection()) {
             stream.close(io);
             continue;

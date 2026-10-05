@@ -1,6 +1,6 @@
 const std = @import("std");
-const core_fs = @import("core_fs");
-const redact = @import("core_redact");
+const core_fs = @import("fs.zig");
+const redact = @import("redact.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;

@@ -1,14 +1,14 @@
 //! Observation-backed Hostinger virtual-machine lifecycle workflow.
 const std = @import("std");
-const app_provider_writes = @import("app_provider_writes");
-const app_writes = @import("app_writes");
-const core_config = @import("core_config");
-const core_json = @import("core_json");
-const core_redact = @import("core_redact");
-const db_store = @import("db_store");
-const net_http = @import("net_http");
-const provider_hostinger = @import("provider_hostinger");
-const provider_hostinger_models = @import("provider_hostinger_models");
+const app_provider_writes = @import("provider_writes.zig");
+const app_writes = @import("writes.zig");
+const core_config = @import("../core/config.zig");
+const core_json = @import("../core/json.zig");
+const core_redact = @import("../core/redact.zig");
+const db_store = @import("../db/store.zig");
+const net_http = @import("../net/http.zig");
+const provider_hostinger = @import("hostinger");
+const provider_hostinger_models = @import("hostinger").models;
 
 const Allocator = std.mem.Allocator;
 const reconcile_polls = 5;
@@ -207,7 +207,7 @@ fn refreshLocked(ctx: Context) !void {
     defer response.deinit(ctx.gpa);
     const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
     defer ctx.gpa.free(redacted);
-    try ctx.db.insertProviderRaw("hostinger", provider_hostinger.virtual_machines_path, @backingInt(response.status), redacted);
+    try ctx.db.insertProviderRaw("hostinger", provider_hostinger.routes.virtual_machines_path, @backingInt(response.status), redacted);
     if (!net_http.isOk(response.status) or !validVpsCollection(ctx.gpa, redacted)) {
         try recordListAttempt(ctx, "error", "Hostinger rejected the machine inventory read.", redacted);
         return error.VpsProviderRejected;
@@ -283,7 +283,7 @@ fn readJobState(ctx: Context, vm_id: []const u8, job_id: []const u8) !JobState {
     defer response.deinit(ctx.gpa);
     const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
     defer ctx.gpa.free(redacted);
-    const endpoint = try std.fmt.allocPrint(ctx.gpa, "{s}/{s}/actions/{s}", .{ provider_hostinger.virtual_machines_path, vm_id, job_id });
+    const endpoint = try std.fmt.allocPrint(ctx.gpa, "{s}/{s}/actions/{s}", .{ provider_hostinger.routes.virtual_machines_path, vm_id, job_id });
     defer ctx.gpa.free(endpoint);
     try ctx.db.insertProviderRaw("hostinger", endpoint, @backingInt(response.status), redacted);
     if (!net_http.isOk(response.status)) return error.VpsProviderRejected;
@@ -298,7 +298,7 @@ fn readMachineState(ctx: Context, vm_id: []const u8) ![]u8 {
     defer response.deinit(ctx.gpa);
     const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
     defer ctx.gpa.free(redacted);
-    const endpoint = try std.fmt.allocPrint(ctx.gpa, "{s}/{s}", .{ provider_hostinger.virtual_machines_path, vm_id });
+    const endpoint = try std.fmt.allocPrint(ctx.gpa, "{s}/{s}", .{ provider_hostinger.routes.virtual_machines_path, vm_id });
     defer ctx.gpa.free(endpoint);
     try ctx.db.insertProviderRaw("hostinger", endpoint, @backingInt(response.status), redacted);
     if (!net_http.isOk(response.status) or !validVpsDetail(ctx.gpa, redacted)) return error.VpsProviderRejected;

@@ -1,7 +1,7 @@
 //! Server-owned appearance preference for every HTML response.
 
 const std = @import("std");
-const http = @import("http");
+const http = @import("../http/root.zig");
 
 pub const secure_cookie_name = "__Host-cloudio_theme";
 pub const local_cookie_name = "cloudio_theme";

@@ -1,8 +1,8 @@
 const std = @import("std");
-const app_render = @import("app_render");
-const collector_project_manifests = @import("collector_project_manifests");
-const core_time = @import("core_time");
-const db_store = @import("db_store");
+const app_render = @import("render.zig");
+const collector_project_manifests = @import("../collectors/project_manifests.zig");
+const core_time = @import("../core/time.zig");
+const db_store = @import("../db/store.zig");
 
 const Allocator = std.mem.Allocator;
 

@@ -3,14 +3,15 @@
 //! app_writes.record, and writes {"ok":bool,"status":N,"result":...} JSON to
 //! the supplied writer. Response bodies are redacted before storage/echo.
 const std = @import("std");
-const app_writes = @import("app_writes");
-const core_config = @import("core_config");
-const core_json = @import("core_json");
-const core_redact = @import("core_redact");
-const db_store = @import("db_store");
-const net_http = @import("net_http");
-const cf_transport = @import("provider_cloudflare_transport");
-const hostinger_transport = @import("provider_hostinger_transport");
+const percent = @import("../core/url.zig");
+const app_writes = @import("writes.zig");
+const core_config = @import("../core/config.zig");
+const core_json = @import("../core/json.zig");
+const core_redact = @import("../core/redact.zig");
+const db_store = @import("../db/store.zig");
+const net_http = @import("../net/http.zig");
+const cf_transport = @import("cloudflare").transport;
+const hostinger_transport = @import("hostinger").transport;
 
 const Allocator = std.mem.Allocator;
 
@@ -91,7 +92,7 @@ fn cfDnsRecordUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8, recor
 }
 
 fn hostingerVpsActionUrlAt(gpa: Allocator, base: []const u8, vm_id: []const u8, action: VpsAction) ![]u8 {
-    const escaped_id = try @import("provider_hostinger").pathEscape(gpa, vm_id);
+    const escaped_id = try percent.component(gpa, vm_id);
     defer gpa.free(escaped_id);
     return try std.fmt.allocPrint(gpa, "{s}/api/vps/v1/virtual-machines/{s}/{s}", .{ base, escaped_id, action.pathSegment() });
 }
@@ -146,7 +147,7 @@ fn recordFailure(ctx: Context, call: Call, err: anyerror, writer: anytype) !void
     try writeErrorResult(writer, 0, @errorName(err));
 }
 
-fn finish(ctx: Context, call: Call, resp: net_http.Response, ok: bool, writer: anytype) !void {
+fn finish(ctx: Context, call: Call, resp: anytype, ok: bool, writer: anytype) !void {
     const redacted = try core_redact.providerResponse(ctx.gpa, resp.body);
     defer ctx.gpa.free(redacted);
     const detail = if (net_http.isOk(resp.status) and !ok)

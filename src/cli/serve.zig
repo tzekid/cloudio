@@ -1,13 +1,12 @@
 const std = @import("std");
-const app_database = @import("app_database");
-const app_dashboard = @import("app_dashboard");
-const server = @import("server");
-const cli_args = @import("cli_args");
-const core_config = @import("core_config");
-const core_fs = @import("core_fs");
-const app_writes = @import("app_writes");
-const runtime_nob_workers = @import("runtime_nob_workers");
-const runtime_scheduler = @import("runtime_scheduler");
+const app_database = @import("../app/database.zig");
+const server = @import("../server/root.zig");
+const cli_args = @import("args.zig");
+const core_config = @import("../core/config.zig");
+const core_fs = @import("../core/fs.zig");
+const app_writes = @import("../app/writes.zig");
+const runtime_nob_workers = @import("../runtime/nob_workers.zig");
+const runtime_scheduler = @import("../runtime/scheduler.zig");
 
 const Allocator = std.mem.Allocator;
 const Db = app_database.Db;
@@ -44,17 +43,15 @@ pub fn run(ctx: Context, args: []const []const u8) !void {
         defer ctx.gpa.free(detail);
         try ctx.db.insertAudit("mutation.recover", "ok", detail);
     }
-    if (!options.once and ctx.config.refresh_seconds > 0) {
+    if (ctx.config.refresh_seconds > 0) {
         runtime_scheduler.start(.{ .io = ctx.io, .gpa = ctx.gpa, .config = ctx.config }) catch |err| {
             std.debug.print("cloudio scheduler spawn failed: {s}\n", .{@errorName(err)});
         };
     }
-    if (!options.once) {
-        runtime_nob_workers.start(.{ .io = ctx.io, .gpa = ctx.gpa, .config = ctx.config }) catch |err| {
-            std.debug.print("cloudio nob worker spawn failed: {s}\n", .{@errorName(err)});
-        };
-    }
-    try server.runPrepared(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }, options, &listener);
+    runtime_nob_workers.start(.{ .io = ctx.io, .gpa = ctx.gpa, .config = ctx.config }) catch |err| {
+        std.debug.print("cloudio nob worker spawn failed: {s}\n", .{@errorName(err)});
+    };
+    try server.serve(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }, options, &listener);
 }
 
 fn acquireServeLock(io: Io, gpa: Allocator, db_path: []const u8) !ServeLock {
@@ -86,39 +83,16 @@ pub fn parse(args: []const []const u8) !server.Options {
             options.port = parsed;
             continue;
         }
-        if (try cli_args.parseRequiredValueArg(args, &index, .{"--domain"}, error.MissingDomain)) |value| {
-            options.dashboard.domain = value;
-            continue;
-        }
-        if (try cli_args.parseRequiredValueArg(args, &index, .{"--section"}, error.MissingSection)) |value| {
-            options.dashboard.section = app_dashboard.Section.parse(value) orelse return error.InvalidSection;
-            continue;
-        }
-        if (try cli_args.parsePositiveI64Arg(args, &index, .{"--limit"}, error.MissingLimit, error.InvalidLimit)) |limit| {
-            options.dashboard.limit = limit;
-            continue;
-        }
-        if (std.mem.eql(u8, args[index], "--issues")) {
-            options.dashboard.issues_only = true;
-            continue;
-        }
-        if (std.mem.eql(u8, args[index], "--once")) {
-            options.once = true;
-            continue;
-        }
         return error.UnexpectedServeArgument;
     }
     return options;
 }
 
-test "serve parser accepts local server and dashboard filters" {
-    const args = [_][]const u8{ "--host=127.0.0.1", "--port", "9330", "--domain", "plosca.ru", "--section", "projects", "--once" };
-    const options = try parse(args[0..]);
+test "serve parser accepts host and port" {
+    const options = try parse(&.{ "--host=127.0.0.1", "--port", "9330" });
     try std.testing.expectEqualStrings("127.0.0.1", options.host);
     try std.testing.expectEqual(@as(u16, 9330), options.port);
-    try std.testing.expectEqualStrings("plosca.ru", options.dashboard.domain.?);
-    try std.testing.expectEqual(app_dashboard.Section.projects, options.dashboard.section);
-    try std.testing.expect(options.once);
+    try std.testing.expectError(error.UnexpectedServeArgument, parse(&.{"--once"}));
 }
 
 test "serve lock excludes a second process owner" {

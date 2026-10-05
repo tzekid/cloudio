@@ -60,6 +60,13 @@ pub fn request(gpa: Allocator, io: Io, method: std.http.Method, url: []const u8,
         try body_writer.writer.writeAll(payload);
         try body_writer.end();
         try req.connection.?.flush();
+    } else if (method.requestHasBody()) {
+        // POST actions such as VPS restart carry no payload; std.http refuses
+        // sendBodiless for methods that require a body.
+        req.transfer_encoding = .{ .content_length = 0 };
+        var body_writer = try req.sendBodyUnflushed(&.{});
+        try body_writer.end();
+        try req.connection.?.flush();
     } else {
         try req.sendBodiless();
     }

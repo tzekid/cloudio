@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Export `transport` from the package root.
 - Add explicit Kitesurf and default-Chromium Browser Run clients.
 - Add rendered-content and bounded binary-screenshot Quick Actions.
 - Add Browser Run session and target lifecycle APIs over HTTP.

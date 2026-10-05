@@ -1,7 +1,7 @@
 const std = @import("std");
-const core_config = @import("core_config");
-const subprocess = @import("nob_subprocess");
-const nob = @import("nob_sdk");
+const core_config = @import("../core/config.zig");
+const subprocess = @import("subprocess.zig");
+const nob = @import("nob");
 
 const Allocator = std.mem.Allocator;
 

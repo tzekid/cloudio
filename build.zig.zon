@@ -17,6 +17,12 @@
         .nob = .{
             .path = "vendor/nob",
         },
+        .cloudflare = .{
+            .path = "packages/cloudflare",
+        },
+        .hostinger = .{
+            .path = "packages/hostinger",
+        },
     },
     .minimum_zig_version = "0.17.0",
     .paths = .{""},

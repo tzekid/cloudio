@@ -2,9 +2,9 @@
 //! Everything else in Cloudio is a server-rendered page or native form.
 
 const std = @import("std");
-const app_authentication = @import("app_authentication");
-const core_json = @import("core_json");
-const http = @import("http");
+const app_authentication = @import("../app/authentication.zig");
+const core_json = @import("../core/json.zig");
+const http = @import("../http/root.zig");
 const auth = @import("auth.zig");
 const common = @import("common.zig");
 const context = @import("context.zig");

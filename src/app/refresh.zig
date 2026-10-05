@@ -1,39 +1,38 @@
+//! Observes every source the pages read. Each source keeps its last-good
+//! rows when collection fails, and records the attempt for freshness.
+
 const std = @import("std");
-const collector_caddy = @import("collector_caddy");
-const collector_cloudflare = @import("collector_cloudflare");
-const collector_hostinger = @import("collector_hostinger");
-const collector_project_manifests = @import("collector_project_manifests");
-const collector_projects = @import("collector_projects");
-const collector_system = @import("collector_system");
-const core_json = @import("core_json");
-const core_log = @import("core_log");
-const db_store = @import("db_store");
+const app_browser_run = @import("browser_run.zig");
+const app_dns = @import("dns.zig");
+const app_vps = @import("vps.zig");
+const collector_caddy = @import("../collectors/caddy.zig");
+const collector_project_manifests = @import("../collectors/project_manifests.zig");
+const collector_projects = @import("../collectors/projects.zig");
+const collector_system = @import("../collectors/system.zig");
+const core_config = @import("../core/config.zig");
+const core_json = @import("../core/json.zig");
+const db_store = @import("../db/store.zig");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
-const Io = std.Io;
 var refresh_mutex: std.atomic.Mutex = .unlocked;
 
+pub const Context = struct {
+    io: std.Io,
+    gpa: Allocator,
+    db: *Db,
+    config: core_config.Config,
+};
+
 pub const Outcome = enum {
-    not_requested,
     ok,
     unavailable,
     err,
 
     fn status(self: Outcome) []const u8 {
         return switch (self) {
-            .not_requested => "not_requested",
             .ok => "ok",
             .unavailable => "unavailable",
-            .err => "error",
-        };
-    }
-
-    fn snapshotStatus(self: Outcome) []const u8 {
-        return switch (self) {
-            .not_requested => "skipped",
-            .ok => "ok",
-            .unavailable => "skipped",
             .err => "error",
         };
     }
@@ -41,8 +40,8 @@ pub const Outcome = enum {
 
 pub const SourceResult = struct {
     name: []const u8,
-    outcome: Outcome = .not_requested,
-    detail: []const u8 = "not requested",
+    outcome: Outcome = .ok,
+    detail: []const u8 = "collection completed",
 };
 
 pub const Result = struct {
@@ -56,18 +55,12 @@ pub const Result = struct {
 
     pub fn successCount(self: Result) usize {
         var count: usize = 0;
-        for (self.sources) |source| if (source.outcome == .ok) {
-            count += 1;
-        };
+        for (self.sources) |source| count += @intFromBool(source.outcome == .ok);
         return count;
     }
 
     pub fn failureCount(self: Result) usize {
-        var count: usize = 0;
-        for (self.sources) |source| if (source.outcome == .err or source.outcome == .unavailable) {
-            count += 1;
-        };
-        return count;
+        return self.sources.len - self.successCount();
     }
 
     pub fn statusCode(self: Result) u16 {
@@ -76,237 +69,102 @@ pub const Result = struct {
         return 207;
     }
 
-    pub fn writeJson(self: Result, gpa: Allocator, db: *Db, writer: anytype) !void {
+    pub fn writeJson(self: Result, writer: anytype) !void {
         try writer.writeAll("{\"sources\":[");
-        var first = true;
-        for (self.sources) |source| {
-            if (source.outcome == .not_requested) continue;
-            if (!first) try writer.writeByte(',');
-            first = false;
+        for (self.sources, 0..) |source, index| {
+            if (index != 0) try writer.writeByte(',');
             try writer.writeByte('{');
             try core_json.writeStringField(writer, "source", source.name, true);
             try core_json.writeStringField(writer, "result", source.outcome.status(), true);
-            try core_json.writeStringField(writer, "detail", source.detail, true);
-            const observation_optional = try db.latestObservation(gpa, "refresh", source.name);
-            if (observation_optional) |observation_const| {
-                var observation = observation_const;
-                defer observation.deinit(gpa);
-                try core_json.writeStringField(writer, "attempted_at", observation.attempted_at, true);
-                try core_json.writeStringField(writer, "observed_at", observation.observed_at, false);
-            } else {
-                try core_json.writeStringField(writer, "attempted_at", "", true);
-                try core_json.writeStringField(writer, "observed_at", "", false);
-            }
+            try core_json.writeStringField(writer, "detail", source.detail, false);
             try writer.writeByte('}');
         }
-        try writer.writeAll("],");
-        try core_json.writeIntField(writer, "succeeded", @as(i64, @intCast(self.successCount())), true);
-        try core_json.writeIntField(writer, "failed", @as(i64, @intCast(self.failureCount())), false);
-        try writer.writeAll("}\n");
+        try writer.print("],\"succeeded\":{d},\"failed\":{d}}}\n", .{ self.successCount(), self.failureCount() });
     }
 };
 
-pub const Selection = struct {
-    cloudflare: bool = true,
-    hostinger: bool = true,
-    caddy: bool = true,
-    system: bool = true,
-    projects: bool = true,
-    dashboard: bool = false,
-
-    pub fn all() Selection {
-        return .{};
-    }
-
-    pub fn dashboardProfile() Selection {
-        return .{ .dashboard = true };
-    }
-
-    pub fn none() Selection {
-        return .{
-            .cloudflare = false,
-            .hostinger = false,
-            .caddy = false,
-            .system = false,
-            .projects = false,
-        };
-    }
-
-    pub fn label(self: Selection) []const u8 {
-        if (self.dashboard) return "dashboard";
-        if (self.cloudflare and self.hostinger and self.caddy and self.system and self.projects) return "all";
-        return "selected";
-    }
-};
-
-pub const LogMetadata = struct {
-    version: []const u8,
-    db_path: []const u8,
-    config_path: []const u8,
-    log_path: []const u8,
-    loaded_dotenv: bool,
-    loaded_fish_env: bool,
-    cloudflare_auth: bool,
-    hostinger_auth: bool,
-};
-
-pub const Context = struct {
-    io: Io,
-    gpa: Allocator,
-    db: *Db,
-    domains: []const []const u8,
-    cloudflare_auth: collector_cloudflare.Auth,
-    hostinger_token: ?[]const u8,
-    hostinger_api_base: []const u8,
-    caddy_paths: collector_caddy.Paths,
-    projects_root: []const u8,
-    nob_enabled: bool,
-    nob_scan_depth: u8,
-    log: LogMetadata,
-};
-
-pub fn run(ctx: Context, selection: Selection) !Result {
+pub fn run(ctx: Context) !Result {
     if (!refresh_mutex.tryLock()) return error.RefreshInProgress;
     defer refresh_mutex.unlock();
 
     var result = Result{};
-    const start_snapshot_id = try ctx.db.latestSnapshotId();
-    if (selection.cloudflare) {
-        if (!ctx.cloudflare_auth.hasApiToken() and !ctx.cloudflare_auth.hasLegacy()) {
-            result.sources[0] = .{ .name = "cloudflare", .outcome = .unavailable, .detail = "Cloudflare credentials are not configured" };
-        } else {
-            const collected = if (selection.dashboard)
-                collector_cloudflare.collectDashboard(ctx.io, ctx.gpa, ctx.cloudflare_auth, ctx.domains, ctx.db)
-            else
-                collector_cloudflare.collectAll(ctx.io, ctx.gpa, ctx.cloudflare_auth, ctx.domains, ctx.db);
-            if (collected) {
-                result.sources[0] = .{ .name = "cloudflare", .outcome = .ok, .detail = "collection completed" };
-            } else |err| {
-                result.sources[0] = .{ .name = "cloudflare", .outcome = .err, .detail = @errorName(err) };
-            }
-        }
-        try recordSource(ctx.db, result.sources[0]);
-    }
-    if (selection.hostinger) {
-        if (ctx.hostinger_token == null or ctx.hostinger_token.?.len == 0) {
-            result.sources[1] = .{ .name = "hostinger", .outcome = .unavailable, .detail = "Hostinger credentials are not configured" };
-        } else {
-            const collected = if (selection.dashboard)
-                collectHostingerDashboard(ctx)
-            else
-                collector_hostinger.collectAll(ctx.io, ctx.gpa, ctx.hostinger_token, ctx.domains, ctx.db);
-            if (collected) {
-                result.sources[1] = .{ .name = "hostinger", .outcome = .ok, .detail = "collection completed" };
-            } else |err| {
-                result.sources[1] = .{ .name = "hostinger", .outcome = .err, .detail = @errorName(err) };
-            }
-        }
-        try recordSource(ctx.db, result.sources[1]);
-    }
-    if (selection.caddy) {
-        if (collector_caddy.collect(ctx.io, ctx.gpa, ctx.caddy_paths, ctx.db)) {
-            result.sources[2] = .{ .name = "caddy", .outcome = .ok, .detail = "collection completed" };
-        } else |err| {
-            result.sources[2] = .{ .name = "caddy", .outcome = .err, .detail = @errorName(err) };
-        }
-        try recordSource(ctx.db, result.sources[2]);
-    }
-    if (selection.system) {
-        if (collector_system.collect(ctx.io, ctx.gpa, ctx.db)) {
-            result.sources[3] = .{ .name = "system", .outcome = .ok, .detail = "collection completed" };
-        } else |err| {
-            result.sources[3] = .{ .name = "system", .outcome = .err, .detail = @errorName(err) };
-        }
-        try recordSource(ctx.db, result.sources[3]);
-    }
-    if (selection.projects) {
-        var project_error: ?anyerror = null;
-        if (ctx.nob_enabled) {
-            const scanned = collector_project_manifests.scan(ctx.io, ctx.gpa, ctx.db, ctx.projects_root, .{
-                .scan_depth = ctx.nob_scan_depth,
-            }) catch |err| blk: {
-                project_error = err;
-                break :blk null;
-            };
-            if (scanned) |scan_result| {
-                const detail = try std.fmt.allocPrint(
-                    ctx.gpa,
-                    "seen={d} valid={d} invalid={d} candidates={d} conflicts={d} missing={d}",
-                    .{ scan_result.projects_seen, scan_result.valid, scan_result.invalid, scan_result.candidates, scan_result.conflicts, scan_result.missing },
-                );
-                defer ctx.gpa.free(detail);
-                try ctx.db.insertAudit("nob.scan", "ok", detail);
-            }
-        }
-        collector_projects.collect(ctx.io, ctx.gpa, ctx.projects_root, ctx.db) catch |err| {
-            if (project_error == null) project_error = err;
-        };
-        if (project_error) |err| {
-            result.sources[4] = .{ .name = "projects", .outcome = .err, .detail = @errorName(err) };
-        } else {
-            result.sources[4] = .{ .name = "projects", .outcome = .ok, .detail = "collection completed" };
-        }
-        try recordSource(ctx.db, result.sources[4]);
+    result.sources[0] = cloudflare(ctx);
+    result.sources[1] = hostinger(ctx);
+    result.sources[2] = local("caddy", collector_caddy.collect(ctx.io, ctx.gpa, caddyPaths(ctx.config), ctx.db));
+    result.sources[3] = local("system", collector_system.collect(ctx.io, ctx.gpa, ctx.db));
+    result.sources[4] = local("projects", projects(ctx));
+    for (result.sources) |source| {
+        const status = if (source.outcome == .ok) "ok" else if (source.outcome == .err) "error" else "skipped";
+        _ = try ctx.db.insertSnapshot("refresh", source.name, null, status, source.detail, null, null);
     }
     try ctx.db.insertAudit(
         "refresh",
         if (result.failureCount() == 0) "ok" else "error",
         if (result.failureCount() == 0) "read-only refresh complete" else "read-only refresh completed with unavailable or failed sources",
     );
-    try writeRefreshLog(ctx, selection, start_snapshot_id);
     return result;
 }
 
-fn collectHostingerDashboard(ctx: Context) !void {
-    var output = try collector_hostinger.collectVpsAt(
-        ctx.io,
-        ctx.gpa,
-        ctx.hostinger_token,
-        ctx.hostinger_api_base,
-        ctx.db,
-        false,
-    );
-    output.deinit(ctx.gpa);
+fn cloudflare(ctx: Context) SourceResult {
+    if (!ctx.config.hasCloudflareAuth()) {
+        return .{ .name = "cloudflare", .outcome = .unavailable, .detail = "Cloudflare credentials are not configured" };
+    }
+    app_browser_run.refreshAccounts(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }) catch |err| {
+        return .{ .name = "cloudflare", .outcome = .err, .detail = @errorName(err) };
+    };
+    for (ctx.config.domains) |domain| {
+        app_dns.refresh(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }, domain) catch |err| {
+            return .{ .name = "cloudflare", .outcome = .err, .detail = @errorName(err) };
+        };
+    }
+    return .{ .name = "cloudflare" };
 }
 
-fn recordSource(db: *Db, result: SourceResult) !void {
-    _ = try db.insertSnapshot("refresh", result.name, null, result.outcome.snapshotStatus(), result.detail, null, null);
+fn hostinger(ctx: Context) SourceResult {
+    if (!ctx.config.hasHostingerAuth()) {
+        return .{ .name = "hostinger", .outcome = .unavailable, .detail = "Hostinger credentials are not configured" };
+    }
+    app_vps.refresh(.{ .io = ctx.io, .gpa = ctx.gpa, .db = ctx.db, .config = ctx.config }) catch |err| {
+        return .{ .name = "hostinger", .outcome = .err, .detail = @errorName(err) };
+    };
+    return .{ .name = "hostinger" };
 }
 
-fn writeRefreshLog(ctx: Context, selection: Selection, start_snapshot_id: i64) !void {
-    var out = core_log.Buffer.init(ctx.gpa);
-    defer out.deinit();
+/// Project correlation runs even when manifest discovery fails so the
+/// dashboard keeps current service and route links.
+fn projects(ctx: Context) !void {
+    const scanned = if (ctx.config.nob_enabled) scanManifests(ctx) else {};
+    try collector_projects.collect(ctx.io, ctx.gpa, ctx.config.projects_root, ctx.db);
+    try scanned;
+}
 
-    try core_log.writeRefreshHeader(out.writer(), .{
-        .version = ctx.log.version,
-        .selection = selection.label(),
-        .db_path = ctx.log.db_path,
-        .config_path = ctx.log.config_path,
-        .loaded_dotenv = ctx.log.loaded_dotenv,
-        .loaded_fish_env = ctx.log.loaded_fish_env,
-        .cloudflare_auth = ctx.log.cloudflare_auth,
-        .hostinger_auth = ctx.log.hostinger_auth,
+fn scanManifests(ctx: Context) !void {
+    const scan = try collector_project_manifests.scan(ctx.io, ctx.gpa, ctx.db, ctx.config.projects_root, .{
+        .scan_depth = ctx.config.nob_scan_depth,
     });
-    try out.writer().writeAll("\ncounts\n");
-    try ctx.db.writeOverviewCounts(out.writer());
-    try out.writer().writeAll("\nrun_snapshots\n");
-    try ctx.db.writeSnapshotsAfter(out.writer(), start_snapshot_id);
-
-    const bytes = try out.toOwnedSlice();
-    defer ctx.gpa.free(bytes);
-    try core_log.writeRedactedFile(ctx.io, ctx.gpa, ctx.log.log_path, bytes);
+    var detail_buffer: [160]u8 = undefined;
+    const detail = try std.fmt.bufPrint(&detail_buffer, "seen={d} valid={d} invalid={d} candidates={d} conflicts={d} missing={d}", .{
+        scan.projects_seen, scan.valid, scan.invalid, scan.candidates, scan.conflicts, scan.missing,
+    });
+    try ctx.db.insertAudit("nob.scan", "ok", detail);
 }
 
-test "refresh selection labels all versus selected" {
-    try std.testing.expectEqualStrings("all", Selection.all().label());
-    try std.testing.expectEqualStrings("dashboard", Selection.dashboardProfile().label());
-    try std.testing.expectEqualStrings("selected", Selection.none().label());
-    try std.testing.expectEqualStrings("selected", (Selection{ .projects = false }).label());
+fn local(name: []const u8, collected: anyerror!void) SourceResult {
+    collected catch |err| return .{ .name = name, .outcome = .err, .detail = @errorName(err) };
+    return .{ .name = name };
+}
+
+fn caddyPaths(config: core_config.Config) collector_caddy.Paths {
+    return .{
+        .caddyfile_path = config.caddyfile_path,
+        .caddy_sites_path = config.caddy_sites_path,
+        .caddy_owned_path = config.caddy_owned_path,
+        .caddy_admin_socket = config.caddy_admin_socket,
+    };
 }
 
 test "refresh result status distinguishes success partial and unavailable" {
-    var success = Result{};
-    for (&success.sources) |*source| source.outcome = .ok;
+    const success = Result{};
     try std.testing.expectEqual(@as(u16, 200), success.statusCode());
 
     var partial = success;

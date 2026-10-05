@@ -1,13 +1,13 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
-const db_schema = @import("db_schema");
+const db_schema = @import("schema.zig");
 const models = @import("models.zig");
 const helpers = @import("helpers.zig");
 const connection = @import("connection.zig");
 const auth_repository = @import("repositories/auth.zig");
 const nob_repository = @import("repositories/nob.zig");
 const browser_run_repository = @import("repositories/browser_run.zig");
-const nob_model = @import("nob_model");
+const nob_model = @import("../nob/model.zig");
 
 pub const Db = connection.Db;
 pub const DbError = models.DbError;

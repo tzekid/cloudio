@@ -1,7 +1,7 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
 const helpers = @import("../helpers.zig");
-const model = @import("nob_model");
+const model = @import("../../nob/model.zig");
 
 const Allocator = std.mem.Allocator;
 const bindI64 = helpers.bindI64;

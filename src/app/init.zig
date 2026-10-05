@@ -1,6 +1,6 @@
 const std = @import("std");
-const core_config = @import("core_config");
-const core_fs = @import("core_fs");
+const core_config = @import("../core/config.zig");
+const core_fs = @import("../core/fs.zig");
 
 const Allocator = std.mem.Allocator;
 const Config = core_config.Config;

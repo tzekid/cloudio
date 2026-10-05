@@ -1,14 +1,14 @@
 const std = @import("std");
-const app_nob_projects = @import("app_nob_projects");
-const app_nob_secrets = @import("app_nob_secrets");
-const bootstrap = @import("nob_bootstrap");
-const core_config = @import("core_config");
-const core_time = @import("core_time");
-const db_store = @import("db_store");
-const independent_observation = @import("nob_independent_observation");
-const observation = @import("nob_observation");
-const source = @import("nob_source");
-const nob = @import("nob_sdk");
+const app_nob_projects = @import("nob_projects.zig");
+const app_nob_secrets = @import("nob_secrets.zig");
+const bootstrap = @import("../nob/bootstrap.zig");
+const core_config = @import("../core/config.zig");
+const core_time = @import("../core/time.zig");
+const db_store = @import("../db/store.zig");
+const independent_observation = @import("../nob/independent_observation.zig");
+const observation = @import("../nob/observation.zig");
+const source = @import("../nob/source.zig");
+const nob = @import("nob");
 
 const Allocator = std.mem.Allocator;
 

@@ -1,9 +1,9 @@
 const std = @import("std");
-const app_nob_worker = @import("app_nob_worker");
-const core_config = @import("core_config");
-const core_time = @import("core_time");
-const core_version = @import("core_version");
-const db_store = @import("db_store");
+const app_nob_worker = @import("../app/nob_worker.zig");
+const core_config = @import("../core/config.zig");
+const core_time = @import("../core/time.zig");
+const core_version = @import("../core/version.zig");
+const db_store = @import("../db/store.zig");
 
 pub const Context = struct {
     io: std.Io,

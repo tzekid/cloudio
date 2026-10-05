@@ -1,6 +1,6 @@
 const std = @import("std");
-const core_json = @import("core_json");
-const db_store = @import("db_store");
+const core_json = @import("../core/json.zig");
+const db_store = @import("../db/store.zig");
 
 pub const SnapshotJsonOptions = struct {
     include_id: bool = false,

@@ -2,9 +2,9 @@
 //! page rendering, native form dispatch, and the passkey JSON API.
 
 const std = @import("std");
-const app_authentication = @import("app_authentication");
-const app_browser_run = @import("app_browser_run");
-const http = @import("http");
+const app_authentication = @import("../app/authentication.zig");
+const app_browser_run = @import("../app/browser_run.zig");
+const http = @import("../http/root.zig");
 const auth = @import("auth.zig");
 const common = @import("common.zig");
 const context = @import("context.zig");

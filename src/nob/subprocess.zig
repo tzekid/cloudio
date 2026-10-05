@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const core_config = @import("core_config");
+const core_config = @import("../core/config.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;

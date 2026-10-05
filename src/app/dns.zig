@@ -1,13 +1,13 @@
 //! Observation-backed Cloudflare DNS record workflow.
 const std = @import("std");
-const app_provider_writes = @import("app_provider_writes");
-const core_config = @import("core_config");
-const core_json = @import("core_json");
-const core_redact = @import("core_redact");
-const db_store = @import("db_store");
-const net_http = @import("net_http");
-const provider_cloudflare = @import("provider_cloudflare");
-const provider_cloudflare_models = @import("provider_cloudflare_models");
+const app_provider_writes = @import("provider_writes.zig");
+const core_config = @import("../core/config.zig");
+const core_json = @import("../core/json.zig");
+const core_redact = @import("../core/redact.zig");
+const db_store = @import("../db/store.zig");
+const net_http = @import("../net/http.zig");
+const provider_cloudflare = @import("cloudflare");
+const provider_cloudflare_models = @import("cloudflare").models;
 
 const Allocator = std.mem.Allocator;
 var dns_mutex: std.atomic.Mutex = .unlocked;
@@ -28,7 +28,7 @@ pub const Context = struct {
     gpa: Allocator,
     db: *db_store.Db,
     config: core_config.Config,
-    write_meta: @import("app_writes").Metadata = .{},
+    write_meta: @import("writes.zig").Metadata = .{},
 };
 
 pub const Action = enum {

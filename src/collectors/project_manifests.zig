@@ -1,7 +1,7 @@
 const std = @import("std");
-const core_time = @import("core_time");
-const db_store = @import("db_store");
-const nob = @import("nob_sdk");
+const core_time = @import("../core/time.zig");
+const db_store = @import("../db/store.zig");
+const nob = @import("nob");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;

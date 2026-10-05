@@ -1,8 +1,7 @@
 const std = @import("std");
-const app_dashboard = @import("app_dashboard");
-const app_writes = @import("app_writes");
-const core_json = @import("core_json");
-const http = @import("http");
+const app_writes = @import("../app/writes.zig");
+const core_json = @import("../core/json.zig");
+const http = @import("../http/root.zig");
 
 pub fn jsonBody(gpa: std.mem.Allocator, body: []const u8) ?std.json.Parsed(std.json.Value) {
     const parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return null;
@@ -15,15 +14,6 @@ pub fn jsonBody(gpa: std.mem.Allocator, body: []const u8) ?std.json.Parsed(std.j
 
 pub fn strField(value: std.json.Value, name: []const u8) ?[]const u8 {
     return core_json.fieldString(value, name);
-}
-
-pub fn dashboardOptions(request: http.Request, defaults: app_dashboard.Options) app_dashboard.Options {
-    var out = defaults;
-    if (request.query("domain")) |value| out.domain = value;
-    if (request.query("issues")) |value| out.issues_only = std.mem.eql(u8, value, "1") or std.mem.eql(u8, value, "true");
-    if (request.query("section")) |value| out.section = app_dashboard.Section.parse(value) orelse out.section;
-    if (request.query("limit")) |value| out.limit = std.fmt.parseInt(i64, value, 10) catch out.limit;
-    return out.normalized();
 }
 
 pub fn auditOptions(request: http.Request) app_writes.AuditOptions {

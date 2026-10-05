@@ -1,19 +1,18 @@
 const std = @import("std");
-const app_caddy_desired = @import("app_caddy_desired");
-const app_dashboard = @import("app_dashboard");
-const app_browser_run = @import("app_browser_run");
-const app_dns = @import("app_dns");
-const app_nob_projects = @import("app_nob_projects");
-const app_nob_actions = @import("app_nob_actions");
-const app_nob_runtime = @import("app_nob_runtime");
-const app_nob_secrets = @import("app_nob_secrets");
-const app_provider_writes = @import("app_provider_writes");
-const app_system_control = @import("app_system_control");
-const app_vps = @import("app_vps");
-const app_writes = @import("app_writes");
-const core_config = @import("core_config");
-const core_version = @import("core_version");
-const db_store = @import("db_store");
+const app_caddy_desired = @import("../app/caddy_desired.zig");
+const app_browser_run = @import("../app/browser_run.zig");
+const app_dns = @import("../app/dns.zig");
+const app_nob_projects = @import("../app/nob_projects.zig");
+const app_nob_actions = @import("../app/nob_actions.zig");
+const app_nob_runtime = @import("../app/nob_runtime.zig");
+const app_nob_secrets = @import("../app/nob_secrets.zig");
+const app_provider_writes = @import("../app/provider_writes.zig");
+const app_system_control = @import("../app/system_control.zig");
+const app_vps = @import("../app/vps.zig");
+const app_writes = @import("../app/writes.zig");
+const core_config = @import("../core/config.zig");
+const core_version = @import("../core/version.zig");
+const db_store = @import("../db/store.zig");
 
 pub const Context = struct {
     io: std.Io,
@@ -21,7 +20,6 @@ pub const Context = struct {
     db: *db_store.Db,
     config: core_config.Config = .{ .domains = &.{} },
     write_meta: app_writes.Metadata = .{},
-    dashboard: app_dashboard.Options = .{},
     auth_user_id: ?[]const u8 = null,
     auth_csrf_token: ?[]const u8 = null,
     response_headers: []const u8 = "",

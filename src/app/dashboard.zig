@@ -1,757 +1,268 @@
+//! Dashboard read model: every observed host reconciled across DNS, Caddy,
+//! listening sockets, services, containers, and projects, plus the freshness
+//! of each source that feeds it.
+
 const std = @import("std");
-const app_actions = @import("app_actions");
-const app_overview = @import("app_overview");
-const app_render = @import("app_render");
-const app_topology = @import("app_topology");
-const db_store = @import("db_store");
+const db_store = @import("../db/store.zig");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;
+const Row = db_store.TopologyRow;
 
-pub const default_limit = 200;
-
-pub const Section = enum {
-    all,
-    domains,
-    vps,
-    system,
-    caddy,
-    projects,
-    providers,
-
-    pub fn parse(value: []const u8) ?Section {
-        if (std.mem.eql(u8, value, "all")) return .all;
-        if (std.mem.eql(u8, value, "domains")) return .domains;
-        if (std.mem.eql(u8, value, "vps")) return .vps;
-        if (std.mem.eql(u8, value, "system")) return .system;
-        if (std.mem.eql(u8, value, "caddy")) return .caddy;
-        if (std.mem.eql(u8, value, "projects")) return .projects;
-        if (std.mem.eql(u8, value, "providers")) return .providers;
-        return null;
-    }
-
-    pub fn label(self: Section) []const u8 {
-        return switch (self) {
-            .all => "all",
-            .domains => "domains",
-            .vps => "vps",
-            .system => "system",
-            .caddy => "caddy",
-            .projects => "projects",
-            .providers => "providers",
-        };
-    }
-};
+const row_limit = 200;
 
 pub const Options = struct {
     domain: ?[]const u8 = null,
     issues_only: bool = false,
-    section: Section = .all,
-    limit: i64 = default_limit,
+};
 
-    pub fn normalized(self: Options) Options {
-        return .{
-            .domain = self.domain,
-            .issues_only = self.issues_only,
-            .section = self.section,
-            .limit = app_render.positiveLimit(self.limit, default_limit),
-        };
+pub const Status = enum { healthy, degraded, dns_only, local_only, project_only };
+
+pub const Issue = enum {
+    dns_without_local_target,
+    caddy_without_dns,
+    upstream_without_socket,
+    project_without_runtime,
+    service_not_running,
+    container_not_running,
+
+    /// A discovered project without a runtime is inventory awaiting
+    /// enrollment, not a failed workload.
+    pub fn isIncident(self: Issue) bool {
+        return self != .project_without_runtime;
     }
 };
 
-pub const Context = struct {
-    gpa: Allocator,
-    db: *Db,
-    fresh_after_seconds: i64 = 120,
+pub const Freshness = enum { current, stale, unavailable };
+
+pub const Source = struct {
+    name: []const u8,
+    label: []const u8,
+    local: bool,
+    freshness: Freshness = .unavailable,
+    observation: ?db_store.Observation = null,
+};
+
+pub const Summary = struct {
+    hosts: usize = 0,
+    healthy: usize = 0,
+    degraded: usize = 0,
+    dns_only: usize = 0,
+    local_only: usize = 0,
+    project_only: usize = 0,
+    incidents: usize = 0,
 };
 
 pub const Dashboard = struct {
-    options: Options,
-    overview: app_overview.Overview,
-    audit_events: db_store.AuditEvents,
-    topology: app_topology.Topology,
-    cloudflare_accounts: db_store.CloudflareAccountRows,
-    cloudflare_zones: db_store.CloudflareZoneRows,
-    cloudflare_dns: db_store.CloudflareDnsRecordRows,
-    cloudflare_resources: db_store.CloudflareKindCounts,
-    cloudflare_inventory: db_store.InventoryFacets,
-    cloudflare_security: db_store.CloudflareKindCounts,
-    cloudflare_security_items: i64,
-    hostinger_vps: db_store.HostingerVpsRows,
-    hostinger_metrics: db_store.HostingerMetricSummaries,
-    hostinger_evidence: db_store.HostingerVpsFamilySummaries,
-    hostinger_inventory: db_store.InventoryFacets,
-    system_metrics: db_store.MetricRows,
-    services: db_store.NameValueRows,
-    sockets: db_store.NameValueRows,
-    containers: db_store.NameValueRows,
-    caddy_upstreams: db_store.NameValueRows,
-    projects: db_store.ProjectCorrelations,
+    all: db_store.TopologyRows,
+    rows: []const Row,
+    summary: Summary,
+    sources: [5]Source,
 
-    pub fn load(ctx: Context, options: Options) !Dashboard {
-        const normalized = options.normalized();
-        var overview = try app_overview.Overview.load(ctx.gpa, ctx.db, 12);
-        errdefer overview.deinit(ctx.gpa);
-        var audit_events = try ctx.db.recentAuditEvents(ctx.gpa, 50);
-        errdefer audit_events.deinit(ctx.gpa);
-        var topology = try app_topology.Topology.load(.{ .gpa = ctx.gpa, .db = ctx.db }, .{ .limit = normalized.limit });
-        errdefer topology.deinit(ctx.gpa);
-        var cloudflare_accounts = try ctx.db.cloudflareAccountRows(ctx.gpa, normalized.limit);
-        errdefer cloudflare_accounts.deinit(ctx.gpa);
-        var cloudflare_zones = try ctx.db.cloudflareZoneRows(ctx.gpa, normalized.limit);
-        errdefer cloudflare_zones.deinit(ctx.gpa);
-        var cloudflare_dns = try ctx.db.cloudflareDnsRecordRows(ctx.gpa, normalized.limit);
-        errdefer cloudflare_dns.deinit(ctx.gpa);
-        var cloudflare_resources = try ctx.db.cloudflareResourceKindCounts(ctx.gpa, normalized.limit);
-        errdefer cloudflare_resources.deinit(ctx.gpa);
-        var cloudflare_inventory = try ctx.db.inventoryFacets(ctx.gpa, .{ .provider = "cloudflare", .domain = normalized.domain, .limit = normalized.limit });
-        errdefer cloudflare_inventory.deinit(ctx.gpa);
-        var cloudflare_security = try ctx.db.cloudflareSecurityKindCounts(ctx.gpa, normalized.limit);
-        errdefer cloudflare_security.deinit(ctx.gpa);
-        var hostinger_vps = try ctx.db.hostingerVpsRows(ctx.gpa, normalized.limit);
-        errdefer hostinger_vps.deinit(ctx.gpa);
-        var hostinger_metrics = try ctx.db.hostingerMetricSummaries(ctx.gpa, normalized.limit);
-        errdefer hostinger_metrics.deinit(ctx.gpa);
-        var hostinger_evidence = try ctx.db.hostingerVpsFamilySummaries(ctx.gpa, normalized.limit);
-        errdefer hostinger_evidence.deinit(ctx.gpa);
-        var hostinger_inventory = try ctx.db.inventoryFacets(ctx.gpa, .{ .provider = "hostinger", .domain = normalized.domain, .limit = normalized.limit });
-        errdefer hostinger_inventory.deinit(ctx.gpa);
-        var system_metrics = try ctx.db.recentMetrics(ctx.gpa, normalized.limit);
-        errdefer system_metrics.deinit(ctx.gpa);
-        var services = try ctx.db.serviceList(ctx.gpa);
-        errdefer services.deinit(ctx.gpa);
-        var sockets = try ctx.db.socketList(ctx.gpa);
-        errdefer sockets.deinit(ctx.gpa);
-        var containers = try ctx.db.containerList(ctx.gpa);
-        errdefer containers.deinit(ctx.gpa);
-        var caddy_upstreams = try ctx.db.caddyUpstreams(ctx.gpa);
-        errdefer caddy_upstreams.deinit(ctx.gpa);
-        var projects = try ctx.db.projectCorrelations(ctx.gpa, normalized.limit);
-        errdefer projects.deinit(ctx.gpa);
-        return .{
-            .options = normalized,
-            .overview = overview,
-            .audit_events = audit_events,
-            .topology = topology,
-            .cloudflare_accounts = cloudflare_accounts,
-            .cloudflare_zones = cloudflare_zones,
-            .cloudflare_dns = cloudflare_dns,
-            .cloudflare_resources = cloudflare_resources,
-            .cloudflare_inventory = cloudflare_inventory,
-            .cloudflare_security = cloudflare_security,
-            .cloudflare_security_items = try ctx.db.countTable("cloudflare_security_items"),
-            .hostinger_vps = hostinger_vps,
-            .hostinger_metrics = hostinger_metrics,
-            .hostinger_evidence = hostinger_evidence,
-            .hostinger_inventory = hostinger_inventory,
-            .system_metrics = system_metrics,
-            .services = services,
-            .sockets = sockets,
-            .containers = containers,
-            .caddy_upstreams = caddy_upstreams,
-            .projects = projects,
+    pub fn load(gpa: Allocator, db: *Db, options: Options, fresh_after_seconds: i64) !Dashboard {
+        var all = try db.topologyRows(gpa, row_limit);
+        errdefer all.deinit(gpa);
+        try hydrateDerivedRuntime(gpa, db, &all);
+
+        var rows: std.ArrayList(Row) = .empty;
+        errdefer rows.deinit(gpa);
+        var summary: Summary = .{};
+        for (all.items) |row| {
+            const row_issues = issues(row);
+            var incidents: usize = 0;
+            var it = row_issues.iterator();
+            while (it.next()) |issue| incidents += @intFromBool(issue.isIncident());
+            if (options.issues_only and incidents == 0) continue;
+            if (options.domain) |domain| if (!domainMatches(row.host, domain) and !domainMatches(row.dns_name, domain)) continue;
+            try rows.append(gpa, row);
+            summary.hosts += 1;
+            summary.incidents += incidents;
+            switch (status(row)) {
+                .healthy => summary.healthy += 1,
+                .degraded => summary.degraded += 1,
+                .dns_only => summary.dns_only += 1,
+                .local_only => summary.local_only += 1,
+                .project_only => summary.project_only += 1,
+            }
+        }
+
+        var sources = [_]Source{
+            .{ .name = "cloudflare", .label = "Cloudflare", .local = false },
+            .{ .name = "hostinger", .label = "Hostinger", .local = false },
+            .{ .name = "caddy", .label = "Caddy", .local = true },
+            .{ .name = "system", .label = "System", .local = true },
+            .{ .name = "projects", .label = "Projects", .local = true },
         };
+        errdefer for (sources) |source| if (source.observation) |observation| observation.deinit(gpa);
+        for (&sources) |*source| {
+            source.observation = try db.latestObservation(gpa, "refresh", source.name);
+            source.freshness = freshness(source.observation, fresh_after_seconds);
+        }
+        return .{ .all = all, .rows = try rows.toOwnedSlice(gpa), .summary = summary, .sources = sources };
     }
 
     pub fn deinit(self: *Dashboard, gpa: Allocator) void {
-        self.overview.deinit(gpa);
-        self.audit_events.deinit(gpa);
-        self.topology.deinit(gpa);
-        self.cloudflare_accounts.deinit(gpa);
-        self.cloudflare_zones.deinit(gpa);
-        self.cloudflare_dns.deinit(gpa);
-        self.cloudflare_resources.deinit(gpa);
-        self.cloudflare_inventory.deinit(gpa);
-        self.cloudflare_security.deinit(gpa);
-        self.hostinger_vps.deinit(gpa);
-        self.hostinger_metrics.deinit(gpa);
-        self.hostinger_evidence.deinit(gpa);
-        self.hostinger_inventory.deinit(gpa);
-        self.system_metrics.deinit(gpa);
-        self.services.deinit(gpa);
-        self.sockets.deinit(gpa);
-        self.containers.deinit(gpa);
-        self.caddy_upstreams.deinit(gpa);
-        self.projects.deinit(gpa);
-    }
-
-    pub fn writeText(self: Dashboard, writer: anytype) !void {
-        const topology_summary = self.filteredTopologySummary();
-        try writer.writeAll("Cloudio dashboard\n");
-        try writer.print("section={s} domain={s} issues_only={} snapshots={d} topology={d} vps={d} services={d} sockets={d} containers={d}\n", .{
-            self.options.section.label(),
-            self.options.domain orelse "",
-            self.options.issues_only,
-            self.overview.counts.snapshots,
-            topology_summary.total,
-            self.hostinger_vps.items.len,
-            self.services.items.len,
-            self.sockets.items.len,
-            self.containers.items.len,
-        });
-    }
-
-    pub fn writeJson(self: Dashboard, ctx: Context, writer: anytype) !void {
-        try writer.writeAll("{\"kind\":\"dashboard\",\"version\":1,");
-        try writeRequestJson(self.options, writer);
-        try writer.writeAll(",\"filters\":");
-        try app_actions.writeFilterMetadataJson(writer);
-        try writer.writeAll(",\"toggles\":");
-        try app_actions.writeToggleMetadataJson(writer);
-        try writer.writeAll(",\"summary\":");
-        try self.writeSummaryJson(ctx, writer);
-        try writer.writeAll(",\"sections\":{");
-        try self.writeDomainsSection(writer, shouldInclude(self.options.section, .domains));
-        try writer.writeByte(',');
-        try self.writeVpsSection(writer, shouldInclude(self.options.section, .vps));
-        try writer.writeByte(',');
-        try self.writeSystemSection(writer, shouldInclude(self.options.section, .system));
-        try writer.writeByte(',');
-        try self.writeCaddySection(writer, shouldInclude(self.options.section, .caddy));
-        try writer.writeByte(',');
-        try self.writeProjectsSection(writer, shouldInclude(self.options.section, .projects));
-        try writer.writeByte(',');
-        try self.writeProvidersSection(writer, shouldInclude(self.options.section, .providers));
-        try writer.writeAll("},\"actions\":");
-        try app_actions.writeJson(.{ .gpa = ctx.gpa, .db = ctx.db }, .{
-            .domain = self.options.domain,
-            .limit = self.options.limit,
-        }, writer);
-        try writer.writeByte('}');
-        try writer.writeByte('\n');
-    }
-
-    fn writeSummaryJson(self: Dashboard, ctx: Context, writer: anytype) !void {
-        const topology_summary = self.filteredTopologySummary();
-        try writer.writeByte('{');
-        try writer.writeAll("\"counts\":{");
-        try writeOverviewCountsJson(self.overview.counts, self.cloudflare_security_items, writer);
-        try writer.writeAll("},\"last_refresh\":");
-        try writeLastRefreshJson(self.audit_events.items, writer);
-        try writer.writeAll(",\"sources\":");
-        try writeSourceObservationsJson(ctx, writer);
-        try writer.writeAll(",\"topology\":");
-        try app_topology.writeSummaryJson(topology_summary, writer);
-        try writer.writeByte('}');
-    }
-
-    fn writeDomainsSection(self: Dashboard, writer: anytype, include: bool) !void {
-        try writer.writeAll("\"domains\":");
-        if (!include) return try writer.writeAll("null");
-        try writer.writeAll("{\"summary\":");
-        try app_topology.writeSummaryJson(self.filteredTopologySummary(), writer);
-        try writer.writeAll(",\"topology\":[");
-        var first = true;
-        for (self.topology.rows.items) |row| {
-            if (!self.includeTopologyRow(row)) continue;
-            if (!first) try writer.writeByte(',');
-            first = false;
-            try app_topology.writeRowJson(row, writer);
-        }
-        try writer.writeAll("],\"dns_records\":[");
-        first = true;
-        for (self.cloudflare_dns.items) |row| {
-            if (!includeDomain(self.options.domain, row.name)) continue;
-            if (!first) try writer.writeByte(',');
-            first = false;
-            try writeCloudflareDnsJson(row, writer);
-        }
-        try writer.writeAll("]}");
-    }
-
-    fn writeVpsSection(self: Dashboard, writer: anytype, include: bool) !void {
-        try writer.writeAll("\"vps\":");
-        if (!include) return try writer.writeAll("null");
-        try writer.writeAll("{\"items\":[");
-        for (self.hostinger_vps.items, 0..) |row, index| {
-            if (index != 0) try writer.writeByte(',');
-            try writeHostingerVpsJson(row, writer);
-        }
-        try writer.writeAll("],\"metrics\":[");
-        for (self.hostinger_metrics.items, 0..) |row, index| {
-            if (index != 0) try writer.writeByte(',');
-            try writeHostingerMetricSummaryJson(row, writer);
-        }
-        try writer.writeAll("],\"evidence\":[");
-        for (self.hostinger_evidence.items, 0..) |row, index| {
-            if (index != 0) try writer.writeByte(',');
-            try writeHostingerEvidenceJson(row, writer);
-        }
-        try writer.writeAll("]}");
-    }
-
-    fn writeSystemSection(self: Dashboard, writer: anytype, include: bool) !void {
-        try writer.writeAll("\"system\":");
-        if (!include) return try writer.writeAll("null");
-        try writer.writeAll("{\"metrics\":[");
-        for (self.system_metrics.items, 0..) |row, index| {
-            if (index != 0) try writer.writeByte(',');
-            try writeMetricJson(row, writer);
-        }
-        try writer.writeAll("],\"services\":[");
-        try writeNameValueArrayJson(self.services.items, writer);
-        try writer.writeAll("],\"sockets\":[");
-        try writeNameValueArrayJson(self.sockets.items, writer);
-        try writer.writeAll("],\"containers\":[");
-        try writeNameValueArrayJson(self.containers.items, writer);
-        try writer.writeAll("]}");
-    }
-
-    fn writeCaddySection(self: Dashboard, writer: anytype, include: bool) !void {
-        try writer.writeAll("\"caddy\":");
-        if (!include) return try writer.writeAll("null");
-        try writer.writeAll("{\"upstreams\":[");
-        var first = true;
-        for (self.caddy_upstreams.items) |row| {
-            if (!includeDomain(self.options.domain, row.name)) continue;
-            if (!first) try writer.writeByte(',');
-            first = false;
-            try writeNameValueJson(row, "host", "upstream", writer);
-        }
-        try writer.writeAll("]}");
-    }
-
-    fn writeProjectsSection(self: Dashboard, writer: anytype, include: bool) !void {
-        try writer.writeAll("\"projects\":");
-        if (!include) return try writer.writeAll("null");
-        try writer.writeAll("{\"items\":[");
-        var first = true;
-        for (self.projects.items) |row| {
-            if (!self.includeProjectRow(row)) continue;
-            if (!first) try writer.writeByte(',');
-            first = false;
-            try writeProjectCorrelationJson(row, writer);
-        }
-        try writer.writeAll("]}");
-    }
-
-    fn writeProvidersSection(self: Dashboard, writer: anytype, include: bool) !void {
-        try writer.writeAll("\"providers\":");
-        if (!include) return try writer.writeAll("null");
-        try writer.writeAll("{\"cloudflare\":{\"accounts\":[");
-        for (self.cloudflare_accounts.items, 0..) |row, index| {
-            if (index != 0) try writer.writeByte(',');
-            try writeCloudflareAccountJson(row, writer);
-        }
-        try writer.writeAll("],\"zones\":[");
-        var first = true;
-        for (self.cloudflare_zones.items) |row| {
-            if (!includeDomain(self.options.domain, row.name)) continue;
-            if (!first) try writer.writeByte(',');
-            first = false;
-            try writeCloudflareZoneJson(row, writer);
-        }
-        try writer.writeAll("],\"dns_records\":[");
-        first = true;
-        for (self.cloudflare_dns.items) |row| {
-            if (!includeDomain(self.options.domain, row.name)) continue;
-            if (!first) try writer.writeByte(',');
-            first = false;
-            try writeCloudflareDnsJson(row, writer);
-        }
-        try writer.writeAll("],\"resource_kinds\":[");
-        try writeKindCountArrayJson(self.cloudflare_resources.items, writer);
-        try writer.writeAll("],\"inventory_facets\":[");
-        try writeInventoryFacetArrayJson(self.cloudflare_inventory.items, writer);
-        try writer.writeAll("],\"security_kinds\":[");
-        try writeKindCountArrayJson(self.cloudflare_security.items, writer);
-        try writer.writeAll("]},\"hostinger\":{\"vps\":[");
-        for (self.hostinger_vps.items, 0..) |row, index| {
-            if (index != 0) try writer.writeByte(',');
-            try writeHostingerVpsJson(row, writer);
-        }
-        try writer.writeAll("],\"inventory_facets\":[");
-        try writeInventoryFacetArrayJson(self.hostinger_inventory.items, writer);
-        try writer.writeAll("],\"vps_evidence\":[");
-        for (self.hostinger_evidence.items, 0..) |row, index| {
-            if (index != 0) try writer.writeByte(',');
-            try writeHostingerEvidenceJson(row, writer);
-        }
-        try writer.writeAll("]}}");
-    }
-
-    fn filteredTopologySummary(self: Dashboard) app_topology.Summary {
-        var out = app_topology.Summary{};
-        for (self.topology.rows.items) |row| {
-            if (!self.includeTopologyRow(row)) continue;
-            addTopologyRow(&out, row);
-        }
-        return out;
-    }
-
-    fn includeTopologyRow(self: Dashboard, row: db_store.TopologyRow) bool {
-        if (self.options.issues_only and !app_topology.rowHasIncidents(row)) return false;
-        const domain = self.options.domain orelse return true;
-        return includeDomain(domain, row.host) or includeDomain(domain, row.dns_name);
-    }
-
-    fn includeProjectRow(self: Dashboard, row: db_store.ProjectCorrelation) bool {
-        if (self.options.issues_only and !projectHasIssues(row)) return false;
-        const domain = self.options.domain orelse return true;
-        return includeDomain(domain, row.host);
+        for (self.sources) |source| if (source.observation) |observation| observation.deinit(gpa);
+        gpa.free(self.rows);
+        self.all.deinit(gpa);
     }
 };
 
-pub fn writeText(ctx: Context, options: Options, writer: anytype) !void {
-    var dashboard = try Dashboard.load(ctx, options);
-    defer dashboard.deinit(ctx.gpa);
-    try dashboard.writeText(writer);
+pub fn freshness(observation: ?db_store.Observation, fresh_after_seconds: i64) Freshness {
+    const value = observation orelse return .unavailable;
+    if (!value.hasSuccessfulObservation()) return .unavailable;
+    if (!std.mem.eql(u8, value.attempt_status, "ok")) return .stale;
+    return if (value.age_seconds >= 0 and value.age_seconds <= @max(fresh_after_seconds, 1)) .current else .stale;
 }
 
-pub fn writeJson(ctx: Context, options: Options, writer: anytype) !void {
-    var dashboard = try Dashboard.load(ctx, options);
-    defer dashboard.deinit(ctx.gpa);
-    try dashboard.writeJson(ctx, writer);
+pub fn status(row: Row) Status {
+    const found = issues(row);
+    if (found.contains(.upstream_without_socket) or found.contains(.service_not_running) or found.contains(.container_not_running)) return .degraded;
+    if (found.contains(.dns_without_local_target)) return .dns_only;
+    if (found.contains(.caddy_without_dns)) return .local_only;
+    if (found.contains(.project_without_runtime)) return .project_only;
+    return .healthy;
 }
 
-fn shouldInclude(selected: Section, section: Section) bool {
-    return selected == .all or selected == section;
+pub fn issues(row: Row) std.EnumSet(Issue) {
+    const has_dns = row.dns_name.len != 0;
+    const has_caddy = row.caddy_source.len != 0 or row.upstream.len != 0;
+    const has_project = row.project.len != 0;
+    return .init(.{
+        .dns_without_local_target = has_dns and !has_caddy and !has_project,
+        .caddy_without_dns = row.host.len != 0 and has_caddy and !has_dns,
+        .upstream_without_socket = row.upstream.len != 0 and row.socket_state.len == 0,
+        .project_without_runtime = has_project and row.host.len == 0 and row.upstream.len == 0 and row.service.len == 0 and row.container.len == 0,
+        .service_not_running = row.service.len != 0 and !looksRunning(row.service_state),
+        .container_not_running = row.container.len != 0 and !looksRunning(row.container_status),
+    });
 }
 
-fn addTopologyRow(summary: *app_topology.Summary, row: db_store.TopologyRow) void {
-    summary.total += 1;
-    switch (app_topology.rowStatus(row)) {
-        .healthy => summary.healthy += 1,
-        .degraded => summary.degraded += 1,
-        .dns_only => summary.dns_only += 1,
-        .local_only => summary.local_only += 1,
-        .project_only => summary.project_only += 1,
-    }
-    if (app_topology.hasDns(row)) summary.dns += 1;
-    if (app_topology.hasCaddy(row)) summary.caddy += 1;
-    if (app_topology.hasProject(row)) summary.projects += 1;
-    if (app_topology.hasSocket(row)) summary.sockets += 1;
-    if (app_topology.hasService(row)) summary.services += 1;
-    if (app_topology.hasContainer(row)) summary.containers += 1;
-    switch (app_topology.dnsMatch(row)) {
-        .direct => summary.direct_dns += 1,
-        .wildcard => summary.wildcard_dns += 1,
-        .none => {},
-    }
-    if (app_topology.issueCount(row) == 0) return;
-    if (app_topology.rowStatus(row) == .dns_only) summary.dns_only += 0;
-    if (row.host.len != 0 and app_topology.hasCaddy(row) and !app_topology.hasDns(row)) summary.caddy_without_dns += 1;
-    if (row.upstream.len != 0 and !app_topology.hasSocket(row)) summary.upstream_without_socket += 1;
-    if (app_topology.hasProject(row) and row.host.len == 0 and row.upstream.len == 0 and row.service.len == 0 and row.container.len == 0) summary.project_without_runtime += 1;
-    if (app_topology.hasService(row) and !stateLooksRunning(row.service_state)) summary.service_not_running += 1;
-    if (app_topology.hasContainer(row) and !stateLooksRunning(row.container_status)) summary.container_not_running += 1;
+/// How the host is reached: a public DNS name, a local route, or neither.
+pub fn exposure(row: Row) []const u8 {
+    if (row.dns_name.len != 0) return "public";
+    if (row.caddy_source.len != 0 or row.upstream.len != 0) return "local";
+    if (row.project.len != 0 or row.service.len != 0 or row.container.len != 0) return "internal";
+    return "unknown";
 }
 
-fn writeRequestJson(options: Options, writer: anytype) !void {
-    try writer.writeAll("\"request\":{");
-    try app_render.writeJsonNullableStringField(writer, "domain", options.domain, true);
-    try app_render.writeJsonBoolField(writer, "issues_only", options.issues_only, true);
-    try app_render.writeJsonStringField(writer, "section", options.section.label(), true);
-    try app_render.writeJsonIntField(writer, "limit", options.limit, false);
-    try writer.writeByte('}');
-}
-
-fn writeOverviewCountsJson(counts: app_overview.Counts, cloudflare_security_items: i64, writer: anytype) !void {
-    try app_render.writeJsonIntField(writer, "snapshots", counts.snapshots, true);
-    try app_render.writeJsonIntField(writer, "cloudflare_accounts", counts.cloudflare_accounts, true);
-    try app_render.writeJsonIntField(writer, "cloudflare_zones", counts.cloudflare_zones, true);
-    try app_render.writeJsonIntField(writer, "cloudflare_dns_records", counts.cloudflare_dns_records, true);
-    try app_render.writeJsonIntField(writer, "cloudflare_resources", counts.cloudflare_resources, true);
-    try app_render.writeJsonIntField(writer, "cloudflare_inventory_items", counts.cloudflare_inventory_items, true);
-    try app_render.writeJsonIntField(writer, "cloudflare_security_items", cloudflare_security_items, true);
-    try app_render.writeJsonIntField(writer, "hostinger_vps", counts.hostinger_vps, true);
-    try app_render.writeJsonIntField(writer, "hostinger_resources", counts.hostinger_resources, true);
-    try app_render.writeJsonIntField(writer, "hostinger_inventory_items", counts.hostinger_inventory_items, true);
-    try app_render.writeJsonIntField(writer, "caddy_sites", counts.caddy_sites, true);
-    try app_render.writeJsonIntField(writer, "caddy_upstreams", counts.caddy_upstreams, true);
-    try app_render.writeJsonIntField(writer, "projects", counts.projects, true);
-    try app_render.writeJsonIntField(writer, "services", counts.services, true);
-    try app_render.writeJsonIntField(writer, "sockets", counts.sockets, true);
-    try app_render.writeJsonIntField(writer, "containers", counts.containers, false);
-}
-
-fn writeLastRefreshJson(events: []const db_store.AuditEvent, writer: anytype) !void {
-    for (events) |event| {
-        if (!std.mem.eql(u8, event.action, "refresh")) continue;
-        try app_render.writeAuditEventJson(writer, event, .{ .include_id = true });
-        return;
-    }
-    try writer.writeAll("null");
-}
-
-const SourceSpec = struct {
-    name: []const u8,
-    label: []const u8,
-    source_type: []const u8,
-};
-
-const dashboard_sources = [_]SourceSpec{
-    .{ .name = "cloudflare", .label = "Cloudflare", .source_type = "provider" },
-    .{ .name = "hostinger", .label = "Hostinger", .source_type = "provider" },
-    .{ .name = "caddy", .label = "Caddy", .source_type = "local-command" },
-    .{ .name = "system", .label = "System", .source_type = "local-command" },
-    .{ .name = "projects", .label = "Projects", .source_type = "local-command" },
-};
-
-fn writeSourceObservationsJson(ctx: Context, writer: anytype) !void {
-    try writer.writeByte('[');
-    for (dashboard_sources, 0..) |source, index| {
-        if (index != 0) try writer.writeByte(',');
-        const observation_optional = try ctx.db.latestObservation(ctx.gpa, "refresh", source.name);
-        defer if (observation_optional) |observation| observation.deinit(ctx.gpa);
-        const freshness = observationFreshness(observation_optional, ctx.fresh_after_seconds);
-
-        try writer.writeByte('{');
-        try app_render.writeJsonStringField(writer, "name", source.name, true);
-        try app_render.writeJsonStringField(writer, "label", source.label, true);
-        try app_render.writeJsonStringField(writer, "source", source.source_type, true);
-        try app_render.writeJsonStringField(writer, "freshness", freshness, true);
-        try writer.writeAll("\"observed_at\":");
-        if (observation_optional) |observation| {
-            if (observation.hasSuccessfulObservation()) {
-                try app_render.writeJsonString(writer, observation.observed_at);
-            } else {
-                try writer.writeAll("null");
-            }
-        } else {
-            try writer.writeAll("null");
-        }
-        try writer.writeAll(",\"age_seconds\":");
-        if (observation_optional) |observation| {
-            if (observation.age_seconds >= 0) {
-                try writer.print("{d}", .{observation.age_seconds});
-            } else {
-                try writer.writeAll("null");
-            }
-        } else {
-            try writer.writeAll("null");
-        }
-        try writer.writeAll(",\"collection\":{");
-        if (observation_optional) |observation| {
-            try app_render.writeJsonStringField(writer, "status", observation.attempt_status, true);
-            try app_render.writeJsonStringField(writer, "attempted_at", observation.attempted_at, true);
-            try app_render.writeJsonStringField(writer, "summary", observation.attempt_summary, false);
-        } else {
-            try app_render.writeJsonStringField(writer, "status", "unavailable", true);
-            try app_render.writeJsonNullableStringField(writer, "attempted_at", null, true);
-            try app_render.writeJsonStringField(writer, "summary", "No refresh has run for this source.", false);
-        }
-        try writer.writeAll("}}");
-    }
-    try writer.writeByte(']');
-}
-
-fn observationFreshness(observation: ?db_store.Observation, fresh_after_seconds: i64) []const u8 {
-    const value = observation orelse return "unavailable";
-    if (!value.hasSuccessfulObservation()) return "unavailable";
-    if (!std.mem.eql(u8, value.attempt_status, "ok")) return "stale";
-    return if (value.age_seconds >= 0 and value.age_seconds <= @max(fresh_after_seconds, 1)) "current" else "stale";
-}
-
-fn writeCloudflareAccountJson(row: db_store.CloudflareAccountRow, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "id", row.id, true);
-    try app_render.writeJsonStringField(writer, "name", row.name, true);
-    try app_render.writeJsonStringField(writer, "type", row.account_type, true);
-    try app_render.writeJsonStringField(writer, "status", row.status, true);
-    try app_render.writeJsonStringField(writer, "updated_at", row.updated_at, false);
-    try writer.writeByte('}');
-}
-
-fn writeCloudflareZoneJson(row: db_store.CloudflareZoneRow, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "id", row.id, true);
-    try app_render.writeJsonStringField(writer, "name", row.name, true);
-    try app_render.writeJsonStringField(writer, "account_id", row.account_id, true);
-    try app_render.writeJsonStringField(writer, "status", row.status, true);
-    try app_render.writeJsonStringField(writer, "paused", row.paused, true);
-    try app_render.writeJsonStringField(writer, "type", row.zone_type, true);
-    try app_render.writeJsonStringField(writer, "name_servers", row.name_servers, true);
-    try app_render.writeJsonStringField(writer, "updated_at", row.updated_at, false);
-    try writer.writeByte('}');
-}
-
-fn writeCloudflareDnsJson(row: db_store.CloudflareDnsRecordRow, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "id", row.id, true);
-    try app_render.writeJsonStringField(writer, "zone_id", row.zone_id, true);
-    try app_render.writeJsonStringField(writer, "name", row.name, true);
-    try app_render.writeJsonStringField(writer, "type", row.record_type, true);
-    try app_render.writeJsonStringField(writer, "content", row.content, true);
-    try app_render.writeJsonStringField(writer, "ttl", row.ttl, true);
-    try app_render.writeJsonStringField(writer, "proxied", row.proxied, true);
-    try app_render.writeJsonStringField(writer, "updated_at", row.updated_at, false);
-    try writer.writeByte('}');
-}
-
-fn writeHostingerVpsJson(row: db_store.HostingerVpsRow, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "id", row.id, true);
-    try app_render.writeJsonStringField(writer, "name", row.name, true);
-    try app_render.writeJsonStringField(writer, "status", row.status, true);
-    try app_render.writeJsonStringField(writer, "ipv4", row.ipv4, true);
-    try app_render.writeJsonStringField(writer, "plan", row.plan, true);
-    try app_render.writeJsonStringField(writer, "updated_at", row.updated_at, false);
-    try writer.writeByte('}');
-}
-
-fn writeHostingerMetricSummaryJson(row: db_store.HostingerMetricSummary, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "vm_id", row.vm_id, true);
-    try app_render.writeJsonStringField(writer, "metric", row.metric, true);
-    try app_render.writeJsonIntField(writer, "count", row.count, true);
-    try app_render.writeJsonStringField(writer, "latest_captured", row.latest_captured, false);
-    try writer.writeByte('}');
-}
-
-fn writeHostingerEvidenceJson(row: db_store.HostingerVpsFamilySummary, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "vm_id", row.vm_id, true);
-    try app_render.writeJsonStringField(writer, "source", row.source, true);
-    try app_render.writeJsonStringField(writer, "kind", row.kind, true);
-    try app_render.writeJsonIntField(writer, "count", row.count, true);
-    try app_render.writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
-    try writer.writeByte('}');
-}
-
-fn writeMetricJson(row: db_store.MetricRow, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "metric", row.metric, true);
-    try app_render.writeJsonStringField(writer, "value", row.value, true);
-    try app_render.writeJsonStringField(writer, "unit", row.unit, true);
-    try app_render.writeJsonStringField(writer, "captured_at", row.captured_at, false);
-    try writer.writeByte('}');
-}
-
-fn writeNameValueArrayJson(rows: []const db_store.NameValueRow, writer: anytype) !void {
-    for (rows, 0..) |row, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writeNameValueJson(row, "name", "value", writer);
-    }
-}
-
-fn writeNameValueJson(row: db_store.NameValueRow, name_field: []const u8, value_field: []const u8, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, name_field, row.name, true);
-    try app_render.writeJsonStringField(writer, value_field, row.value, false);
-    try writer.writeByte('}');
-}
-
-fn writeProjectCorrelationJson(row: db_store.ProjectCorrelation, writer: anytype) !void {
-    try writer.writeByte('{');
-    try app_render.writeJsonStringField(writer, "project", row.project, true);
-    try app_render.writeJsonStringField(writer, "status", projectStatus(row), true);
-    try writer.writeAll("\"issues\":");
-    try writeProjectIssuesJson(row, writer);
-    try writer.writeByte(',');
-    try app_render.writeJsonStringField(writer, "source", row.source, true);
-    try app_render.writeJsonStringField(writer, "path", row.path, true);
-    try app_render.writeJsonStringField(writer, "host", row.host, true);
-    try app_render.writeJsonStringField(writer, "caddy_source", row.caddy_source, true);
-    try app_render.writeJsonStringField(writer, "upstream", row.upstream, true);
-    try app_render.writeJsonStringField(writer, "socket_state", row.socket_state, true);
-    try app_render.writeJsonStringField(writer, "socket_process", row.socket_process, true);
-    try app_render.writeJsonStringField(writer, "service", row.service, true);
-    try app_render.writeJsonStringField(writer, "service_state", row.service_state, true);
-    try app_render.writeJsonStringField(writer, "container", row.container, true);
-    try app_render.writeJsonStringField(writer, "container_status", row.container_status, false);
-    try writer.writeByte('}');
-}
-
-fn projectStatus(row: db_store.ProjectCorrelation) []const u8 {
-    if (projectHasIssues(row)) return "degraded";
-    if (row.project.len == 0 and row.host.len != 0) return "caddy_only";
-    return "healthy";
-}
-
-fn projectHasIssues(row: db_store.ProjectCorrelation) bool {
-    return projectWithoutRuntime(row) or
-        upstreamWithoutSocket(row) or
-        serviceNotRunning(row) or
-        containerNotRunning(row);
-}
-
-fn projectWithoutRuntime(row: db_store.ProjectCorrelation) bool {
-    return row.project.len != 0 and row.host.len == 0 and row.upstream.len == 0 and row.service.len == 0 and row.container.len == 0;
-}
-
-fn upstreamWithoutSocket(row: db_store.ProjectCorrelation) bool {
-    return row.upstream.len != 0 and row.socket_state.len == 0;
-}
-
-fn serviceNotRunning(row: db_store.ProjectCorrelation) bool {
-    return row.service.len != 0 and !stateLooksRunning(row.service_state);
-}
-
-fn containerNotRunning(row: db_store.ProjectCorrelation) bool {
-    return row.container.len != 0 and !stateLooksRunning(row.container_status);
-}
-
-fn writeProjectIssuesJson(row: db_store.ProjectCorrelation, writer: anytype) !void {
-    try writer.writeByte('[');
-    var first = true;
-    try writeIssue(writer, &first, projectWithoutRuntime(row), "project_without_runtime");
-    try writeIssue(writer, &first, upstreamWithoutSocket(row), "upstream_without_socket");
-    try writeIssue(writer, &first, serviceNotRunning(row), "service_not_running");
-    try writeIssue(writer, &first, containerNotRunning(row), "container_not_running");
-    try writer.writeByte(']');
-}
-
-fn writeIssue(writer: anytype, first: *bool, present: bool, issue: []const u8) !void {
-    if (!present) return;
-    if (!first.*) try writer.writeByte(',');
-    first.* = false;
-    try app_render.writeJsonString(writer, issue);
-}
-
-fn writeKindCountArrayJson(rows: []const db_store.CloudflareKindCount, writer: anytype) !void {
-    for (rows, 0..) |row, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.writeByte('{');
-        try app_render.writeJsonStringField(writer, "kind", row.kind, true);
-        try app_render.writeJsonIntField(writer, "count", row.count, true);
-        try app_render.writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
-        try writer.writeByte('}');
-    }
-}
-
-fn writeInventoryFacetArrayJson(rows: []const db_store.InventoryFacet, writer: anytype) !void {
-    for (rows, 0..) |row, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.writeByte('{');
-        try app_render.writeJsonStringField(writer, "provider", row.provider, true);
-        try app_render.writeJsonStringField(writer, "kind", row.kind, true);
-        try app_render.writeJsonStringField(writer, "status", row.status, true);
-        try app_render.writeJsonStringField(writer, "category", row.category, true);
-        try app_render.writeJsonIntField(writer, "count", row.count, true);
-        try app_render.writeJsonIntField(writer, "domains", row.domains, true);
-        try app_render.writeJsonStringField(writer, "latest_updated", row.latest_updated, false);
-        try writer.writeByte('}');
-    }
-}
-
-fn includeDomain(filter: ?[]const u8, value: []const u8) bool {
-    const domain = filter orelse return true;
-    return domainMatches(value, domain);
+pub fn dnsMatch(row: Row) []const u8 {
+    if (row.dns_name.len == 0) return "none";
+    return if (std.mem.startsWith(u8, row.dns_name, "*.")) "wildcard" else "direct";
 }
 
 fn domainMatches(value: []const u8, domain: []const u8) bool {
-    if (domain.len == 0) return true;
-    if (std.ascii.eqlIgnoreCase(value, domain)) return true;
-    if (value.len > domain.len and std.ascii.endsWithIgnoreCase(value, domain) and value[value.len - domain.len - 1] == '.') return true;
-    return false;
+    if (domain.len == 0 or std.ascii.eqlIgnoreCase(value, domain)) return true;
+    return value.len > domain.len and std.ascii.endsWithIgnoreCase(value, domain) and value[value.len - domain.len - 1] == '.';
 }
 
-fn stateLooksRunning(value: []const u8) bool {
-    return containsIgnoreCase(value, "running") or containsIgnoreCase(value, "active") or containsIgnoreCase(value, "up") or containsIgnoreCase(value, "observed");
-}
-
-fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (needle.len > haystack.len) return false;
-    var index: usize = 0;
-    while (index + needle.len <= haystack.len) : (index += 1) {
-        if (std.ascii.eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return true;
+fn looksRunning(value: []const u8) bool {
+    for ([_][]const u8{ "running", "active", "up", "observed" }) |word| {
+        if (std.ascii.findIgnoreCase(value, word) != null) return true;
     }
     return false;
 }
 
-test "dashboard renders stable top-level JSON contract" {
+/// Fills service and container links the observations imply but do not
+/// record directly: a socket's systemd cgroup, `<project>.service`, and
+/// containers named after their project.
+fn hydrateDerivedRuntime(gpa: Allocator, db: *Db, rows: *db_store.TopologyRows) !void {
+    var services = try db.serviceList(gpa);
+    defer services.deinit(gpa);
+    var containers = try db.containerList(gpa);
+    defer containers.deinit(gpa);
+
+    for (rows.items) |*row| {
+        const socket_service = serviceNameFromSocketProcess(row.socket_process);
+        if (row.service.len == 0) {
+            if (socket_service) |inferred| {
+                try replaceOwned(gpa, &row.service, inferred);
+            } else if (row.project.len != 0) {
+                const candidate = try std.fmt.allocPrint(gpa, "{s}.service", .{row.project});
+                defer gpa.free(candidate);
+                if (valueFor(services.items, candidate)) |state| {
+                    try replaceOwned(gpa, &row.service, candidate);
+                    try replaceOwned(gpa, &row.service_state, state);
+                }
+            }
+        }
+        if (row.service_state.len == 0 and row.service.len != 0) {
+            if (valueFor(services.items, row.service)) |state| {
+                try replaceOwned(gpa, &row.service_state, state);
+            } else if (socket_service != null and std.mem.eql(u8, row.service, socket_service.?)) {
+                try replaceOwned(gpa, &row.service_state, "observed");
+            }
+        }
+        if (row.container.len == 0) {
+            if (projectContainer(rows.items, containers.items, row.project)) |match| {
+                try replaceOwned(gpa, &row.container, match.name);
+                try replaceOwned(gpa, &row.container_status, match.value);
+            }
+        }
+    }
+}
+
+fn projectContainer(rows: []const Row, containers: []const db_store.NameValueRow, project: []const u8) ?db_store.NameValueRow {
+    if (project.len == 0) return null;
+    var fallback: ?db_store.NameValueRow = null;
+    for (containers) |container| {
+        if (!containerOwnedByProject(rows, container.name, project)) continue;
+        if (looksRunning(container.value)) return container;
+        if (fallback == null) fallback = container;
+    }
+    return fallback;
+}
+
+/// A container belongs to the most specific project whose name prefixes it.
+fn containerOwnedByProject(rows: []const Row, container: []const u8, project: []const u8) bool {
+    if (!containerNameMatchesProject(container, project)) return false;
+    for (rows) |row| {
+        if (std.mem.eql(u8, row.source, "docker")) continue;
+        if (row.project.len <= project.len) continue;
+        if (containerNameMatchesProject(container, row.project)) return false;
+    }
+    return true;
+}
+
+fn containerNameMatchesProject(container: []const u8, project: []const u8) bool {
+    if (project.len == 0) return false;
+    if (std.mem.eql(u8, container, project)) return true;
+    if (container.len <= project.len or !std.mem.startsWith(u8, container, project)) return false;
+    return container[project.len] == '-' or container[project.len] == '_';
+}
+
+fn valueFor(rows: []const db_store.NameValueRow, name: []const u8) ?[]const u8 {
+    for (rows) |row| if (std.mem.eql(u8, row.name, name)) return row.value;
+    return null;
+}
+
+fn replaceOwned(gpa: Allocator, field: *[]u8, value: []const u8) !void {
+    const copy = try gpa.dupe(u8, value);
+    gpa.free(field.*);
+    field.* = copy;
+}
+
+fn serviceNameFromSocketProcess(value: []const u8) ?[]const u8 {
+    const suffix = ".service";
+    const suffix_start = std.mem.lastIndexOf(u8, value, suffix) orelse return null;
+    var start = suffix_start;
+    while (start > 0) : (start -= 1) {
+        switch (value[start - 1]) {
+            '/', ' ', '\t', '\r', '\n', ':', '(', ')' => break,
+            else => {},
+        }
+    }
+    if (start == suffix_start) return null;
+    return value[start .. suffix_start + suffix.len];
+}
+
+test "infers systemd service names from socket cgroup process text" {
+    try std.testing.expectEqualStrings("plosca-webapp.service", serviceNameFromSocketProcess("users:((\"webapp\",pid=342665,fd=4)) uid:1001 cgroup:/user.slice/user-1001.slice/user@1001.service/app.slice/plosca-webapp.service <->").?);
+    try std.testing.expectEqualStrings("docker.service", serviceNameFromSocketProcess("ino:19571 sk:3 cgroup:/system.slice/docker.service <->").?);
+    try std.testing.expect(serviceNameFromSocketProcess("users:((\"caddy\",pid=1,fd=3))") == null);
+}
+
+test "dashboard reconciles hosts filters incidents and reports source freshness" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -760,53 +271,23 @@ test "dashboard renders stable top-level JSON contract" {
     var db = try Db.open(std.testing.io, db_path);
     defer db.close();
     try db.initSchema();
-    try db.insertAudit("refresh", "ok", "dashboard refresh complete");
     _ = try db.insertSnapshot("refresh", "cloudflare", null, "ok", "collection completed", null, null);
-    _ = try db.insertSnapshot("cloudflare", "dns", "plosca.ru", "ok", "records", null, null);
-    try db.upsertCloudflareAccount("acct-1", "account", "standard", "active", "{}");
     try db.upsertCloudflareZone("zone-1", "plosca.ru", "acct-1", "active", false, "full", "[]", "{}");
-    try db.upsertDnsRecord("record-1", "zone-1", "plosca.ru", "A", "76.13.130.170", 1, false, "{}");
+    try db.upsertDnsRecord("record-1", "zone-1", "plosca.ru", "A", "192.0.2.1", 1, false, "{}");
+    try db.upsertDnsRecord("record-2", "zone-1", "orphan.plosca.ru", "A", "192.0.2.1", 1, false, "{}");
     try db.upsertCaddySite("plosca.ru", "/etc/caddy/Caddyfile", "plosca.ru { reverse_proxy 127.0.0.1:9327 }");
     try db.insertCaddyUpstream("plosca.ru", "", "127.0.0.1:9327");
-    try db.upsertProject("plosca", "zig", "/home/kid/Projects/plosca.ru", "plosca.ru", "127.0.0.1:9327", "plosca.service", "plosca", null);
-    try db.upsertService("plosca.service", "user", "active", "running", "plosca", "raw");
     try db.insertSocket("tcp", "LISTEN", "127.0.0.1:9327", "plosca.service", "raw");
-    try db.upsertContainer("plosca", "plosca:latest", "Up", "9327/tcp", "raw");
-    try db.upsertHostingerVps("123", "vps", "running", "76.13.130.170", "KVM", "{}");
-    try db.insertHostingerMetric("123", "metrics", "{}", "{}");
-    try db.upsertHostingerResource("backups|123|b1", "backups", "b1", "123", "backup", "available", null, "{}");
-    try db.upsertCloudflareSecurityItem("security|zone|zone-1|i1", "security-center-insights", "i1", "zone", "zone-1", "Insight", "open", "insight", "low", "review", "plosca.ru", "acct-1", "zone-1", null, "managed", null, "2026-06-17T00:00:00Z", null, "{}");
 
-    var out = std.Io.Writer.Allocating.init(allocator);
-    defer out.deinit();
-    try writeJson(.{ .gpa = allocator, .db = &db }, .{ .domain = "plosca.ru" }, &out.writer);
-    const json = try out.toOwnedSlice();
-    defer allocator.free(json);
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
-    defer parsed.deinit();
-    try std.testing.expectEqualStrings("dashboard", parsed.value.object.get("kind").?.string);
-    try std.testing.expect(parsed.value.object.get("filters").?.array.items.len >= 8);
-    try std.testing.expect(parsed.value.object.get("toggles").?.array.items.len >= 10);
-    const sections = parsed.value.object.get("sections").?.object;
-    try std.testing.expect(sections.get("domains").? != .null);
-    try std.testing.expect(sections.get("vps").? != .null);
-    try std.testing.expect(sections.get("system").? != .null);
-    try std.testing.expect(sections.get("caddy").? != .null);
-    try std.testing.expect(sections.get("projects").? != .null);
-    try std.testing.expect(sections.get("providers").? != .null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"last_refresh\":{\"id\":") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"sources\":[{\"name\":\"cloudflare\",\"label\":\"Cloudflare\",\"source\":\"provider\",\"freshness\":\"current\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"name\":\"hostinger\",\"label\":\"Hostinger\",\"source\":\"provider\",\"freshness\":\"unavailable\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"projects\":{\"items\":[{\"project\":\"plosca\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"hostinger.vps.snapshot:123\"") != null);
-}
+    var all = try Dashboard.load(allocator, &db, .{}, 120);
+    defer all.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), all.summary.dns_only);
+    try std.testing.expectEqual(Freshness.current, all.sources[0].freshness);
+    try std.testing.expectEqual(Freshness.unavailable, all.sources[1].freshness);
 
-test "dashboard section parser accepts UI sections" {
-    try std.testing.expectEqual(Section.domains, Section.parse("domains").?);
-    try std.testing.expectEqual(Section.vps, Section.parse("vps").?);
-    try std.testing.expectEqual(Section.system, Section.parse("system").?);
-    try std.testing.expectEqual(Section.caddy, Section.parse("caddy").?);
-    try std.testing.expectEqual(Section.projects, Section.parse("projects").?);
-    try std.testing.expectEqual(Section.providers, Section.parse("providers").?);
-    try std.testing.expect(Section.parse("coverage") == null);
+    var incidents = try Dashboard.load(allocator, &db, .{ .issues_only = true }, 120);
+    defer incidents.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), incidents.rows.len);
+    try std.testing.expectEqualStrings("orphan.plosca.ru", incidents.rows[0].dns_name);
+    try std.testing.expect(issues(incidents.rows[0]).contains(.dns_without_local_target));
 }

@@ -5,21 +5,22 @@
 //! useful state, navigation, and forms arrive before JavaScript runs.
 
 const std = @import("std");
-const app_authentication = @import("app_authentication");
-const app_caddy_desired = @import("app_caddy_desired");
-const app_dashboard = @import("app_dashboard");
-const app_browser_run = @import("app_browser_run");
-const app_dns = @import("app_dns");
-const app_nob_actions = @import("app_nob_actions");
-const app_nob_projects = @import("app_nob_projects");
-const app_nob_secrets = @import("app_nob_secrets");
-const app_maintenance = @import("app_maintenance");
-const app_system_control = @import("app_system_control");
-const app_vps = @import("app_vps");
-const app_web_resources = @import("app_web_resources");
-const app_writes = @import("app_writes");
-const db_store = @import("db_store");
-const http = @import("http");
+const url = @import("../core/url.zig");
+const app_authentication = @import("../app/authentication.zig");
+const app_caddy_desired = @import("../app/caddy_desired.zig");
+const app_dashboard = @import("../app/dashboard.zig");
+const app_browser_run = @import("../app/browser_run.zig");
+const app_dns = @import("../app/dns.zig");
+const app_nob_actions = @import("../app/nob_actions.zig");
+const app_nob_projects = @import("../app/nob_projects.zig");
+const app_nob_secrets = @import("../app/nob_secrets.zig");
+const app_maintenance = @import("../app/maintenance.zig");
+const app_system_control = @import("../app/system_control.zig");
+const app_vps = @import("../app/vps.zig");
+const app_web_resources = @import("../app/web_resources.zig");
+const app_writes = @import("../app/writes.zig");
+const db_store = @import("../db/store.zig");
+const http = @import("../http/root.zig");
 const web_html = @import("web_html");
 const common = @import("common.zig");
 const context = @import("context.zig");
@@ -285,15 +286,6 @@ fn injectPageData(
     }
 }
 
-fn dashboardContext(ctx: context.Context) app_dashboard.Context {
-    const refresh_seconds: i64 = @intCast(ctx.config.refresh_seconds);
-    return .{
-        .gpa = ctx.gpa,
-        .db = ctx.db,
-        .fresh_after_seconds = @max(refresh_seconds * 2, 60),
-    };
-}
-
 fn injectDashboard(ctx: context.Context, request: http.Request, main: *[]u8) !void {
     try injectDashboardStorage(ctx, main);
     try replaceHiddenInput(
@@ -347,38 +339,24 @@ fn injectDashboard(ctx: context.Context, request: http.Request, main: *[]u8) !vo
             );
         }
     }
-    var json = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer json.deinit();
-    try app_dashboard.writeJson(
-        dashboardContext(ctx),
-        common.dashboardOptions(request, ctx.dashboard),
-        &json.writer,
-    );
-    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, json.written(), .{});
-    defer parsed.deinit();
+    const refresh_seconds: i64 = @intCast(ctx.config.refresh_seconds);
+    var dashboard = try app_dashboard.Dashboard.load(ctx.gpa, ctx.db, .{
+        .domain = request.query("domain"),
+        .issues_only = std.mem.eql(u8, request.query("issues") orelse "", "1"),
+    }, @max(refresh_seconds * 2, 60));
+    defer dashboard.deinit(ctx.gpa);
 
     var summary = std.Io.Writer.Allocating.init(ctx.gpa);
     defer summary.deinit();
-    const topology = nested(parsed.value, &.{ "summary", "topology" }) orelse .null;
-    const statuses = member(topology, "statuses") orelse .null;
-    var issue_total: i64 = 0;
-    if (member(topology, "issues")) |issues| {
-        if (issues == .object) {
-            var it = issues.object.iterator();
-            while (it.next()) |entry| {
-                if (std.mem.eql(u8, entry.key_ptr.*, "project_without_runtime")) continue;
-                issue_total += asInt(entry.value_ptr.*);
-            }
-        }
-    }
-    const cards = [_]struct { label: []const u8, value: i64, tone: []const u8 }{
-        .{ .label = "Hosts", .value = intField(topology, "total"), .tone = "" },
-        .{ .label = "Healthy", .value = intField(statuses, "healthy"), .tone = "success" },
-        .{ .label = "Degraded", .value = intField(statuses, "degraded"), .tone = if (intField(statuses, "degraded") > 0) "danger" else "" },
-        .{ .label = "DNS only", .value = intField(statuses, "dns_only"), .tone = if (intField(statuses, "dns_only") > 0) "warning" else "" },
-        .{ .label = "Local only", .value = intField(statuses, "local_only"), .tone = if (intField(statuses, "local_only") > 0) "warning" else "" },
-        .{ .label = "Needs manifest", .value = intField(statuses, "project_only"), .tone = if (intField(statuses, "project_only") > 0) "info" else "" },
-        .{ .label = "Incidents", .value = issue_total, .tone = if (issue_total > 0) "danger" else "success" },
+    const counts = dashboard.summary;
+    const cards = [_]struct { label: []const u8, value: usize, tone: []const u8 }{
+        .{ .label = "Hosts", .value = counts.hosts, .tone = "" },
+        .{ .label = "Healthy", .value = counts.healthy, .tone = "success" },
+        .{ .label = "Degraded", .value = counts.degraded, .tone = if (counts.degraded > 0) "danger" else "" },
+        .{ .label = "DNS only", .value = counts.dns_only, .tone = if (counts.dns_only > 0) "warning" else "" },
+        .{ .label = "Local only", .value = counts.local_only, .tone = if (counts.local_only > 0) "warning" else "" },
+        .{ .label = "Needs manifest", .value = counts.project_only, .tone = if (counts.project_only > 0) "info" else "" },
+        .{ .label = "Incidents", .value = counts.incidents, .tone = if (counts.incidents > 0) "danger" else "success" },
     };
     for (cards) |card| {
         try summary.writer.writeAll("<article class=\"stat-card");
@@ -391,38 +369,41 @@ fn injectDashboard(ctx: context.Context, request: http.Request, main: *[]u8) !vo
 
     var source_rows = std.Io.Writer.Allocating.init(ctx.gpa);
     defer source_rows.deinit();
-    const sources = arrayItems(nested(parsed.value, &.{ "summary", "sources" }));
-    if (sources.len == 0) {
-        try emptyRow(&source_rows.writer, 4, "No source refresh has run yet.");
-    } else for (sources) |source| {
-        const freshness = strField(source, "freshness");
-        const collection = member(source, "collection") orelse .null;
+    for (dashboard.sources) |source| {
         try source_rows.writer.writeAll("<tr data-source=\"");
-        try web_html.attribute(&source_rows.writer, strField(source, "name"));
+        try web_html.attribute(&source_rows.writer, source.name);
         try source_rows.writer.writeAll("\" data-freshness=\"");
-        try web_html.attribute(&source_rows.writer, freshness);
+        try web_html.attribute(&source_rows.writer, @tagName(source.freshness));
         try source_rows.writer.writeAll("\"><td data-label=\"Source\"><strong>");
-        try web_html.text(&source_rows.writer, strField(source, "label"));
+        try web_html.text(&source_rows.writer, source.label);
         try source_rows.writer.writeAll("</strong><div class=\"muted\">");
-        try web_html.text(&source_rows.writer, sourceTypeLabel(strField(source, "source")));
+        try web_html.text(&source_rows.writer, if (source.local) "Local command" else "Provider API");
         try source_rows.writer.writeAll("</div></td><td data-label=\"Freshness\">");
-        try writeStatus(&source_rows.writer, freshnessLabel(freshness));
+        try writeStatus(&source_rows.writer, switch (source.freshness) {
+            .current => "Current",
+            .stale => "Stale",
+            .unavailable => "Unavailable",
+        });
         try source_rows.writer.writeAll("</td>");
-        try dashboardCellText(&source_rows.writer, "Observed", nullableString(member(source, "observed_at")), "mono cell-nowrap", "Never");
+        const observation = source.observation;
+        const observed_at = if (observation) |value| (if (value.hasSuccessfulObservation()) value.observed_at else "") else "";
+        try dashboardCellText(&source_rows.writer, "Observed", observed_at, "mono cell-nowrap", "Never");
         try source_rows.writer.writeAll("<td data-label=\"Last collection\"><strong>");
-        try web_html.text(&source_rows.writer, collectionStatusLabel(strField(collection, "status")));
+        try web_html.text(&source_rows.writer, collectionStatusLabel(if (observation) |value| value.attempt_status else ""));
         try source_rows.writer.writeAll("</strong>");
-        const attempted_at = nullableString(member(collection, "attempted_at"));
-        if (attempted_at.len > 0) {
-            try source_rows.writer.writeAll(" <span class=\"muted mono\">");
-            try web_html.text(&source_rows.writer, attempted_at);
-            try source_rows.writer.writeAll("</span>");
-        }
-        const collection_summary = strField(collection, "summary");
-        if (collection_summary.len > 0) {
-            try source_rows.writer.writeAll("<div class=\"muted breakable\">");
-            try web_html.text(&source_rows.writer, collection_summary);
-            try source_rows.writer.writeAll("</div>");
+        if (observation) |value| {
+            if (value.attempted_at.len > 0) {
+                try source_rows.writer.writeAll(" <span class=\"muted mono\">");
+                try web_html.text(&source_rows.writer, value.attempted_at);
+                try source_rows.writer.writeAll("</span>");
+            }
+            if (value.attempt_summary.len > 0) {
+                try source_rows.writer.writeAll("<div class=\"muted breakable\">");
+                try web_html.text(&source_rows.writer, value.attempt_summary);
+                try source_rows.writer.writeAll("</div>");
+            }
+        } else {
+            try source_rows.writer.writeAll("<div class=\"muted breakable\">No refresh has run for this source.</div>");
         }
         try source_rows.writer.writeAll("</td></tr>");
     }
@@ -430,22 +411,21 @@ fn injectDashboard(ctx: context.Context, request: http.Request, main: *[]u8) !vo
 
     var rows = std.Io.Writer.Allocating.init(ctx.gpa);
     defer rows.deinit();
-    const topology_rows = nested(parsed.value, &.{ "sections", "domains", "topology" });
-    if (arrayItems(topology_rows).len == 0) {
-        try emptyRow(&rows.writer, 8, "No topology rows match this view.");
-    } else for (arrayItems(topology_rows)) |row| {
+    if (dashboard.rows.len == 0) try emptyRow(&rows.writer, 8, "No topology rows match this view.");
+    for (dashboard.rows) |row| {
         try rows.writer.writeAll("<tr>");
-        try dashboardStatusCell(&rows.writer, strField(row, "status"));
+        try dashboardStatusCell(&rows.writer, app_dashboard.status(row));
         try dashboardIdentityCell(&rows.writer, row);
-        try dashboardBadgeCell(&rows.writer, "DNS match", strField(row, "dns_match"));
-        try dashboardCellText(&rows.writer, "Exposure", strField(row, "exposure"), "muted", "—");
-        try dashboardCellText(&rows.writer, "Upstream", strField(row, "upstream"), "mono cell-nowrap", "—");
-        try dashboardDetailCell(&rows.writer, "Service", strField(row, "service"), strField(row, "service_state"));
-        try dashboardDetailCell(&rows.writer, "Container", strField(row, "container"), strField(row, "container_status"));
+        try dashboardBadgeCell(&rows.writer, "DNS match", app_dashboard.dnsMatch(row));
+        try dashboardCellText(&rows.writer, "Exposure", app_dashboard.exposure(row), "muted", "—");
+        try dashboardCellText(&rows.writer, "Upstream", row.upstream, "mono cell-nowrap", "—");
+        try dashboardDetailCell(&rows.writer, "Service", row.service, row.service_state);
+        try dashboardDetailCell(&rows.writer, "Container", row.container, row.container_status);
         try rows.writer.writeAll("<td data-label=\"Diagnosis\"><div class=\"diagnosis-list\">");
-        const issues = arrayItems(member(row, "issues"));
-        if (issues.len == 0) try rows.writer.writeAll("<span class=\"muted\">No action needed.</span>");
-        for (issues) |issue| try writeDashboardIssue(&rows.writer, asString(issue), row);
+        const row_issues = app_dashboard.issues(row);
+        if (row_issues.count() == 0) try rows.writer.writeAll("<span class=\"muted\">No action needed.</span>");
+        var it = row_issues.iterator();
+        while (it.next()) |issue| try writeDashboardIssue(&rows.writer, issue, row);
         try rows.writer.writeAll("</div></td></tr>");
     }
     try replaceElementInner(ctx.gpa, main, "topology-body", "tbody", rows.written());
@@ -771,7 +751,7 @@ fn renderProjectResources(ctx: context.Context, request: http.Request, project: 
                 try out.writeAll("<a class=\"button button-small\" href=\"/projects.html?project=");
                 try out.print("{d}", .{project.id});
                 try out.writeAll("&amp;resource_logs=");
-                try writeUrlQueryComponent(out, resource.resource_id);
+                try url.writeComponent(out, resource.resource_id);
                 try out.writeAll("\">Logs</a>");
                 continue;
             }
@@ -977,7 +957,7 @@ fn renderProjectRuns(ctx: context.Context, project: db_store.NobProject, out: *s
         try out.writeAll("<tr><td data-label=\"Operation\"><a class=\"mono\" href=\"/projects.html?project=");
         try out.print("{d}", .{project.id});
         try out.writeAll("&amp;run=");
-        try writeUrlQueryComponent(out, run.id);
+        try url.writeComponent(out, run.id);
         try out.writeAll("\">");
         try web_html.text(out, run.id);
         try out.writeAll("</a></td>");
@@ -1271,9 +1251,9 @@ fn injectRoutes(ctx: context.Context, request: http.Request, main: *[]u8) !void 
                 try rows.writer.writeAll("<button class=\"button button-small\" type=\"submit\">");
                 try web_html.text(&rows.writer, if (enabled) "Disable" else "Enable");
                 try rows.writer.writeAll("</button></form><a class=\"button button-small\" href=\"/routes.html?edit=");
-                try writeUrlQueryComponent(&rows.writer, host);
+                try url.writeComponent(&rows.writer, host);
                 try rows.writer.writeAll("\">Edit</a><a class=\"button button-small button-danger\" href=\"/routes.html?confirm=delete&amp;host=");
-                try writeUrlQueryComponent(&rows.writer, host);
+                try url.writeComponent(&rows.writer, host);
                 try rows.writer.writeAll("\">Remove</a>");
             } else if (std.mem.eql(u8, state, "pending_delete")) {
                 try rows.writer.writeAll("<span class=\"muted\">Pending removal</span>");
@@ -1679,7 +1659,7 @@ fn injectBrowser(ctx: context.Context, request: http.Request, main: *[]u8) !void
         try rows.writer.writeAll("</td>");
         try dashboardCellText(&rows.writer, "Target", strField(run_value, "target_host"), "mono breakable", "—");
         try rows.writer.writeAll("<td data-label=\"Result\"><a href=\"/browser.html?run=");
-        try writeUrlQueryComponent(&rows.writer, id);
+        try url.writeComponent(&rows.writer, id);
         try rows.writer.writeAll("\">");
         try writeStatus(&rows.writer, strField(run_value, "state"));
         try rows.writer.writeAll("</a></td><td data-label=\"Usage\" class=\"mono\">");
@@ -1687,7 +1667,7 @@ fn injectBrowser(ctx: context.Context, request: http.Request, main: *[]u8) !void
         try rows.writer.writeAll("</td><td data-label=\"Artifact\">");
         if (boolField(run_value, "artifact") and !boolField(run_value, "expired")) {
             try rows.writer.writeAll("<a href=\"/browser/artifact?id=");
-            try writeUrlQueryComponent(&rows.writer, id);
+            try url.writeComponent(&rows.writer, id);
             try rows.writer.writeAll("&amp;download=1\">Download</a>");
         } else if (boolField(run_value, "expired")) {
             try rows.writer.writeAll("<span class=\"muted\">Expired</span>");
@@ -1738,13 +1718,13 @@ fn injectBrowserResult(ctx: context.Context, run_value: std.json.Value, main: *[
     if (std.mem.eql(u8, state, "succeeded") and boolField(run_value, "artifact") and !boolField(run_value, "expired")) {
         if (std.mem.eql(u8, strField(run_value, "action"), "screenshot")) {
             try output.writer.writeAll("<figure class=\"browser-preview\"><img src=\"/browser/artifact?id=");
-            try writeUrlQueryComponent(&output.writer, id);
+            try url.writeComponent(&output.writer, id);
             try output.writer.writeAll("\" alt=\"Screenshot captured by Kitesurf\"><figcaption><a href=\"/browser/artifact?id=");
-            try writeUrlQueryComponent(&output.writer, id);
+            try url.writeComponent(&output.writer, id);
             try output.writer.writeAll("&amp;download=1\">Download PNG</a></figcaption></figure>");
         } else {
             try output.writer.writeAll("<div class=\"cluster\"><a class=\"button\" href=\"/browser/artifact?id=");
-            try writeUrlQueryComponent(&output.writer, id);
+            try url.writeComponent(&output.writer, id);
             try output.writer.writeAll("&amp;download=1\">Download rendered HTML</a></div><pre class=\"log-viewer browser-html-preview\">");
             try web_html.text(&output.writer, strField(run_value, "preview"));
             try output.writer.writeAll("</pre>");
@@ -1862,12 +1842,12 @@ fn writeDnsRecordLink(out: *std.Io.Writer, domain: []const u8, mode: []const u8,
     try out.writeAll("<a class=\"button button-small");
     if (danger) try out.writeAll(" button-danger");
     try out.writeAll("\" href=\"/dns.html?domain=");
-    try writeUrlQueryComponent(out, domain);
+    try url.writeComponent(out, domain);
     try out.writeByte('&');
     try web_html.urlAttribute(out, mode);
     try out.writeByte('=');
     if (std.mem.eql(u8, mode, "confirm")) try out.writeAll("delete&record=");
-    try writeUrlQueryComponent(out, record_id);
+    try url.writeComponent(out, record_id);
     try out.writeAll("\">");
     try web_html.text(out, label);
     try out.writeAll("</a>");
@@ -1927,7 +1907,7 @@ fn injectDnsEdit(ctx: context.Context, request: http.Request, domain: []const u8
     try body.writer.writeAll("\"></div><label class=\"field-inline\" for=\"edit-record-proxied\"><input id=\"edit-record-proxied\" name=\"proxied\" type=\"checkbox\" value=\"1\"");
     if (proxied) try body.writer.writeAll(" checked");
     try body.writer.writeAll("> Proxied</label><div class=\"span-12 cluster\"><button class=\"button-primary\" type=\"submit\">Save record</button><a class=\"button\" href=\"/dns.html?domain=");
-    try writeUrlQueryComponent(&body.writer, domain);
+    try url.writeComponent(&body.writer, domain);
     try body.writer.writeAll("\">Cancel</a></div></form>");
     try replaceElementInner(ctx.gpa, main, "edit-record-body", "div", body.written());
     try replaceExact(ctx.gpa, main, "id=\"edit-record-panel\" class=\"panel hidden\"", "id=\"edit-record-panel\" class=\"panel\"");
@@ -1958,7 +1938,7 @@ fn injectDnsDelete(ctx: context.Context, request: http.Request, domain: []const 
     try body.writer.writeAll("</code> to confirm</label><input id=\"dns-delete-confirmation\" name=\"confirmation\" type=\"text\" required autocomplete=\"off\" value=\"");
     if (draft) |value| if (std.mem.eql(u8, value.action, "delete") and std.mem.eql(u8, value.record_id, record_id)) try web_html.attribute(&body.writer, value.confirmation);
     try body.writer.writeAll("\"></div><div class=\"cluster\"><button class=\"button button-danger\" type=\"submit\">Delete record</button><a class=\"button\" href=\"/dns.html?domain=");
-    try writeUrlQueryComponent(&body.writer, domain);
+    try url.writeComponent(&body.writer, domain);
     try body.writer.writeAll("\">Cancel</a></div></form>");
     try replaceElementInner(ctx.gpa, main, "delete-record-body", "div", body.written());
     try replaceExact(ctx.gpa, main, "id=\"delete-record-panel\" class=\"panel hidden\"", "id=\"delete-record-panel\" class=\"panel\"");
@@ -2086,9 +2066,9 @@ fn writeVpsActionLink(out: *std.Io.Writer, machine_id: []const u8, action: []con
     try out.writeAll("<a class=\"button button-small");
     if (std.mem.eql(u8, action, "stop")) try out.writeAll(" button-danger");
     try out.writeAll("\" href=\"/vps.html?confirm=");
-    try writeUrlQueryComponent(out, action);
+    try url.writeComponent(out, action);
     try out.writeAll("&amp;machine=");
-    try writeUrlQueryComponent(out, machine_id);
+    try url.writeComponent(out, machine_id);
     try out.writeAll("\" data-vps-action=\"");
     try web_html.attribute(out, action);
     try out.writeAll("\" data-vps-id=\"");
@@ -2776,12 +2756,6 @@ fn boolField(value: std.json.Value, name: []const u8) bool {
     return present == .bool and present.bool;
 }
 
-fn sourceTypeLabel(value: []const u8) []const u8 {
-    if (std.mem.eql(u8, value, "provider")) return "Provider API";
-    if (std.mem.eql(u8, value, "local-command")) return "Local command";
-    return "Stored observation";
-}
-
 fn freshnessLabel(value: []const u8) []const u8 {
     if (std.mem.eql(u8, value, "current")) return "Current";
     if (std.mem.eql(u8, value, "stale")) return "Stale";
@@ -2815,21 +2789,15 @@ fn dashboardCellText(
     try out.writeAll("</td>");
 }
 
-fn dashboardStatusCell(out: *std.Io.Writer, value: []const u8) !void {
-    const label: []const u8 = if (std.mem.eql(u8, value, "healthy"))
-        "Healthy"
-    else if (std.mem.eql(u8, value, "degraded"))
-        "Degraded"
-    else if (std.mem.eql(u8, value, "dns_only"))
-        "DNS only"
-    else if (std.mem.eql(u8, value, "local_only"))
-        "Local only"
-    else if (std.mem.eql(u8, value, "project_only"))
-        "Needs manifest"
-    else
-        "Unknown";
+fn dashboardStatusCell(out: *std.Io.Writer, value: app_dashboard.Status) !void {
     try out.writeAll("<td data-label=\"Status\">");
-    try writeStatus(out, label);
+    try writeStatus(out, switch (value) {
+        .healthy => "Healthy",
+        .degraded => "Degraded",
+        .dns_only => "DNS only",
+        .local_only => "Local only",
+        .project_only => "Needs manifest",
+    });
     try out.writeAll("</td>");
 }
 
@@ -2858,107 +2826,47 @@ fn dashboardDetailCell(out: *std.Io.Writer, label: []const u8, primary: []const 
     try out.writeAll("</td>");
 }
 
-fn dashboardIdentityCell(out: *std.Io.Writer, row: std.json.Value) !void {
-    const identity = firstNonEmpty(row, &.{ "host", "project" });
+fn dashboardIdentityCell(out: *std.Io.Writer, row: db_store.TopologyRow) !void {
+    const identity = if (row.host.len > 0) row.host else row.project;
     try out.writeAll("<td data-label=\"Host\" class=\"mono cell-nowrap\">");
     if (identity.len == 0) {
         try out.writeAll("(unnamed)");
-    } else if (strField(row, "container").len > 0) {
-        try writeDashboardLink(out, "/docker.html", "container", strField(row, "container"), identity);
-    } else if (strField(row, "project").len > 0) {
-        try writeDashboardLink(out, "/projects.html", "query", strField(row, "project"), identity);
-    } else if (strField(row, "upstream").len > 0 or strField(row, "caddy_source").len > 0) {
+    } else if (row.container.len > 0) {
+        try writeDashboardLink(out, "/docker.html", "container", row.container, identity);
+    } else if (row.project.len > 0) {
+        try writeDashboardLink(out, "/projects.html", "query", row.project, identity);
+    } else if (row.upstream.len > 0 or row.caddy_source.len > 0) {
         try writeDashboardLink(out, "/routes.html", "host", identity, identity);
-    } else if (strField(row, "dns_name").len > 0) {
-        try writeDashboardLink(out, "/dns.html", "domain", strField(row, "dns_name"), identity);
+    } else if (row.dns_name.len > 0) {
+        try writeDashboardLink(out, "/dns.html", "domain", row.dns_name, identity);
     } else {
         try web_html.text(out, identity);
     }
     try out.writeAll("</td>");
 }
 
-const DashboardIssue = struct {
-    title: []const u8,
-    description: []const u8,
-    owner: []const u8,
-    path: []const u8,
-    query_name: []const u8,
-    query_value: []const u8,
-    tone: []const u8,
-};
-
-fn dashboardIssue(issue: []const u8, row: std.json.Value) !DashboardIssue {
-    if (std.mem.eql(u8, issue, "dns_without_local_target")) return .{
-        .title = "DNS has no local target",
-        .description = "This public DNS name has no matching route or managed project.",
-        .owner = "Routes",
-        .path = "/routes.html",
-        .query_name = "host",
-        .query_value = firstNonEmpty(row, &.{ "dns_name", "host" }),
-        .tone = "danger",
+/// Each diagnosis names its problem and links to the one page that owns the fix.
+fn writeDashboardIssue(out: *std.Io.Writer, issue: app_dashboard.Issue, row: db_store.TopologyRow) !void {
+    const Diagnosis = struct { title: []const u8, description: []const u8, owner: []const u8, path: []const u8, query_name: []const u8, query_value: []const u8, tone: []const u8 };
+    const diagnosis: Diagnosis = switch (issue) {
+        .dns_without_local_target => .{ .title = "DNS has no local target", .description = "This public DNS name has no matching route or managed project.", .owner = "Routes", .path = "/routes.html", .query_name = "host", .query_value = if (row.dns_name.len > 0) row.dns_name else row.host, .tone = "danger" },
+        .caddy_without_dns => .{ .title = "Route has no DNS record", .description = "Caddy knows this host, but the configured DNS observations do not.", .owner = "DNS", .path = "/dns.html", .query_name = "domain", .query_value = row.host, .tone = "danger" },
+        .upstream_without_socket => .{ .title = "Upstream is not listening", .description = "The route points to an address with no observed listening socket.", .owner = "Routes", .path = "/routes.html", .query_name = "host", .query_value = row.host, .tone = "danger" },
+        .project_without_runtime => .{ .title = "Project needs a manifest", .description = "This directory was discovered but is not enrolled as a managed runtime.", .owner = "Projects", .path = "/projects.html", .query_name = "query", .query_value = row.project, .tone = "info" },
+        .service_not_running => .{ .title = "Service is not running", .description = "The observed service state is not active or running.", .owner = "Projects", .path = "/projects.html", .query_name = "query", .query_value = if (row.project.len > 0) row.project else row.service, .tone = "danger" },
+        .container_not_running => .{ .title = "Container is not running", .description = "The observed Docker container is stopped, restarting, or unhealthy.", .owner = "Docker", .path = "/docker.html", .query_name = "container", .query_value = row.container, .tone = "danger" },
     };
-    if (std.mem.eql(u8, issue, "caddy_without_dns")) return .{
-        .title = "Route has no DNS record",
-        .description = "Caddy knows this host, but the configured DNS observations do not.",
-        .owner = "DNS",
-        .path = "/dns.html",
-        .query_name = "domain",
-        .query_value = strField(row, "host"),
-        .tone = "danger",
-    };
-    if (std.mem.eql(u8, issue, "upstream_without_socket")) return .{
-        .title = "Upstream is not listening",
-        .description = "The route points to an address with no observed listening socket.",
-        .owner = "Routes",
-        .path = "/routes.html",
-        .query_name = "host",
-        .query_value = strField(row, "host"),
-        .tone = "danger",
-    };
-    if (std.mem.eql(u8, issue, "project_without_runtime")) return .{
-        .title = "Project needs a manifest",
-        .description = "This directory was discovered but is not enrolled as a managed runtime.",
-        .owner = "Projects",
-        .path = "/projects.html",
-        .query_name = "query",
-        .query_value = strField(row, "project"),
-        .tone = "info",
-    };
-    if (std.mem.eql(u8, issue, "service_not_running")) return .{
-        .title = "Service is not running",
-        .description = "The observed service state is not active or running.",
-        .owner = "Projects",
-        .path = "/projects.html",
-        .query_name = "query",
-        .query_value = firstNonEmpty(row, &.{ "project", "service" }),
-        .tone = "danger",
-    };
-    if (std.mem.eql(u8, issue, "container_not_running")) return .{
-        .title = "Container is not running",
-        .description = "The observed Docker container is stopped, restarting, or unhealthy.",
-        .owner = "Docker",
-        .path = "/docker.html",
-        .query_name = "container",
-        .query_value = strField(row, "container"),
-        .tone = "danger",
-    };
-    return error.UnmappedTopologyIssue;
-}
-
-fn writeDashboardIssue(out: *std.Io.Writer, issue_code: []const u8, row: std.json.Value) !void {
-    const issue = try dashboardIssue(issue_code, row);
     try out.writeAll("<div class=\"diagnosis tone-");
-    try web_html.attribute(out, issue.tone);
+    try web_html.attribute(out, diagnosis.tone);
     try out.writeAll("\" data-issue=\"");
-    try web_html.attribute(out, issue_code);
+    try web_html.attribute(out, @tagName(issue));
     try out.writeAll("\"><strong>");
-    try web_html.text(out, issue.title);
+    try web_html.text(out, diagnosis.title);
     try out.writeAll("</strong><span>");
-    try web_html.text(out, issue.description);
+    try web_html.text(out, diagnosis.description);
     try out.writeAll("</span>");
     var owner_buffer: [64]u8 = undefined;
-    const owner_label = try std.fmt.bufPrint(&owner_buffer, "Open {s}", .{issue.owner});
-    try writeDashboardLink(out, issue.path, issue.query_name, issue.query_value, owner_label);
+    try writeDashboardLink(out, diagnosis.path, diagnosis.query_name, diagnosis.query_value, try std.fmt.bufPrint(&owner_buffer, "Open {s}", .{diagnosis.owner}));
     try out.writeAll("</div>");
 }
 
@@ -2975,25 +2883,13 @@ fn writeDashboardLink(
         try out.writeByte('?');
         try web_html.urlAttribute(out, query_name);
         try out.writeByte('=');
-        try writeUrlQueryComponent(out, query_value);
+        try url.writeComponent(out, query_value);
     }
     try out.writeAll("\">");
     try web_html.text(out, label);
     try out.writeAll("</a>");
 }
 
-fn writeUrlQueryComponent(out: *std.Io.Writer, value: []const u8) !void {
-    const hex = "0123456789ABCDEF";
-    for (value) |byte| {
-        if (std.ascii.isAlphanumeric(byte) or byte == '-' or byte == '.' or byte == '_' or byte == '~') {
-            try out.writeByte(byte);
-        } else {
-            try out.writeByte('%');
-            try out.writeByte(hex[byte >> 4]);
-            try out.writeByte(hex[byte & 0x0f]);
-        }
-    }
-}
 
 fn firstNonEmpty(value: std.json.Value, names: []const []const u8) []const u8 {
     for (names) |name| {
@@ -3380,7 +3276,7 @@ test "every authenticated page has a useful server-rendered empty state" {
         .{tmp.sub_path},
     );
     defer allocator.free(db_path);
-    var db = try @import("db_store").Db.open(std.testing.io, db_path);
+    var db = try @import("../db/store.zig").Db.open(std.testing.io, db_path);
     defer db.close();
     try db.initSchema();
     try db.upsertContainer(

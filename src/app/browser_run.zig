@@ -1,10 +1,13 @@
 //! Bounded Cloudflare Kitesurf Quick Actions for the authenticated web UI.
 const std = @import("std");
-const app_writes = @import("app_writes");
-const core_config = @import("core_config");
-const core_json = @import("core_json");
-const db_store = @import("db_store");
-const provider_cloudflare = @import("provider_cloudflare");
+const app_writes = @import("writes.zig");
+const core_config = @import("../core/config.zig");
+const core_json = @import("../core/json.zig");
+const core_redact = @import("../core/redact.zig");
+const db_store = @import("../db/store.zig");
+const net_http = @import("../net/http.zig");
+const provider_cloudflare = @import("cloudflare");
+const provider_cloudflare_models = @import("cloudflare").models;
 
 const Allocator = std.mem.Allocator;
 const browser = provider_cloudflare.browser_run;
@@ -93,6 +96,24 @@ const StoredArtifact = struct {
         allocator.free(self.sha256);
     }
 };
+
+/// Observes the Cloudflare accounts a Browser Run may target.
+pub fn refreshAccounts(ctx: Context) !void {
+    const client = provider_cloudflare.Client.init(.{
+        .token = ctx.config.cloudflare_api_token,
+        .email = ctx.config.cloudflare_email,
+        .key = ctx.config.cloudflare_api_key,
+        .base_url = ctx.config.cloudflare_api_base,
+    });
+    const response = try client.getAccounts(ctx.io, ctx.gpa);
+    defer response.deinit(ctx.gpa);
+    if (!net_http.isOk(response.status)) return error.CloudflareAccountsRejected;
+    const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
+    defer ctx.gpa.free(redacted);
+    var rows = try provider_cloudflare_models.parseAccountRows(ctx.gpa, redacted);
+    defer rows.deinit(ctx.gpa);
+    for (rows.items) |row| try ctx.db.upsertCloudflareAccount(row.id, row.name, row.typ, row.status, row.raw_json);
+}
 
 pub fn run(ctx: Context, input: Input) !Outcome {
     if (!run_mutex.tryLock()) return error.BrowserRunBusy;

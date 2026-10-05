@@ -1,5 +1,5 @@
 const std = @import("std");
-const nob = @import("nob_sdk");
+const nob = @import("nob");
 
 pub const max_stdout_bytes = 1024 * 1024;
 pub const max_resource_facts_bytes = 64 * 1024;

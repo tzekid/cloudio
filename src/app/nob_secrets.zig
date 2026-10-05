@@ -1,9 +1,9 @@
 const std = @import("std");
-const app_nob_projects = @import("app_nob_projects");
-const core_config = @import("core_config");
-const core_time = @import("core_time");
-const db_store = @import("db_store");
-const nob = @import("nob_sdk");
+const app_nob_projects = @import("nob_projects.zig");
+const core_config = @import("../core/config.zig");
+const core_time = @import("../core/time.zig");
+const db_store = @import("../db/store.zig");
+const nob = @import("nob");
 
 const Allocator = std.mem.Allocator;
 const max_secret_bytes = 64 * 1024;

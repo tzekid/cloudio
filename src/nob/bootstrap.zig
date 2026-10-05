@@ -1,10 +1,10 @@
 const std = @import("std");
-const core_config = @import("core_config");
-const core_redact = @import("core_redact");
-const protocol = @import("nob_protocol");
-const source = @import("nob_source");
-const subprocess = @import("nob_subprocess");
-const nob = @import("nob_sdk");
+const core_config = @import("../core/config.zig");
+const core_redact = @import("../core/redact.zig");
+const protocol = @import("protocol.zig");
+const source = @import("source.zig");
+const subprocess = @import("subprocess.zig");
+const nob = @import("nob");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;

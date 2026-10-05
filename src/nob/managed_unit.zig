@@ -1,8 +1,8 @@
 const std = @import("std");
-const core_config = @import("core_config");
-const db_store = @import("db_store");
-const systemd = @import("nob_systemd");
-const nob = @import("nob_sdk");
+const core_config = @import("../core/config.zig");
+const db_store = @import("../db/store.zig");
+const systemd = @import("systemd.zig");
+const nob = @import("nob");
 
 const Allocator = std.mem.Allocator;
 const max_unit_bytes = nob.systemd_unit.max_rendered_bytes;

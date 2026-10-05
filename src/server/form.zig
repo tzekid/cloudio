@@ -1,7 +1,7 @@
 //! Minimal bounded decoder for native HTML form posts.
 
 const std = @import("std");
-const http = @import("http");
+const http = @import("../http/root.zig");
 
 pub const max_body_bytes: usize = 80 * 1024;
 pub const max_fields: usize = 80;

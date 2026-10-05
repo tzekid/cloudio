@@ -1,9 +1,9 @@
 //! Shared write-action contract and normalized audit read model.
 const std = @import("std");
 const sqlite = @import("sqlite");
-const core_json = @import("core_json");
-const core_redact = @import("core_redact");
-const db_store = @import("db_store");
+const core_json = @import("../core/json.zig");
+const core_redact = @import("../core/redact.zig");
+const db_store = @import("../db/store.zig");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;

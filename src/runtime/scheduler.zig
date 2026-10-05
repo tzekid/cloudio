@@ -1,8 +1,8 @@
 const std = @import("std");
-const app_maintenance = @import("app_maintenance");
-const app_refresh_cycle = @import("app_refresh_cycle");
-const core_config = @import("core_config");
-const db_store = @import("db_store");
+const app_maintenance = @import("../app/maintenance.zig");
+const app_refresh = @import("../app/refresh.zig");
+const core_config = @import("../core/config.zig");
+const db_store = @import("../db/store.zig");
 
 pub const Context = struct {
     io: std.Io,
@@ -26,7 +26,7 @@ fn run(ctx: Context) void {
             continue;
         };
         defer db.close();
-        _ = app_refresh_cycle.run(.{ .io = ctx.io, .gpa = ctx.gpa, .db = &db, .config = ctx.config }) catch |err| {
+        _ = app_refresh.run(.{ .io = ctx.io, .gpa = ctx.gpa, .db = &db, .config = ctx.config }) catch |err| {
             std.debug.print("cloudio scheduled refresh failed: {s}\n", .{@errorName(err)});
             continue;
         };

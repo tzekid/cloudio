@@ -1,16 +1,16 @@
 const std = @import("std");
-const app_doctor = @import("app_doctor");
-const app_init = @import("app_init");
-const app_refresh_cycle = @import("app_refresh_cycle");
-const app_database = @import("app_database");
-const core_config = @import("core_config");
-const core_version = @import("core_version");
-const cli_args = @import("cli_args");
-const cli_auth = @import("cli_auth");
-const cli_maintenance = @import("cli_maintenance");
-const cli_nob = @import("cli_nob");
-const cli_render = @import("cli_render");
-const cli_serve = @import("cli_serve");
+const app_doctor = @import("../app/doctor.zig");
+const app_init = @import("../app/init.zig");
+const app_refresh = @import("../app/refresh.zig");
+const app_database = @import("../app/database.zig");
+const core_config = @import("../core/config.zig");
+const core_version = @import("../core/version.zig");
+const cli_args = @import("args.zig");
+const cli_auth = @import("auth.zig");
+const cli_maintenance = @import("maintenance.zig");
+const cli_nob = @import("nob.zig");
+const cli_render = @import("render.zig");
+const cli_serve = @import("serve.zig");
 
 pub fn run(init: std.process.Init) !void {
     const arena = init.arena.allocator();
@@ -42,10 +42,10 @@ pub fn run(init: std.process.Init) !void {
         try cli_render.printFormatted(init.io, init.gpa, format, app_doctor.writeText, app_doctor.writeJson, .{ctx});
     } else if (std.mem.eql(u8, cmd, "refresh")) {
         if (rest.len != 0) return error.UnexpectedRefreshArgument;
-        const result = try app_refresh_cycle.run(.{ .io = init.io, .gpa = init.gpa, .db = &db, .config = cfg });
+        const result = try app_refresh.run(.{ .io = init.io, .gpa = init.gpa, .db = &db, .config = cfg });
         var out = std.Io.Writer.Allocating.init(init.gpa);
         defer out.deinit();
-        try result.writeJson(init.gpa, &db, &out.writer);
+        try result.writeJson(&out.writer);
         try cli_render.printOwned(init.io, init.gpa, &out);
     } else if (std.mem.eql(u8, cmd, "auth")) {
         try cli_auth.run(.{ .io = init.io, .gpa = init.gpa, .db = &db, .config = cfg }, rest);

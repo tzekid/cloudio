@@ -1,7 +1,7 @@
 const std = @import("std");
-const app_system_control = @import("app_system_control");
-const core_json = @import("core_json");
-const db_store = @import("db_store");
+const app_system_control = @import("system_control.zig");
+const core_json = @import("../core/json.zig");
+const db_store = @import("../db/store.zig");
 
 pub const Context = struct {
     gpa: std.mem.Allocator,

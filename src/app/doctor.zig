@@ -1,10 +1,10 @@
 const std = @import("std");
-const app_render = @import("app_render");
-const core_config = @import("core_config");
-const core_fs = @import("core_fs");
-const core_process = @import("core_process");
-const db_store = @import("db_store");
-const nob_subprocess = @import("nob_subprocess");
+const app_render = @import("render.zig");
+const core_config = @import("../core/config.zig");
+const core_fs = @import("../core/fs.zig");
+const core_process = @import("../core/process.zig");
+const db_store = @import("../db/store.zig");
+const nob_subprocess = @import("../nob/subprocess.zig");
 
 const Allocator = std.mem.Allocator;
 const Config = core_config.Config;

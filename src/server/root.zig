@@ -1,40 +1,28 @@
 const std = @import("std");
-const app_dashboard = @import("app_dashboard");
-const db_store = @import("db_store");
-const http = @import("http");
+const db_store = @import("../db/store.zig");
+const http = @import("../http/root.zig");
 const context = @import("context.zig");
 const pipeline = @import("pipeline.zig");
 
-pub const default_host = "127.0.0.1";
-pub const default_port: u16 = 9328;
 pub const Context = context.Context;
 
 pub const Options = struct {
-    host: []const u8 = default_host,
-    port: u16 = default_port,
-    once: bool = false,
-    dashboard: app_dashboard.Options = .{},
+    host: []const u8 = "127.0.0.1",
+    port: u16 = 9331,
 };
-
-pub fn run(ctx: Context, options: Options) !void {
-    var listener = try listen(ctx.io, options);
-    defer listener.deinit(ctx.io);
-    try runPrepared(ctx, options, &listener);
-}
 
 pub fn listen(io: std.Io, options: Options) !std.Io.net.Server {
     return try http.server.listen(io, options.host, options.port);
 }
 
-pub fn runPrepared(ctx: Context, options: Options, listener: *std.Io.net.Server) !void {
+pub fn serve(ctx: Context, options: Options, listener: *std.Io.net.Server) !void {
     var server_ctx = ctx;
-    server_ctx.dashboard = options.dashboard;
     server_ctx.trust_proxy_client_ip =
         std.mem.eql(u8, options.host, "127.0.0.1") or
         std.mem.eql(u8, options.host, "::1") or
         std.mem.eql(u8, options.host, "localhost");
     std.debug.print("cloudio serve http://{s}:{d}\n", .{ options.host, options.port });
-    try http.server.runPrepared(Context, server_ctx, ctx.io, listener, options.once, connection);
+    try http.server.serve(Context, server_ctx, ctx.io, listener, connection);
 }
 
 fn connection(ctx: Context, stream: std.Io.net.Stream) void {

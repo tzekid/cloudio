@@ -1,7 +1,7 @@
 const std = @import("std");
-const core_process = @import("core_process");
-const core_redact = @import("core_redact");
-const db_store = @import("db_store");
+const core_process = @import("../core/process.zig");
+const core_redact = @import("../core/redact.zig");
+const db_store = @import("../db/store.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;

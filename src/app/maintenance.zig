@@ -5,10 +5,10 @@
 //! `prune` directly only when the operator explicitly enables auto-prune.
 const std = @import("std");
 const sqlite = @import("sqlite");
-const core_config = @import("core_config");
-const core_fs = @import("core_fs");
-const core_json = @import("core_json");
-const db_store = @import("db_store");
+const core_config = @import("../core/config.zig");
+const core_fs = @import("../core/fs.zig");
+const core_json = @import("../core/json.zig");
+const db_store = @import("../db/store.zig");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;

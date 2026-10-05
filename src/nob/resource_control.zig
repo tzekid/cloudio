@@ -1,6 +1,6 @@
 const std = @import("std");
-const source = @import("nob_source");
-const nob = @import("nob_sdk");
+const source = @import("source.zig");
+const nob = @import("nob");
 
 const Allocator = std.mem.Allocator;
 

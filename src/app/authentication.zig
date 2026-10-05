@@ -1,8 +1,8 @@
 const std = @import("std");
-const core_json = @import("core_json");
-const core_time = @import("core_time");
-const db_store = @import("db_store");
-const security_passkeys = @import("security_passkeys");
+const core_json = @import("../core/json.zig");
+const core_time = @import("../core/time.zig");
+const db_store = @import("../db/store.zig");
+const security_passkeys = @import("../security/passkeys.zig");
 
 const Allocator = std.mem.Allocator;
 const Db = db_store.Db;

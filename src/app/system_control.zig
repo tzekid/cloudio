@@ -3,11 +3,11 @@
 //! Commands are executed directly as argv. Availability comes from the
 //! process identity and runtime socket permissions; there is no sudo fallback.
 const std = @import("std");
-const app_writes = @import("app_writes");
-const collector_system = @import("collector_system");
-const core_json = @import("core_json");
-const core_process = @import("core_process");
-const db_store = @import("db_store");
+const app_writes = @import("writes.zig");
+const collector_system = @import("../collectors/system.zig");
+const core_json = @import("../core/json.zig");
+const core_process = @import("../core/process.zig");
+const db_store = @import("../db/store.zig");
 
 const Allocator = std.mem.Allocator;
 

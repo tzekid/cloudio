@@ -1,5 +1,5 @@
 const std = @import("std");
-const cli_render = @import("cli_render");
+const cli_render = @import("render.zig");
 
 pub const ValueArg = union(enum) {
     no_match,

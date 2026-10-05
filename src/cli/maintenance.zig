@@ -1,9 +1,9 @@
 const std = @import("std");
-const app_database = @import("app_database");
-const app_maintenance = @import("app_maintenance");
-const cli_args = @import("cli_args");
-const cli_render = @import("cli_render");
-const core_config = @import("core_config");
+const app_database = @import("../app/database.zig");
+const app_maintenance = @import("../app/maintenance.zig");
+const cli_args = @import("args.zig");
+const cli_render = @import("render.zig");
+const core_config = @import("../core/config.zig");
 
 const Allocator = std.mem.Allocator;
 const Db = app_database.Db;

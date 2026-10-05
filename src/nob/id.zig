@@ -26,7 +26,7 @@ pub fn generate(io: std.Io, epoch_milliseconds: u64) [26]u8 {
 }
 
 test "generated identifiers are protocol-compatible ULIDs" {
-    const nob = @import("nob_sdk");
+    const nob = @import("nob");
     const first = generate(std.testing.io, 1_700_000_000_000);
     const second = generate(std.testing.io, 1_700_000_000_000);
     try std.testing.expect(nob.plan.validUlid(&first));

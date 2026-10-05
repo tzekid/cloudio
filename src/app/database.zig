@@ -1,5 +1,5 @@
 const std = @import("std");
-const db_store = @import("db_store");
+const db_store = @import("../db/store.zig");
 
 pub const Db = db_store.Db;
 
