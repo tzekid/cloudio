@@ -14,7 +14,7 @@ the two provider packages.
 ```text
 cli ─────────┐
 server ──────┼──> app ──> collectors ──> db ──> core
-runtime ─────┘      └───> packages/cloudflare, packages/hostinger
+runtime ─────┘      └───> vendor/cloudflare, vendor/hostinger
 ```
 
 - `src/cli` parses arguments and prints results; it calls `app`.
@@ -26,9 +26,10 @@ runtime ─────┘      └───> packages/cloudflare, packages/host
 - `src/collectors` turns local host state into database rows.
 - `src/db` owns migrations and SQL; `core` and `http` know nothing about
   Cloudio policy.
-- `packages/cloudflare` and `packages/hostinger` are standalone libraries
-  that own provider transport, routes, and response parsing. They are
-  mirrored to their own repositories.
+- `vendor/cloudflare` and `vendor/hostinger` are pinned Git submodules of
+  the canonical `cloudflare-zig` and `hostinger-zig` repositories. These
+  standalone libraries own provider transport, routes, and response parsing;
+  library changes are made in their own repositories.
 
 ## Requests
 

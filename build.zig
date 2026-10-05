@@ -38,7 +38,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run Cloudio and provider package unit tests");
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = cloudio })).step);
     const package_optimize = b.fmt("-Doptimize={s}", .{@tagName(optimize)});
-    for ([_][]const u8{ "packages/cloudflare", "packages/hostinger" }) |package| {
+    for ([_][]const u8{ "vendor/cloudflare", "vendor/hostinger" }) |package| {
         const package_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test", package_optimize });
         package_test.setCwd(b.path(package));
         test_step.dependOn(&package_test.step);

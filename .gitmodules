@@ -1,3 +1,9 @@
 [submodule "vendor/nob"]
 	path = vendor/nob
 	url = git@github.com:tzekid/nob.zig.git
+[submodule "vendor/cloudflare"]
+	path = vendor/cloudflare
+	url = https://github.com/tzekid/cloudflare-zig.git
+[submodule "vendor/hostinger"]
+	path = vendor/hostinger
+	url = https://github.com/tzekid/hostinger-zig.git

@@ -15,7 +15,7 @@ replacement for Caddy, systemd, or provider consoles.
 Use the Zig version pinned in `.zigversion` and system SQLite.
 
 ```sh
-git submodule update --init
+git submodule update --init --recursive
 zig build --system zig-pkg
 ./zig-out/bin/cloudio init
 ./zig-out/bin/cloudio doctor
@@ -195,6 +195,13 @@ observation. See [docs/nob-zig-spec.md](docs/nob-zig-spec.md) and
 
 ## Development
 
+The canonical provider libraries live in
+[cloudflare-zig](https://github.com/tzekid/cloudflare-zig) and
+[hostinger-zig](https://github.com/tzekid/hostinger-zig). Make library changes
+in those repositories, then update the corresponding submodule commit in
+`vendor/cloudflare` or `vendor/hostinger` here. Commit the pin update and run
+`release-check` to verify the client change through Cloudio.
+
 ```sh
 zig build --system zig-pkg check
 tests/setup-browser-e2e.sh
@@ -217,7 +224,7 @@ src/nob/          project protocol and host-control boundaries
 src/runtime/      scheduler and project workers
 src/http/         bounded HTTP/1.1 server
 src/core/         configuration, redaction, process, JSON, time
-packages/         standalone Cloudflare and Hostinger Zig clients, mirrored to their own repositories
+vendor/           pinned Nob, Cloudflare, and Hostinger Git submodules
 web/              page templates and browser assets
 tests/            browser acceptance and fakes
 ```
