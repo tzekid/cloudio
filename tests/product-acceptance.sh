@@ -214,7 +214,7 @@ done
 
 cd "$repo_dir"
 CLOUDIO_DISABLE_ENV_FILES=1 CLOUDIO_CONFIG="$config" "$app_bin" init >/dev/null
-python3 - "$database" <<'PY'
+python3 - "$database" "$fake_docker_state" <<'PY'
 import sqlite3
 import sys
 
@@ -271,25 +271,23 @@ connection.executemany(
         ("cloudflare.collect", "ok", "fixture provider refresh succeeded"),
     ],
 )
+with open(sys.argv[2]) as docker_state:
+    containers = [line.rstrip("\n").split("\t") for line in docker_state if line.strip()]
+connection.executemany(
+    "INSERT INTO containers(name,image,status,ports,raw_text) VALUES(?,?,?,?,?)",
+    [(name, image, status, ports, "\t".join((name, image, status, ports))) for name, image, status, ports in containers],
+)
+connection.execute(
+    "INSERT INTO snapshots(source,kind,status,summary) VALUES(?,?,?,?)",
+    ("system", "containers", "ok", f"observed {len(containers)} containers"),
+)
 connection.execute(
     "INSERT INTO mutation_requests(idempotency_key,request_hash,method,target,actor) VALUES(?,?,?,?,?)",
-    ("fixture-interrupted-mutation", "fixture-hash", "POST", "/api/containers/refresh", "fixture"),
+    ("fixture-interrupted-mutation", "fixture-hash", "POST", "/docker/refresh", "fixture"),
 )
 connection.commit()
 connection.close()
 PY
-
-PATH="$fake_bin:$PATH" \
-  CLOUDIO_DISABLE_ENV_FILES=1 \
-  CLOUDIO_FAKE_DOCKER_STATE="$fake_docker_state" \
-  CLOUDIO_FAKE_DOCKER_CONTROL="$fake_docker_control" \
-  CLOUDIO_FAKE_DOCKER_CALLS="$fake_docker_calls" \
-  CLOUDIO_FAKE_CADDY_ROOT="$caddy_root" \
-  CLOUDIO_FAKE_CADDY_STATE="$caddy_state" \
-  CLOUDIO_FAKE_CADDY_CONTROL="$caddy_control" \
-  CLOUDIO_FAKE_CADDY_CALLS="$caddy_calls" \
-  CLOUDIO_CONFIG="$config" \
-  "$app_bin" system containers >/dev/null
 
 CLOUDIO_DISABLE_ENV_FILES=1 CLOUDIO_CONFIG="$config" \
   "$app_bin" maintenance backup --output "$preflight_backup" >/dev/null

@@ -4,11 +4,6 @@ const app_writes = @import("app_writes");
 const core_json = @import("core_json");
 const http = @import("http");
 
-pub fn badRequest(writer: *std.Io.Writer) !u16 {
-    try writer.writeAll("{\"error\":\"bad_request\"}\n");
-    return 400;
-}
-
 pub fn jsonBody(gpa: std.mem.Allocator, body: []const u8) ?std.json.Parsed(std.json.Value) {
     const parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return null;
     if (parsed.value != .object) {
@@ -20,15 +15,6 @@ pub fn jsonBody(gpa: std.mem.Allocator, body: []const u8) ?std.json.Parsed(std.j
 
 pub fn strField(value: std.json.Value, name: []const u8) ?[]const u8 {
     return core_json.fieldString(value, name);
-}
-
-pub fn boolField(value: std.json.Value, name: []const u8) ?bool {
-    return core_json.fieldBool(value, name);
-}
-
-pub fn intQuery(request: http.Request, key: []const u8, fallback: i64) i64 {
-    const raw = request.query(key) orelse return fallback;
-    return std.fmt.parseInt(i64, raw, 10) catch fallback;
 }
 
 pub fn dashboardOptions(request: http.Request, defaults: app_dashboard.Options) app_dashboard.Options {
@@ -48,91 +34,108 @@ pub fn auditOptions(request: http.Request) app_writes.AuditOptions {
     if (request.query("target")) |value| options.target = value;
     if (request.query("actor")) |value| options.actor = value;
     if (request.query("window")) |value| options.window = app_writes.AuditWindow.parse(value) orelse options.window;
-    options.limit = intQuery(request, "limit", options.limit);
+    if (request.query("limit")) |value| options.limit = std.fmt.parseInt(i64, value, 10) catch options.limit;
     return options.normalized();
 }
 
-pub const ApiErrorResponse = struct {
+/// HTTP status and stable code for an application error. Pages turn the
+/// code into operator feedback; the passkey API returns it as JSON.
+pub const Failure = struct {
     status: u16,
-    body: []const u8,
+    code: []const u8,
 };
 
-pub fn mapApiError(err: anyerror) ApiErrorResponse {
+pub fn failure(err: anyerror) Failure {
     return switch (err) {
-        error.AppBusy => .{ .status = 409, .body = "{\"error\":\"app_busy\"}\n" },
-        error.AppExists => .{ .status = 409, .body = "{\"error\":\"app_exists\"}\n" },
-        error.AppNotFound, error.DeployNotFound => .{ .status = 404, .body = "{\"error\":\"not_found\"}\n" },
-        error.ProjectNotFound => .{ .status = 404, .body = "{\"error\":\"project_not_found\"}\n" },
-        error.InvalidProjectForm => .{ .status = 400, .body = "{\"error\":\"bad_request\"}\n" },
-        error.NobDisabled => .{ .status = 409, .body = "{\"error\":\"nob_disabled\"}\n" },
-        error.ProjectIdConflict => .{ .status = 409, .body = "{\"error\":\"project_id_conflict\"}\n" },
-        error.ManifestDigestMismatch => .{ .status = 409, .body = "{\"error\":\"manifest_changed\"}\n" },
-        error.ProjectStateChanged => .{ .status = 409, .body = "{\"error\":\"project_state_changed\"}\n" },
-        error.ProjectNotTrusted => .{ .status = 409, .body = "{\"error\":\"project_not_approved\"}\n" },
-        error.RunnerNotReady, error.RunnerMetadataMissing => .{ .status = 409, .body = "{\"error\":\"runner_not_ready\"}\n" },
-        error.PlanNotFound, error.RunNotFound => .{ .status = 404, .body = "{\"error\":\"not_found\"}\n" },
-        error.PlanUnavailable, error.PlanBindingChanged, error.SourceChanged, error.RunnerDigestMismatch, error.PlanDigestMismatch => .{ .status = 409, .body = "{\"error\":\"plan_no_longer_current\"}\n" },
-        error.ProjectBusy => .{ .status = 409, .body = "{\"error\":\"project_busy\"}\n" },
-        error.RunnerCacheRootUnsafe, error.RunnerCachePathUnsafe => .{ .status = 409, .body = "{\"error\":\"runner_cache_unsafe\"}\n" },
-        error.PlanRouteMismatch, error.PlanActorMismatch => .{ .status = 403, .body = "{\"error\":\"plan_not_authorized\"}\n" },
-        error.ConfirmationRequired => .{ .status = 428, .body = "{\"error\":\"confirmation_required\"}\n" },
-        error.ProjectConfirmationMismatch => .{ .status = 428, .body = "{\"error\":\"project_confirmation_mismatch\"}\n" },
-        error.DuplicateRunRequest => .{ .status = 409, .body = "{\"error\":\"duplicate_run_request\"}\n" },
-        error.RunNotCancelable => .{ .status = 409, .body = "{\"error\":\"run_not_cancelable\"}\n" },
-        error.InvalidOperationLogPath => .{ .status = 409, .body = "{\"error\":\"operation_log_unavailable\"}\n" },
-        error.UnknownAction, error.ActionUnavailable => .{ .status = 422, .body = "{\"error\":\"action_unavailable\"}\n" },
-        error.SecretBindingNotFound => .{ .status = 404, .body = "{\"error\":\"secret_binding_not_found\"}\n" },
-        error.UndeclaredSecret => .{ .status = 422, .body = "{\"error\":\"secret_not_declared\"}\n" },
-        error.RequiredSecretUnavailable, error.SecretSourceUnavailable, error.ProcessEnvironmentUnavailable => .{ .status = 503, .body = "{\"error\":\"required_secret_unavailable\"}\n" },
-        error.InvalidSecretSourceKind, error.InvalidSecretSourceRef, error.SecretSourcePathNotAbsolute, error.InvalidEnvironmentName, error.ReservedEnvironmentName, error.InvalidSecretFile, error.InvalidSecretValue, error.SecretFilePermissionsTooBroad, error.SecretFileOwnerMismatch => .{ .status = 400, .body = "{\"error\":\"invalid_secret_binding\"}\n" },
-        error.SecretSourceMetadataUnavailable => .{ .status = 503, .body = "{\"error\":\"secret_source_unverifiable\"}\n" },
-        error.UnknownResource => .{ .status = 404, .body = "{\"error\":\"resource_not_found\"}\n" },
-        error.UnknownResourceControl, error.UndeclaredResourceControl, error.UnsupportedResourceControl, error.ResourceControlNotOwned, error.ResourceControlIsReadOnly, error.UnsupportedPrivilege => .{ .status = 422, .body = "{\"error\":\"resource_control_unavailable\"}\n" },
-        error.SystemMutationDisabled => .{ .status = 409, .body = "{\"error\":\"system_mutation_disabled\"}\n" },
-        error.InvalidResourcePlan, error.ResourcePlanIdentityMismatch => .{ .status = 409, .body = "{\"error\":\"resource_plan_invalid\"}\n" },
-        error.JournalctlUnavailable, error.JournalctlFailed => .{ .status = 503, .body = "{\"error\":\"resource_logs_unavailable\"}\n" },
-        error.ManifestUnavailable, error.ProjectNotTrustable => .{ .status = 422, .body = "{\"error\":\"project_not_trustable\"}\n" },
-        error.ProjectManifestNotValid => .{ .status = 422, .body = "{\"error\":\"project_manifest_invalid\"}\n" },
-        error.RunnerBuildFailed, error.RunnerDescribeFailed, error.RunnerObserveFailed => .{ .status = 422, .body = "{\"error\":\"project_runner_failed\"}\n" },
-        error.UnsupportedProtocol, error.ManifestIdentityMismatch, error.ProjectIdentityMismatch, error.SourceIdentityMismatch, error.ProtocolLimitExceeded, error.ProtocolDocumentTooLarge => .{ .status = 422, .body = "{\"error\":\"project_protocol_invalid\"}\n" },
-        error.InvalidZigVersion, error.InvalidZigVersionFile, error.ZigVersionMismatch, error.ToolchainMappingMissing => .{ .status = 422, .body = "{\"error\":\"project_toolchain_unavailable\"}\n" },
-        error.NoRollbackTarget => .{ .status = 409, .body = "{\"error\":\"no_rollback_target\"}\n" },
-        error.ReleaseMissing => .{ .status = 422, .body = "{\"error\":\"release_missing\"}\n" },
-        error.InvalidName, error.SourceRequired, error.SourceConflict, error.WorkdirMissing, error.UnknownRoute => .{ .status = 400, .body = "{\"error\":\"bad_request\"}\n" },
-        error.InvalidContainerName, error.InvalidContainerLogTail, error.ContainerObservationInvalid => .{ .status = 400, .body = "{\"error\":\"invalid_container_request\"}\n" },
-        error.ContainerNotObserved => .{ .status = 404, .body = "{\"error\":\"container_not_observed\"}\n" },
-        error.ContainerActionUnavailable => .{ .status = 409, .body = "{\"error\":\"container_action_unavailable\"}\n" },
-        error.ContainerRefreshInProgress => .{ .status = 409, .body = "{\"error\":\"container_refresh_in_progress\"}\n" },
-        error.RefreshInProgress => .{ .status = 409, .body = "{\"error\":\"refresh_in_progress\"}\n" },
-        error.ContainerCommandFailed => .{ .status = 502, .body = "{\"error\":\"container_command_failed\"}\n" },
-        error.ContainerStateUnconfirmed => .{ .status = 502, .body = "{\"error\":\"container_state_unconfirmed\"}\n" },
-        error.ContainerRuntimeUnavailable, error.ContainerLogsFailed => .{ .status = 503, .body = "{\"error\":\"container_runtime_unavailable\"}\n" },
-        error.InvalidDnsRequest => .{ .status = 400, .body = "{\"error\":\"invalid_dns_request\"}\n" },
-        error.DnsZoneNotConfigured, error.DnsZoneNotObserved => .{ .status = 404, .body = "{\"error\":\"dns_zone_not_observed\"}\n" },
-        error.DnsRecordNotObserved => .{ .status = 404, .body = "{\"error\":\"dns_record_not_observed\"}\n" },
-        error.DnsWriteUnavailable, error.DnsBusy => .{ .status = 409, .body = "{\"error\":\"dns_write_unavailable\"}\n" },
-        error.DnsProviderRejected => .{ .status = 502, .body = "{\"error\":\"dns_provider_rejected\"}\n" },
-        error.DnsProviderUnavailable => .{ .status = 503, .body = "{\"error\":\"dns_provider_unavailable\"}\n" },
-        error.InvalidVpsRequest => .{ .status = 400, .body = "{\"error\":\"invalid_vps_request\"}\n" },
-        error.VpsNotObserved => .{ .status = 404, .body = "{\"error\":\"vps_not_observed\"}\n" },
-        error.VpsActionUnavailable => .{ .status = 409, .body = "{\"error\":\"vps_action_unavailable\"}\n" },
-        error.VpsWriteUnavailable, error.VpsBusy => .{ .status = 409, .body = "{\"error\":\"vps_write_unavailable\"}\n" },
-        error.VpsProviderRejected, error.VpsActionFailed => .{ .status = 502, .body = "{\"error\":\"vps_provider_rejected\"}\n" },
-        error.VpsProviderUnavailable => .{ .status = 503, .body = "{\"error\":\"vps_provider_unavailable\"}\n" },
-        error.InvalidRouteRequest => .{ .status = 400, .body = "{\"error\":\"invalid_caddy_route\"}\n" },
-        error.RouteNotObserved => .{ .status = 404, .body = "{\"error\":\"caddy_route_not_observed\"}\n" },
-        error.RouteAlreadyExists, error.RouteNeedsAdoption, error.RouteNotOwned, error.CaddyBusy, error.CaddyWriteUnavailable, error.CaddyObservationChanged => .{ .status = 409, .body = "{\"error\":\"caddy_write_unavailable\"}\n" },
-        error.CaddyFragmentInvalid, error.CaddyValidationFailed => .{ .status = 422, .body = "{\"error\":\"caddy_validation_failed\"}\n" },
-        error.CaddyWriteFailed => .{ .status = 503, .body = "{\"error\":\"caddy_fragment_write_failed\"}\n" },
-        error.CaddyReloadFailed, error.CaddyVerificationFailed => .{ .status = 502, .body = "{\"error\":\"caddy_apply_failed\"}\n" },
-        error.CaddyRecoveryFailed => .{ .status = 500, .body = "{\"error\":\"caddy_recovery_failed\"}\n" },
-        error.InvalidAuthPolicy, error.InsecureAuthOrigin, error.AuthRpOriginMismatch => .{ .status = 500, .body = "{\"error\":\"auth_policy_invalid\"}\n" },
-        error.InvalidBootstrap, error.InvalidChallenge, error.InvalidPasskeyResponse, error.Unauthorized => .{ .status = 401, .body = "{\"error\":\"authentication_failed\"}\n" },
-        error.AuthAlreadyConfigured, error.CredentialAlreadyRegistered => .{ .status = 409, .body = "{\"error\":\"authentication_conflict\"}\n" },
-        error.AuthNotConfigured => .{ .status = 409, .body = "{\"error\":\"passkey_setup_required\"}\n" },
-        error.LastCredential => .{ .status = 409, .body = "{\"error\":\"last_passkey_cannot_be_removed\"}\n" },
-        error.CredentialNotFound => .{ .status = 404, .body = "{\"error\":\"credential_not_found\"}\n" },
-        error.InvalidCredentialLabel, error.InvalidTransports, error.InvalidBootstrapTtl => .{ .status = 400, .body = "{\"error\":\"bad_request\"}\n" },
-        else => .{ .status = 500, .body = "{\"error\":\"internal\"}\n" },
+        // Projects
+        error.ProjectNotFound => .{ .status = 404, .code = "project_not_found" },
+        error.InvalidProjectForm => .{ .status = 400, .code = "request" },
+        error.NobDisabled => .{ .status = 409, .code = "nob_disabled" },
+        error.ProjectIdConflict => .{ .status = 409, .code = "project_id_conflict" },
+        error.ProjectStateChanged => .{ .status = 409, .code = "project_state_changed" },
+        error.ProjectNotTrusted => .{ .status = 409, .code = "project_not_approved" },
+        error.RunnerNotReady, error.RunnerMetadataMissing => .{ .status = 409, .code = "runner_not_ready" },
+        error.PlanNotFound, error.RunNotFound => .{ .status = 404, .code = "not_found" },
+        error.PlanUnavailable, error.PlanBindingChanged, error.SourceChanged, error.RunnerDigestMismatch, error.PlanDigestMismatch, error.ManifestDigestMismatch => .{ .status = 409, .code = "plan_no_longer_current" },
+        error.ProjectBusy => .{ .status = 409, .code = "project_busy" },
+        error.RunnerCacheRootUnsafe, error.RunnerCachePathUnsafe => .{ .status = 409, .code = "runner_cache_unsafe" },
+        error.PlanRouteMismatch, error.PlanActorMismatch => .{ .status = 403, .code = "plan_not_authorized" },
+        error.ConfirmationRequired, error.ProjectConfirmationMismatch => .{ .status = 428, .code = "confirmation" },
+        error.DuplicateRunRequest => .{ .status = 409, .code = "duplicate_run_request" },
+        error.RunNotCancelable => .{ .status = 409, .code = "run_not_cancelable" },
+        error.UnknownAction, error.ActionUnavailable => .{ .status = 422, .code = "action_unavailable" },
+        error.SecretBindingNotFound => .{ .status = 404, .code = "secret_binding_not_found" },
+        error.UndeclaredSecret => .{ .status = 422, .code = "secret_not_declared" },
+        error.RequiredSecretUnavailable, error.SecretSourceUnavailable, error.ProcessEnvironmentUnavailable => .{ .status = 503, .code = "required_secret_unavailable" },
+        error.InvalidSecretSourceKind, error.InvalidSecretSourceRef, error.SecretSourcePathNotAbsolute, error.InvalidEnvironmentName, error.ReservedEnvironmentName, error.InvalidSecretFile, error.InvalidSecretValue, error.SecretFilePermissionsTooBroad, error.SecretFileOwnerMismatch => .{ .status = 400, .code = "invalid_secret_binding" },
+        error.SecretSourceMetadataUnavailable => .{ .status = 503, .code = "secret_source_unverifiable" },
+        error.UnknownResource => .{ .status = 404, .code = "resource_not_found" },
+        error.UnknownResourceControl, error.UndeclaredResourceControl, error.UnsupportedResourceControl, error.ResourceControlNotOwned, error.ResourceControlIsReadOnly, error.UnsupportedPrivilege => .{ .status = 422, .code = "resource_control_unavailable" },
+        error.SystemMutationDisabled => .{ .status = 409, .code = "system_mutation_disabled" },
+        error.InvalidResourcePlan, error.ResourcePlanIdentityMismatch => .{ .status = 409, .code = "resource_plan_invalid" },
+        error.ManifestUnavailable, error.ProjectNotTrustable => .{ .status = 422, .code = "project_not_trustable" },
+        error.ProjectManifestNotValid => .{ .status = 422, .code = "project_manifest_invalid" },
+        error.RunnerBuildFailed, error.RunnerDescribeFailed, error.RunnerObserveFailed, error.RunnerPlanFailed => .{ .status = 422, .code = "project_runner_failed" },
+        error.UnsupportedProtocol, error.ManifestIdentityMismatch, error.ProjectIdentityMismatch, error.SourceIdentityMismatch, error.ProtocolLimitExceeded, error.ProtocolDocumentTooLarge => .{ .status = 422, .code = "project_protocol_invalid" },
+        error.InvalidZigVersion, error.InvalidZigVersionFile, error.ZigVersionMismatch, error.ToolchainMappingMissing => .{ .status = 422, .code = "project_toolchain_unavailable" },
+
+        // Docker
+        error.InvalidContainerName, error.InvalidContainerLogTail, error.ContainerObservationInvalid => .{ .status = 400, .code = "invalid_container_request" },
+        error.ContainerNotObserved => .{ .status = 404, .code = "container_not_observed" },
+        error.ContainerActionUnavailable => .{ .status = 409, .code = "container_action_unavailable" },
+        error.ContainerRefreshInProgress => .{ .status = 409, .code = "container_refresh_in_progress" },
+        error.ContainerCommandFailed => .{ .status = 502, .code = "container_command_failed" },
+        error.ContainerStateUnconfirmed => .{ .status = 502, .code = "container_state_unconfirmed" },
+        error.ContainerRuntimeUnavailable, error.ContainerLogsFailed => .{ .status = 503, .code = "container_runtime_unavailable" },
+
+        // DNS
+        error.InvalidDnsRequest => .{ .status = 400, .code = "invalid_dns_request" },
+        error.DnsZoneNotConfigured, error.DnsZoneNotObserved => .{ .status = 404, .code = "dns_zone_not_observed" },
+        error.DnsRecordNotObserved => .{ .status = 404, .code = "dns_record_not_observed" },
+        error.DnsWriteUnavailable, error.DnsBusy => .{ .status = 409, .code = "dns_write_unavailable" },
+        error.DnsProviderRejected => .{ .status = 502, .code = "dns_provider_rejected" },
+        error.DnsProviderUnavailable => .{ .status = 503, .code = "dns_provider_unavailable" },
+
+        // VPS
+        error.InvalidVpsRequest => .{ .status = 400, .code = "invalid_vps_request" },
+        error.VpsNotObserved => .{ .status = 404, .code = "vps_not_observed" },
+        error.VpsActionUnavailable => .{ .status = 409, .code = "vps_action_unavailable" },
+        error.VpsWriteUnavailable, error.VpsBusy => .{ .status = 409, .code = "vps_write_unavailable" },
+        error.VpsProviderRejected, error.VpsActionFailed => .{ .status = 502, .code = "vps_provider_rejected" },
+        error.VpsProviderUnavailable => .{ .status = 503, .code = "vps_provider_unavailable" },
+
+        // Routes
+        error.InvalidRouteRequest => .{ .status = 400, .code = "invalid_caddy_route" },
+        error.RouteNotObserved => .{ .status = 404, .code = "caddy_route_not_observed" },
+        error.RouteAlreadyExists => .{ .status = 409, .code = "caddy_route_exists" },
+        error.RouteNeedsAdoption => .{ .status = 409, .code = "caddy_adoption_required" },
+        error.RouteNotOwned => .{ .status = 409, .code = "caddy_route_not_owned" },
+        error.CaddyBusy, error.CaddyWriteUnavailable => .{ .status = 409, .code = "caddy_write_unavailable" },
+        error.CaddyObservationChanged => .{ .status = 409, .code = "caddy_observation_changed" },
+        error.CaddyFragmentInvalid, error.CaddyValidationFailed => .{ .status = 422, .code = "caddy_validation_failed" },
+        error.CaddyWriteFailed => .{ .status = 503, .code = "caddy_fragment_write_failed" },
+        error.CaddyReloadFailed => .{ .status = 502, .code = "caddy_reload_failed" },
+        error.CaddyVerificationFailed => .{ .status = 502, .code = "caddy_verification_failed" },
+        error.CaddyRecoveryFailed => .{ .status = 500, .code = "caddy_recovery_failed" },
+
+        // Browser Run
+        error.InvalidBrowserRunRequest => .{ .status = 400, .code = "invalid_request" },
+        error.BrowserRunTokenRequired => .{ .status = 409, .code = "token_required" },
+        error.BrowserRunAccountNotObserved => .{ .status = 404, .code = "account_not_observed" },
+        error.BrowserRunDestinationPolicyRequired, error.BrowserRunDestinationDenied => .{ .status = 403, .code = "destination_denied" },
+        error.BrowserRunBusy => .{ .status = 409, .code = "busy" },
+
+        // Dashboard
+        error.RefreshInProgress => .{ .status = 409, .code = "in_progress" },
+
+        // Passkeys
+        error.InvalidAuthPolicy, error.InsecureAuthOrigin, error.AuthRpOriginMismatch => .{ .status = 500, .code = "auth_policy_invalid" },
+        error.InvalidBootstrap, error.InvalidChallenge, error.InvalidPasskeyResponse, error.Unauthorized => .{ .status = 401, .code = "authentication_failed" },
+        error.AuthAlreadyConfigured, error.CredentialAlreadyRegistered => .{ .status = 409, .code = "authentication_conflict" },
+        error.AuthNotConfigured => .{ .status = 409, .code = "passkey_setup_required" },
+        error.LastCredential => .{ .status = 409, .code = "last_passkey_cannot_be_removed" },
+        error.CredentialNotFound => .{ .status = 404, .code = "credential_not_found" },
+        error.InvalidCredentialLabel, error.InvalidTransports, error.InvalidBootstrapTtl => .{ .status = 400, .code = "bad_request" },
+        else => .{ .status = 500, .code = "internal" },
     };
 }

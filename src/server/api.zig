@@ -1,10 +1,35 @@
+//! Passkey JSON API used by the setup, login, and security page scripts.
+//! Everything else in Cloudio is a server-rendered page or native form.
+
 const std = @import("std");
 const app_authentication = @import("app_authentication");
 const core_json = @import("core_json");
 const http = @import("http");
-const auth = @import("../auth.zig");
-const common = @import("../common.zig");
-const context = @import("../context.zig");
+const auth = @import("auth.zig");
+const common = @import("common.zig");
+const context = @import("context.zig");
+
+
+pub const Handler = *const fn (context.Context, http.Request, http.Params, *std.Io.Writer, *std.Io.Writer) anyerror!u16;
+
+pub const Route = struct {
+    method: []const u8,
+    pattern: []const u8,
+    handler: Handler,
+    /// Public routes are rate limited; the rest require a session and CSRF header.
+    public: bool = false,
+};
+
+pub const all = [_]Route{
+    .{ .method = "POST", .pattern = "/api/auth/setup/options", .handler = setupOptions, .public = true },
+    .{ .method = "POST", .pattern = "/api/auth/setup/verify", .handler = setupVerify, .public = true },
+    .{ .method = "POST", .pattern = "/api/auth/login/options", .handler = loginOptions, .public = true },
+    .{ .method = "POST", .pattern = "/api/auth/login/verify", .handler = loginVerify, .public = true },
+    .{ .method = "POST", .pattern = "/api/auth/credentials/options", .handler = credentialOptions },
+    .{ .method = "POST", .pattern = "/api/auth/credentials/verify", .handler = credentialVerify },
+    .{ .method = "PATCH", .pattern = "/api/auth/credentials/:id", .handler = credentialLabel },
+    .{ .method = "DELETE", .pattern = "/api/auth/credentials/:id", .handler = credentialRevoke },
+};
 
 pub fn setupOptions(
     ctx: context.Context,
@@ -73,38 +98,6 @@ pub fn loginVerify(
     return 200;
 }
 
-pub fn session(
-    ctx: context.Context,
-    _: http.Request,
-    _: http.Params,
-    writer: *std.Io.Writer,
-    _: *std.Io.Writer,
-) !u16 {
-    const user_id = ctx.auth_user_id orelse return error.Unauthorized;
-    const csrf_token = ctx.auth_csrf_token orelse return error.Unauthorized;
-    try writer.writeAll("{\"authenticated\":true,\"user_id\":");
-    try core_json.writeString(writer, user_id);
-    try writer.writeAll(",\"csrf_token\":");
-    try core_json.writeString(writer, csrf_token);
-    try writer.writeAll("}\n");
-    return 200;
-}
-
-pub fn logout(
-    ctx: context.Context,
-    request: http.Request,
-    _: http.Params,
-    writer: *std.Io.Writer,
-    extra_headers: *std.Io.Writer,
-) !u16 {
-    if (auth.sessionToken(request, isSecure(ctx))) |token| {
-        try app_authentication.revokeSession(appContext(ctx), token);
-    }
-    try auth.writeClearedSessionCookie(extra_headers, isSecure(ctx));
-    try writer.writeAll("{\"ok\":true}\n");
-    return 200;
-}
-
 pub fn credentialOptions(
     ctx: context.Context,
     _: http.Request,
@@ -132,18 +125,6 @@ pub fn credentialVerify(
     }
     try writer.writeAll("{\"ok\":true}\n");
     return 201;
-}
-
-pub fn credentials(
-    ctx: context.Context,
-    _: http.Request,
-    _: http.Params,
-    writer: *std.Io.Writer,
-    _: *std.Io.Writer,
-) !u16 {
-    _ = ctx.auth_user_id orelse return error.Unauthorized;
-    try app_authentication.writeCredentials(appContext(ctx), writer);
-    return 200;
 }
 
 pub fn credentialLabel(
@@ -280,4 +261,12 @@ test "flat WebAuthn response parser is strict about required fields" {
     try std.testing.expectEqualStrings("challenge", parsed.value.challenge_id);
     try std.testing.expectEqualStrings("MacBook", parsed.value.label);
     try std.testing.expect(parseRegistration(gpa, "{}", null) == null);
+}
+
+test "route table matches named params and rejects removed endpoints" {
+    const credential = http.router.match(Route, &all, "PATCH", "/api/auth/credentials/42").?;
+    try std.testing.expectEqualStrings("42", credential.params.get("id").?);
+    try std.testing.expect(!credential.route.public);
+    try std.testing.expect(http.router.match(Route, &all, "GET", "/api/auth/session") == null);
+    try std.testing.expect(!http.router.pathExists(Route, &all, "/api/dns/records"));
 }

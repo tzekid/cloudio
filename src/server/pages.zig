@@ -3423,8 +3423,8 @@ test "every authenticated page has a useful server-rendered empty state" {
         try std.testing.expect(std.mem.indexOf(u8, output.written(), "aria-current=\"page\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, output.written(), "loading-state") == null);
         try std.testing.expect(std.mem.indexOf(u8, output.written(), "class=\"theme-light\"") != null);
-        try std.testing.expect(std.mem.indexOf(u8, output.written(), "class=\"theme-light\"") <
-            std.mem.indexOf(u8, output.written(), "/assets/app.css"));
+        try std.testing.expect(std.mem.indexOf(u8, output.written(), "class=\"theme-light\"").? <
+            std.mem.indexOf(u8, output.written(), "/assets/app.css").?);
         if (std.mem.eql(u8, path, "/docker.html")) {
             try std.testing.expect(std.mem.indexOf(u8, output.written(), "&lt;script&gt;alert(1)&lt;/script&gt;") != null);
             try std.testing.expect(std.mem.indexOf(u8, output.written(), "<script>alert(1)</script>") == null);

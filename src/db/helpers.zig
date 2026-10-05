@@ -1003,7 +1003,7 @@ pub fn isKnownTable(table: []const u8) bool {
         "cloudflare_resources", "cloudflare_inventory_items", "cloudflare_security_items", "hostinger_vps",    "hostinger_metrics",
         "hostinger_resources",  "hostinger_inventory_items",  "caddy_sites",               "caddy_upstreams",  "projects",
         "system_metrics",       "services",                   "sockets",                   "containers",       "audit_events",
-        "settings",
+        "settings",             "mutation_requests",
     };
     for (known) |name| if (std.mem.eql(u8, table, name)) return true;
     return false;

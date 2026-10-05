@@ -48,23 +48,12 @@ function observePage(page, errors) {
     if (message.type() === "error") {
       const location = message.location();
       const expectedHttpRejection =
-        (location.url === `${origin}/api/refresh` && message.text().includes("403")) ||
-        (location.url.startsWith(`${origin}/api/caddy/routes`) && /\b(400|404|409)\b/.test(message.text())) ||
-        (location.url === `${origin}/api/caddy/apply` && /\b(409|422|500|502|503)\b/.test(message.text())) ||
         (location.url === `${origin}/routes/apply` && /\b(409|422|428|502|503)\b/.test(message.text())) ||
-        (location.url === `${origin}/api/containers/action` && /\b(400|404|409|502)\b/.test(message.text())) ||
-        (location.url.startsWith(`${origin}/api/containers/logs?`) && /\b(400|503)\b/.test(message.text())) ||
-        (location.url === `${origin}/api/containers/refresh` && message.text().includes("503")) ||
-        (location.url.startsWith(`${origin}/api/dns/records`) && /\b(400|404|409|502|503)\b/.test(message.text())) ||
         (location.url === `${origin}/dns/record` && /\b(428|502)\b/.test(message.text())) ||
         (location.url === `${origin}/browser/run` && /\b(400|403|409|422|429|500|502|503)\b/.test(message.text())) ||
-        (location.url === `${origin}/api/vps/action` && /\b(400|404|409|502|503)\b/.test(message.text())) ||
-        (location.url === `${origin}/api/vps/refresh` && /\b(409|502|503)\b/.test(message.text())) ||
         (location.url === `${origin}/vps/action` && /\b(428|502)\b/.test(message.text())) ||
-        (location.url.startsWith(`${origin}/api/nob/projects/`) && /\b(409|422|503)\b/.test(message.text())) ||
         (location.url === `${origin}/projects/action` && /\b(409|422|428|503)\b/.test(message.text())) ||
-        (location.url.startsWith(`${origin}/api/auth/credentials/`) && message.text().includes("409")) ||
-        (location.url === `${origin}/api/auth/session` && message.text().includes("401"));
+        (location.url.startsWith(`${origin}/api/auth/credentials/`) && message.text().includes("409"));
       if (expectedHttpRejection) return;
       errors.push(`console: ${location.url || "unknown"} ${message.text()}`);
     }
@@ -84,49 +73,27 @@ async function assertRendered(page, controlSelector) {
   assert.deepEqual(await page.evaluate(() => window.__cspViolations || []), []);
 }
 
-async function apiMutation(page, pathName, body, key, confirm = false, method = "POST") {
-  return page.evaluate(async ({ pathName: target, body: payload, key: requestKey, confirm: needsConfirm, method: requestMethod }) => {
-    const session = await fetch("/api/auth/session", { credentials: "same-origin" }).then((response) => response.json());
-    const headers = {
-      "Content-Type": "application/json",
-      "X-Cloudio-CSRF": session.csrf_token,
-      "Idempotency-Key": requestKey,
-    };
-    if (needsConfirm) headers["X-Cloudio-Confirm"] = "confirmed";
-    const response = await fetch(target, {
-      method: requestMethod,
-      credentials: "same-origin",
-      headers,
-      body: JSON.stringify(payload || {}),
-    });
-    let responseBody = null;
-    try {
-      responseBody = await response.json();
-    } catch (_) {
-      responseBody = null;
-    }
-    return {
-      status: response.status,
-      body: responseBody,
-      replayed: response.headers.get("Idempotency-Replayed"),
-    };
-  }, { pathName, body, key, confirm, method });
+// Posts a native form directly, bypassing the page's own controls so guard
+// paths the UI hides (stale plans, unobserved IDs, invalid states) stay covered.
+async function formPost(page, action, fields, key) {
+  const csrf = await page.locator('input[name="csrf_token"]').first().inputValue();
+  const response = await page.request.post(`${origin}${action}`, {
+    headers: { Origin: origin },
+    form: { csrf_token: csrf, idempotency_key: key, ...fields },
+    maxRedirects: 0,
+  });
+  return {
+    status: response.status(),
+    location: response.headers()["location"] || "",
+    replayed: response.headers()["idempotency-replayed"],
+    text: await response.text(),
+  };
 }
 
-async function auditEntries(page) {
-  const audit = await page.evaluate(() => fetch("/api/audit?limit=500", {
-    credentials: "same-origin",
-  }).then((response) => response.json()));
-  return audit.entries || [];
-}
-
-async function auditCount(page, action, target, result = null) {
-  return (await auditEntries(page)).filter((entry) => entry.action === action && entry.target === target &&
-    (result === null || entry.result === result)).length;
-}
-
-async function dockerAuditCount(page, action, target) {
-  return auditCount(page, action, target);
+function auditCount(action, target, result = null) {
+  const sql = "SELECT COUNT(*) FROM audit_actions WHERE kind=? AND target=?" + (result === null ? "" : " AND result=?");
+  const params = result === null ? [action, target] : [action, target, result];
+  return Number(execFileSync("python3", ["-c", "import json,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute(sys.argv[2], json.loads(sys.argv[3])).fetchone()[0])", databasePath, sql, JSON.stringify(params)]).toString().trim());
 }
 
 function cloudflareCallCount(method) {
@@ -236,15 +203,16 @@ async function checkProjectsEnhanced(page) {
   assert.match(await page.locator("#nob-project-detail").innerText(), /Approval needed/);
   assert.match(await page.locator("#nob-project-detail").innerText(), /Approve and prepare this exact manifest first/);
 
-  let blocked = await apiMutation(page, `/api/nob/projects/${projectId}/actions/check/plan`, { parameters: { channel: "fast" } }, "projects-unapproved-plan-0001");
+  const planCheck = { operation: "plan", project: projectId, action_id: "check", "param.channel": "fast" };
+  let blocked = await formPost(page, "/projects/action", planCheck, "projects-unapproved-plan-0001");
   assert.equal(blocked.status, 409);
-  assert.equal(blocked.body.error, "project_not_approved");
+  assert.match(blocked.text, /Approve the current manifest/);
 
   await submitProjectForm(page, projectForm(page, "trust"));
   assert.equal(new URL(page.url()).searchParams.get("result"), "trusted");
-  blocked = await apiMutation(page, `/api/nob/projects/${projectId}/actions/check/plan`, { parameters: { channel: "fast" } }, "projects-unprepared-plan-0001");
+  blocked = await formPost(page, "/projects/action", planCheck, "projects-unprepared-plan-0001");
   assert.equal(blocked.status, 409);
-  assert.equal(blocked.body.error, "runner_not_ready");
+  assert.match(blocked.text, /Prepare the approved project runner/);
 
   const secretRow = page.locator("#nob-project-detail table tr", { hasText: "fixture-token" });
   const bindForm = projectForm(page, "secret-bind", secretRow);
@@ -263,15 +231,14 @@ async function checkProjectsEnhanced(page) {
   assert.match(await page.locator("#nob-project-detail").innerText(), /System-scope services are outside/);
   assert.match(await page.locator("#nob-project-detail").innerText(), /global kill switch/);
 
-  blocked = await apiMutation(page, `/api/nob/projects/${projectId}/resources/observed-service/start/plan`, {}, "projects-observed-control-0001");
+  const resourcePlan = (resource) => ({ operation: "resource-plan", project: projectId, resource_id: resource, control_name: "start" });
+  blocked = await formPost(page, "/projects/action", resourcePlan("observed-service"), "projects-observed-control-0001");
   assert.equal(blocked.status, 422);
-  assert.equal(blocked.body.error, "resource_control_unavailable");
-  blocked = await apiMutation(page, `/api/nob/projects/${projectId}/resources/system-service/start/plan`, {}, "projects-system-control-0001");
+  blocked = await formPost(page, "/projects/action", resourcePlan("system-service"), "projects-system-control-0001");
   assert.equal(blocked.status, 422);
-  assert.equal(blocked.body.error, "resource_control_unavailable");
-  blocked = await apiMutation(page, `/api/nob/projects/${projectId}/resources/user-service/start/plan`, {}, "projects-killswitch-control-0001");
+  blocked = await formPost(page, "/projects/action", resourcePlan("user-service"), "projects-killswitch-control-0001");
   assert.equal(blocked.status, 409);
-  assert.equal(blocked.body.error, "system_mutation_disabled");
+  assert.match(blocked.text, /kill switch blocks/);
 
   const observeResponse = await submitProjectForm(page, projectForm(page, "observe"));
   assert.equal(observeResponse.status(), 303);
@@ -335,9 +302,11 @@ async function checkProjectsEnhanced(page) {
   await page.goto(`${origin}/projects.html?project=${projectId}`, { waitUntil: "load" });
   assert.match(await page.locator("#nob-project-detail").innerText(), /Changed — review/);
   assert.match(await page.locator("#nob-project-detail").innerText(), /Not prepared/);
-  const staleRun = await apiMutation(page, `/api/nob/projects/${projectId}/actions/check/run`, { plan_id: staleManifestPlan }, "projects-stale-manifest-run-0001", true);
+  const staleRun = await formPost(page, "/projects/action", {
+    operation: "run", project: projectId, action_id: "check", plan_id: staleManifestPlan, confirmation: "confirmed",
+  }, "projects-stale-manifest-run-0001");
   assert.equal(staleRun.status, 409);
-  assert.equal(staleRun.body.error, "plan_no_longer_current");
+  assert.match(staleRun.text, /plan is no longer current/);
   fs.writeFileSync(manifestPath, originalManifest);
   const [restoreScanResponse] = await Promise.all([
     page.waitForResponse((candidate) => candidate.request().method() === "POST" && new URL(candidate.url()).pathname === "/projects/scan", { timeout: 120_000 }),
@@ -660,10 +629,9 @@ async function enrollAndCheckEnhanced(browser) {
   assert.equal((await context.cookies()).find((cookie) => cookie.name === "cloudio_theme")?.value, "dark");
 
   assert.equal((await page.request.get(`${origin}/apps.html`)).status(), 404);
-  assert.equal((await page.request.get(`${origin}/api/apps`)).status(), 404);
-  assert.equal((await page.request.get(`${origin}/api/topology`)).status(), 404);
-  assert.equal((await page.request.get(`${origin}/api/topology/changes`)).status(), 404);
-  assert.equal((await page.request.post(`${origin}/api/actions/plan`)).status(), 404);
+  for (const removed of ["/api/apps", "/api/topology", "/api/dashboard", "/api/audit", "/api/dns/records", "/api/auth/session"]) {
+    assert.equal((await page.request.get(`${origin}${removed}`)).status(), 404, `${removed} must stay removed`);
+  }
   assert.equal(await page.locator('a[href="/apps.html"]').count(), 0);
 
   await page.goto(`${origin}/`, { waitUntil: "load" });
@@ -738,12 +706,14 @@ async function enrollAndCheckEnhanced(browser) {
   assert.equal(await page.locator('[data-route-host="fixture.example.test"]').count(), 1, "failed Caddy collection must retain last-good routes");
 
   const caddyCallsBeforeInvalid = fs.readFileSync(caddyCallsPath, "utf8");
-  const invalidRoute = await apiMutation(page, "/api/caddy/routes", {
+  const invalidRoute = await formPost(page, "/routes/route", {
     action: "create", host: "INVALID HOST", upstream: "127.0.0.1:9000",
   }, "browser-caddy-invalid-route-0001");
   assert.equal(invalidRoute.status, 400);
-  assert.equal(invalidRoute.body.error, "invalid_caddy_route");
-  const missingRoute = await apiMutation(page, "/api/caddy/routes?host=missing.example.test", {}, "browser-caddy-missing-route-0001", true, "DELETE");
+  assert.match(invalidRoute.text, /Use one lowercase hostname/);
+  const missingRoute = await formPost(page, "/routes/route", {
+    action: "delete", host: "missing.example.test", confirmation: "missing.example.test",
+  }, "browser-caddy-missing-route-0001");
   assert.equal(missingRoute.status, 404);
   assert.equal(fs.readFileSync(caddyCallsPath, "utf8"), caddyCallsBeforeInvalid, "invalid and unobserved routes must not invoke Caddy");
 
@@ -769,18 +739,18 @@ async function enrollAndCheckEnhanced(browser) {
 
   const initialApplyKey = "browser-caddy-initial-apply-0001";
   const reloadsBeforeInitialApply = caddyCallCount("reload ");
-  const initialApply = await apiMutation(page, "/api/caddy/apply", {}, initialApplyKey, true);
-  assert.equal(initialApply.status, 200);
-  assert.equal(initialApply.body.verified, true);
+  const initialApply = await formPost(page, "/routes/apply", { confirmation: "APPLY" }, initialApplyKey);
+  assert.equal(initialApply.status, 303);
+  assert.equal(initialApply.location, "/routes.html?result=apply");
   assert.match(caddyOwnedText(), /^# Managed by Cloudio/m);
   assert.match(caddyOwnedText(), /app\.example\.test \{\n\treverse_proxy 127\.0\.0\.1:9101/);
   assert.equal(caddyCallCount("reload "), reloadsBeforeInitialApply + 1);
-  const initialApplyAuditCount = await auditCount(page, "caddy.apply", caddyOwnedPath, "ok");
-  const replayedInitialApply = await apiMutation(page, "/api/caddy/apply", {}, initialApplyKey, true);
-  assert.equal(replayedInitialApply.status, 200);
+  const initialApplyAuditCount = auditCount("caddy.apply", caddyOwnedPath, "ok");
+  const replayedInitialApply = await formPost(page, "/routes/apply", { confirmation: "APPLY" }, initialApplyKey);
+  assert.equal(replayedInitialApply.status, 303);
   assert.equal(replayedInitialApply.replayed, "true");
   assert.equal(caddyCallCount("reload "), reloadsBeforeInitialApply + 1);
-  assert.equal(await auditCount(page, "caddy.apply", caddyOwnedPath, "ok"), initialApplyAuditCount);
+  assert.equal(auditCount("caddy.apply", caddyOwnedPath, "ok"), initialApplyAuditCount);
 
   await page.goto(`${origin}/routes.html?edit=app.example.test`, { waitUntil: "load" });
   await page.locator("#route-upstream").fill("127.0.0.1:9199");
@@ -789,29 +759,29 @@ async function enrollAndCheckEnhanced(browser) {
     page.locator('#route-form button[type="submit"]').click(),
   ]);
   const activeBeforeFailures = caddyOwnedText();
-  const failedApplyAuditBefore = await auditCount(page, "caddy.apply", caddyOwnedPath, "error");
+  const failedApplyAuditBefore = auditCount("caddy.apply", caddyOwnedPath, "error");
 
   fs.writeFileSync(caddyControlPath, "validate-fail\n");
-  const invalidApply = await apiMutation(page, "/api/caddy/apply", {}, "browser-caddy-invalid-apply-0001", true);
+  const invalidApply = await formPost(page, "/routes/apply", { confirmation: "APPLY" }, "browser-caddy-invalid-apply-0001");
   assert.equal(invalidApply.status, 422);
-  assert.equal(invalidApply.body.error, "caddy_validation_failed");
+  assert.match(invalidApply.text, /Caddy rejected the candidate/);
   assert.equal(caddyOwnedText(), activeBeforeFailures);
   fs.writeFileSync(caddyControlPath, "");
-  assert.equal((await apiMutation(page, "/api/caddy/refresh", {}, "browser-caddy-refresh-after-invalid-0001")).status, 200);
+  assert.equal((await formPost(page, "/routes/refresh", {}, "browser-caddy-refresh-after-invalid-0001")).status, 303);
 
   fs.writeFileSync(caddyControlPath, "reload-fail\n");
-  const reloadFailure = await apiMutation(page, "/api/caddy/apply", {}, "browser-caddy-reload-fail-0001", true);
+  const reloadFailure = await formPost(page, "/routes/apply", { confirmation: "APPLY" }, "browser-caddy-reload-fail-0001");
   assert.equal(reloadFailure.status, 502);
-  assert.equal(reloadFailure.body.error, "caddy_apply_failed");
+  assert.match(reloadFailure.text, /Caddy reload failed/);
   assert.equal(caddyOwnedText(), activeBeforeFailures, "reload failure must restore the previous fragment");
-  assert.equal((await apiMutation(page, "/api/caddy/refresh", {}, "browser-caddy-refresh-after-reload-0001")).status, 200);
+  assert.equal((await formPost(page, "/routes/refresh", {}, "browser-caddy-refresh-after-reload-0001")).status, 303);
 
   fs.writeFileSync(caddyControlPath, "verify-fail\n");
-  const verifyFailure = await apiMutation(page, "/api/caddy/apply", {}, "browser-caddy-verify-fail-0001", true);
+  const verifyFailure = await formPost(page, "/routes/apply", { confirmation: "APPLY" }, "browser-caddy-verify-fail-0001");
   assert.equal(verifyFailure.status, 502);
-  assert.equal(verifyFailure.body.error, "caddy_apply_failed");
+  assert.match(verifyFailure.text, /Runtime verification failed/);
   assert.equal(caddyOwnedText(), activeBeforeFailures, "verification failure must restore the previous fragment");
-  assert.equal((await apiMutation(page, "/api/caddy/refresh", {}, "browser-caddy-refresh-after-verify-0001")).status, 200);
+  assert.equal((await formPost(page, "/routes/refresh", {}, "browser-caddy-refresh-after-verify-0001")).status, 303);
 
   sqliteScript(`
     CREATE TRIGGER fixture_fail_caddy_apply_bookkeeping
@@ -819,24 +789,23 @@ async function enrollAndCheckEnhanced(browser) {
     WHEN NEW.source='caddy' AND NEW.kind='owned-fragment' AND NEW.summary='Applied and verified the Cloudio-owned Caddy fragment.'
     BEGIN SELECT RAISE(ABORT, 'fixture bookkeeping failure'); END;
   `);
-  const bookkeepingFailure = await apiMutation(page, "/api/caddy/apply", {}, "browser-caddy-bookkeeping-fail-0001", true);
+  const bookkeepingFailure = await formPost(page, "/routes/apply", { confirmation: "APPLY" }, "browser-caddy-bookkeeping-fail-0001");
   assert.equal(bookkeepingFailure.status, 500);
   assert.equal(caddyOwnedText(), activeBeforeFailures, "bookkeeping failure must roll back the live Caddy change");
   sqliteScript("DROP TRIGGER fixture_fail_caddy_apply_bookkeeping;");
-  assert.equal((await apiMutation(page, "/api/caddy/refresh", {}, "browser-caddy-refresh-after-bookkeeping-0001")).status, 200);
+  assert.equal((await formPost(page, "/routes/refresh", {}, "browser-caddy-refresh-after-bookkeeping-0001")).status, 303);
 
   fs.chmodSync(caddyOwnedPath, 0o440);
   await page.goto(`${origin}/routes.html`, { waitUntil: "load" });
   assert.equal(await page.locator('#apply-btn[aria-disabled="true"]').count(), 1);
   assert.match(await page.locator("#caddy-apply-capability").innerText(), /cannot replace/i);
-  const writeDenied = await apiMutation(page, "/api/caddy/apply", {}, "browser-caddy-write-denied-0001", true);
+  const writeDenied = await formPost(page, "/routes/apply", { confirmation: "APPLY" }, "browser-caddy-write-denied-0001");
   assert.equal(writeDenied.status, 409);
-  assert.equal(writeDenied.body.error, "caddy_write_unavailable");
   assert.equal(caddyOwnedText(), activeBeforeFailures);
-  assert.equal(await auditCount(page, "caddy.apply", caddyOwnedPath, "error"), failedApplyAuditBefore + 5,
+  assert.equal(auditCount("caddy.apply", caddyOwnedPath, "error"), failedApplyAuditBefore + 5,
     "validation, reload, verification, bookkeeping, and permission failures must each be audited once");
   fs.chmodSync(caddyOwnedPath, 0o640);
-  assert.equal((await apiMutation(page, "/api/caddy/refresh", {}, "browser-caddy-refresh-after-permission-0001")).status, 200);
+  assert.equal((await formPost(page, "/routes/refresh", {}, "browser-caddy-refresh-after-permission-0001")).status, 303);
 
   await page.goto(`${origin}/routes.html?confirm=apply`, { waitUntil: "load" });
   assert.equal(await page.locator("#apply-confirmation-panel").isVisible(), true);
@@ -857,7 +826,7 @@ async function enrollAndCheckEnhanced(browser) {
   assert.match(caddyOwnedText(), /reverse_proxy 127\.0\.0\.1:9199/);
 
   fs.appendFileSync(caddyOwnedPath, "\nadopted.example.test {\n\treverse_proxy 127.0.0.1:9200\n}\n");
-  assert.equal((await apiMutation(page, "/api/caddy/refresh", {}, "browser-caddy-adopt-refresh-0001")).status, 200);
+  assert.equal((await formPost(page, "/routes/refresh", {}, "browser-caddy-adopt-refresh-0001")).status, 303);
   await page.goto(`${origin}/routes.html`, { waitUntil: "load" });
   assert.equal(await page.locator('#apply-btn[aria-disabled="true"]').count(), 1);
   const adoptForm = page.locator('#adopt-routes form', { hasText: "adopted.example.test" });
@@ -870,7 +839,6 @@ async function enrollAndCheckEnhanced(browser) {
   await page.waitForURL((url) => url.pathname === "/routes.html" && url.searchParams.get("result") === "adopt");
   await page.waitForLoadState("load");
   assert.equal(await page.locator('[data-route-host="adopted.example.test"]').count(), 1);
-  assert.equal((await page.request.post(`${origin}/api/caddy/import`)).status(), 404);
 
   await page.goto(`${origin}/audit.html?category=routes&result=failure&window=all&limit=500`, { waitUntil: "load" });
   const caddyFailureRow = page.locator('tr[data-audit-category="routes"]', { hasText: "caddy.apply" }).first();
@@ -896,12 +864,10 @@ async function enrollAndCheckEnhanced(browser) {
   assert.equal(await page.locator('[data-dns-record="record-initial"]').count(), 1);
 
   const beforeInvalidDnsWrites = cloudflareWriteCount();
-  const invalidDns = await apiMutation(page, "/api/dns/records", {
-    domain: "fixture.example.test",
-    record: { type: "A", name: "invalid", content: "999.0.2.10", ttl: 60, proxied: false },
-  }, "browser-dns-invalid-create-0001");
+  const dnsRecord = (fields) => ({ domain: "fixture.example.test", type: "A", ttl: "60", ...fields });
+  const invalidDns = await formPost(page, "/dns/record", dnsRecord({ action: "create", name: "invalid", content: "999.0.2.10" }), "browser-dns-invalid-create-0001");
   assert.equal(invalidDns.status, 400);
-  assert.equal(invalidDns.body.error, "invalid_dns_request");
+  assert.match(invalidDns.text, /The record input is invalid/);
   assert.equal(cloudflareWriteCount(), beforeInvalidDnsWrites, "invalid input must be rejected before provider I/O");
 
   await page.goto(`${origin}/dns.html?domain=fixture.example.test`, { waitUntil: "load" });
@@ -921,21 +887,18 @@ async function enrollAndCheckEnhanced(browser) {
   assert.ok(wwwRecordId);
   assert.match(await wwwRow.innerText(), /Proxied/);
 
-  const createAuditBefore = await auditCount(page, "cf.dns.create", "zone-fixture");
+  const createAuditBefore = auditCount("cf.dns.create", "zone-fixture");
   const providerCreatesBefore = cloudflareCallCount("POST");
-  const apiCreateKey = "browser-dns-api-create-0001";
-  const apiCreateBody = {
-    domain: "fixture.example.test",
-    record: { type: "A", name: "api", content: "192.0.2.55", ttl: 60, proxied: false },
-  };
-  const apiCreate = await apiMutation(page, "/api/dns/records", apiCreateBody, apiCreateKey);
-  assert.equal(apiCreate.status, 200);
-  assert.equal(apiCreate.body.result, "confirmed");
-  const apiCreateReplay = await apiMutation(page, "/api/dns/records", apiCreateBody, apiCreateKey);
-  assert.equal(apiCreateReplay.status, 200);
+  const replayCreateKey = "browser-dns-replay-create-0001";
+  const replayCreateBody = dnsRecord({ action: "create", name: "replay", content: "192.0.2.55" });
+  const replayCreate = await formPost(page, "/dns/record", replayCreateBody, replayCreateKey);
+  assert.equal(replayCreate.status, 303);
+  assert.equal(replayCreate.location, "/dns.html?domain=fixture.example.test&result=create");
+  const apiCreateReplay = await formPost(page, "/dns/record", replayCreateBody, replayCreateKey);
+  assert.equal(apiCreateReplay.status, 303);
   assert.equal(apiCreateReplay.replayed, "true");
   assert.equal(cloudflareCallCount("POST"), providerCreatesBefore + 1, "idempotent replay must not repeat provider I/O");
-  assert.equal(await auditCount(page, "cf.dns.create", "zone-fixture"), createAuditBefore + 1, "idempotent replay must not duplicate audit rows");
+  assert.equal(auditCount("cf.dns.create", "zone-fixture"), createAuditBefore + 1, "idempotent replay must not duplicate audit rows");
 
   await page.goto(`${origin}/dns.html?domain=fixture.example.test`, { waitUntil: "load" });
   wwwRow = page.locator(`tr[data-dns-record="${wwwRecordId}"]`);
@@ -961,7 +924,7 @@ async function enrollAndCheckEnhanced(browser) {
   assert.match(await wwwRow.innerText(), /DNS only/);
 
   fs.writeFileSync(fakeCloudflareControlPath, "reject\n");
-  const rejectedAuditBefore = await auditCount(page, "cf.dns.create", "zone-fixture", "error");
+  const rejectedAuditBefore = auditCount("cf.dns.create", "zone-fixture", "error");
   await page.locator("#record-name").fill("preserved");
   await page.locator("#record-content").fill("192.0.2.77");
   await page.locator("#record-ttl").fill("300");
@@ -975,7 +938,7 @@ async function enrollAndCheckEnhanced(browser) {
   assert.equal(await page.locator("#record-content").inputValue(), "192.0.2.77");
   assert.equal(await page.locator("#record-ttl").inputValue(), "300");
   assert.equal(await page.locator(`tr[data-dns-record="${wwwRecordId}"]`).count(), 1);
-  assert.equal(await auditCount(page, "cf.dns.create", "zone-fixture", "error"), rejectedAuditBefore + 1);
+  assert.equal(auditCount("cf.dns.create", "zone-fixture", "error"), rejectedAuditBefore + 1);
   fs.writeFileSync(fakeCloudflareControlPath, "");
 
   await page.goto(`${origin}/dns.html?domain=fixture.example.test`, { waitUntil: "load" });
@@ -991,13 +954,10 @@ async function enrollAndCheckEnhanced(browser) {
   assert.equal(await page.locator("#add-record").isDisabled(), true);
   assert.equal(await page.locator("[data-dns-record] form").count(), 0);
   const stalePutCount = cloudflareCallCount("PUT");
-  const staleWrite = await apiMutation(page, "/api/dns/records", {
-    domain: "fixture.example.test",
-    record_id: wwwRecordId,
-    record: { type: "A", name: "www", content: "192.0.2.99", ttl: 60, proxied: true },
-  }, "browser-dns-stale-update-0001", false, "PUT");
+  const staleWrite = await formPost(page, "/dns/record", dnsRecord({
+    action: "update", record_id: wwwRecordId, name: "www", content: "192.0.2.99", proxied: "1",
+  }), "browser-dns-stale-update-0001");
   assert.equal(staleWrite.status, 409);
-  assert.equal(staleWrite.body.error, "dns_write_unavailable");
   assert.equal(cloudflareCallCount("PUT"), stalePutCount);
 
   fs.writeFileSync(fakeCloudflareControlPath, "");
@@ -1012,16 +972,11 @@ async function enrollAndCheckEnhanced(browser) {
   assert.match(await wwwRow.innerText(), /Proxied/);
 
   const missingPutCount = cloudflareCallCount("PUT");
-  const unobservedDns = await apiMutation(page, "/api/dns/records", {
-    domain: "fixture.example.test",
-    record_id: "record-not-observed",
-    record: { type: "A", name: "missing", content: "192.0.2.90", ttl: 60, proxied: false },
-  }, "browser-dns-unobserved-update-0001", false, "PUT");
+  const unobservedDns = await formPost(page, "/dns/record", dnsRecord({
+    action: "update", record_id: "record-not-observed", name: "missing", content: "192.0.2.90",
+  }), "browser-dns-unobserved-update-0001");
   assert.equal(unobservedDns.status, 404);
-  assert.equal(unobservedDns.body.error, "dns_record_not_observed");
   assert.equal(cloudflareCallCount("PUT"), missingPutCount);
-  assert.equal((await page.request.post(`${origin}/api/cache/purge`)).status(), 404);
-  assert.equal((await page.request.post(`${origin}/api/zone/setting`)).status(), 404);
 
   await page.goto(`${origin}/dns.html?domain=fixture.example.test`, { waitUntil: "load" });
   wwwRow = page.locator(`tr[data-dns-record="${wwwRecordId}"]`);
@@ -1076,20 +1031,14 @@ async function enrollAndCheckEnhanced(browser) {
   assert.match(await page.locator("#vps-notice").innerText(), /refreshed successfully/i);
 
   const writesBeforeUnobserved = hostingerWriteCount();
-  const unobservedVps = await apiMutation(page, "/api/vps/action", {
-    vm_id: "vm-not-observed",
-    action: "start",
-  }, "browser-vps-unobserved-0001", true);
+  const vpsAction = (machine, action) => ({ machine, action, confirmation: machine });
+  const unobservedVps = await formPost(page, "/vps/action", vpsAction("vm-not-observed", "start"), "browser-vps-unobserved-0001");
   assert.equal(unobservedVps.status, 404);
-  assert.equal(unobservedVps.body.error, "vps_not_observed");
   assert.equal(hostingerWriteCount(), writesBeforeUnobserved, "unobserved IDs must not reach Hostinger");
 
-  const invalidStateVps = await apiMutation(page, "/api/vps/action", {
-    vm_id: "vm-running",
-    action: "start",
-  }, "browser-vps-invalid-state-0001", true);
+  const invalidStateVps = await formPost(page, "/vps/action", vpsAction("vm-running", "start"), "browser-vps-invalid-state-0001");
   assert.equal(invalidStateVps.status, 409);
-  assert.equal(invalidStateVps.body.error, "vps_action_unavailable");
+  assert.match(invalidStateVps.text, /not valid for the machine/);
   assert.equal(hostingerWriteCount(), writesBeforeUnobserved, "invalid state transitions must not reach Hostinger");
 
   await page.locator('[data-vps-action="start"][data-vps-id="vm-stopped"]').click();
@@ -1118,30 +1067,18 @@ async function enrollAndCheckEnhanced(browser) {
 
   const vpsRestartKey = "browser-vps-restart-running-0001";
   const providerRestartsBefore = hostingerCallCount("POST", "/restart");
-  const restartAuditBefore = await auditCount(page, "hostinger.vps.restart", "vm-running");
-  const restartedVps = await apiMutation(page, "/api/vps/action", {
-    vm_id: "vm-running",
-    action: "restart",
-  }, vpsRestartKey, true);
-  assert.equal(restartedVps.status, 200);
-  assert.equal(restartedVps.body.result, "confirmed");
-  assert.equal(restartedVps.body.state, "running");
-  assert.match(restartedVps.body.provider_job_id, /^job-/);
-  const replayedVpsRestart = await apiMutation(page, "/api/vps/action", {
-    vm_id: "vm-running",
-    action: "restart",
-  }, vpsRestartKey, true);
-  assert.equal(replayedVpsRestart.status, 200);
+  const restartAuditBefore = auditCount("hostinger.vps.restart", "vm-running");
+  const restartedVps = await formPost(page, "/vps/action", vpsAction("vm-running", "restart"), vpsRestartKey);
+  assert.equal(restartedVps.status, 303);
+  assert.match(restartedVps.location, /^\/vps\.html\?result=restart&machine=vm-running&job=job-/);
+  const replayedVpsRestart = await formPost(page, "/vps/action", vpsAction("vm-running", "restart"), vpsRestartKey);
+  assert.equal(replayedVpsRestart.status, 303);
   assert.equal(replayedVpsRestart.replayed, "true");
   assert.equal(hostingerCallCount("POST", "/restart"), providerRestartsBefore + 1);
-  assert.equal(await auditCount(page, "hostinger.vps.restart", "vm-running"), restartAuditBefore + 1);
+  assert.equal(auditCount("hostinger.vps.restart", "vm-running"), restartAuditBefore + 1);
 
-  const stoppedVps = await apiMutation(page, "/api/vps/action", {
-    vm_id: "vm-running",
-    action: "stop",
-  }, "browser-vps-stop-running-0001", true);
-  assert.equal(stoppedVps.status, 200);
-  assert.equal(stoppedVps.body.state, "stopped");
+  const stoppedVps = await formPost(page, "/vps/action", vpsAction("vm-running", "stop"), "browser-vps-stop-running-0001");
+  assert.equal(stoppedVps.status, 303);
   await page.goto(`${origin}/vps.html`, { waitUntil: "load" });
   assert.equal(await page.locator('[data-vps-action="start"][data-vps-id="vm-running"]').count(), 1);
 
@@ -1149,7 +1086,7 @@ async function enrollAndCheckEnhanced(browser) {
   await page.waitForURL((url) => url.pathname === "/vps.html" && url.searchParams.get("confirm") === "start" && url.searchParams.get("machine") === "vm-running");
   await page.locator("#vps-confirmation-value").fill("vm-running");
   fs.writeFileSync(fakeHostingerControlPath, "reject\n");
-  const rejectedVpsAuditBefore = await auditCount(page, "hostinger.vps.start", "vm-running", "error");
+  const rejectedVpsAuditBefore = auditCount("hostinger.vps.start", "vm-running", "error");
   const [rejectedVpsResponse] = await Promise.all([
     page.waitForResponse((candidate) => candidate.request().method() === "POST" && new URL(candidate.url()).pathname === "/vps/action"),
     page.locator('#vps-action-form button[type="submit"]').click(),
@@ -1157,55 +1094,43 @@ async function enrollAndCheckEnhanced(browser) {
   assert.equal(rejectedVpsResponse.status(), 502);
   assert.match(await page.locator("#vps-notice").innerText(), /Hostinger rejected.*last observed state was retained/i);
   assert.equal(await page.locator("#vps-confirmation-value").inputValue(), "vm-running");
-  assert.equal(await auditCount(page, "hostinger.vps.start", "vm-running", "error"), rejectedVpsAuditBefore + 1);
+  assert.equal(auditCount("hostinger.vps.start", "vm-running", "error"), rejectedVpsAuditBefore + 1);
   assert.match(await page.locator('[data-vps-machine="vm-running"]').innerText(), /stopped/i);
   fs.writeFileSync(fakeHostingerControlPath, "");
 
   fs.writeFileSync(fakeHostingerControlPath, "pending\n");
-  const pendingVps = await apiMutation(page, "/api/vps/action", {
-    vm_id: "vm-stopped",
-    action: "restart",
-  }, "browser-vps-pending-restart-0001", true);
+  const pendingVps = await formPost(page, "/vps/action", vpsAction("vm-stopped", "restart"), "browser-vps-pending-restart-0001");
   assert.equal(pendingVps.status, 202);
-  assert.equal(pendingVps.body.result, "accepted_pending");
-  assert.equal(pendingVps.body.reconciled, false);
-  await page.goto(`${origin}/vps.html?result=accepted_pending&machine=vm-stopped&job=${encodeURIComponent(pendingVps.body.provider_job_id)}`, { waitUntil: "load" });
+  const pendingJob = pendingVps.text.match(/Provider job: (job-[A-Za-z0-9_-]+)/)?.[1];
+  assert.ok(pendingJob, "pending results must name the provider job");
+  await page.goto(`${origin}/vps.html?result=accepted_pending&machine=vm-stopped&job=${encodeURIComponent(pendingJob)}`, { waitUntil: "load" });
   assert.match(await page.locator("#vps-notice").innerText(), /accepted.*still pending.*read-only.*Provider job: job-/s);
   assert.equal(await page.locator('[data-vps-machine="vm-stopped"] [data-vps-action]').count(), 0);
   assert.match(await page.locator('[data-vps-machine="vm-stopped"]').innerText(), /accepted but not yet confirmed/i);
 
   fs.writeFileSync(fakeHostingerControlPath, "");
-  const recoveryVps = await apiMutation(page, "/api/vps/refresh", {}, "browser-vps-recovery-0001");
-  assert.equal(recoveryVps.status, 200);
+  const recoveryVps = await formPost(page, "/vps/refresh", {}, "browser-vps-recovery-0001");
+  assert.equal(recoveryVps.status, 303);
   await page.goto(`${origin}/vps.html`, { waitUntil: "load" });
   assert.equal(await page.locator('[data-vps-action="restart"][data-vps-id="vm-stopped"]').count(), 1);
 
   fs.writeFileSync(fakeHostingerControlPath, "timeout\n");
-  const timedOutVps = await apiMutation(page, "/api/vps/action", {
-    vm_id: "vm-stopped",
-    action: "restart",
-  }, "browser-vps-timeout-restart-0001", true);
+  await page.goto(`${origin}/vps.html`, { waitUntil: "load" });
+  const timedOutVps = await formPost(page, "/vps/action", vpsAction("vm-stopped", "restart"), "browser-vps-timeout-restart-0001");
   assert.equal(timedOutVps.status, 202);
-  assert.equal(timedOutVps.body.result, "accepted_pending");
   fs.writeFileSync(fakeHostingerControlPath, "");
-  assert.equal((await apiMutation(page, "/api/vps/refresh", {}, "browser-vps-timeout-recovery-0001")).status, 200);
+  assert.equal((await formPost(page, "/vps/refresh", {}, "browser-vps-timeout-recovery-0001")).status, 303);
 
   fs.writeFileSync(fakeHostingerControlPath, "malformed-read\n");
-  const malformedVpsRead = await apiMutation(page, "/api/vps/refresh", {}, "browser-vps-malformed-read-0001");
+  const malformedVpsRead = await formPost(page, "/vps/refresh", {}, "browser-vps-malformed-read-0001");
   assert.equal(malformedVpsRead.status, 502);
-  assert.equal(malformedVpsRead.body.error, "vps_provider_rejected");
   await page.goto(`${origin}/vps.html`, { waitUntil: "load" });
   assert.equal((await page.locator("#vps-freshness").innerText()).trim(), "Stale");
   assert.equal(await page.locator('[data-vps-machine="vm-running"]').count(), 1, "invalid reads must retain last-good machines");
   assert.equal(await page.locator("[data-vps-action]").count(), 0);
   fs.writeFileSync(fakeHostingerControlPath, "");
-  assert.equal((await apiMutation(page, "/api/vps/refresh", {}, "browser-vps-malformed-recovery-0001")).status, 200);
+  assert.equal((await formPost(page, "/vps/refresh", {}, "browser-vps-malformed-recovery-0001")).status, 303);
 
-  assert.equal((await page.request.get(`${origin}/api/firewalls`)).status(), 404);
-  assert.equal((await page.request.post(`${origin}/api/firewall/rule`)).status(), 404);
-  assert.equal((await page.request.put(`${origin}/api/firewall/rule`)).status(), 404);
-  assert.equal((await page.request.delete(`${origin}/api/firewall/rule`)).status(), 404);
-  assert.equal((await page.request.post(`${origin}/api/firewall/sync`)).status(), 404);
 
   await page.goto(`${origin}/audit.html?category=vps&window=all&limit=500`, { waitUntil: "load" });
   const vpsAuditRow = page.locator('tr[data-audit-category="vps"]', { hasText: "hostinger.vps.start" }).first();
@@ -1244,55 +1169,34 @@ async function enrollAndCheckEnhanced(browser) {
   assert.match(await page.locator("#docker-feedback").innerText(), /running state was confirmed/i);
   assert.equal(await page.locator('[data-container-action="start"][data-container-name="fixture-stopped"]').count(), 0);
   assert.equal(await page.locator('[data-container-action="stop"][data-container-name="fixture-stopped"]').count(), 1);
-  assert.equal(await dockerAuditCount(page, "docker.start", "fixture-stopped"), 1);
+  assert.equal(auditCount("docker.start", "fixture-stopped"), 1);
 
   const restartKey = "browser-docker-restart-running-0001";
-  const restart = await apiMutation(page, "/api/containers/action", {
-    name: "fixture-running",
-    action: "restart",
-  }, restartKey, true);
-  assert.equal(restart.status, 200);
-  assert.equal(restart.body.state, "running");
-  const replayedRestart = await apiMutation(page, "/api/containers/action", {
-    name: "fixture-running",
-    action: "restart",
-  }, restartKey, true);
-  assert.equal(replayedRestart.status, 200);
+  const containerAction = (container, action) => ({ container, action, confirmation: container });
+  const restart = await formPost(page, "/docker/action", containerAction("fixture-running", "restart"), restartKey);
+  assert.equal(restart.status, 303);
+  assert.equal(restart.location, "/docker.html?result=restart&container=fixture-running");
+  const replayedRestart = await formPost(page, "/docker/action", containerAction("fixture-running", "restart"), restartKey);
+  assert.equal(replayedRestart.status, 303);
   assert.equal(replayedRestart.replayed, "true");
-  assert.equal(await dockerAuditCount(page, "docker.restart", "fixture-running"), 1);
+  assert.equal(auditCount("docker.restart", "fixture-running"), 1);
 
-  const stopped = await apiMutation(page, "/api/containers/action", {
-    name: "fixture-running",
-    action: "stop",
-  }, "browser-docker-stop-running-0001", true);
-  assert.equal(stopped.status, 200);
-  assert.equal(stopped.body.state, "exited");
-  const invalidForState = await apiMutation(page, "/api/containers/action", {
-    name: "fixture-running",
-    action: "stop",
-  }, "browser-docker-stop-again-0001", true);
+  const stopped = await formPost(page, "/docker/action", containerAction("fixture-running", "stop"), "browser-docker-stop-running-0001");
+  assert.equal(stopped.status, 303);
+  const invalidForState = await formPost(page, "/docker/action", containerAction("fixture-running", "stop"), "browser-docker-stop-again-0001");
   assert.equal(invalidForState.status, 409);
-  assert.equal(invalidForState.body.error, "container_action_unavailable");
+  assert.match(invalidForState.text, /not valid for the container/);
 
-  const missing = await apiMutation(page, "/api/containers/action", {
-    name: "fixture-missing",
-    action: "start",
-  }, "browser-docker-missing-0001", true);
+  const missing = await formPost(page, "/docker/action", containerAction("fixture-missing", "start"), "browser-docker-missing-0001");
   assert.equal(missing.status, 404);
-  assert.equal(missing.body.error, "container_not_observed");
-  const optionShaped = await apiMutation(page, "/api/containers/action", {
-    name: "-not-an-option",
-    action: "start",
-  }, "browser-docker-option-name-0001", true);
-  assert.equal(optionShaped.status, 400);
-  assert.equal(optionShaped.body.error, "invalid_container_request");
-  const commandFailure = await apiMutation(page, "/api/containers/action", {
-    name: "fixture-command-fail",
-    action: "start",
-  }, "browser-docker-command-fail-0001", true);
+  const dockerCallsBeforeOption = fs.readFileSync(fakeDockerCallsPath, "utf8");
+  const optionShaped = await formPost(page, "/docker/action", containerAction("-not-an-option", "start"), "browser-docker-option-name-0001");
+  assert.equal(optionShaped.status, 428);
+  assert.equal(fs.readFileSync(fakeDockerCallsPath, "utf8"), dockerCallsBeforeOption, "option-shaped names must never reach docker");
+  const commandFailure = await formPost(page, "/docker/action", containerAction("fixture-command-fail", "start"), "browser-docker-command-fail-0001");
   assert.equal(commandFailure.status, 502);
-  assert.equal(commandFailure.body.error, "container_command_failed");
-  assert.equal(await dockerAuditCount(page, "docker.start", "fixture-command-fail"), 1);
+  assert.match(commandFailure.text, /container command failed/i);
+  assert.equal(auditCount("docker.start", "fixture-command-fail"), 1);
 
   await page.goto(`${origin}/audit.html?category=docker&window=all&limit=500`, { waitUntil: "load" });
   const dockerAuditRow = page.locator('tr[data-audit-category="docker"]', { hasText: "fixture-stopped" }).filter({ hasText: "docker.start" }).first();
@@ -1300,20 +1204,15 @@ async function enrollAndCheckEnhanced(browser) {
   await dockerAuditRow.locator('td[data-label="Action"] a').click();
   await page.waitForURL((url) => url.pathname === "/docker.html" && url.searchParams.get("container") === "fixture-stopped");
 
-  const logsFailure = await page.evaluate(() => fetch("/api/containers/logs?name=fixture-logs-fail&tail=200", {
-    credentials: "same-origin",
-  }).then(async (response) => ({ status: response.status, body: await response.json() })));
-  assert.equal(logsFailure.status, 503);
-  assert.equal(logsFailure.body.error, "container_runtime_unavailable");
-  const invalidTail = await page.evaluate(() => fetch("/api/containers/logs?name=fixture-logs-fail&tail=501", {
-    credentials: "same-origin",
-  }).then(async (response) => ({ status: response.status, body: await response.json() })));
-  assert.equal(invalidTail.status, 400);
+  await page.goto(`${origin}/docker.html?container=fixture-logs-fail&tail=200`, { waitUntil: "load" });
+  assert.match(await page.locator("#logs-status").innerText(), /rejected the bounded log read|runtime is unavailable/);
+  assert.equal(await page.locator("#container-logs").getAttribute("data-state"), "error");
+  await page.goto(`${origin}/docker.html?container=fixture-logs-fail&tail=501`, { waitUntil: "load" });
+  assert.match(await page.locator("#logs-status").innerText(), /Tail must be 100, 200, or 500 lines/);
 
   fs.writeFileSync(fakeDockerControlPath, "daemon-unavailable\n");
-  const unavailable = await apiMutation(page, "/api/containers/refresh", {}, "browser-docker-daemon-down-0001");
+  const unavailable = await formPost(page, "/docker/refresh", {}, "browser-docker-daemon-down-0001");
   assert.equal(unavailable.status, 503);
-  assert.equal(unavailable.body.error, "container_runtime_unavailable");
   await page.goto(`${origin}/docker.html`, { waitUntil: "load" });
   assert.equal(await page.locator("#docker-freshness").innerText(), "stale");
   assert.match(await page.locator("#docker-capability").innerText(), /latest collection failed/i);
@@ -1330,12 +1229,12 @@ async function enrollAndCheckEnhanced(browser) {
   assert.equal(await page.locator("#docker-freshness").innerText(), "current");
   assert.ok(fs.readFileSync(fakeDockerCallsPath, "utf8").split("\n").some((line) => /^ps -a(?: |$)/.test(line)));
 
-  const rejected = await page.evaluate(() => fetch("/api/refresh", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { Accept: "application/json" },
-  }).then((result) => result.status));
-  assert.equal(rejected, 403, "unsafe requests without CSRF must remain rejected");
+  const rejected = await page.request.post(`${origin}/dashboard/refresh`, {
+    headers: { Origin: origin },
+    form: { idempotency_key: "dashboard-refresh-no-csrf-0001" },
+    maxRedirects: 0,
+  });
+  assert.equal(rejected.status(), 403, "unsafe requests without CSRF must remain rejected");
 
   await page.goto(`${origin}/security.html`, { waitUntil: "load" });
   await Promise.all([

@@ -52,7 +52,7 @@ fn connection(ctx: Context, stream: std.Io.net.Stream) void {
 }
 
 test {
+    _ = @import("api.zig");
     _ = @import("auth.zig");
-    _ = @import("routes.zig");
-    _ = @import("handlers/authentication.zig");
+    _ = @import("forms.zig");
 }
