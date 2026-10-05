@@ -12,8 +12,6 @@ auto_prune = false
 backup_root = ".cloudio/backups"
 disk_budget_bytes = 0
 snapshot_retention_days = 14
-provider_raw_retention_days = 14
-metrics_retention_days = 30
 maintenance_interval_hours = 24
 maintenance_batch_rows = 5000
 ```
@@ -32,7 +30,6 @@ cloudio maintenance status --json
 The report separates:
 
 - the database file, WAL, and shared-memory file;
-- the current log;
 - every regular file below `storage.backup_root`;
 - retained nob operation state and artifacts;
 - the nob runner cache;
