@@ -1,4 +1,5 @@
 const app_vps = @import("../../app/vps.zig");
+const observation = @import("../../app/observation.zig");
 const context = @import("../context.zig");
 const form = @import("../form.zig");
 const html = @import("../html.zig");
@@ -8,77 +9,70 @@ const url = @import("../../core/url.zig");
 const web_html = @import("web_html");
 
 pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
-    var json = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer json.deinit();
-    try app_vps.writeJson(context.vps(ctx), &json.writer);
-    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, json.written(), .{});
-    defer parsed.deinit();
-    const machines = html.arrayItems(html.member(parsed.value, "machines"));
-    const collection = html.member(parsed.value, "collection") orelse .null;
-    const capability = html.member(parsed.value, "capability") orelse .null;
+    var view = try app_vps.View.load(context.vps(ctx));
+    defer view.deinit(ctx.gpa);
 
     var freshness = std.Io.Writer.Allocating.init(ctx.gpa);
     defer freshness.deinit();
-    try html.writeStatus(&freshness.writer, html.freshnessLabel(html.strField(parsed.value, "freshness")));
+    try html.writeStatus(&freshness.writer, view.freshness.label());
     try html.replaceElementInner(ctx.gpa, main, "vps-freshness", "dd", freshness.written());
-    const observed_at = html.nullableString(html.member(parsed.value, "observed_at"));
+    const observed_at = observation.observedAt(view.latest);
     try html.replaceEscapedElement(ctx.gpa, main, "vps-observed-at", "dd", if (observed_at.len > 0) observed_at else "Never");
     var attempt = std.Io.Writer.Allocating.init(ctx.gpa);
     defer attempt.deinit();
-    try web_html.text(&attempt.writer, html.collectionStatusLabel(html.strField(collection, "status")));
-    const attempted_at = html.nullableString(html.member(collection, "attempted_at"));
+    try web_html.text(&attempt.writer, html.collectionStatusLabel(if (view.latest) |value| value.attempt_status else ""));
+    const attempted_at = if (view.latest) |value| value.attempted_at else "";
     if (attempted_at.len > 0) {
         try attempt.writer.writeAll(" · ");
         try web_html.text(&attempt.writer, attempted_at);
     }
     try html.replaceElementInner(ctx.gpa, main, "vps-attempt", "dd", attempt.written());
-    try html.replaceEscapedElement(ctx.gpa, main, "vps-capability", "p", html.strField(capability, "reason"));
+    try html.replaceEscapedElement(ctx.gpa, main, "vps-capability", "p", view.reason);
 
     var refresh_key_buffer: [80]u8 = undefined;
     const refresh_key = try html.formIdempotencyKey(ctx.io, &refresh_key_buffer, "vps-refresh");
     try html.replaceHiddenInput(ctx.gpa, main, "vps-refresh-csrf", "csrf_token", ctx.auth_csrf_token orelse "");
     try html.replaceHiddenInput(ctx.gpa, main, "vps-refresh-idempotency", "idempotency_key", refresh_key);
-    if (html.boolField(capability, "refresh")) try html.replaceExact(ctx.gpa, main, "<button class=\"button-primary\" type=\"submit\" disabled>Refresh machines</button>", "<button class=\"button-primary\" type=\"submit\">Refresh machines</button>");
+    if (view.can_refresh) try html.replaceExact(ctx.gpa, main, "<button class=\"button-primary\" type=\"submit\" disabled>Refresh machines</button>", "<button class=\"button-primary\" type=\"submit\">Refresh machines</button>");
 
     var cards = std.Io.Writer.Allocating.init(ctx.gpa);
     defer cards.deinit();
     try cards.writer.writeAll("<div id=\"machines\" class=\"resource-grid\">");
-    if (machines.len == 0) {
+    if (view.machines.len == 0) {
         try cards.writer.writeAll("<div class=\"resource-card empty-state\">Refresh to observe Hostinger machines.</div>");
-    } else for (machines) |machine| {
-        const machine_id = html.strField(machine, "id");
-        const actions = html.member(machine, "actions") orelse .null;
+    } else for (view.machines) |machine| {
+        const machine_id = machine.row.id;
         try cards.writer.writeAll("<article class=\"resource-card\" data-vps-machine=\"");
         try web_html.attribute(&cards.writer, machine_id);
         try cards.writer.writeAll("\"><div class=\"resource-card-header\"><h3 class=\"resource-card-title\">");
-        try web_html.text(&cards.writer, html.firstString(machine, &.{ "name", "id" }));
+        try web_html.text(&cards.writer, if (machine.row.name.len > 0) machine.row.name else machine_id);
         try cards.writer.writeAll("</h3>");
-        try html.writeStatus(&cards.writer, html.strField(machine, "status"));
+        try html.writeStatus(&cards.writer, machine.row.status);
         try cards.writer.writeAll("</div><dl class=\"kv-list\">");
-        try html.definition(&cards.writer, "IPv4", html.strField(machine, "ipv4"));
-        try html.definition(&cards.writer, "Plan", html.strField(machine, "plan"));
+        try html.definition(&cards.writer, "IPv4", machine.row.ipv4);
+        try html.definition(&cards.writer, "Plan", machine.row.plan);
         try html.definition(&cards.writer, "ID", machine_id);
-        try html.definition(&cards.writer, "Observed", html.strField(machine, "observed_at"));
+        try html.definition(&cards.writer, "Observed", machine.observed_at);
         try cards.writer.writeAll("</dl><div class=\"resource-card-actions\">");
         var rendered_action = false;
-        for ([_][]const u8{ "start", "stop", "restart" }) |action| {
-            if (!html.boolField(actions, action)) continue;
+        var actions = machine.actions.iterator();
+        while (actions.next()) |action| {
             rendered_action = true;
-            try writeVpsActionLink(&cards.writer, machine_id, action);
+            try writeVpsActionLink(&cards.writer, machine_id, @tagName(action));
         }
         if (!rendered_action) {
             try cards.writer.writeAll("<span class=\"muted\">");
-            try web_html.text(&cards.writer, html.strField(machine, "capability_reason"));
+            try web_html.text(&cards.writer, machine.reason);
             try cards.writer.writeAll("</span>");
         }
         try cards.writer.writeAll("</div></article>");
     }
     try cards.writer.writeAll("</div>");
     try html.replaceExact(ctx.gpa, main, "<div id=\"machines\" class=\"resource-grid\">\n        <div class=\"resource-card empty-state loading-state\">Loading machines…</div>\n      </div>", cards.written());
-    try html.replaceCountLabel(ctx.gpa, main, "machine-count", "p", machines.len, "machine", "machines");
+    try html.replaceCountLabel(ctx.gpa, main, "machine-count", "p", view.machines.len, "machine", "machines");
 
 
-    try injectVpsConfirmation(ctx, request, machines, main);
+    try injectVpsConfirmation(ctx, request, view, main);
     if (vpsFeedback(request)) |feedback| {
         var message = std.Io.Writer.Allocating.init(ctx.gpa);
         defer message.deinit();
@@ -120,22 +114,21 @@ fn parseVpsDraft(arena: std.mem.Allocator, request: http.Request) ?VpsDraft {
         .confirmation = fields.get("confirmation") catch "",
     };
 }
-fn injectVpsConfirmation(ctx: context.Context, request: http.Request, machines: []const std.json.Value, main: *[]u8) !void {
+fn injectVpsConfirmation(ctx: context.Context, request: http.Request, view: app_vps.View, main: *[]u8) !void {
     const action_text = request.query("confirm") orelse return;
     const machine_id = request.query("machine") orelse return;
     const action = std.meta.stringToEnum(app_vps.Action, action_text) orelse return;
-    const machine = findJsonMachine(machines, machine_id) orelse return;
-    const actions = html.member(machine, "actions") orelse .null;
-    if (!html.boolField(actions, action_text)) return;
+    const machine = view.machine(machine_id) orelse return;
+    if (!machine.actions.contains(action)) return;
 
     var summary = std.Io.Writer.Allocating.init(ctx.gpa);
     defer summary.deinit();
     try summary.writer.writeAll("Confirm ");
     try web_html.text(&summary.writer, action_text);
     try summary.writer.writeAll(" for ");
-    try web_html.text(&summary.writer, html.firstString(machine, &.{ "name", "id" }));
+    try web_html.text(&summary.writer, if (machine.row.name.len > 0) machine.row.name else machine_id);
     try summary.writer.writeAll(". The current observed state is ");
-    try web_html.text(&summary.writer, html.strField(machine, "status"));
+    try web_html.text(&summary.writer, machine.row.status);
     try summary.writer.writeByte('.');
     try html.replaceElementInner(ctx.gpa, main, "vps-confirmation-summary", "p", summary.written());
 
@@ -163,10 +156,6 @@ fn injectVpsConfirmation(ctx: context.Context, request: http.Request, machines: 
     try body.writer.writeAll(" machine</button><a class=\"button\" href=\"/vps.html\">Cancel</a></div></form>");
     try html.replaceElementInner(ctx.gpa, main, "vps-confirmation-body", "div", body.written());
     try html.replaceExact(ctx.gpa, main, "id=\"vps-confirmation\" class=\"panel hidden\"", "id=\"vps-confirmation\" class=\"panel\"");
-}
-fn findJsonMachine(machines: []const std.json.Value, machine_id: []const u8) ?std.json.Value {
-    for (machines) |machine| if (std.mem.eql(u8, html.strField(machine, "id"), machine_id)) return machine;
-    return null;
 }
 const VpsFeedback = struct { tone: []const u8, message: []const u8 };
 fn vpsFeedback(request: http.Request) ?VpsFeedback {

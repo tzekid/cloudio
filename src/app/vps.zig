@@ -6,6 +6,7 @@ const core_config = @import("../core/config.zig");
 const core_json = @import("../core/json.zig");
 const core_redact = @import("../core/redact.zig");
 const db_store = @import("../db/store.zig");
+const observation = @import("observation.zig");
 const net_http = @import("../net/http.zig");
 const provider_hostinger = @import("hostinger");
 const provider_hostinger_models = @import("hostinger").models;
@@ -57,65 +58,76 @@ pub const MutationResult = struct {
 
 const JobState = enum { pending, succeeded, failed };
 
-pub fn writeJson(ctx: Context, writer: anytype) !void {
-    var machines = try ctx.db.hostinger().hostingerVpsRows(ctx.gpa, 200);
-    defer machines.deinit(ctx.gpa);
-    const observation_optional = try ctx.db.latestObservation(ctx.gpa, "hostinger", "vps");
-    defer if (observation_optional) |observation| observation.deinit(ctx.gpa);
-    const freshness = observationFreshness(observation_optional, freshAfterSeconds(ctx.config));
-    const refresh_available = ctx.config.hasHostingerAuth();
-    const write_available = refresh_available and observation_optional != null and
-        observation_optional.?.hasSuccessfulObservation() and
-        std.mem.eql(u8, observation_optional.?.attempt_status, "ok") and
-        std.mem.eql(u8, freshness, "current");
+pub const Machine = struct {
+    row: db_store.HostingerVpsRow,
+    observed_at: []const u8,
+    reason: []const u8,
+    actions: std.EnumSet(Action),
+};
 
-    try writer.writeAll("{\"kind\":\"vps_observation\",\"source\":\"hostinger\",");
-    try core_json.writeStringField(writer, "freshness", freshness, true);
-    try writer.writeAll("\"observed_at\":");
-    if (observation_optional) |observation| {
-        if (observation.hasSuccessfulObservation()) try core_json.writeString(writer, observation.observed_at) else try writer.writeAll("null");
-    } else try writer.writeAll("null");
-    try writer.writeAll(",\"age_seconds\":");
-    if (observation_optional) |observation| {
-        if (observation.age_seconds >= 0) try writer.print("{d}", .{observation.age_seconds}) else try writer.writeAll("null");
-    } else try writer.writeAll("null");
-    try writer.writeAll(",\"collection\":{");
-    if (observation_optional) |observation| {
-        try core_json.writeStringField(writer, "status", observation.attempt_status, true);
-        try core_json.writeStringField(writer, "attempted_at", observation.attempted_at, true);
-        try core_json.writeStringField(writer, "summary", observation.attempt_summary, false);
-    } else {
-        try core_json.writeStringField(writer, "status", "unavailable", true);
-        try core_json.writeNullableStringField(writer, "attempted_at", null, true);
-        try core_json.writeStringField(writer, "summary", "Hostinger machines have not been refreshed.", false);
+/// What the VPS page shows: stored machines and which lifecycle actions their
+/// current observation allows.
+pub const View = struct {
+    freshness: observation.Freshness,
+    latest: ?db_store.Observation,
+    can_refresh: bool,
+    reason: []const u8,
+    machines: []Machine,
+    targets: []?db_store.Observation,
+    rows: db_store.HostingerVpsRows,
+
+    pub fn load(ctx: Context) !View {
+        var rows = try ctx.db.hostinger().hostingerVpsRows(ctx.gpa, 200);
+        errdefer rows.deinit(ctx.gpa);
+        const latest = try ctx.db.latestObservation(ctx.gpa, "hostinger", "vps");
+        errdefer if (latest) |value| value.deinit(ctx.gpa);
+        const fresh = observation.freshness(latest, ctx.config);
+        const can_write = ctx.config.hasHostingerAuth() and fresh == .current;
+
+        const machines = try ctx.gpa.alloc(Machine, rows.items.len);
+        errdefer ctx.gpa.free(machines);
+        const targets = try ctx.gpa.alloc(?db_store.Observation, rows.items.len);
+        @memset(targets, null);
+        errdefer {
+            for (targets) |target| if (target) |value| value.deinit(ctx.gpa);
+            ctx.gpa.free(targets);
+        }
+        for (rows.items, machines, targets) |row, *slot, *target| {
+            target.* = try ctx.db.latestObservationForTarget(ctx.gpa, "hostinger", "vps-detail", row.id);
+            const actionable = can_write and (target.* == null or std.mem.eql(u8, target.*.?.attempt_status, "ok"));
+            var actions: std.EnumSet(Action) = .empty;
+            for ([_]Action{ .start, .stop, .restart }) |action| actions.setPresent(action, actionable and actionAllowed(row.status, action));
+            slot.* = .{
+                .row = row,
+                .observed_at = machineObservedAt(row, target.*, latest),
+                .reason = machineCapabilityReason(actionable, target.*),
+                .actions = actions,
+            };
+        }
+        return .{
+            .freshness = fresh,
+            .latest = latest,
+            .can_refresh = ctx.config.hasHostingerAuth(),
+            .reason = capabilityReason(ctx.config.hasHostingerAuth(), fresh, latest),
+            .machines = machines,
+            .targets = targets,
+            .rows = rows,
+        };
     }
-    try writer.writeAll("},\"capability\":{");
-    try core_json.writeBoolField(writer, "refresh", refresh_available, true);
-    try core_json.writeBoolField(writer, "write", write_available, true);
-    try core_json.writeStringField(writer, "reason", capabilityReason(ctx.config.hasHostingerAuth(), freshness, observation_optional), false);
-    try writer.writeAll("},\"machines\":[");
-    for (machines.items, 0..) |machine, index| {
-        if (index != 0) try writer.writeByte(',');
-        const target_observation = try ctx.db.latestObservationForTarget(ctx.gpa, "hostinger", "vps-detail", machine.id);
-        defer if (target_observation) |observation| observation.deinit(ctx.gpa);
-        const target_ready = target_observation == null or std.mem.eql(u8, target_observation.?.attempt_status, "ok");
-        const actionable = write_available and target_ready;
-        try writer.writeByte('{');
-        try core_json.writeStringField(writer, "id", machine.id, true);
-        try core_json.writeStringField(writer, "name", machine.name, true);
-        try core_json.writeStringField(writer, "status", machine.status, true);
-        try core_json.writeStringField(writer, "ipv4", machine.ipv4, true);
-        try core_json.writeStringField(writer, "plan", machine.plan, true);
-        try core_json.writeStringField(writer, "observed_at", machineObservedAt(machine, target_observation, observation_optional), true);
-        try core_json.writeStringField(writer, "capability_reason", machineCapabilityReason(actionable, target_observation), true);
-        try writer.writeAll("\"actions\":{");
-        try core_json.writeBoolField(writer, "start", actionable and actionAllowed(machine.status, .start), true);
-        try core_json.writeBoolField(writer, "stop", actionable and actionAllowed(machine.status, .stop), true);
-        try core_json.writeBoolField(writer, "restart", actionable and actionAllowed(machine.status, .restart), false);
-        try writer.writeAll("}}");
+
+    pub fn deinit(self: *View, gpa: Allocator) void {
+        for (self.targets) |target| if (target) |value| value.deinit(gpa);
+        gpa.free(self.targets);
+        gpa.free(self.machines);
+        if (self.latest) |value| value.deinit(gpa);
+        self.rows.deinit(gpa);
     }
-    try writer.writeAll("]}\n");
-}
+
+    pub fn machine(self: View, id: []const u8) ?Machine {
+        for (self.machines) |item| if (std.mem.eql(u8, item.row.id, id)) return item;
+        return null;
+    }
+};
 
 pub fn refresh(ctx: Context) !void {
     if (!vps_mutex.tryLock()) return error.VpsBusy;
@@ -129,20 +141,16 @@ pub fn mutate(ctx: Context, vm_id: []const u8, action: Action) !MutationResult {
     if (vm_id.len == 0 or vm_id.len > 128) return error.InvalidVpsRequest;
     if (!ctx.config.hasHostingerAuth()) return error.VpsWriteUnavailable;
 
-    const observation_optional = try ctx.db.latestObservation(ctx.gpa, "hostinger", "vps");
-    defer if (observation_optional) |observation| observation.deinit(ctx.gpa);
-    if (observation_optional == null or
-        !observation_optional.?.hasSuccessfulObservation() or
-        !std.mem.eql(u8, observation_optional.?.attempt_status, "ok") or
-        !std.mem.eql(u8, observationFreshness(observation_optional, freshAfterSeconds(ctx.config)), "current"))
-        return error.VpsWriteUnavailable;
+    const latest = try ctx.db.latestObservation(ctx.gpa, "hostinger", "vps");
+    defer if (latest) |value| value.deinit(ctx.gpa);
+    if (observation.freshness(latest, ctx.config) != .current) return error.VpsWriteUnavailable;
 
     var machines = try ctx.db.hostinger().hostingerVpsRows(ctx.gpa, 200);
     defer machines.deinit(ctx.gpa);
     const machine = findMachine(machines.items, vm_id) orelse return error.VpsNotObserved;
     const target_observation = try ctx.db.latestObservationForTarget(ctx.gpa, "hostinger", "vps-detail", machine.id);
-    defer if (target_observation) |observation| observation.deinit(ctx.gpa);
-    if (target_observation) |observation| if (!std.mem.eql(u8, observation.attempt_status, "ok")) return error.VpsWriteUnavailable;
+    defer if (target_observation) |value| value.deinit(ctx.gpa);
+    if (target_observation) |value| if (!std.mem.eql(u8, value.attempt_status, "ok")) return error.VpsWriteUnavailable;
     if (!actionAllowed(machine.status, action)) return error.VpsActionUnavailable;
 
     var provider_output = std.Io.Writer.Allocating.init(ctx.gpa);
@@ -382,34 +390,23 @@ fn equalsAnyIgnoreCase(value: []const u8, candidates: []const []const u8) bool {
     return false;
 }
 
-fn freshAfterSeconds(config: core_config.Config) i64 {
-    return @max(@as(i64, config.refresh_seconds) * 2, 600);
-}
-
-fn observationFreshness(observation: ?db_store.Observation, fresh_after_seconds: i64) []const u8 {
-    const value = observation orelse return "unavailable";
-    if (!value.hasSuccessfulObservation()) return "unavailable";
-    if (!std.mem.eql(u8, value.attempt_status, "ok")) return "stale";
-    return if (value.age_seconds >= 0 and value.age_seconds <= fresh_after_seconds) "current" else "stale";
-}
-
-fn capabilityReason(has_auth: bool, freshness: []const u8, observation: ?db_store.Observation) []const u8 {
+fn capabilityReason(has_auth: bool, freshness: observation.Freshness, latest: ?db_store.Observation) []const u8 {
     if (!has_auth) return "Hostinger credentials are not configured; stored machines are read-only.";
-    if (observation == null or !observation.?.hasSuccessfulObservation()) return "Refresh successfully before controlling a machine.";
-    if (!std.mem.eql(u8, observation.?.attempt_status, "ok")) return "The latest refresh failed; retained machines are read-only.";
-    if (!std.mem.eql(u8, freshness, "current")) return "The machine observation is stale; refresh before controlling a machine.";
+    if (latest == null or !latest.?.hasSuccessfulObservation()) return "Refresh successfully before controlling a machine.";
+    if (!std.mem.eql(u8, latest.?.attempt_status, "ok")) return "The latest refresh failed; retained machines are read-only.";
+    if (freshness != .current) return "The machine observation is stale; refresh before controlling a machine.";
     return "Hostinger access and the exact observed machine identities were confirmed.";
 }
 
 fn machineObservedAt(machine: db_store.HostingerVpsRow, target: ?db_store.Observation, list: ?db_store.Observation) []const u8 {
-    if (target) |observation| if (observation.hasSuccessfulObservation()) return observation.observed_at;
-    if (list) |observation| if (observation.hasSuccessfulObservation()) return observation.observed_at;
+    if (target) |value| if (value.hasSuccessfulObservation()) return value.observed_at;
+    if (list) |value| if (value.hasSuccessfulObservation()) return value.observed_at;
     return machine.updated_at;
 }
 
 fn machineCapabilityReason(actionable: bool, target: ?db_store.Observation) []const u8 {
     if (actionable) return "State-aware lifecycle actions are available for this observed machine.";
-    if (target) |observation| if (std.mem.eql(u8, observation.attempt_status, "pending")) return "A provider action is accepted but not yet confirmed; refresh to reconcile it.";
+    if (target) |value| if (std.mem.eql(u8, value.attempt_status, "pending")) return "A provider action is accepted but not yet confirmed; refresh to reconcile it.";
     return "Lifecycle actions require a current successful machine observation.";
 }
 

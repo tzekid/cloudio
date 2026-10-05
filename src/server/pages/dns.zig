@@ -1,4 +1,5 @@
 const app_dns = @import("../../app/dns.zig");
+const observation = @import("../../app/observation.zig");
 const context = @import("../context.zig");
 const form = @import("../form.zig");
 const html = @import("../html.zig");
@@ -11,30 +12,23 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
     var draft_arena = std.heap.ArenaAllocator.init(ctx.gpa);
     defer draft_arena.deinit();
     const draft = parseDnsDraft(draft_arena.allocator(), request);
-    var json = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer json.deinit();
-    try app_dns.writeJson(context.dns(ctx), request.query("domain"), &json.writer);
-    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, json.written(), .{});
-    defer parsed.deinit();
-    const domain = html.strField(parsed.value, "selected_domain");
-    const zones = html.arrayItems(html.member(parsed.value, "zones"));
-    const records = html.arrayItems(html.member(parsed.value, "records"));
-    const collection = html.member(parsed.value, "collection") orelse .null;
-    const capability = html.member(parsed.value, "capability") orelse .null;
+    var view = try app_dns.View.load(context.dns(ctx), request.query("domain"));
+    defer view.deinit(ctx.gpa);
+    const domain = view.domain;
 
     var zone_options = std.Io.Writer.Allocating.init(ctx.gpa);
     defer zone_options.deinit();
-    if (zones.len == 0) {
+    if (view.zones.len == 0) {
         try zone_options.writer.writeAll("<option value=\"\" selected>No configured zones</option>");
-    } else for (zones) |zone| {
-        const configured = html.strField(zone, "domain");
+    } else for (view.zones) |zone| {
+        const configured = zone.domain;
         try zone_options.writer.writeAll("<option value=\"");
         try web_html.attribute(&zone_options.writer, configured);
         try zone_options.writer.writeByte('"');
         if (std.mem.eql(u8, configured, domain)) try zone_options.writer.writeAll(" selected");
         try zone_options.writer.writeByte('>');
         try web_html.text(&zone_options.writer, configured);
-        if (html.nullableString(html.member(zone, "zone_id")).len == 0) try zone_options.writer.writeAll(" (not observed)");
+        if (!zone.observed) try zone_options.writer.writeAll(" (not observed)");
         try zone_options.writer.writeAll("</option>");
     }
     try html.replaceElementInner(ctx.gpa, main, "domain", "select", zone_options.written());
@@ -51,73 +45,72 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
     try html.replaceElementInner(ctx.gpa, main, "dns-source-note", "p", source_note.written());
     var freshness_status = std.Io.Writer.Allocating.init(ctx.gpa);
     defer freshness_status.deinit();
-    try html.writeStatus(&freshness_status.writer, html.freshnessLabel(html.strField(parsed.value, "freshness")));
+    try html.writeStatus(&freshness_status.writer, view.freshness.label());
     try html.replaceElementInner(ctx.gpa, main, "dns-freshness", "span", freshness_status.written());
-    const observed_at = html.nullableString(html.member(parsed.value, "observed_at"));
+    const observed_at = observation.observedAt(view.latest);
     try html.replaceEscapedElement(ctx.gpa, main, "dns-observed-at", "dd", if (observed_at.len > 0) observed_at else "Never");
     var attempt_text = std.Io.Writer.Allocating.init(ctx.gpa);
     defer attempt_text.deinit();
-    try web_html.text(&attempt_text.writer, html.collectionStatusLabel(html.strField(collection, "status")));
-    const attempted_at = html.nullableString(html.member(collection, "attempted_at"));
+    try web_html.text(&attempt_text.writer, html.collectionStatusLabel(if (view.latest) |value| value.attempt_status else ""));
+    const attempted_at = if (view.latest) |value| value.attempted_at else "";
     if (attempted_at.len > 0) {
         try attempt_text.writer.writeAll(" · ");
         try web_html.text(&attempt_text.writer, attempted_at);
     }
     try html.replaceElementInner(ctx.gpa, main, "dns-attempt", "dd", attempt_text.written());
-    try html.replaceEscapedElement(ctx.gpa, main, "dns-capability", "p", html.strField(capability, "reason"));
+    try html.replaceEscapedElement(ctx.gpa, main, "dns-capability", "p", view.reason);
 
     var refresh_key_buffer: [80]u8 = undefined;
     const refresh_key = try html.formIdempotencyKey(ctx.io, &refresh_key_buffer, "dns-refresh");
     try html.replaceHiddenInput(ctx.gpa, main, "dns-refresh-domain", "domain", domain);
     try html.replaceHiddenInput(ctx.gpa, main, "dns-refresh-csrf", "csrf_token", ctx.auth_csrf_token orelse "");
     try html.replaceHiddenInput(ctx.gpa, main, "dns-refresh-idempotency", "idempotency_key", refresh_key);
-    if (html.boolField(capability, "refresh")) {
+    if (view.can_refresh) {
         try html.replaceExact(ctx.gpa, main, "<button class=\"button-primary\" type=\"submit\" disabled>Refresh zone</button>", "<button class=\"button-primary\" type=\"submit\">Refresh zone</button>");
     }
 
     var rows = std.Io.Writer.Allocating.init(ctx.gpa);
     defer rows.deinit();
-    if (records.len == 0) {
+    if (view.records.len == 0) {
         try html.emptyRow(&rows.writer, 6, if (domain.len == 0) "Choose a configured zone." else "No DNS records observed for this zone.");
-    } else for (records) |record| {
-        const record_id = html.strField(record, "id");
-        const actions = html.member(record, "actions") orelse .null;
+    } else for (view.records) |record| {
+        const record_id = record.row.id;
         try rows.writer.writeAll("<tr data-dns-record=\"");
         try web_html.attribute(&rows.writer, record_id);
         try rows.writer.writeAll("\">");
         try rows.writer.writeAll("<td data-label=\"Type\">");
-        try html.writeBadge(&rows.writer, html.strField(record, "type"));
+        try html.writeBadge(&rows.writer, record.row.record_type);
         try rows.writer.writeAll("</td>");
-        try html.dashboardCellText(&rows.writer, "Name", html.strField(record, "name"), "mono breakable", "—");
-        try html.dashboardCellText(&rows.writer, "Content", html.strField(record, "content"), "mono breakable", "—");
+        try html.dashboardCellText(&rows.writer, "Name", record.row.name, "mono breakable", "—");
+        try html.dashboardCellText(&rows.writer, "Content", record.row.content, "mono breakable", "—");
         try rows.writer.writeAll("<td data-label=\"TTL\" class=\"mono\">");
-        try rows.writer.print("{d}", .{html.intField(record, "ttl")});
+        try rows.writer.print("{d}", .{record.ttl});
         try rows.writer.writeAll("</td><td data-label=\"Proxy\">");
-        try html.writeBadge(&rows.writer, if (html.boolField(record, "proxied")) "Proxied" else "DNS only");
+        try html.writeBadge(&rows.writer, if (record.proxied) "Proxied" else "DNS only");
         try rows.writer.writeAll("</td><td data-label=\"Actions\" class=\"cell-actions\"><div class=\"table-actions\">");
-        if (html.boolField(actions, "edit")) try writeDnsRecordLink(&rows.writer, domain, "edit", record_id, "Edit", false);
-        if (html.boolField(actions, "toggle")) {
+        if (record.can_edit) try writeDnsRecordLink(&rows.writer, domain, "edit", record_id, "Edit", false);
+        if (record.can_toggle) {
             var toggle_key_buffer: [80]u8 = undefined;
             const toggle_key = try html.formIdempotencyKey(ctx.io, &toggle_key_buffer, "dns-toggle");
-            try writeDnsInlineActionForm(&rows.writer, ctx.auth_csrf_token orelse "", toggle_key, domain, "toggle", record_id, if (html.boolField(record, "proxied")) "Set DNS only" else "Enable proxy", false);
+            try writeDnsInlineActionForm(&rows.writer, ctx.auth_csrf_token orelse "", toggle_key, domain, "toggle", record_id, if (record.proxied) "Set DNS only" else "Enable proxy", false);
         }
-        if (html.boolField(actions, "delete")) try writeDnsRecordLink(&rows.writer, domain, "confirm", record_id, "Delete", true);
-        if (!html.boolField(actions, "edit") and !html.boolField(actions, "toggle") and !html.boolField(actions, "delete")) try rows.writer.writeAll("<span class=\"muted\">Read-only</span>");
+        if (record.can_delete) try writeDnsRecordLink(&rows.writer, domain, "confirm", record_id, "Delete", true);
+        if (!record.can_edit and !record.can_toggle and !record.can_delete) try rows.writer.writeAll("<span class=\"muted\">Read-only</span>");
         try rows.writer.writeAll("</div></td></tr>");
     }
     try html.replaceElementInner(ctx.gpa, main, "records-body", "tbody", rows.written());
-    try html.replaceCountLabel(ctx.gpa, main, "record-count", "span", records.len, "record", "records");
+    try html.replaceCountLabel(ctx.gpa, main, "record-count", "span", view.records.len, "record", "records");
 
     var create_key_buffer: [80]u8 = undefined;
     const create_key = try html.formIdempotencyKey(ctx.io, &create_key_buffer, "dns-create");
     try html.replaceHiddenInput(ctx.gpa, main, "dns-create-domain", "domain", domain);
     try html.replaceHiddenInput(ctx.gpa, main, "dns-create-csrf", "csrf_token", ctx.auth_csrf_token orelse "");
     try html.replaceHiddenInput(ctx.gpa, main, "dns-create-idempotency", "idempotency_key", create_key);
-    if (html.boolField(capability, "write")) try enableDnsCreateForm(ctx.gpa, main);
+    if (view.can_write) try enableDnsCreateForm(ctx.gpa, main);
     if (draft) |value| if (std.mem.eql(u8, value.action, "create")) try applyDnsCreateDraft(ctx.gpa, main, value);
 
-    try injectDnsEdit(ctx, request, domain, records, draft, main);
-    try injectDnsDelete(ctx, request, domain, records, draft, main);
+    try injectDnsEdit(ctx, request, view, draft, main);
+    try injectDnsDelete(ctx, request, view, draft, main);
     if (dnsFeedback(request)) |feedback| {
         try html.replaceEscapedElement(ctx.gpa, main, "dns-notice", "div", feedback.message);
         var class_buffer: [96]u8 = undefined;
@@ -223,17 +216,17 @@ fn writeDnsInlineActionForm(out: *std.Io.Writer, csrf: []const u8, key: []const 
     try web_html.text(out, label);
     try out.writeAll("</button></form>");
 }
-fn injectDnsEdit(ctx: context.Context, request: http.Request, domain: []const u8, records: []const std.json.Value, draft: ?DnsDraft, main: *[]u8) !void {
+fn injectDnsEdit(ctx: context.Context, request: http.Request, view: app_dns.View, draft: ?DnsDraft, main: *[]u8) !void {
+    const domain = view.domain;
     const record_id = request.query("edit") orelse return;
-    const record = findJsonRecord(records, record_id) orelse return;
-    const actions = html.member(record, "actions") orelse .null;
-    if (!html.boolField(actions, "edit")) return;
+    const record = view.record(record_id) orelse return;
+    if (!record.can_edit) return;
     const submitted = if (draft) |value| std.mem.eql(u8, value.action, "update") and std.mem.eql(u8, value.record_id, record_id) else false;
-    const selected_record_type = if (submitted and isSupportedDnsType(draft.?.record_type)) draft.?.record_type else html.strField(record, "type");
-    const name = if (submitted) draft.?.name else html.strField(record, "name");
-    const content = if (submitted) draft.?.content else html.strField(record, "content");
+    const selected_record_type = if (submitted and isSupportedDnsType(draft.?.record_type)) draft.?.record_type else record.row.record_type;
+    const name = if (submitted) draft.?.name else record.row.name;
+    const content = if (submitted) draft.?.content else record.row.content;
     const ttl = if (submitted) draft.?.ttl else "";
-    const proxied = if (submitted) draft.?.proxied else html.boolField(record, "proxied");
+    const proxied = if (submitted) draft.?.proxied else record.proxied;
     var key_buffer: [80]u8 = undefined;
     const key = try html.formIdempotencyKey(ctx.io, &key_buffer, "dns-update");
     var body = std.Io.Writer.Allocating.init(ctx.gpa);
@@ -259,7 +252,7 @@ fn injectDnsEdit(ctx: context.Context, request: http.Request, domain: []const u8
     try body.writer.writeAll("\"></div><div class=\"field span-4\"><label for=\"edit-record-content\">Content</label><input id=\"edit-record-content\" name=\"content\" type=\"text\" required autocomplete=\"off\" value=\"");
     try web_html.attribute(&body.writer, content);
     try body.writer.writeAll("\"></div><div class=\"field span-2\"><label for=\"edit-record-ttl\">TTL</label><input id=\"edit-record-ttl\" name=\"ttl\" type=\"number\" min=\"1\" max=\"86400\" required value=\"");
-    if (submitted) try web_html.attribute(&body.writer, ttl) else try body.writer.print("{d}", .{html.intField(record, "ttl")});
+    if (submitted) try web_html.attribute(&body.writer, ttl) else try body.writer.print("{d}", .{record.ttl});
     try body.writer.writeAll("\"></div><label class=\"field-inline\" for=\"edit-record-proxied\"><input id=\"edit-record-proxied\" name=\"proxied\" type=\"checkbox\" value=\"1\"");
     if (proxied) try body.writer.writeAll(" checked");
     try body.writer.writeAll("> Proxied</label><div class=\"span-12 cluster\"><button class=\"button-primary\" type=\"submit\">Save record</button><a class=\"button\" href=\"/dns.html?domain=");
@@ -268,20 +261,20 @@ fn injectDnsEdit(ctx: context.Context, request: http.Request, domain: []const u8
     try html.replaceElementInner(ctx.gpa, main, "edit-record-body", "div", body.written());
     try html.replaceExact(ctx.gpa, main, "id=\"edit-record-panel\" class=\"panel hidden\"", "id=\"edit-record-panel\" class=\"panel\"");
 }
-fn injectDnsDelete(ctx: context.Context, request: http.Request, domain: []const u8, records: []const std.json.Value, draft: ?DnsDraft, main: *[]u8) !void {
+fn injectDnsDelete(ctx: context.Context, request: http.Request, view: app_dns.View, draft: ?DnsDraft, main: *[]u8) !void {
+    const domain = view.domain;
     if (!std.mem.eql(u8, request.query("confirm") orelse "", "delete")) return;
     const record_id = request.query("record") orelse return;
-    const record = findJsonRecord(records, record_id) orelse return;
-    const actions = html.member(record, "actions") orelse .null;
-    if (!html.boolField(actions, "delete")) return;
+    const record = view.record(record_id) orelse return;
+    if (!record.can_delete) return;
     var key_buffer: [80]u8 = undefined;
     const key = try html.formIdempotencyKey(ctx.io, &key_buffer, "dns-delete");
     var body = std.Io.Writer.Allocating.init(ctx.gpa);
     defer body.deinit();
     try body.writer.writeAll("<p>Delete the ");
-    try web_html.text(&body.writer, html.strField(record, "type"));
+    try web_html.text(&body.writer, record.row.record_type);
     try body.writer.writeAll(" record <code>");
-    try web_html.text(&body.writer, html.strField(record, "name"));
+    try web_html.text(&body.writer, record.row.name);
     try body.writer.writeAll("</code>. This changes public DNS.</p><form id=\"delete-record-form\" class=\"stack\" method=\"post\" action=\"/dns/record\">");
     try html.writeHiddenInput(&body.writer, "csrf_token", ctx.auth_csrf_token orelse "");
     try html.writeHiddenInput(&body.writer, "idempotency_key", key);
@@ -289,7 +282,7 @@ fn injectDnsDelete(ctx: context.Context, request: http.Request, domain: []const 
     try html.writeHiddenInput(&body.writer, "action", "delete");
     try html.writeHiddenInput(&body.writer, "record_id", record_id);
     try body.writer.writeAll("<div class=\"field\"><label for=\"dns-delete-confirmation\">Type <code>");
-    try web_html.text(&body.writer, html.strField(record, "name"));
+    try web_html.text(&body.writer, record.row.name);
     try body.writer.writeAll("</code> to confirm</label><input id=\"dns-delete-confirmation\" name=\"confirmation\" type=\"text\" required autocomplete=\"off\" value=\"");
     if (draft) |value| if (std.mem.eql(u8, value.action, "delete") and std.mem.eql(u8, value.record_id, record_id)) try web_html.attribute(&body.writer, value.confirmation);
     try body.writer.writeAll("\"></div><div class=\"cluster\"><button class=\"button button-danger\" type=\"submit\">Delete record</button><a class=\"button\" href=\"/dns.html?domain=");
@@ -298,7 +291,4 @@ fn injectDnsDelete(ctx: context.Context, request: http.Request, domain: []const 
     try html.replaceElementInner(ctx.gpa, main, "delete-record-body", "div", body.written());
     try html.replaceExact(ctx.gpa, main, "id=\"delete-record-panel\" class=\"panel hidden\"", "id=\"delete-record-panel\" class=\"panel\"");
 }
-fn findJsonRecord(records: []const std.json.Value, record_id: []const u8) ?std.json.Value {
-    for (records) |record| if (std.mem.eql(u8, html.strField(record, "id"), record_id)) return record;
-    return null;
-}
+

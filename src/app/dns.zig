@@ -5,6 +5,7 @@ const core_config = @import("../core/config.zig");
 const core_json = @import("../core/json.zig");
 const core_redact = @import("../core/redact.zig");
 const db_store = @import("../db/store.zig");
+const observation = @import("observation.zig");
 const net_http = @import("../net/http.zig");
 const provider_cloudflare = @import("cloudflare");
 const provider_cloudflare_models = @import("cloudflare").models;
@@ -67,87 +68,94 @@ const PreparedRecord = struct {
     }
 };
 
-pub fn writeJson(ctx: Context, requested_domain: ?[]const u8, writer: anytype) !void {
-    const domain = selectedDomain(ctx.config.domains, requested_domain);
-    var zones = try ctx.db.cloudflare().cloudflareZoneRows(ctx.gpa, 200);
-    defer zones.deinit(ctx.gpa);
-    const zone = findZone(zones.items, domain);
-    const observation_optional = if (domain.len > 0)
-        try ctx.db.latestObservationForTarget(ctx.gpa, "cloudflare", "dns", domain)
-    else
-        null;
-    defer if (observation_optional) |observation| observation.deinit(ctx.gpa);
-    const freshness = observationFreshness(observation_optional, freshAfterSeconds(ctx.config));
-    const refresh_available = domain.len > 0 and ctx.config.hasCloudflareAuth();
-    const write_available = refresh_available and zone != null and observation_optional != null and
-        std.mem.eql(u8, freshness, "current") and
-        std.mem.eql(u8, observation_optional.?.attempt_status, "ok");
+pub const Zone = struct {
+    domain: []const u8,
+    observed: bool,
+};
 
-    var records = try ctx.db.cloudflare().cloudflareDnsRecordRows(ctx.gpa, 5000);
-    defer records.deinit(ctx.gpa);
-    try writer.writeAll("{\"kind\":\"dns_observation\",\"source\":\"provider-observation\",");
-    try core_json.writeStringField(writer, "selected_domain", domain, true);
-    try writer.writeAll("\"zones\":[");
-    for (ctx.config.domains, 0..) |configured, index| {
-        if (index != 0) try writer.writeByte(',');
-        const observed = findZone(zones.items, configured);
-        try writer.writeByte('{');
-        try core_json.writeStringField(writer, "domain", configured, true);
-        try core_json.writeNullableStringField(writer, "zone_id", if (observed) |item| item.id else null, false);
-        try writer.writeByte('}');
+pub const Record = struct {
+    row: db_store.CloudflareDnsRecordRow,
+    ttl: i64,
+    proxied: bool,
+    can_edit: bool,
+    can_toggle: bool,
+    can_delete: bool,
+};
+
+/// What the DNS page shows for one configured zone: its stored records and
+/// whether the observation is current enough to allow changes.
+pub const View = struct {
+    domain: []const u8,
+    zones: []Zone,
+    zone_observed: bool,
+    freshness: observation.Freshness,
+    latest: ?db_store.Observation,
+    can_refresh: bool,
+    can_write: bool,
+    reason: []const u8,
+    records: []Record,
+    zone_rows: db_store.CloudflareZoneRows,
+    record_rows: db_store.CloudflareDnsRecordRows,
+
+    pub fn load(ctx: Context, requested_domain: ?[]const u8) !View {
+        const domain = selectedDomain(ctx.config.domains, requested_domain);
+        var zone_rows = try ctx.db.cloudflare().cloudflareZoneRows(ctx.gpa, 200);
+        errdefer zone_rows.deinit(ctx.gpa);
+        var record_rows = try ctx.db.cloudflare().cloudflareDnsRecordRows(ctx.gpa, 5000);
+        errdefer record_rows.deinit(ctx.gpa);
+        const latest = if (domain.len > 0) try ctx.db.latestObservationForTarget(ctx.gpa, "cloudflare", "dns", domain) else null;
+        errdefer if (latest) |value| value.deinit(ctx.gpa);
+
+        const zone = findZone(zone_rows.items, domain);
+        const fresh = observation.freshness(latest, ctx.config);
+        const can_refresh = domain.len > 0 and ctx.config.hasCloudflareAuth();
+        const can_write = can_refresh and zone != null and fresh == .current;
+
+        const zones = try ctx.gpa.alloc(Zone, ctx.config.domains.len);
+        errdefer ctx.gpa.free(zones);
+        for (ctx.config.domains, zones) |configured, *item| item.* = .{ .domain = configured, .observed = findZone(zone_rows.items, configured) != null };
+
+        var records: std.ArrayList(Record) = .empty;
+        errdefer records.deinit(ctx.gpa);
+        if (zone) |observed| for (record_rows.items) |row| {
+            if (!std.mem.eql(u8, row.zone_id, observed.id)) continue;
+            try records.append(ctx.gpa, .{
+                .row = row,
+                .ttl = std.fmt.parseInt(i64, row.ttl, 10) catch 0,
+                .proxied = std.mem.eql(u8, row.proxied, "true"),
+                .can_edit = can_write and supportedType(row.record_type),
+                .can_toggle = can_write and proxyableType(row.record_type),
+                .can_delete = can_write,
+            });
+        };
+        return .{
+            .domain = domain,
+            .zones = zones,
+            .zone_observed = zone != null,
+            .freshness = fresh,
+            .latest = latest,
+            .can_refresh = can_refresh,
+            .can_write = can_write,
+            .reason = capabilityReason(domain, ctx.config.hasCloudflareAuth(), zone != null, fresh, latest),
+            .records = try records.toOwnedSlice(ctx.gpa),
+            .zone_rows = zone_rows,
+            .record_rows = record_rows,
+        };
     }
-    try writer.writeAll("],\"zone\":{");
-    try core_json.writeNullableStringField(writer, "id", if (zone) |item| item.id else null, true);
-    try core_json.writeStringField(writer, "domain", domain, false);
-    try writer.writeAll("},");
-    try core_json.writeStringField(writer, "freshness", freshness, true);
-    try writer.writeAll("\"observed_at\":");
-    if (observation_optional) |observation| {
-        if (observation.hasSuccessfulObservation()) try core_json.writeString(writer, observation.observed_at) else try writer.writeAll("null");
-    } else try writer.writeAll("null");
-    try writer.writeAll(",\"age_seconds\":");
-    if (observation_optional) |observation| {
-        if (observation.age_seconds >= 0) try writer.print("{d}", .{observation.age_seconds}) else try writer.writeAll("null");
-    } else try writer.writeAll("null");
-    try writer.writeAll(",\"collection\":{");
-    if (observation_optional) |observation| {
-        try core_json.writeStringField(writer, "status", observation.attempt_status, true);
-        try core_json.writeStringField(writer, "attempted_at", observation.attempted_at, true);
-        try core_json.writeStringField(writer, "summary", observation.attempt_summary, false);
-    } else {
-        try core_json.writeStringField(writer, "status", "unavailable", true);
-        try core_json.writeNullableStringField(writer, "attempted_at", null, true);
-        try core_json.writeStringField(writer, "summary", "This zone has not been refreshed.", false);
+
+    pub fn deinit(self: *View, gpa: Allocator) void {
+        gpa.free(self.records);
+        gpa.free(self.zones);
+        if (self.latest) |value| value.deinit(gpa);
+        self.record_rows.deinit(gpa);
+        self.zone_rows.deinit(gpa);
     }
-    try writer.writeAll("},\"capability\":{");
-    try core_json.writeBoolField(writer, "refresh", refresh_available, true);
-    try core_json.writeBoolField(writer, "write", write_available, true);
-    try core_json.writeStringField(writer, "reason", capabilityReason(domain, ctx.config.hasCloudflareAuth(), zone != null, freshness, observation_optional), false);
-    try writer.writeAll("},\"records\":[");
-    var first = true;
-    for (records.items) |record| {
-        if (zone == null or !std.mem.eql(u8, record.zone_id, zone.?.id)) continue;
-        if (!first) try writer.writeByte(',');
-        first = false;
-        try writer.writeByte('{');
-        try core_json.writeStringField(writer, "id", record.id, true);
-        try core_json.writeStringField(writer, "zone_id", record.zone_id, true);
-        try core_json.writeStringField(writer, "name", record.name, true);
-        try core_json.writeStringField(writer, "type", record.record_type, true);
-        try core_json.writeStringField(writer, "content", record.content, true);
-        const ttl = std.fmt.parseInt(i64, record.ttl, 10) catch 0;
-        try core_json.writeIntField(writer, "ttl", ttl, true);
-        try core_json.writeBoolField(writer, "proxied", std.mem.eql(u8, record.proxied, "true"), true);
-        try core_json.writeStringField(writer, "observed_at", record.updated_at, true);
-        try writer.writeAll("\"actions\":{");
-        const supported = supportedType(record.record_type);
-        try core_json.writeBoolField(writer, "edit", write_available and supported, true);
-        try core_json.writeBoolField(writer, "toggle", write_available and proxyableType(record.record_type), true);
-        try core_json.writeBoolField(writer, "delete", write_available, false);
-        try writer.writeAll("}}");
+
+    pub fn record(self: View, id: []const u8) ?Record {
+        for (self.records) |item| if (std.mem.eql(u8, item.row.id, id)) return item;
+        return null;
     }
-    try writer.writeAll("]}\n");
-}
+};
 
 pub fn refresh(ctx: Context, domain_input: []const u8) !void {
     if (!dns_mutex.tryLock()) return error.DnsBusy;
@@ -172,9 +180,8 @@ pub fn mutate(
     defer zones.deinit(ctx.gpa);
     const zone = findZone(zones.items, domain) orelse return error.DnsZoneNotObserved;
     const observation_optional = try ctx.db.latestObservationForTarget(ctx.gpa, "cloudflare", "dns", domain);
-    defer if (observation_optional) |observation| observation.deinit(ctx.gpa);
-    if (!std.mem.eql(u8, observationFreshness(observation_optional, freshAfterSeconds(ctx.config)), "current") or
-        observation_optional == null or !std.mem.eql(u8, observation_optional.?.attempt_status, "ok"))
+    defer if (observation_optional) |value| value.deinit(ctx.gpa);
+    if (observation.freshness(observation_optional, ctx.config) != .current)
         return error.DnsWriteUnavailable;
 
     var records = try ctx.db.cloudflare().cloudflareDnsRecordRows(ctx.gpa, 5000);
@@ -461,24 +468,13 @@ fn findRecord(records: []const db_store.CloudflareDnsRecordRow, zone_id: []const
     return null;
 }
 
-fn freshAfterSeconds(config: core_config.Config) i64 {
-    return @max(@as(i64, config.refresh_seconds) * 2, 600);
-}
-
-fn observationFreshness(observation: ?db_store.Observation, fresh_after_seconds: i64) []const u8 {
-    const value = observation orelse return "unavailable";
-    if (!value.hasSuccessfulObservation()) return "unavailable";
-    if (!std.mem.eql(u8, value.attempt_status, "ok")) return "stale";
-    return if (value.age_seconds >= 0 and value.age_seconds <= fresh_after_seconds) "current" else "stale";
-}
-
-fn capabilityReason(domain: []const u8, has_auth: bool, has_zone: bool, freshness: []const u8, observation: ?db_store.Observation) []const u8 {
+fn capabilityReason(domain: []const u8, has_auth: bool, has_zone: bool, freshness: observation.Freshness, latest: ?db_store.Observation) []const u8 {
     if (domain.len == 0) return "Choose a configured DNS zone.";
     if (!has_auth) return "Cloudflare credentials are not configured; stored records are read-only.";
     if (!has_zone) return "Refresh this configured zone to resolve its exact Cloudflare identity.";
-    if (observation == null or !observation.?.hasSuccessfulObservation()) return "Refresh this zone successfully before changing records.";
-    if (!std.mem.eql(u8, observation.?.attempt_status, "ok")) return "The latest refresh failed; retained records are read-only.";
-    if (!std.mem.eql(u8, freshness, "current")) return "The observation is stale; refresh this zone before changing records.";
+    if (latest == null or !latest.?.hasSuccessfulObservation()) return "Refresh this zone successfully before changing records.";
+    if (!std.mem.eql(u8, latest.?.attempt_status, "ok")) return "The latest refresh failed; retained records are read-only.";
+    if (freshness != .current) return "The observation is stale; refresh this zone before changing records.";
     return "Cloudflare access and the exact zone identity were confirmed by the current observation.";
 }
 
