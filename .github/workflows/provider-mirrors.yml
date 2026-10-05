@@ -15,8 +15,17 @@ permissions:
   contents: read
 
 jobs:
-  cloudflare:
+  mirror:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - package: cloudflare
+            mirror: tzekid/cloudflare-zig
+            key: CLOUDFLARE_MIRROR_SSH_KEY
+          - package: hostinger
+            mirror: tzekid/hostinger-zig
+            key: HOSTINGER_MIRROR_SSH_KEY
     steps:
       - uses: actions/checkout@v7
         with:
@@ -28,25 +37,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ steps.zig-version.outputs.version }}
-      - run: tools/provider-package-check.sh cloudflare
-      - run: tools/publish-provider-mirror.sh cloudflare tzekid/cloudflare-zig
+      - run: tools/provider-package-check.sh ${{ matrix.package }}
+      - run: tools/publish-provider-mirror.sh ${{ matrix.package }} ${{ matrix.mirror }}
         env:
-          MIRROR_SSH_KEY: ${{ secrets.CLOUDFLARE_MIRROR_SSH_KEY }}
-
-  hostinger:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Install verification dependency
-        run: sudo apt-get update && sudo apt-get install --yes ripgrep
-      - id: zig-version
-        run: echo "version=$(cat .zigversion)" >> "$GITHUB_OUTPUT"
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ steps.zig-version.outputs.version }}
-      - run: tools/provider-package-check.sh hostinger
-      - run: tools/publish-provider-mirror.sh hostinger tzekid/hostinger-zig
-        env:
-          MIRROR_SSH_KEY: ${{ secrets.HOSTINGER_MIRROR_SSH_KEY }}
+          MIRROR_SSH_KEY: ${{ secrets[matrix.key] }}

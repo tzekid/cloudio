@@ -264,11 +264,9 @@ pub fn columnText(stmt: *sqlite.sqlite3_stmt, idx: c_int) ?[]const u8 {
 
 pub fn isKnownTable(table: []const u8) bool {
     const known = [_][]const u8{
-        "snapshots",            "provider_raw",               "cloudflare_accounts",       "cloudflare_zones", "cloudflare_dns_records",
-        "cloudflare_resources", "cloudflare_inventory_items", "cloudflare_security_items", "hostinger_vps",    "hostinger_metrics",
-        "hostinger_resources",  "hostinger_inventory_items",  "caddy_sites",               "caddy_upstreams",  "projects",
-        "system_metrics",       "services",                   "sockets",                   "containers",       "audit_events",
-        "settings",             "mutation_requests",
+        "snapshots",        "cloudflare_accounts", "cloudflare_zones", "cloudflare_dns_records", "hostinger_vps",
+        "caddy_sites",      "caddy_upstreams",     "projects",         "services",               "sockets",
+        "containers",       "audit_events",        "mutation_requests",
     };
     for (known) |name| if (std.mem.eql(u8, table, name)) return true;
     return false;

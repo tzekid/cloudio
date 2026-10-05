@@ -8,7 +8,6 @@ const audit_repository = @import("repositories/audit.zig");
 const maintenance_repository = @import("repositories/maintenance.zig");
 const cloudflare_repository = @import("repositories/cloudflare.zig");
 const hostinger_repository = @import("repositories/hostinger.zig");
-const inventory_repository = @import("repositories/inventory.zig");
 const system_repository = @import("repositories/system.zig");
 const auth_repository = @import("repositories/auth.zig");
 const nob_repository = @import("repositories/nob.zig");
@@ -47,10 +46,6 @@ pub const Db = struct {
     }
 
     pub fn hostinger(self: *Db) hostinger_repository.Repository {
-        return .{ .handle = self.handle };
-    }
-
-    pub fn inventory(self: *Db) inventory_repository.Repository {
         return .{ .handle = self.handle };
     }
 

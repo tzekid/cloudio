@@ -4,10 +4,10 @@
 - Audience: Cloudio and `nob.zig` implementers
 - Protocol name: **nob.zig protocol v1**
 - Static manifest: `nob.json`
-Last updated: 2026-08-03
+Last updated: 2026-10-05
 
 The external SDK, fixtures, examples, passive discovery, trust/bootstrap,
-independent observation, persisted plan/run engine, CLI/API/web adapters,
+independent observation, persisted plan/run engine, CLI and web adapters,
 logical secrets, scoped user-systemd and Caddy brokers, tombstones, and bounded
 retention are implemented. This document defines the shared protocol and
 Cloudio trust boundary; it is not a cross-repository adoption roadmap.
@@ -1598,86 +1598,32 @@ At server startup:
 - No interrupted mutating operation is resumed or retried automatically.
 - Immediate independent observation determines the actual host state.
 
-## 13. HTTP API
+## 13. Web form surface
 
-All routes use the existing default-deny authentication pipeline. Mutation
-routes require `Idempotency-Key`; every execute, trust/revoke, secret-binding,
-cancel, and forget route is classified destructive at the HTTP layer and
-requires `X-Cloudio-Confirm: confirmed`. `purge` additionally requires a body field
-`confirm_project_id` exactly equal to the declared project ID.
+Project mutations are native form posts through the shared form pipeline:
+exact origin, session CSRF, field allowlist, and an idempotency claim; replays
+return the stored redirect. `POST /projects/scan` triggers a passive scan.
+Every other operation posts to `POST /projects/action` with `operation` and
+`project` fields:
 
-| Method | Route | Purpose |
+| Operation | Extra fields | Effect |
 |---|---|---|
-| GET | `/api/nob/projects` | Projects/candidates with trust and effective status |
-| POST | `/api/nob/scan` | Trigger passive scan |
-| GET | `/api/nob/projects/:id` | Manifest, resources, actions, operations, diagnostics |
-| POST | `/api/nob/projects/:id/trust` | Trust exact `manifest_sha256` after review |
-| POST | `/api/nob/projects/:id/revoke` | Revoke code execution/direct controls |
-| POST | `/api/nob/projects/:id/prepare` | Build/validate the trusted runner and observe |
-| GET | `/api/nob/projects/:id/secrets` | Logical secret requirements and presence only |
-| PUT | `/api/nob/projects/:id/secrets/:secret` | Bind a logical ID to a local source reference, never a value |
-| DELETE | `/api/nob/projects/:id/secrets/:secret` | Remove a logical secret binding |
-| POST | `/api/nob/projects/:id/observe` | Run trusted runner plus independent observation |
-| POST | `/api/nob/projects/:id/actions/:action/plan` | Create action plan |
-| POST | `/api/nob/projects/:id/actions/:action/run` | Consume `plan_id`, return 202 operation |
-| POST | `/api/nob/projects/:id/resources/:resource/:control/plan` | Create Cloudio resource-control plan |
-| POST | `/api/nob/projects/:id/resources/:resource/:control/run` | Consume resource plan |
-| GET | `/api/nob/projects/:id/resources/:resource/logs?tail=N` | Read bounded logs for a declared log-capable resource |
-| POST | `/api/nob/projects/:id/forget` | Ignore/remove Cloudio registry state only |
-| GET | `/api/nob/operations?limit=N` | Recent operations across projects |
-| GET | `/api/nob/operations/:id` | Operation summary and last structural events |
-| GET | `/api/nob/operations/:id/events?after_seq=N&limit=N` | Bounded polling feed |
-| GET | `/api/nob/operations/:id/log?tail_bytes=N` | Redacted bounded log tail |
-| POST | `/api/nob/operations/:id/cancel` | Request cooperative cancellation |
+| `trust` | `manifest_sha256` | Trust the exact reviewed manifest digest |
+| `revoke`, `forget` | `confirmation` (declared project ID) | Revoke code execution; `forget` also tombstones registry state |
+| `prepare`, `observe` | — | Build and validate the trusted runner, then observe |
+| `secret-bind` | `secret_id`, `source_kind`, `source_ref` | Bind a logical secret to a local source, never a value |
+| `secret-unbind` | `secret_id` | Remove a logical secret binding |
+| `plan` | `action_id`, `param.<name>` | Create an action plan from declared, typed parameters |
+| `resource-plan` | `resource_id`, `control_name` | Create a Cloudio resource-control plan |
+| `run` | `plan_id`, `action_id`, `confirmation`, optional `confirm_project_id`, `resource_id`, `control_name` | Consume a reviewed plan and queue the operation |
+| `cancel` | `run_id` | Request cooperative cancellation |
 
-Request bodies are closed objects:
-
-- trust: `{"manifest_sha256":"<64 lowercase hex>","confirm_declared_id":"dev..."}`;
-- revoke/forget/cancel: `{}` (cancel may later add a bounded `reason` field);
-- action plan: `{"parameters":{...}}`;
-- action/resource run: `{"plan_id":"<ULID>"}`, plus
-  `confirm_project_id` only where required;
-- resource-control plan: `{}` in v1 because the resource and control are in the
-  route.
-
-Unknown body fields are errors. A run plan must belong to the exact route
-project/action or project/resource/control and actor session; plan IDs are not
-ambient bearer capabilities.
-
-Example 202 response:
-
-```json
-{
-  "kind": "nob_run",
-  "operation": {
-    "id": "01J...",
-    "state": "queued",
-    "project_id": 42,
-    "declared_id": "dev.tzekid.plosca",
-    "action_id": "deploy"
-  },
-  "status_url": "/api/nob/operations/01J..."
-}
-```
-
-Status codes:
-
-- 200 for reads, plans, trusted prepare/observation, replayed completed mutation
-  responses, and accepted trust/revoke/forget changes.
-- 202 for a newly queued operation or cancellation request.
-- 400 invalid input/parameter/protocol shape.
-- 404 unknown project/action/resource/operation.
-- 409 idempotency conflict, project busy, consumed/stale plan, manifest review
-  required, or declared-ID collision.
-- 412 plan precondition/source fingerprint changed.
-- 422 valid manifest but unsupported protocol/resource control.
-- 503 toolchain, runner bootstrap, user bus, or required secret unavailable.
-
-Operation event polling is the first implementation; SSE/WebSocket is not
-required. `after_seq` defaults to 0, limit defaults to 200 and caps at 500. The
-response includes `next_seq`, `terminal`, and `truncated` for bounded API
-clients. The shipped Projects page remains server-rendered and uses explicit
-reload/navigation rather than adding a second browser-owned operation model.
+A run plan must belong to the exact project, action or resource control, and
+actor session; plan IDs are not ambient bearer capabilities. Failures render
+the Projects page with a stable error code and HTTP status: 400 invalid input,
+404 unknown project/plan/run, 409 approval, readiness, busy, or stale plan,
+422 unsupported protocol or resource control, 428 confirmation, and 503
+toolchain, runner bootstrap, or required secret unavailable.
 
 `forget` creates an audit-preserving tombstone: it revokes trust, invalidates
 plans, removes cached runners and secret bindings, and sets discovery state to
@@ -1687,11 +1633,11 @@ root. A later trust request can restore it only through a fresh exact-manifest
 review. Hard deletion is retention maintenance after related history expires,
 not a user-facing project action.
 
-Secret-binding bodies are exactly
-`{"source_kind":"file|process-environment","source_ref":"..."}`. Responses
-contain `secret_id`, source kind, `present`, and `checked_at`; they do not echo a
-file path, environment-variable name, or value. Binding is allowed only for a
-secret ID in the current reviewed manifest and is audited.
+Secret bindings record a source kind (`file` or `process-environment`) and a
+reference. Pages and CLI output show the secret ID, source kind, and presence
+only; they never echo a file path, environment-variable name, or value.
+Binding is allowed only for a secret ID in the current reviewed manifest and is
+audited.
 
 ## 14. Cloudio CLI and web UI
 
@@ -1719,14 +1665,14 @@ cloudio nob cancel <operation-id>
 cloudio nob forget <id> --yes
 ```
 
-`purge` additionally requires `--confirm-project <declared-id>`. CLI and HTTP
+`purge` additionally requires `--confirm-project <declared-id>`. CLI and web forms
 delegate to the same application services and database operation engine; the
 CLI must not implement a second synchronous deploy path.
 
 ### 14.2 Web UI
 
-Projects is the sole operator-facing lifecycle page; the overlapping legacy
-Apps UI/API and generic deployer are retired. The first server-rendered view
+Projects is the sole operator-facing lifecycle page; the legacy
+Apps deployer is gone. The first server-rendered view
 shows project ID/name, kind, trust state, effective health, source
 revision/dirty state, resource summary, current operation, and last
 observation.
@@ -1912,16 +1858,14 @@ roots or a declared managed release root.
 The design deliberately reuses current strengths:
 
 - `app/writes.zig` remains the audit/idempotency metadata boundary.
-- `mutation_requests` remains the HTTP idempotency store.
+- `mutation_requests` remains the form idempotency store.
 - `app/maintenance.zig` gains operation-file/event retention policies.
 - `runtime/scheduler.zig` triggers passive scans and due observations.
-- The current server-rendered page and native-form architecture owns Projects
-  operations; JSON remains a programmatic contract rather than a page renderer.
-- `app/topology.zig` joins exact declared resources and retains legacy inferred
+- The server-rendered page and native-form architecture owns Projects
+  operations; JSON output is limited to `cloudio nob ... --json`.
+- `app/dashboard.zig` joins exact declared resources and retains inferred
   correlations for candidates.
-- The legacy `app/deploy.zig` adapter and its HTTP surface are removed; the
-  empty `apps`/`deploys` tables remain schema-compatible until a separately
-  backed-up migration is justified.
+- The legacy Apps deployer and its tables are removed (migration 20).
 
 Current weaknesses this work corrects:
 
