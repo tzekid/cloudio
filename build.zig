@@ -115,14 +115,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_json", .module = core_json_mod },
         },
     });
-    const provider_capabilities_mod = b.createModule(.{
-        .root_source_file = b.path("src/providers/capabilities.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
     const nob_model_mod = b.createModule(.{
         .root_source_file = b.path("src/nob/model.zig"),
         .target = target,
@@ -378,16 +370,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_cloudflare_browser_run", .module = provider_cloudflare_browser_run_mod },
         },
     });
-    const provider_auth_mod = b.createModule(.{
-        .root_source_file = b.path("src/providers/auth.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
     const collector_caddy_mod = b.createModule(.{
         .root_source_file = b.path("src/collectors/caddy.zig"),
         .target = target,
@@ -622,18 +604,6 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_authentication_mod);
 
-    const app_caddy_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/caddy.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "collector_caddy", .module = collector_caddy_mod },
-            .{ .name = "core_output", .module = core_output_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_caddy_mod);
 
     const app_nob_projects_mod = b.createModule(.{
         .root_source_file = b.path("src/app/nob_projects.zig"),
@@ -752,17 +722,6 @@ pub fn build(b: *std.Build) void {
 
 
 
-    const app_inventory_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/inventory.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_inventory_mod);
 
     const app_topology_mod = b.createModule(.{
         .root_source_file = b.path("src/app/topology.zig"),
@@ -827,7 +786,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "core_redact", .module = core_redact_mod },
             .{ .name = "db_store", .module = db_store_mod },
             .{ .name = "net_http", .module = net_http_mod },
-            .{ .name = "provider_auth", .module = provider_auth_mod },
             .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
             .{ .name = "provider_cloudflare_transport", .module = provider_cloudflare_transport_mod },
             .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
@@ -951,7 +909,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "app_browser_run", .module = app_browser_run_mod },
             .{ .name = "app_dns", .module = app_dns_mod },
             .{ .name = "app_vps", .module = app_vps_mod },
-            .{ .name = "app_inventory", .module = app_inventory_mod },
             .{ .name = "app_maintenance", .module = app_maintenance_mod },
             .{ .name = "app_nob_projects", .module = app_nob_projects_mod },
             .{ .name = "app_nob_secrets", .module = app_nob_secrets_mod },
@@ -1109,7 +1066,6 @@ pub fn build(b: *std.Build) void {
         app_doctor_mod,
         app_init_mod,
         app_authentication_mod,
-        app_caddy_mod,
         app_nob_projects_mod,
         app_nob_secrets_mod,
         runtime_nob_workers_mod,
@@ -1126,7 +1082,6 @@ pub fn build(b: *std.Build) void {
         app_browser_run_mod,
         app_vps_mod,
         app_render_mod,
-        app_inventory_mod,
         app_database_mod,
         app_refresh_mod,
         app_web_resources_mod,
@@ -1142,8 +1097,6 @@ pub fn build(b: *std.Build) void {
         net_http_mod,
         http_mod,
         net_pagination_mod,
-        provider_capabilities_mod,
-        provider_auth_mod,
         provider_routes_mod,
         provider_typed_routes_mod,
         nob_model_mod,

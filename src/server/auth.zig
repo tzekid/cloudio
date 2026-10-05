@@ -44,13 +44,6 @@ pub fn originMatches(request: http.Request, expected_origin: []const u8) bool {
     return constantTimeEqual(provided, expected_origin);
 }
 
-pub fn isUnsafeMethod(method: []const u8) bool {
-    return std.mem.eql(u8, method, "POST") or
-        std.mem.eql(u8, method, "PUT") or
-        std.mem.eql(u8, method, "PATCH") or
-        std.mem.eql(u8, method, "DELETE");
-}
-
 pub fn hasJsonBody(request: http.Request) bool {
     if (request.body.len == 0) return true;
     const value = request.header("content-type") orelse return false;

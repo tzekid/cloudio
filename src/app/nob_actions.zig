@@ -343,10 +343,6 @@ pub fn listEvents(ctx: Context, operation_id: []const u8) !db_store.NobRunEvents
     return try ctx.db.nob().listRunEvents(ctx.gpa, operation_id);
 }
 
-pub fn listEventsAfter(ctx: Context, operation_id: []const u8, after_seq: i64, limit: i64) !db_store.NobRunEvents {
-    return try ctx.db.nob().listRunEventsAfter(ctx.gpa, operation_id, @max(after_seq, 0), @min(@max(limit, 1), 501));
-}
-
 pub fn listRecentEvents(ctx: Context, operation_id: []const u8, limit: i64) !db_store.NobRunEvents {
     return try ctx.db.nob().listRecentRunEvents(ctx.gpa, operation_id, @min(@max(limit, 1), 500));
 }

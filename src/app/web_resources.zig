@@ -81,14 +81,3 @@ fn containerFreshness(observation: ?db_store.Observation, fresh_after_seconds: i
     return if (value.age_seconds >= 0 and value.age_seconds <= @max(fresh_after_seconds, 1)) "current" else "stale";
 }
 
-fn dnsNameMatchesDomain(name: []const u8, domain: []const u8) bool {
-    if (std.mem.eql(u8, name, domain)) return true;
-    return name.len > domain.len + 1 and
-        std.mem.endsWith(u8, name, domain) and
-        name[name.len - domain.len - 1] == '.';
-}
-
-test "DNS domain matching respects label boundaries" {
-    try std.testing.expect(dnsNameMatchesDomain("api.example.com", "example.com"));
-    try std.testing.expect(!dnsNameMatchesDomain("notexample.com", "example.com"));
-}

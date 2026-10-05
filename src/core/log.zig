@@ -58,12 +58,6 @@ pub fn writeRedactedFile(io: Io, allocator: Allocator, path: []const u8, bytes: 
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = redacted });
 }
 
-pub fn readRedactedFile(io: Io, allocator: Allocator, path: []const u8, max_bytes: usize) ![]u8 {
-    const text = try Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(max_bytes));
-    defer allocator.free(text);
-    return try redact.secrets(allocator, text);
-}
-
 fn loadedLabel(value: bool) []const u8 {
     return if (value) "loaded" else "missing";
 }
@@ -98,16 +92,3 @@ test "refresh header uses stable labels" {
     try std.testing.expect(std.mem.indexOf(u8, text, "hostinger_auth=missing\n") != null);
 }
 
-test "redacted file io never returns secret-like values" {
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/latest-run.log", .{tmp.sub_path});
-    defer allocator.free(path);
-
-    try writeRedactedFile(std.testing.io, allocator, path, "Authorization: Bearer abc123\nnormal=value\n");
-    const text = try readRedactedFile(std.testing.io, allocator, path, 1024);
-    defer allocator.free(text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "abc123") == null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "normal=value") != null);
-}

@@ -157,12 +157,6 @@ pub fn diff(io: Io, gpa: Allocator, paths: Paths) !Output {
     return .{ .text = try out.toOwnedSlice() };
 }
 
-pub fn parseSitesFromFile(io: Io, gpa: Allocator, path: []const u8) !Sites {
-    const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_file_bytes));
-    defer gpa.free(raw);
-    return parseSites(gpa, raw);
-}
-
 pub fn parseSites(gpa: Allocator, raw: []const u8) !Sites {
     var sites = std.ArrayList(Site).empty;
     errdefer {

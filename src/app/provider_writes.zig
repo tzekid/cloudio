@@ -14,9 +14,6 @@ const hostinger_transport = @import("provider_hostinger_transport");
 
 const Allocator = std.mem.Allocator;
 
-pub const cloudflare_base = "https://api.cloudflare.com/client/v4";
-pub const hostinger_base = "https://developers.hostinger.com";
-
 pub const Context = struct {
     io: std.Io,
     gpa: Allocator,
@@ -83,44 +80,20 @@ pub fn vpsAction(ctx: Context, vm_id: []const u8, action: VpsAction, writer: any
     try executeHostinger(ctx, .{ .method = .POST, .url = url, .body = null, .kind = action.auditKind(), .target = vm_id }, writer);
 }
 
-pub fn hostingerDnsUpdate(ctx: Context, domain: []const u8, body_json: []const u8, writer: anytype) !void {
-    const url = try hostingerDnsZoneUrl(ctx.gpa, domain);
-    defer ctx.gpa.free(url);
-    const call: Call = .{ .method = .PUT, .url = url, .body = body_json, .kind = "hostinger.dns.update", .target = domain };
-    if (try rejectInvalidBody(ctx, call, body_json, writer)) return;
-    try executeHostinger(ctx, call, writer);
-}
-
 // --- URL builders (pure, tested below) ---
-
-pub fn cfDnsRecordsUrl(gpa: Allocator, zone_id: []const u8) ![]u8 {
-    return try cfDnsRecordsUrlAt(gpa, cloudflare_base, zone_id);
-}
 
 fn cfDnsRecordsUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8) ![]u8 {
     return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/dns_records", .{ base, zone_id });
-}
-
-pub fn cfDnsRecordUrl(gpa: Allocator, zone_id: []const u8, record_id: []const u8) ![]u8 {
-    return try cfDnsRecordUrlAt(gpa, cloudflare_base, zone_id, record_id);
 }
 
 fn cfDnsRecordUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8, record_id: []const u8) ![]u8 {
     return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/dns_records/{s}", .{ base, zone_id, record_id });
 }
 
-pub fn hostingerVpsActionUrl(gpa: Allocator, vm_id: []const u8, action: VpsAction) ![]u8 {
-    return try hostingerVpsActionUrlAt(gpa, hostinger_base, vm_id, action);
-}
-
 fn hostingerVpsActionUrlAt(gpa: Allocator, base: []const u8, vm_id: []const u8, action: VpsAction) ![]u8 {
     const escaped_id = try @import("provider_hostinger").pathEscape(gpa, vm_id);
     defer gpa.free(escaped_id);
     return try std.fmt.allocPrint(gpa, "{s}/api/vps/v1/virtual-machines/{s}/{s}", .{ base, escaped_id, action.pathSegment() });
-}
-
-pub fn hostingerDnsZoneUrl(gpa: Allocator, domain: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/api/dns/v1/zones/{s}", .{ hostinger_base, domain });
 }
 
 // --- shared plumbing ---
@@ -209,34 +182,6 @@ fn writeErrorResult(writer: anytype, status: u16, code: []const u8) !void {
 
 // --- tests ---
 
-test "cloudflare url builders match the generated route manifest paths" {
-    const allocator = std.testing.allocator;
-
-    const create = try cfDnsRecordsUrl(allocator, "zone-1");
-    defer allocator.free(create);
-    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone-1/dns_records", create);
-
-    const update = try cfDnsRecordUrl(allocator, "zone-1", "rec-9");
-    defer allocator.free(update);
-    try std.testing.expectEqualStrings("https://api.cloudflare.com/client/v4/zones/zone-1/dns_records/rec-9", update);
-}
-
-test "hostinger url builders match the generated route manifest paths" {
-    const allocator = std.testing.allocator;
-
-    const start = try hostingerVpsActionUrl(allocator, "123", .start);
-    defer allocator.free(start);
-    try std.testing.expectEqualStrings("https://developers.hostinger.com/api/vps/v1/virtual-machines/123/start", start);
-
-    const restart = try hostingerVpsActionUrl(allocator, "123", .restart);
-    defer allocator.free(restart);
-    try std.testing.expectEqualStrings("https://developers.hostinger.com/api/vps/v1/virtual-machines/123/restart", restart);
-
-    const dns = try hostingerDnsZoneUrl(allocator, "example.com");
-    defer allocator.free(dns);
-    try std.testing.expectEqualStrings("https://developers.hostinger.com/api/dns/v1/zones/example.com", dns);
-}
-
 test "json validation accepts objects and rejects malformed payloads" {
     const allocator = std.testing.allocator;
     try std.testing.expect(isValidJson(allocator, "{\"type\":\"A\",\"name\":\"www\"}"));
@@ -253,40 +198,3 @@ test "Cloudflare HTTP success still requires a successful provider envelope" {
     try std.testing.expect(!cloudflareEnvelopeSucceeded(allocator, "not-json"));
 }
 
-test "invalid body json records an error audit row without network access" {
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/provider_writes.db", .{tmp.sub_path});
-    defer allocator.free(db_path);
-
-    var db = try db_store.Db.open(std.testing.io, db_path);
-    defer db.close();
-    try db.initSchema();
-
-    const ctx: Context = .{
-        .io = std.testing.io,
-        .gpa = allocator,
-        .db = &db,
-        .config = .{ .domains = &.{} },
-    };
-
-    var out = std.Io.Writer.Allocating.init(allocator);
-    defer out.deinit();
-    try dnsRecordCreate(ctx, "zone-1", "{broken", &out.writer);
-    try std.testing.expectEqualStrings("{\"ok\":false,\"status\":0,\"result\":{\"error\":\"invalid_json\"}}\n", out.written());
-
-    var audit = std.Io.Writer.Allocating.init(allocator);
-    defer audit.deinit();
-    try app_writes.writeAuditJson(allocator, &db, .{ .window = .all, .limit = 10 }, &audit.writer);
-    const json = audit.written();
-    try std.testing.expect(std.mem.indexOf(u8, json, "cf.dns.create") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"target\":\"zone-1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "invalid request json") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"result\":\"error\"") != null);
-
-    var out2 = std.Io.Writer.Allocating.init(allocator);
-    defer out2.deinit();
-    try hostingerDnsUpdate(ctx, "example.com", "[oops", &out2.writer);
-    try std.testing.expect(std.mem.indexOf(u8, out2.written(), "\"error\":\"invalid_json\"") != null);
-}

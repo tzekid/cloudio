@@ -14,10 +14,6 @@ pub fn parseFormat(value: []const u8) ?RenderFormat {
     return null;
 }
 
-pub fn parseFormatStrict(value: []const u8) !RenderFormat {
-    return parseFormat(value) orelse error.InvalidFormat;
-}
-
 pub const FormatArg = union(enum) {
     no_match,
     matched: RenderFormat,
@@ -43,16 +39,6 @@ pub fn parseFormatArg(args: []const []const u8, index: *usize) FormatArg {
 
 pub fn writeAll(io: Io, text: []const u8) !void {
     try Io.File.writeStreamingAll(Io.File.stdout(), io, text);
-}
-
-pub fn writeLine(io: Io, text: []const u8) !void {
-    try writeAll(io, text);
-    try writeAll(io, "\n");
-}
-
-pub fn printOutput(io: Io, gpa: Allocator, output: anytype) !void {
-    defer output.deinit(gpa);
-    if (output.text) |text| try writeLine(io, text);
 }
 
 pub fn printOwned(io: Io, gpa: Allocator, out: *std.Io.Writer.Allocating) !void {
@@ -88,13 +74,6 @@ pub fn printFormatted(
     }
 }
 
-test "render format parser accepts text and json" {
-    try std.testing.expectEqual(RenderFormat.text, parseFormat("text").?);
-    try std.testing.expectEqual(RenderFormat.json, parseFormat("json").?);
-    try std.testing.expect(parseFormat("yaml") == null);
-    try std.testing.expectError(error.InvalidFormat, parseFormatStrict("yaml"));
-}
-
 test "format argument parser handles flags and values" {
     var index: usize = 0;
     const json_args = [_][]const u8{"--json"};
@@ -128,28 +107,3 @@ test "format argument parser handles flags and values" {
     try std.testing.expectEqual(@as(usize, 0), index);
 }
 
-fn writeFixture(label: []const u8, suffix: []const u8, writer: anytype) !void {
-    try writer.writeAll(label);
-    try writer.writeAll(":");
-    try writer.writeAll(suffix);
-}
-
-fn writeFixtureText(label: []const u8, writer: anytype) !void {
-    try writeFixture(label, "text", writer);
-}
-
-fn writeFixtureJson(label: []const u8, writer: anytype) !void {
-    try writeFixture(label, "json", writer);
-}
-
-test "render helpers own allocating writer lifecycle" {
-    const allocator = std.testing.allocator;
-
-    const text = try renderToOwned(allocator, writeFixtureText, .{"example"});
-    defer allocator.free(text);
-    try std.testing.expectEqualStrings("example:text", text);
-
-    const json = try renderToOwned(allocator, writeFixtureJson, .{"example"});
-    defer allocator.free(json);
-    try std.testing.expectEqualStrings("example:json", json);
-}

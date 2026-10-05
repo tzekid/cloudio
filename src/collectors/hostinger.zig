@@ -15,7 +15,6 @@ const columnText = db_store.columnText;
 
 pub const VmEndpoint = provider_hostinger.VmEndpoint;
 pub const VpsInventoryEndpoint = provider_hostinger.VpsInventoryEndpoint;
-pub const VpsInventoryDetailEndpoint = provider_hostinger.VpsInventoryDetailEndpoint;
 pub const DockerEndpoint = provider_hostinger.DockerEndpoint;
 pub const BillingEndpoint = provider_hostinger.BillingEndpoint;
 pub const DnsEndpoint = provider_hostinger.DnsEndpoint;
@@ -23,7 +22,6 @@ pub const DomainEndpoint = provider_hostinger.DomainEndpoint;
 pub const HostingEndpoint = provider_hostinger.HostingEndpoint;
 pub const HostingArgs = provider_hostinger.HostingArgs;
 pub const EcommerceEndpoint = provider_hostinger.EcommerceEndpoint;
-pub const HorizonsEndpoint = provider_hostinger.HorizonsEndpoint;
 pub const ReachEndpoint = provider_hostinger.ReachEndpoint;
 pub const ReachArgs = provider_hostinger.ReachArgs;
 
@@ -245,30 +243,6 @@ pub fn collectVmEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, vm
     return .{ .text = if (capture_output) redacted else null };
 }
 
-pub fn collectActionDetails(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, vm_id: []const u8, action_id: []const u8, capture_output: bool) !Output {
-    const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ vm_id, action_id });
-    defer gpa.free(target);
-    const client = clientFromToken(token) catch {
-        return try collector_capture.skipped(gpa, db, "hostinger", "action-detail", target, "missing Hostinger API token", "Hostinger token missing", capture_output);
-    };
-    const body = try client.getActionDetails(io, gpa, vm_id, action_id);
-    defer body.deinit(gpa);
-    const endpoint_path = try actionDetailPath(gpa, vm_id, action_id);
-    defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
-        .provider = "hostinger",
-        .kind = "action-detail",
-        .target = target,
-        .summary_label = "action detail",
-        .endpoint = endpoint_path,
-        .status = body.status,
-        .body = body.body,
-    });
-    defer if (!capture_output) gpa.free(redacted);
-    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, "action-detail", target, redacted);
-    return .{ .text = if (capture_output) redacted else null };
-}
-
 pub fn collectDockerEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, vm_id: []const u8, endpoint: DockerEndpoint, project_name: ?[]const u8, capture_output: bool) !Output {
     const endpoint_label = endpoint.label();
     const target = try dockerTarget(gpa, vm_id, project_name);
@@ -411,29 +385,6 @@ pub fn collectEcommerceEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: 
     return try collectPagedEcommerceEndpoint(io, gpa, token, db, endpoint, capture_output);
 }
 
-pub fn collectHorizonsEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, endpoint: HorizonsEndpoint, website_id: []const u8, capture_output: bool) !Output {
-    const endpoint_label = endpoint.label();
-    const client = clientFromToken(token) catch {
-        return try collector_capture.skipped(gpa, db, "hostinger", endpoint_label, website_id, "missing Hostinger API token", "Hostinger token missing", capture_output);
-    };
-    const body = try client.getHorizonsEndpoint(io, gpa, endpoint, website_id);
-    defer body.deinit(gpa);
-    const endpoint_path = try provider_hostinger.horizonsEndpointPath(gpa, endpoint, website_id);
-    defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
-        .provider = "hostinger",
-        .kind = endpoint_label,
-        .target = website_id,
-        .summary_label = endpoint_label,
-        .endpoint = endpoint_path,
-        .status = body.status,
-        .body = body.body,
-    });
-    defer if (!capture_output) gpa.free(redacted);
-    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, website_id, redacted);
-    return .{ .text = if (capture_output) redacted else null };
-}
-
 pub fn collectReachEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, endpoint: ReachEndpoint, args: ReachArgs, capture_output: bool) !Output {
     if (isPaginatedReachEndpoint(endpoint)) return try collectPagedReachEndpoint(io, gpa, token, db, endpoint, args, capture_output);
 
@@ -480,29 +431,6 @@ pub fn collectVpsInventoryEndpoint(io: Io, gpa: Allocator, token: ?[]const u8, d
     });
     defer if (!capture_output) gpa.free(redacted);
     if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, null, redacted);
-    return .{ .text = if (capture_output) redacted else null };
-}
-
-pub fn collectVpsInventoryDetail(io: Io, gpa: Allocator, token: ?[]const u8, db: *Db, endpoint: VpsInventoryDetailEndpoint, id: []const u8, capture_output: bool) !Output {
-    const endpoint_label = endpoint.label();
-    const client = clientFromToken(token) catch {
-        return try collector_capture.skipped(gpa, db, "hostinger", endpoint_label, id, "missing Hostinger API token", "Hostinger token missing", capture_output);
-    };
-    const body = try client.getVpsInventoryDetail(io, gpa, endpoint, id);
-    defer body.deinit(gpa);
-    const endpoint_path = try provider_hostinger.vpsInventoryDetailPath(gpa, endpoint, id);
-    defer gpa.free(endpoint_path);
-    const redacted = try collector_capture.storeResponse(gpa, db, .{
-        .provider = "hostinger",
-        .kind = endpoint_label,
-        .target = id,
-        .summary_label = endpoint_label,
-        .endpoint = endpoint_path,
-        .status = body.status,
-        .body = body.body,
-    });
-    defer if (!capture_output) gpa.free(redacted);
-    if (net_http.isOk(body.status)) try persistResourceRows(gpa, db, endpoint_label, id, redacted);
     return .{ .text = if (capture_output) redacted else null };
 }
 
@@ -891,10 +819,6 @@ fn vmEndpointPathPage(gpa: Allocator, vm_id: []const u8, endpoint: VmEndpoint, p
     return try provider_hostinger.pageUrl(gpa, path, page);
 }
 
-fn actionDetailPath(gpa: Allocator, vm_id: []const u8, action_id: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/{s}/actions/{s}", .{ provider_hostinger.virtual_machines_path, vm_id, action_id });
-}
-
 fn vpsInventoryPathPage(gpa: Allocator, endpoint: VpsInventoryEndpoint, page: usize) ![]u8 {
     return try provider_hostinger.pageUrl(gpa, endpoint.path(), page);
 }
@@ -1067,22 +991,6 @@ test "missing Hostinger token records inventory snapshot without live API call" 
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
 }
 
-test "missing Hostinger token records inventory detail snapshot without live API call" {
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/hostinger-inventory-detail.db", .{tmp.sub_path});
-    defer allocator.free(db_path);
-    var db = try Db.open(std.testing.io, db_path);
-    defer db.close();
-    try db.initSchema();
-
-    var output = try collectVpsInventoryDetail(std.testing.io, allocator, null, &db, .template, "1034", true);
-    defer output.deinit(allocator);
-    try std.testing.expectEqualStrings("Hostinger token missing", output.text orelse "");
-    try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
-}
-
 test "missing Hostinger token records docker snapshot without live API call" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -1174,22 +1082,6 @@ test "missing Hostinger token records ecommerce snapshot without live API call" 
     try db.initSchema();
 
     var output = try collectEcommerceEndpoint(std.testing.io, allocator, null, &db, .stores, true);
-    defer output.deinit(allocator);
-    try std.testing.expectEqualStrings("Hostinger token missing", output.text orelse "");
-    try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
-}
-
-test "missing Hostinger token records horizons snapshot without live API call" {
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/hostinger-horizons.db", .{tmp.sub_path});
-    defer allocator.free(db_path);
-    var db = try Db.open(std.testing.io, db_path);
-    defer db.close();
-    try db.initSchema();
-
-    var output = try collectHorizonsEndpoint(std.testing.io, allocator, null, &db, .website, "site-id", true);
     defer output.deinit(allocator);
     try std.testing.expectEqualStrings("Hostinger token missing", output.text orelse "");
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));

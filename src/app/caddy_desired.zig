@@ -418,23 +418,6 @@ pub fn writeJson(ctx: Context, writer: anytype) !void {
     try writer.writeAll("}\n");
 }
 
-pub fn writePreviewJson(ctx: Context, writer: anytype) !void {
-    var desired = try loadDesired(ctx);
-    defer desired.deinit(ctx.gpa);
-    const observed_text = try latestObservedText(ctx);
-    defer if (observed_text) |text| ctx.gpa.free(text);
-    var observed = try parseObservedOrEmpty(ctx.gpa, observed_text orelse "");
-    defer observed.deinit(ctx.gpa);
-    const rendered = try render(ctx, ctx.gpa);
-    defer ctx.gpa.free(rendered);
-    try writer.writeAll("{\"kind\":\"caddy_owned_preview\",");
-    try core_json.writeStringField(writer, "fragment", ctx.config.caddy_owned_path, true);
-    try core_json.writeStringField(writer, "rendered", rendered, true);
-    try writer.writeAll("\"diff\":");
-    try writeDiffJson(desired.items, observed.items, writer);
-    try writer.writeAll("}\n");
-}
-
 pub fn writeCapabilityJson(capability: Capability, writer: anytype) !void {
     try writer.writeByte('{');
     try core_json.writeBoolField(writer, "refresh", capability.refresh, true);

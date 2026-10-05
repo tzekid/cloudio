@@ -73,14 +73,6 @@ fn emptyBodyDiagnostic(gpa: Allocator, input: ResponseCapture) ![]u8 {
     return try out.toOwnedSlice();
 }
 
-pub fn captureResponse(gpa: Allocator, db: *Db, input: ResponseCapture) !Output {
-    const stored = try storeResponseWithSnapshotId(gpa, db, input);
-    errdefer stored.deinit(gpa);
-    if (input.capture_output) return .{ .text = stored.redacted };
-    stored.deinit(gpa);
-    return .{};
-}
-
 pub fn skipped(gpa: Allocator, db: *Db, provider: []const u8, kind: []const u8, target: ?[]const u8, summary: []const u8, output_text: []const u8, capture_output: bool) !Output {
     _ = try db.insertSnapshot(provider, kind, target, "skipped", summary, null, null);
     return try outputText(gpa, capture_output, output_text);
@@ -88,34 +80,6 @@ pub fn skipped(gpa: Allocator, db: *Db, provider: []const u8, kind: []const u8, 
 
 pub fn outputText(gpa: Allocator, capture_output: bool, text: []const u8) !Output {
     return try core_output.maybeText(gpa, capture_output, text);
-}
-
-test "captures redacted provider response into snapshots and provider raw" {
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/capture.db", .{tmp.sub_path});
-    defer allocator.free(db_path);
-    var db = try Db.open(std.testing.io, db_path);
-    defer db.close();
-    try db.initSchema();
-
-    var output = try captureResponse(allocator, &db, .{
-        .provider = "fixture",
-        .kind = "auth-check",
-        .summary_label = "auth check",
-        .endpoint = "/fixture",
-        .status = .ok,
-        .body = "{\"Authorization\":\"Bearer abcdefghijklmnopqrstuvwxyz\",\"result_info\":{\"cursors\":{\"after\":\"opaque-next-cursor\"}},\"success\":true}",
-        .capture_output = true,
-    });
-    defer output.deinit(allocator);
-
-    try std.testing.expect(output.text != null);
-    try std.testing.expect(std.mem.indexOf(u8, output.text.?, "abcdefghijklmnopqrstuvwxyz") == null);
-    try std.testing.expect(std.mem.indexOf(u8, output.text.?, "opaque-next-cursor") == null);
-    try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
-    try std.testing.expectEqual(@as(i64, 1), try db.countTable("provider_raw"));
 }
 
 test "captures exact snapshot id next to redacted provider response" {
@@ -153,30 +117,3 @@ test "captures exact snapshot id next to redacted provider response" {
     try std.testing.expectEqual(@as(i64, 2), try db.countTable("provider_raw"));
 }
 
-test "captures empty provider response as structured diagnostic" {
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const db_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/empty-capture.db", .{tmp.sub_path});
-    defer allocator.free(db_path);
-    var db = try Db.open(std.testing.io, db_path);
-    defer db.close();
-    try db.initSchema();
-
-    var output = try captureResponse(allocator, &db, .{
-        .provider = "cloudflare",
-        .kind = "tls-zone-per-hostname-tls-setting",
-        .summary_label = "TLS setting detail",
-        .endpoint = "/zones/zone/hostnames/settings/min_tls_version/plosca.ru",
-        .status = .method_not_allowed,
-        .body = "",
-        .capture_output = true,
-    });
-    defer output.deinit(allocator);
-
-    try std.testing.expect(output.text != null);
-    try std.testing.expect(std.mem.indexOf(u8, output.text.?, "\"http_status\":405") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output.text.?, "empty response body from provider") != null);
-    try std.testing.expectEqual(@as(i64, 1), try db.countTable("snapshots"));
-    try std.testing.expectEqual(@as(i64, 1), try db.countTable("provider_raw"));
-}
