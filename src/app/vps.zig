@@ -7,7 +7,7 @@ const core_json = @import("../core/json.zig");
 const core_redact = @import("../core/redact.zig");
 const db_store = @import("../db/store.zig");
 const observation = @import("observation.zig");
-const net_http = @import("../net/http.zig");
+
 const provider_hostinger = @import("hostinger");
 const provider_hostinger_models = @import("hostinger").models;
 
@@ -153,10 +153,13 @@ pub fn mutate(ctx: Context, vm_id: []const u8, action: Action) !MutationResult {
     if (target_observation) |value| if (!std.mem.eql(u8, value.attempt_status, "ok")) return error.VpsWriteUnavailable;
     if (!actionAllowed(machine.status, action)) return error.VpsActionUnavailable;
 
-    var provider_output = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer provider_output.deinit();
-    try app_provider_writes.vpsAction(providerContext(ctx), machine.id, action, &provider_output.writer);
-    const job_id = try acceptedJobId(ctx.gpa, provider_output.written());
+    const result = try app_provider_writes.vpsAction(providerContext(ctx), machine.id, action);
+    defer result.deinit(ctx.gpa);
+    const job_id = switch (result) {
+        .unavailable => return error.VpsProviderUnavailable,
+        .rejected => return error.VpsProviderRejected,
+        .accepted => |body| acceptedJobId(ctx.gpa, body),
+    };
     errdefer if (job_id) |value| ctx.gpa.free(value);
 
     var observed_state: ?[]u8 = null;
@@ -194,7 +197,7 @@ fn refreshLocked(ctx: Context) !void {
     defer response.deinit(ctx.gpa);
     const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
     defer ctx.gpa.free(redacted);
-    if (!net_http.isOk(response.status) or !validVpsCollection(ctx.gpa, redacted)) {
+    if (!isOk(response.status) or !validVpsCollection(ctx.gpa, redacted)) {
         try recordListAttempt(ctx, "error", "Hostinger rejected the machine inventory read.", redacted);
         return error.VpsProviderRejected;
     }
@@ -271,7 +274,7 @@ fn readJobState(ctx: Context, vm_id: []const u8, job_id: []const u8) !JobState {
     defer ctx.gpa.free(redacted);
     const endpoint = try std.fmt.allocPrint(ctx.gpa, "{s}/{s}/actions/{s}", .{ provider_hostinger.routes.virtual_machines_path, vm_id, job_id });
     defer ctx.gpa.free(endpoint);
-    if (!net_http.isOk(response.status)) return error.VpsProviderRejected;
+    if (!isOk(response.status)) return error.VpsProviderRejected;
     return parseJobState(ctx.gpa, redacted) orelse error.VpsProviderRejected;
 }
 
@@ -285,7 +288,7 @@ fn readMachineState(ctx: Context, vm_id: []const u8) ![]u8 {
     defer ctx.gpa.free(redacted);
     const endpoint = try std.fmt.allocPrint(ctx.gpa, "{s}/{s}", .{ provider_hostinger.routes.virtual_machines_path, vm_id });
     defer ctx.gpa.free(endpoint);
-    if (!net_http.isOk(response.status) or !validVpsDetail(ctx.gpa, redacted)) return error.VpsProviderRejected;
+    if (!isOk(response.status) or !validVpsDetail(ctx.gpa, redacted)) return error.VpsProviderRejected;
     var rows = try provider_hostinger_models.parseVpsRows(ctx.gpa, redacted);
     defer rows.deinit(ctx.gpa);
     if (rows.items.len != 1 or !std.mem.eql(u8, rows.items[0].id, vm_id)) return error.VpsProviderRejected;
@@ -294,14 +297,12 @@ fn readMachineState(ctx: Context, vm_id: []const u8) ![]u8 {
     return try ctx.gpa.dupe(u8, row.status orelse "unknown");
 }
 
-fn acceptedJobId(gpa: Allocator, body: []const u8) !?[]u8 {
-    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return error.VpsProviderUnavailable;
+/// The provider job ID from an accepted action response, wherever this API
+/// version puts it.
+fn acceptedJobId(gpa: Allocator, body: []const u8) ?[]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return null;
     defer parsed.deinit();
-    if (parsed.value != .object) return error.VpsProviderUnavailable;
-    const ok = core_json.fieldBool(parsed.value, "ok") orelse false;
-    const status = core_json.fieldInt(parsed.value, "status") orelse 0;
-    if (!ok) return if (status == 0) error.VpsProviderUnavailable else error.VpsProviderRejected;
-    const result = core_json.field(parsed.value, "result") orelse return null;
+    const result = parsed.value;
     if (result != .object) return null;
     if (core_json.fieldAnyString(gpa, result, "id")) |id| return id;
     const data = core_json.field(result, "data") orelse return null;
@@ -433,4 +434,8 @@ test "Hostinger job states distinguish terminal success and failure" {
     try std.testing.expectEqual(JobState.succeeded, parseJobState(allocator, "{\"data\":{\"state\":\"completed\"}}").?);
     try std.testing.expectEqual(JobState.failed, parseJobState(allocator, "{\"data\":{\"state\":\"failed\"}}").?);
     try std.testing.expectEqual(JobState.pending, parseJobState(allocator, "{\"data\":{\"state\":\"running\"}}").?);
+}
+
+fn isOk(status: std.http.Status) bool {
+    return @backingInt(status) >= 200 and @backingInt(status) < 300;
 }

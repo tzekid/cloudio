@@ -5,7 +5,6 @@ const core_config = @import("../core/config.zig");
 const core_json = @import("../core/json.zig");
 const core_redact = @import("../core/redact.zig");
 const db_store = @import("../db/store.zig");
-const net_http = @import("../net/http.zig");
 const provider_cloudflare = @import("cloudflare");
 const provider_cloudflare_models = @import("cloudflare").models;
 
@@ -107,7 +106,7 @@ pub fn refreshAccounts(ctx: Context) !void {
     });
     const response = try client.getAccounts(ctx.io, ctx.gpa);
     defer response.deinit(ctx.gpa);
-    if (!net_http.isOk(response.status)) return error.CloudflareAccountsRejected;
+    if (@backingInt(response.status) < 200 or @backingInt(response.status) >= 300) return error.CloudflareAccountsRejected;
     const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
     defer ctx.gpa.free(redacted);
     var rows = try provider_cloudflare_models.parseAccountRows(ctx.gpa, redacted);

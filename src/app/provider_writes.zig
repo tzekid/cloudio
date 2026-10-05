@@ -1,15 +1,11 @@
-//! B2: typed provider mutation helpers (Cloudflare DNS/cache/settings, Hostinger VPS/firewall/DNS).
-//! Every helper performs the live HTTP call, records an audit_actions row via
-//! app_writes.record, and writes {"ok":bool,"status":N,"result":...} JSON to
-//! the supplied writer. Response bodies are redacted before storage/echo.
+//! Audited provider writes: Cloudflare DNS records and Hostinger VPS actions.
+//! Every call performs the live request and records one audit_actions row.
 const std = @import("std");
 const percent = @import("../core/url.zig");
 const app_writes = @import("writes.zig");
 const core_config = @import("../core/config.zig");
-const core_json = @import("../core/json.zig");
 const core_redact = @import("../core/redact.zig");
 const db_store = @import("../db/store.zig");
-const net_http = @import("../net/http.zig");
 const cf_transport = @import("cloudflare").transport;
 const hostinger_transport = @import("hostinger").transport;
 
@@ -41,6 +37,20 @@ pub const VpsAction = enum {
     }
 };
 
+/// Outcome of one provider write.
+pub const Result = union(enum) {
+    /// The request did not complete.
+    unavailable,
+    /// The provider answered with a failing status or envelope.
+    rejected,
+    /// The provider accepted the change. The caller owns the redacted body.
+    accepted: []u8,
+
+    pub fn deinit(self: Result, gpa: Allocator) void {
+        if (self == .accepted) gpa.free(self.accepted);
+    }
+};
+
 const Call = struct {
     method: std.http.Method,
     url: []const u8,
@@ -51,50 +61,32 @@ const Call = struct {
 
 // --- Cloudflare helpers ---
 
-pub fn dnsRecordCreate(ctx: Context, zone_id: []const u8, body_json: []const u8, writer: anytype) !void {
-    const url = try cfDnsRecordsUrlAt(ctx.gpa, ctx.config.cloudflare_api_base, zone_id);
+pub fn dnsRecordCreate(ctx: Context, zone_id: []const u8, body_json: []const u8) !Result {
+    const url = try std.fmt.allocPrint(ctx.gpa, "{s}/zones/{s}/dns_records", .{ ctx.config.cloudflare_api_base, zone_id });
     defer ctx.gpa.free(url);
-    const call: Call = .{ .method = .POST, .url = url, .body = body_json, .kind = "cf.dns.create", .target = zone_id };
-    if (try rejectInvalidBody(ctx, call, body_json, writer)) return;
-    try executeCloudflare(ctx, call, writer);
+    return executeCloudflare(ctx, .{ .method = .POST, .url = url, .body = body_json, .kind = "cf.dns.create", .target = zone_id });
 }
 
-pub fn dnsRecordUpdate(ctx: Context, zone_id: []const u8, record_id: []const u8, body_json: []const u8, writer: anytype) !void {
-    const url = try cfDnsRecordUrlAt(ctx.gpa, ctx.config.cloudflare_api_base, zone_id, record_id);
+pub fn dnsRecordUpdate(ctx: Context, zone_id: []const u8, record_id: []const u8, body_json: []const u8) !Result {
+    const url = try std.fmt.allocPrint(ctx.gpa, "{s}/zones/{s}/dns_records/{s}", .{ ctx.config.cloudflare_api_base, zone_id, record_id });
     defer ctx.gpa.free(url);
-    const call: Call = .{ .method = .PUT, .url = url, .body = body_json, .kind = "cf.dns.update", .target = zone_id };
-    if (try rejectInvalidBody(ctx, call, body_json, writer)) return;
-    try executeCloudflare(ctx, call, writer);
+    return executeCloudflare(ctx, .{ .method = .PUT, .url = url, .body = body_json, .kind = "cf.dns.update", .target = zone_id });
 }
 
-pub fn dnsRecordDelete(ctx: Context, zone_id: []const u8, record_id: []const u8, writer: anytype) !void {
-    const url = try cfDnsRecordUrlAt(ctx.gpa, ctx.config.cloudflare_api_base, zone_id, record_id);
+pub fn dnsRecordDelete(ctx: Context, zone_id: []const u8, record_id: []const u8) !Result {
+    const url = try std.fmt.allocPrint(ctx.gpa, "{s}/zones/{s}/dns_records/{s}", .{ ctx.config.cloudflare_api_base, zone_id, record_id });
     defer ctx.gpa.free(url);
-    try executeCloudflare(ctx, .{ .method = .DELETE, .url = url, .body = null, .kind = "cf.dns.delete", .target = zone_id }, writer);
+    return executeCloudflare(ctx, .{ .method = .DELETE, .url = url, .body = null, .kind = "cf.dns.delete", .target = zone_id });
 }
 
 // --- Hostinger helpers ---
 
-pub fn vpsAction(ctx: Context, vm_id: []const u8, action: VpsAction, writer: anytype) !void {
-    const url = try hostingerVpsActionUrlAt(ctx.gpa, ctx.config.hostinger_api_base, vm_id, action);
+pub fn vpsAction(ctx: Context, vm_id: []const u8, action: VpsAction) !Result {
+    const escaped_id = try percent.component(ctx.gpa, vm_id);
+    defer ctx.gpa.free(escaped_id);
+    const url = try std.fmt.allocPrint(ctx.gpa, "{s}/api/vps/v1/virtual-machines/{s}/{s}", .{ ctx.config.hostinger_api_base, escaped_id, action.pathSegment() });
     defer ctx.gpa.free(url);
-    try executeHostinger(ctx, .{ .method = .POST, .url = url, .body = null, .kind = action.auditKind(), .target = vm_id }, writer);
-}
-
-// --- URL builders (pure, tested below) ---
-
-fn cfDnsRecordsUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/dns_records", .{ base, zone_id });
-}
-
-fn cfDnsRecordUrlAt(gpa: Allocator, base: []const u8, zone_id: []const u8, record_id: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(gpa, "{s}/zones/{s}/dns_records/{s}", .{ base, zone_id, record_id });
-}
-
-fn hostingerVpsActionUrlAt(gpa: Allocator, base: []const u8, vm_id: []const u8, action: VpsAction) ![]u8 {
-    const escaped_id = try percent.component(gpa, vm_id);
-    defer gpa.free(escaped_id);
-    return try std.fmt.allocPrint(gpa, "{s}/api/vps/v1/virtual-machines/{s}/{s}", .{ base, escaped_id, action.pathSegment() });
+    return executeHostinger(ctx, .{ .method = .POST, .url = url, .body = null, .kind = action.auditKind(), .target = vm_id });
 }
 
 // --- shared plumbing ---
@@ -108,63 +100,44 @@ fn cloudflareAuth(config: core_config.Config) cf_transport.Auth {
     };
 }
 
-pub fn isValidJson(gpa: Allocator, input: []const u8) bool {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    _ = std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), input, .{}) catch return false;
-    return true;
-}
-
-/// Returns true (and writes the error result) when body_json is invalid.
-fn rejectInvalidBody(ctx: Context, call: Call, body_json: []const u8, writer: anytype) !bool {
-    if (isValidJson(ctx.gpa, body_json)) return false;
-    _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, call.kind, call.target, body_json, .err, "invalid request json");
-    try writeErrorResult(writer, 0, "invalid_json");
-    return true;
-}
-
-fn executeCloudflare(ctx: Context, call: Call, writer: anytype) !void {
+fn executeCloudflare(ctx: Context, call: Call) !Result {
     const resp = cf_transport.requestJson(ctx.io, ctx.gpa, cloudflareAuth(ctx.config), call.method, call.url, call.body) catch |err| {
-        return recordFailure(ctx, call, err, writer);
+        return recordFailure(ctx, call, err);
     };
     defer resp.deinit(ctx.gpa);
-    try finish(ctx, call, resp, net_http.isOk(resp.status) and cloudflareEnvelopeSucceeded(ctx.gpa, resp.body), writer);
+    return finish(ctx, call, resp, cloudflareEnvelopeSucceeded(ctx.gpa, resp.body));
 }
 
-fn executeHostinger(ctx: Context, call: Call, writer: anytype) !void {
-    const token = ctx.config.hostinger_api_token orelse return recordFailure(ctx, call, error.MissingHostingerToken, writer);
+fn executeHostinger(ctx: Context, call: Call) !Result {
+    const token = ctx.config.hostinger_api_token orelse return recordFailure(ctx, call, error.MissingHostingerToken);
     const resp = hostinger_transport.requestJson(ctx.io, ctx.gpa, token, call.method, call.url, call.body) catch |err| {
-        return recordFailure(ctx, call, err, writer);
+        return recordFailure(ctx, call, err);
     };
     defer resp.deinit(ctx.gpa);
-    try finish(ctx, call, resp, net_http.isOk(resp.status), writer);
+    return finish(ctx, call, resp, true);
 }
 
-fn recordFailure(ctx: Context, call: Call, err: anyerror, writer: anytype) !void {
+fn recordFailure(ctx: Context, call: Call, err: anyerror) !Result {
     const detail = try std.fmt.allocPrint(ctx.gpa, "request failed: {s}", .{@errorName(err)});
     defer ctx.gpa.free(detail);
     _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, call.kind, call.target, call.body, .err, detail);
-    try writeErrorResult(writer, 0, @errorName(err));
+    return .unavailable;
 }
 
-fn finish(ctx: Context, call: Call, resp: anytype, ok: bool, writer: anytype) !void {
-    const redacted = try core_redact.providerResponse(ctx.gpa, resp.body);
-    defer ctx.gpa.free(redacted);
-    const detail = if (net_http.isOk(resp.status) and !ok)
+/// `envelope_ok` lets Cloudflare reject a 2xx response whose envelope says
+/// `success: false`.
+fn finish(ctx: Context, call: Call, resp: anytype, envelope_ok: bool) !Result {
+    const status: u16 = @backingInt(resp.status);
+    const http_ok = status >= 200 and status < 300;
+    const ok = http_ok and envelope_ok;
+    const detail = if (http_ok and !ok)
         try std.fmt.allocPrint(ctx.gpa, "{s}: provider rejected the response envelope", .{call.kind})
     else
-        try net_http.summary(ctx.gpa, call.kind, resp.status);
+        try std.fmt.allocPrint(ctx.gpa, "{s} HTTP {d}", .{ call.kind, status });
     defer ctx.gpa.free(detail);
     _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, call.kind, call.target, call.body, if (ok) .ok else .err, detail);
-
-    const status_code: u16 = @backingInt(resp.status);
-    try writer.print("{{\"ok\":{},\"status\":{d},\"result\":", .{ ok, status_code });
-    if (redacted.len != 0 and isValidJson(ctx.gpa, redacted)) {
-        try writer.writeAll(redacted);
-    } else {
-        try core_json.writeString(writer, redacted);
-    }
-    try writer.writeAll("}\n");
+    if (!ok) return .rejected;
+    return .{ .accepted = try core_redact.providerResponse(ctx.gpa, resp.body) };
 }
 
 fn cloudflareEnvelopeSucceeded(gpa: Allocator, body: []const u8) bool {
@@ -175,21 +148,8 @@ fn cloudflareEnvelopeSucceeded(gpa: Allocator, body: []const u8) bool {
     return success == .bool and success.bool;
 }
 
-fn writeErrorResult(writer: anytype, status: u16, code: []const u8) !void {
-    try writer.print("{{\"ok\":false,\"status\":{d},\"result\":{{\"error\":", .{status});
-    try core_json.writeString(writer, code);
-    try writer.writeAll("}}\n");
-}
-
 // --- tests ---
 
-test "json validation accepts objects and rejects malformed payloads" {
-    const allocator = std.testing.allocator;
-    try std.testing.expect(isValidJson(allocator, "{\"type\":\"A\",\"name\":\"www\"}"));
-    try std.testing.expect(isValidJson(allocator, "\"strict\""));
-    try std.testing.expect(!isValidJson(allocator, "{not json"));
-    try std.testing.expect(!isValidJson(allocator, ""));
-}
 
 test "Cloudflare HTTP success still requires a successful provider envelope" {
     const allocator = std.testing.allocator;

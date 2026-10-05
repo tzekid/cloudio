@@ -6,7 +6,7 @@ const core_json = @import("../core/json.zig");
 const core_redact = @import("../core/redact.zig");
 const db_store = @import("../db/store.zig");
 const observation = @import("observation.zig");
-const net_http = @import("../net/http.zig");
+
 const provider_cloudflare = @import("cloudflare");
 const provider_cloudflare_models = @import("cloudflare").models;
 
@@ -189,21 +189,18 @@ pub fn mutate(
     const observed_record = if (record_id) |id| findRecord(records.items, zone.id, id) else null;
     if (action != .create and observed_record == null) return error.DnsRecordNotObserved;
 
-    var provider_output = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer provider_output.deinit();
-    switch (action) {
-        .create, .update => {
+    const result: app_provider_writes.Result = switch (action) {
+        .create, .update => blk: {
             var prepared = try prepareRecord(ctx.gpa, domain, input orelse return error.InvalidDnsRequest);
             defer prepared.deinit(ctx.gpa);
             const body = try recordJson(ctx.gpa, prepared);
             defer ctx.gpa.free(body);
-            if (action == .create) {
-                try app_provider_writes.dnsRecordCreate(providerContext(ctx), zone.id, body, &provider_output.writer);
-            } else {
-                try app_provider_writes.dnsRecordUpdate(providerContext(ctx), zone.id, observed_record.?.id, body, &provider_output.writer);
-            }
+            break :blk if (action == .create)
+                try app_provider_writes.dnsRecordCreate(providerContext(ctx), zone.id, body)
+            else
+                try app_provider_writes.dnsRecordUpdate(providerContext(ctx), zone.id, observed_record.?.id, body);
         },
-        .toggle => {
+        .toggle => blk: {
             const record = observed_record.?;
             if (!proxyableType(record.record_type)) return error.InvalidDnsRequest;
             const ttl = std.fmt.parseInt(i64, record.ttl, 10) catch return error.InvalidDnsRequest;
@@ -217,11 +214,16 @@ pub fn mutate(
             defer prepared.deinit(ctx.gpa);
             const body = try recordJson(ctx.gpa, prepared);
             defer ctx.gpa.free(body);
-            try app_provider_writes.dnsRecordUpdate(providerContext(ctx), zone.id, record.id, body, &provider_output.writer);
+            break :blk try app_provider_writes.dnsRecordUpdate(providerContext(ctx), zone.id, record.id, body);
         },
-        .delete => try app_provider_writes.dnsRecordDelete(providerContext(ctx), zone.id, observed_record.?.id, &provider_output.writer),
+        .delete => try app_provider_writes.dnsRecordDelete(providerContext(ctx), zone.id, observed_record.?.id),
+    };
+    defer result.deinit(ctx.gpa);
+    switch (result) {
+        .unavailable => return error.DnsProviderUnavailable,
+        .rejected => return error.DnsProviderRejected,
+        .accepted => {},
     }
-    try requireAcceptedMutation(ctx.gpa, provider_output.written());
     refreshLocked(ctx, domain) catch |err| switch (err) {
         error.DnsProviderRejected, error.DnsProviderUnavailable => return .accepted_unconfirmed,
         else => return err,
@@ -268,7 +270,7 @@ fn refreshLocked(ctx: Context, domain: []const u8) !void {
         defer response.deinit(ctx.gpa);
         const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
         defer ctx.gpa.free(redacted);
-        if (!net_http.isOk(response.status) or !validCloudflareEnvelope(ctx.gpa, redacted, .array)) {
+        if (!isOk(response.status) or !validCloudflareEnvelope(ctx.gpa, redacted, .array)) {
             try recordRefreshAttempt(ctx, domain, "error", "Cloudflare rejected the zone lookup.", redacted);
             return error.DnsProviderRejected;
         }
@@ -298,7 +300,7 @@ fn refreshLocked(ctx: Context, domain: []const u8) !void {
     defer response.deinit(ctx.gpa);
     const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
     defer ctx.gpa.free(redacted);
-    if (!net_http.isOk(response.status) or !validCloudflareEnvelope(ctx.gpa, redacted, .array)) {
+    if (!isOk(response.status) or !validCloudflareEnvelope(ctx.gpa, redacted, .array)) {
         try recordRefreshAttempt(ctx, domain, "error", "Cloudflare rejected the DNS record read.", redacted);
         return error.DnsProviderRejected;
     }
@@ -340,22 +342,7 @@ fn recordRefreshAttempt(ctx: Context, domain: []const u8, status: []const u8, su
     try ctx.db.insertAudit("cloudflare.dns.refresh", status, summary);
 }
 
-fn requireAcceptedMutation(gpa: Allocator, body: []const u8) !void {
-    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return error.DnsProviderUnavailable;
-    defer parsed.deinit();
-    if (parsed.value != .object) return error.DnsProviderUnavailable;
-    const ok = core_json.fieldBool(parsed.value, "ok") orelse false;
-    const status = core_json.fieldInt(parsed.value, "status") orelse 0;
-    if (!ok) return if (status == 0) error.DnsProviderUnavailable else error.DnsProviderRejected;
-    const result = core_json.field(parsed.value, "result") orelse return error.DnsProviderRejected;
-    if (!validCloudflareValue(result)) return error.DnsProviderRejected;
-}
 
-fn validCloudflareValue(value: std.json.Value) bool {
-    if (value != .object) return false;
-    const success = value.object.get("success") orelse return false;
-    return success == .bool and success.bool;
-}
 
 fn providerContext(ctx: Context) app_provider_writes.Context {
     return .{
@@ -503,4 +490,8 @@ test "DNS record validation and observation capability are bounded" {
         .ttl = 2,
         .proxied = false,
     }));
+}
+
+fn isOk(status: std.http.Status) bool {
+    return @backingInt(status) >= 200 and @backingInt(status) < 300;
 }

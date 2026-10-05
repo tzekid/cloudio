@@ -49,7 +49,6 @@ test {
     _ = @import("http/root.zig");
     _ = @import("http/router.zig");
     _ = @import("http/static.zig");
-    _ = @import("net/http.zig");
     _ = @import("nob/bootstrap.zig");
     _ = @import("nob/broker.zig");
     _ = @import("nob/id.zig");
