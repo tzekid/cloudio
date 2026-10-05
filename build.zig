@@ -123,38 +123,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "provider_routes", .module = provider_routes_mod },
         },
     });
-    const provider_route_safety_mod = b.createModule(.{
-        .root_source_file = b.path("src/providers/route_safety.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    const provider_request_plan_mod = b.createModule(.{
-        .root_source_file = b.path("src/providers/request_plan.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_route_safety", .module = provider_route_safety_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    const provider_route_plan_mod = b.createModule(.{
-        .root_source_file = b.path("src/providers/route_plan.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_request_plan", .module = provider_request_plan_mod },
-            .{ .name = "provider_route_safety", .module = provider_route_safety_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
     const nob_model_mod = b.createModule(.{
         .root_source_file = b.path("src/nob/model.zig"),
         .target = target,
@@ -535,46 +503,6 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(collector_cloudflare_mod);
-    const provider_route_result_mod = b.createModule(.{
-        .root_source_file = b.path("src/providers/route_result.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "net_http", .module = net_http_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    const provider_transport_mod = b.createModule(.{
-        .root_source_file = b.path("src/providers/transport.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "net_http", .module = net_http_mod },
-            .{ .name = "provider_auth", .module = provider_auth_mod },
-            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
-            .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
-            .{ .name = "provider_request_plan", .module = provider_request_plan_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    const collector_route_capture_mod = b.createModule(.{
-        .root_source_file = b.path("src/collectors/route_capture.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "collector_capture", .module = collector_capture_mod },
-            .{ .name = "collector_capture_normalize", .module = collector_capture_normalize_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "net_pagination", .module = net_pagination_mod },
-            .{ .name = "provider_auth", .module = provider_auth_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_route_result", .module = provider_route_result_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-            .{ .name = "provider_transport", .module = provider_transport_mod },
-        },
-    });
-    linkSqlite(collector_route_capture_mod);
     const collector_hostinger_mod = b.createModule(.{
         .root_source_file = b.path("src/collectors/hostinger.zig"),
         .target = target,
@@ -632,339 +560,28 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_overview_mod);
 
-    const app_history_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/history.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_history_mod);
 
-    const app_provider_family_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_family.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
 
-    const app_evidence_common_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/evidence_common.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_family", .module = app_provider_family_mod },
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "core_redact", .module = core_redact_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_evidence_common_mod);
-    const app_evidence_routes_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/evidence_routes.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "app_evidence_common", .module = app_evidence_common_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_evidence_routes_mod);
-    const app_evidence_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/evidence.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "app_evidence_common", .module = app_evidence_common_mod },
-            .{ .name = "app_evidence_routes", .module = app_evidence_routes_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_evidence_mod);
 
-    const app_export_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/export.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_history", .module = app_history_mod },
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_export_mod);
 
-    const app_provider_l1_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_l1.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_provider_route_plan_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_route_plan.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "provider_auth", .module = provider_auth_mod },
-            .{ .name = "provider_route_plan", .module = provider_route_plan_mod },
-            .{ .name = "provider_route_result", .module = provider_route_result_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-            .{ .name = "provider_transport", .module = provider_transport_mod },
-        },
-    });
 
-    const app_provider_route_capture_result_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_route_capture_result.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "provider_route_result", .module = provider_route_result_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_provider_route_capture_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_route_capture.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_route_capture_result", .module = app_provider_route_capture_result_mod },
-            .{ .name = "app_provider_route_plan", .module = app_provider_route_plan_mod },
-            .{ .name = "collector_route_capture", .module = collector_route_capture_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_route_result", .module = provider_route_result_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_provider_route_capture_mod);
 
-    const app_provider_coverage_render_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_render.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-        },
-    });
 
-    const app_provider_sources_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_sources.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_provider_coverage_routes_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_routes.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_family", .module = app_provider_family_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_provider_coverage_candidates_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_candidates.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_route_plan", .module = provider_route_plan_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_provider_coverage_actual_inputs_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_actual_inputs.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
-            .{ .name = "core_time", .module = core_time_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_provider_coverage_actual_inputs_mod);
 
-    const app_provider_coverage_actual_plan_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_actual_plan.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_actual_inputs", .module = app_provider_coverage_actual_inputs_mod },
-            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_provider_coverage_actual_plan_mod);
 
-    const app_provider_coverage_actual_commands_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_actual_commands.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_actual_inputs", .module = app_provider_coverage_actual_inputs_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_provider_coverage_actual_ready_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_actual_ready.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_actual_commands", .module = app_provider_coverage_actual_commands_mod },
-            .{ .name = "app_provider_coverage_actual_inputs", .module = app_provider_coverage_actual_inputs_mod },
-            .{ .name = "app_provider_coverage_actual_plan", .module = app_provider_coverage_actual_plan_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
-            .{ .name = "app_provider_route_capture", .module = app_provider_route_capture_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_auth", .module = provider_auth_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_provider_coverage_actual_ready_mod);
 
-    const app_provider_coverage_actual_captures_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_actual_captures.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_actual_commands", .module = app_provider_coverage_actual_commands_mod },
-            .{ .name = "app_provider_coverage_actual_inputs", .module = app_provider_coverage_actual_inputs_mod },
-            .{ .name = "app_provider_coverage_actual_plan", .module = app_provider_coverage_actual_plan_mod },
-            .{ .name = "app_provider_coverage_actual_ready", .module = app_provider_coverage_actual_ready_mod },
-            .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
-            .{ .name = "app_provider_route_capture", .module = app_provider_route_capture_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_auth", .module = provider_auth_mod },
-            .{ .name = "provider_capabilities", .module = provider_capabilities_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_provider_coverage_actual_captures_mod);
 
-    const app_provider_coverage_workplan_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_workplan.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
-            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_provider_coverage_levels_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_levels.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
-            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_provider_coverage_rollups_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_rollups.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
-            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_provider_coverage_families_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_families.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
-            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
-            .{ .name = "app_provider_coverage_workplan", .module = app_provider_coverage_workplan_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_provider_coverage_typed_models_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_coverage_typed_models.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_coverage_workplan", .module = app_provider_coverage_workplan_mod },
-            .{ .name = "app_provider_coverage_render", .module = app_provider_coverage_render_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
-    const app_coverage_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/coverage.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_l1", .module = app_provider_l1_mod },
-            .{ .name = "app_provider_coverage_actual_captures", .module = app_provider_coverage_actual_captures_mod },
-            .{ .name = "app_provider_coverage_actual_ready", .module = app_provider_coverage_actual_ready_mod },
-            .{ .name = "app_provider_coverage_candidates", .module = app_provider_coverage_candidates_mod },
-            .{ .name = "app_provider_coverage_families", .module = app_provider_coverage_families_mod },
-            .{ .name = "app_provider_coverage_levels", .module = app_provider_coverage_levels_mod },
-            .{ .name = "app_provider_coverage_rollups", .module = app_provider_coverage_rollups_mod },
-            .{ .name = "app_provider_coverage_routes", .module = app_provider_coverage_routes_mod },
-            .{ .name = "app_provider_coverage_typed_models", .module = app_provider_coverage_typed_models_mod },
-            .{ .name = "app_provider_coverage_workplan", .module = app_provider_coverage_workplan_mod },
-            .{ .name = "app_provider_sources", .module = app_provider_sources_mod },
-            .{ .name = "app_provider_route_capture", .module = app_provider_route_capture_mod },
-            .{ .name = "app_provider_route_plan", .module = app_provider_route_plan_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_auth", .module = provider_auth_mod },
-            .{ .name = "provider_route_result", .module = provider_route_result_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_coverage_mod);
 
     const app_doctor_mod = b.createModule(.{
         .root_source_file = b.path("src/app/doctor.zig"),
@@ -991,28 +608,7 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const app_log_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/log.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "core_log", .module = core_log_mod },
-        },
-    });
-    linkSqlite(app_log_mod);
 
-    const app_security_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/security.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "core_config", .module = core_config_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_security_mod);
     const app_authentication_mod = b.createModule(.{
         .root_source_file = b.path("src/app/authentication.zig"),
         .target = target,
@@ -1039,17 +635,6 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_caddy_mod);
 
-    const app_projects_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/projects.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "collector_projects", .module = collector_projects_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_projects_mod);
     const app_nob_projects_mod = b.createModule(.{
         .root_source_file = b.path("src/app/nob_projects.zig"),
         .target = target,
@@ -1136,42 +721,8 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_nob_worker_mod);
 
-    const app_system_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/system.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "collector_system", .module = collector_system_mod },
-            .{ .name = "core_output", .module = core_output_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_system_mod);
 
-    const app_provider_list_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_list.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "core_output", .module = core_output_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_provider_list_mod);
 
-    const app_provider_api_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/provider_api.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
-    linkSqlite(app_provider_api_mod);
 
     const app_database_mod = b.createModule(.{
         .root_source_file = b.path("src/app/database.zig"),
@@ -1197,59 +748,9 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(app_maintenance_mod);
 
-    const app_cloudflare_overview_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/cloudflare_overview.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_api", .module = app_provider_api_mod },
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_cloudflare_overview_mod);
 
-    const app_cloudflare_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/cloudflare.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "collector_cloudflare", .module = collector_cloudflare_mod },
-            .{ .name = "app_cloudflare_overview", .module = app_cloudflare_overview_mod },
-            .{ .name = "app_provider_list", .module = app_provider_list_mod },
-            .{ .name = "core_output", .module = core_output_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_cloudflare", .module = provider_cloudflare_mod },
-        },
-    });
-    linkSqlite(app_cloudflare_mod);
 
-    const app_hostinger_overview_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/hostinger_overview.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_provider_api", .module = app_provider_api_mod },
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-        },
-    });
-    linkSqlite(app_hostinger_overview_mod);
 
-    const app_hostinger_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/hostinger.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "collector_hostinger", .module = collector_hostinger_mod },
-            .{ .name = "app_hostinger_overview", .module = app_hostinger_overview_mod },
-            .{ .name = "app_provider_list", .module = app_provider_list_mod },
-            .{ .name = "core_output", .module = core_output_mod },
-            .{ .name = "db_store", .module = db_store_mod },
-            .{ .name = "provider_hostinger", .module = provider_hostinger_mod },
-        },
-    });
-    linkSqlite(app_hostinger_mod);
 
     const app_inventory_mod = b.createModule(.{
         .root_source_file = b.path("src/app/inventory.zig"),
@@ -1471,16 +972,6 @@ pub fn build(b: *std.Build) void {
     });
     linkSqlite(server_mod);
 
-    const app_route_catalog_mod = b.createModule(.{
-        .root_source_file = b.path("src/app/route_catalog.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_render", .module = app_render_mod },
-            .{ .name = "core_json", .module = core_json_mod },
-            .{ .name = "provider_routes", .module = provider_routes_mod },
-        },
-    });
 
     const cli_render_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/render.zig"),
@@ -1495,178 +986,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli_render", .module = cli_render_mod },
         },
     });
-    const cli_coverage_parse_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/coverage_parse.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_coverage", .module = app_coverage_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    const cli_route_request_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/route_request.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_coverage", .module = app_coverage_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-        },
-    });
-    const cli_coverage_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/coverage.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_coverage", .module = app_coverage_mod },
-            .{ .name = "cli_coverage_parse", .module = cli_coverage_parse_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "cli_route_request", .module = cli_route_request_mod },
-        },
-    });
-    const cli_route_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/route.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_coverage", .module = app_coverage_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "cli_route_request", .module = cli_route_request_mod },
-        },
-    });
-    const cli_routes_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/routes.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_route_catalog", .module = app_route_catalog_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    const cli_caddy_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/caddy.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_caddy", .module = app_caddy_mod },
-            .{ .name = "app_caddy_desired", .module = app_caddy_desired_mod },
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "core_config", .module = core_config_mod },
-        },
-    });
-    linkSqlite(cli_caddy_mod);
-    const cli_cloudflare_options_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/cloudflare_options.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_cloudflare_options_mod);
-    const cli_cloudflare_dry_run_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/cloudflare_dry_run.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_cloudflare_dry_run_mod);
-    const cli_cloudflare_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/cloudflare.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "cli_cloudflare_dry_run", .module = cli_cloudflare_dry_run_mod },
-            .{ .name = "cli_cloudflare_options", .module = cli_cloudflare_options_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_cloudflare_mod);
-    const cli_hostinger_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/hostinger.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_hostinger", .module = app_hostinger_mod },
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_hostinger_mod);
-    const cli_evidence_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/evidence.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "app_evidence", .module = app_evidence_mod },
-            .{ .name = "app_evidence_routes", .module = app_evidence_routes_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_evidence_mod);
-    const cli_inventory_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/inventory.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "app_inventory", .module = app_inventory_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_inventory_mod);
-    const cli_actions_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/actions.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_actions", .module = app_actions_mod },
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_actions_mod);
-    const cli_dashboard_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/dashboard.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_dashboard", .module = app_dashboard_mod },
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_dashboard_mod);
-    const cli_projects_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/projects.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "app_projects", .module = app_projects_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_projects_mod);
     const cli_nob_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/nob.zig"),
         .target = target,
@@ -1685,29 +1004,6 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(cli_nob_mod);
-    const cli_system_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/system.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "app_system", .module = app_system_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_system_mod);
-    const cli_topology_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/topology.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "app_topology", .module = app_topology_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-        },
-    });
-    linkSqlite(cli_topology_mod);
     const cli_serve_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/serve.zig"),
         .target = target,
@@ -1725,19 +1021,6 @@ pub fn build(b: *std.Build) void {
         },
     });
     linkSqlite(cli_serve_mod);
-    const cli_security_mod = b.createModule(.{
-        .root_source_file = b.path("src/cli/security.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "app_database", .module = app_database_mod },
-            .{ .name = "app_security", .module = app_security_mod },
-            .{ .name = "cli_args", .module = cli_args_mod },
-            .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "core_config", .module = core_config_mod },
-        },
-    });
-    linkSqlite(cli_security_mod);
     const cli_auth_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/auth.zig"),
         .target = target,
@@ -1771,36 +1054,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "app_doctor", .module = app_doctor_mod },
-            .{ .name = "app_export", .module = app_export_mod },
-            .{ .name = "app_history", .module = app_history_mod },
             .{ .name = "app_init", .module = app_init_mod },
-            .{ .name = "app_log", .module = app_log_mod },
-            .{ .name = "app_overview", .module = app_overview_mod },
-            .{ .name = "app_refresh", .module = app_refresh_mod },
-            .{ .name = "app_topology", .module = app_topology_mod },
-            .{ .name = "app_caddy", .module = app_caddy_mod },
-            .{ .name = "app_cloudflare", .module = app_cloudflare_mod },
+            .{ .name = "app_refresh_cycle", .module = app_refresh_cycle_mod },
             .{ .name = "app_database", .module = app_database_mod },
             .{ .name = "cli_args", .module = cli_args_mod },
             .{ .name = "cli_auth", .module = cli_auth_mod },
-            .{ .name = "cli_actions", .module = cli_actions_mod },
-            .{ .name = "cli_caddy", .module = cli_caddy_mod },
-            .{ .name = "cli_cloudflare", .module = cli_cloudflare_mod },
-            .{ .name = "cli_coverage", .module = cli_coverage_mod },
-            .{ .name = "cli_dashboard", .module = cli_dashboard_mod },
-            .{ .name = "cli_evidence", .module = cli_evidence_mod },
-            .{ .name = "cli_hostinger", .module = cli_hostinger_mod },
-            .{ .name = "cli_inventory", .module = cli_inventory_mod },
             .{ .name = "cli_maintenance", .module = cli_maintenance_mod },
             .{ .name = "cli_nob", .module = cli_nob_mod },
-            .{ .name = "cli_projects", .module = cli_projects_mod },
             .{ .name = "cli_render", .module = cli_render_mod },
-            .{ .name = "cli_route", .module = cli_route_mod },
-            .{ .name = "cli_routes", .module = cli_routes_mod },
-            .{ .name = "cli_security", .module = cli_security_mod },
             .{ .name = "cli_serve", .module = cli_serve_mod },
-            .{ .name = "cli_system", .module = cli_system_mod },
-            .{ .name = "cli_topology", .module = cli_topology_mod },
             .{ .name = "core_config", .module = core_config_mod },
             .{ .name = "core_version", .module = core_version_mod },
         },
@@ -1839,44 +1101,18 @@ pub fn build(b: *std.Build) void {
         cli_root_mod,
         cli_args_mod,
         cli_render_mod,
-        cli_coverage_parse_mod,
-        cli_route_request_mod,
-        cli_route_mod,
-        cli_caddy_mod,
-        cli_cloudflare_options_mod,
-        cli_cloudflare_mod,
-        cli_evidence_mod,
-        cli_hostinger_mod,
-        cli_inventory_mod,
-        cli_actions_mod,
-        cli_dashboard_mod,
-        cli_projects_mod,
         cli_nob_mod,
-        cli_routes_mod,
-        cli_security_mod,
         cli_auth_mod,
         cli_maintenance_mod,
         cli_serve_mod,
-        cli_system_mod,
-        cli_topology_mod,
         app_overview_mod,
-        app_export_mod,
-        app_history_mod,
-        app_coverage_mod,
         app_doctor_mod,
-        app_evidence_common_mod,
-        app_evidence_mod,
-        app_evidence_routes_mod,
         app_init_mod,
-        app_log_mod,
-        app_security_mod,
         app_authentication_mod,
         app_caddy_mod,
-        app_projects_mod,
         app_nob_projects_mod,
         app_nob_secrets_mod,
         runtime_nob_workers_mod,
-        app_system_mod,
         app_topology_mod,
         app_actions_mod,
         app_dashboard_mod,
@@ -1889,28 +1125,7 @@ pub fn build(b: *std.Build) void {
         app_dns_mod,
         app_browser_run_mod,
         app_vps_mod,
-        app_provider_api_mod,
-        app_provider_family_mod,
-        app_provider_l1_mod,
-        app_provider_coverage_actual_captures_mod,
-        app_provider_coverage_actual_inputs_mod,
-        app_provider_coverage_candidates_mod,
-        app_provider_coverage_families_mod,
-        app_provider_coverage_levels_mod,
-        app_provider_coverage_render_mod,
-        app_provider_coverage_rollups_mod,
-        app_provider_sources_mod,
-        app_provider_coverage_typed_models_mod,
-        app_provider_coverage_workplan_mod,
-        app_provider_coverage_routes_mod,
-        app_provider_route_plan_mod,
-        app_provider_route_capture_result_mod,
-        app_provider_list_mod,
         app_render_mod,
-        app_route_catalog_mod,
-        app_cloudflare_overview_mod,
-        app_cloudflare_mod,
-        app_hostinger_mod,
         app_inventory_mod,
         app_database_mod,
         app_refresh_mod,
@@ -1929,11 +1144,6 @@ pub fn build(b: *std.Build) void {
         net_pagination_mod,
         provider_capabilities_mod,
         provider_auth_mod,
-        provider_request_plan_mod,
-        provider_route_plan_mod,
-        provider_route_result_mod,
-        provider_route_safety_mod,
-        provider_transport_mod,
         provider_routes_mod,
         provider_typed_routes_mod,
         nob_model_mod,
@@ -1952,7 +1162,6 @@ pub fn build(b: *std.Build) void {
         security_passkeys_mod,
         collector_capture_mod,
         collector_capture_normalize_mod,
-        collector_route_capture_mod,
         collector_caddy_mod,
         collector_projects_mod,
         collector_project_manifests_mod,
