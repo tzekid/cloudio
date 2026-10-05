@@ -93,6 +93,7 @@ pub const NobArtifacts = nob_model.Artifacts;
 pub const NobManagedUnit = nob_repository.ManagedUnit;
 pub const NobSecretBinding = nob_model.SecretBinding;
 pub const BrowserRun = browser_run_repository.Run;
+pub const BrowserRuns = browser_run_repository.Runs;
 
 test "sqlite schema initializes" {
     const allocator = std.testing.allocator;

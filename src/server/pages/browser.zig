@@ -1,4 +1,5 @@
 const app_browser_run = @import("../../app/browser_run.zig");
+const db_store = @import("../../db/store.zig");
 const context = @import("../context.zig");
 const form = @import("../form.zig");
 const html = @import("../html.zig");
@@ -8,22 +9,16 @@ const url = @import("../../core/url.zig");
 const web_html = @import("web_html");
 
 pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
-    var json = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer json.deinit();
-    try app_browser_run.writeJson(context.browserRun(ctx), request.query("run"), &json.writer);
-    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, json.written(), .{});
-    defer parsed.deinit();
-    const capability = html.member(parsed.value, "capability") orelse .null;
-    const accounts = html.arrayItems(html.member(parsed.value, "accounts"));
-    const allowed_hosts = html.arrayItems(html.member(parsed.value, "allowed_hosts"));
-    const recent = html.arrayItems(html.member(parsed.value, "recent"));
+    var view = try app_browser_run.View.load(context.browserRun(ctx), request.query("run"));
+    defer view.deinit(ctx.gpa);
+    const allowed_hosts = ctx.config.browser_run_allowed_hosts;
 
     var status = std.Io.Writer.Allocating.init(ctx.gpa);
     defer status.deinit();
-    try html.writeStatus(&status.writer, if (html.boolField(capability, "available")) "Available" else "Unavailable");
+    try html.writeStatus(&status.writer, if (view.can_run) "Available" else "Unavailable");
     try html.replaceElementInner(ctx.gpa, main, "browser-capability-status", "span", status.written());
-    try html.replaceEscapedElement(ctx.gpa, main, "browser-token-status", "dd", if (html.boolField(capability, "token")) "Configured · permission checked on run" else "API token required");
-    try html.replaceEscapedElement(ctx.gpa, main, "browser-capability-reason", "p", html.strField(capability, "reason"));
+    try html.replaceEscapedElement(ctx.gpa, main, "browser-token-status", "dd", if (view.has_token) "Configured · permission checked on run" else "API token required");
+    try html.replaceEscapedElement(ctx.gpa, main, "browser-capability-reason", "p", view.reason);
 
     var destinations = std.Io.Writer.Allocating.init(ctx.gpa);
     defer destinations.deinit();
@@ -31,29 +26,28 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
         try destinations.writer.writeAll("None configured");
     } else for (allowed_hosts, 0..) |entry, index| {
         if (index != 0) try destinations.writer.writeAll(", ");
-        try web_html.text(&destinations.writer, html.asString(entry));
+        try web_html.text(&destinations.writer, entry);
     }
     try html.replaceElementInner(ctx.gpa, main, "browser-destinations", "dd", destinations.written());
     var retention_buffer: [64]u8 = undefined;
-    const retention_hours = html.intField(parsed.value, "retention_hours");
+    const retention_hours = ctx.config.browser_run_retention_hours;
     const retention = try std.fmt.bufPrint(&retention_buffer, "{d} {s}", .{ retention_hours, if (retention_hours == 1) "hour" else "hours" });
     try html.replaceEscapedElement(ctx.gpa, main, "browser-retention", "dd", retention);
 
     var account_options = std.Io.Writer.Allocating.init(ctx.gpa);
     defer account_options.deinit();
-    if (accounts.len == 0) {
+    if (view.accounts.items.len == 0) {
         try account_options.writer.writeAll("<option value=\"\" selected>No observed accounts</option>");
-    } else for (accounts, 0..) |account, index| {
+    } else for (view.accounts.items, 0..) |account, index| {
         try account_options.writer.writeAll("<option value=\"");
-        try web_html.attribute(&account_options.writer, html.strField(account, "id"));
+        try web_html.attribute(&account_options.writer, account.id);
         try account_options.writer.writeByte('"');
         if (index == 0) try account_options.writer.writeAll(" selected");
         try account_options.writer.writeByte('>');
-        const name = html.strField(account, "name");
-        try web_html.text(&account_options.writer, if (name.len > 0) name else html.strField(account, "id"));
-        if (html.strField(account, "status").len > 0) {
+        try web_html.text(&account_options.writer, if (account.name.len > 0) account.name else account.id);
+        if (account.status.len > 0) {
             try account_options.writer.writeAll(" · ");
-            try web_html.text(&account_options.writer, html.strField(account, "status"));
+            try web_html.text(&account_options.writer, account.status);
         }
         try account_options.writer.writeAll("</option>");
     }
@@ -62,7 +56,7 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
     const key = try html.formIdempotencyKey(ctx.io, &key_buffer, "browser-run");
     try html.replaceHiddenInput(ctx.gpa, main, "browser-run-csrf", "csrf_token", ctx.auth_csrf_token orelse "");
     try html.replaceHiddenInput(ctx.gpa, main, "browser-run-idempotency", "idempotency_key", key);
-    if (html.boolField(capability, "available")) {
+    if (view.can_run) {
         const replacements = [_][2][]const u8{
             .{ "<select id=\"browser-account\" name=\"account_id\" required disabled>", "<select id=\"browser-account\" name=\"account_id\" required>" },
             .{ "<input id=\"browser-url\" name=\"url\" type=\"url\" inputmode=\"url\" placeholder=\"https://example.com/page\" maxlength=\"4096\" autocomplete=\"off\" required disabled>", "<input id=\"browser-url\" name=\"url\" type=\"url\" inputmode=\"url\" placeholder=\"https://example.com/page\" maxlength=\"4096\" autocomplete=\"off\" required>" },
@@ -79,34 +73,32 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
         try html.replaceExact(ctx.gpa, main, "id=\"browser-notice\" class=\"notice hidden\"", replacement);
     }
 
-    if (html.member(parsed.value, "selected")) |selected| {
-        if (selected == .object) try injectBrowserResult(ctx, selected, main);
-    }
+    if (view.selected) |selected| try injectBrowserResult(ctx, view, selected, main);
 
     var rows = std.Io.Writer.Allocating.init(ctx.gpa);
     defer rows.deinit();
-    if (recent.len == 0) {
+    if (view.recent.items.len == 0) {
         try html.emptyRow(&rows.writer, 6, "No Browser Run results yet.");
-    } else for (recent) |run_value| {
-        const id = html.strField(run_value, "id");
+    } else for (view.recent.items) |run_value| {
+        const id = run_value.id;
         try rows.writer.writeAll("<tr><td data-label=\"Started\" class=\"mono cell-nowrap\">");
-        try writeEpoch(&rows.writer, html.intField(run_value, "created_at"));
+        try writeEpoch(&rows.writer, run_value.created_at);
         try rows.writer.writeAll("</td><td data-label=\"Action\">");
-        try html.writeBadge(&rows.writer, browserActionLabel(html.strField(run_value, "action")));
+        try html.writeBadge(&rows.writer, browserActionLabel(run_value.action));
         try rows.writer.writeAll("</td>");
-        try html.dashboardCellText(&rows.writer, "Target", html.strField(run_value, "target_host"), "mono breakable", "—");
+        try html.dashboardCellText(&rows.writer, "Target", run_value.target_host, "mono breakable", "—");
         try rows.writer.writeAll("<td data-label=\"Result\"><a href=\"/browser.html?run=");
         try url.writeComponent(&rows.writer, id);
         try rows.writer.writeAll("\">");
-        try html.writeStatus(&rows.writer, html.strField(run_value, "state"));
+        try html.writeStatus(&rows.writer, run_value.state);
         try rows.writer.writeAll("</a></td><td data-label=\"Usage\" class=\"mono\">");
-        if (html.intField(run_value, "browser_ms_used") > 0) try rows.writer.print("{d} ms", .{html.intField(run_value, "browser_ms_used")}) else try rows.writer.writeAll("—");
+        if (run_value.browser_ms_used orelse 0 > 0) try rows.writer.print("{d} ms", .{run_value.browser_ms_used.?}) else try rows.writer.writeAll("—");
         try rows.writer.writeAll("</td><td data-label=\"Artifact\">");
-        if (html.boolField(run_value, "artifact") and !html.boolField(run_value, "expired")) {
+        if (run_value.artifact_path != null and !view.expired(run_value)) {
             try rows.writer.writeAll("<a href=\"/browser/artifact?id=");
             try url.writeComponent(&rows.writer, id);
             try rows.writer.writeAll("&amp;download=1\">Download</a>");
-        } else if (html.boolField(run_value, "expired")) {
+        } else if (view.expired(run_value)) {
             try rows.writer.writeAll("<span class=\"muted\">Expired</span>");
         } else {
             try rows.writer.writeAll("<span class=\"muted\">—</span>");
@@ -114,15 +106,15 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
         try rows.writer.writeAll("</td></tr>");
     }
     try html.replaceElementInner(ctx.gpa, main, "browser-runs-body", "tbody", rows.written());
-    try html.replaceCountLabel(ctx.gpa, main, "browser-run-count", "span", recent.len, "run", "runs");
+    try html.replaceCountLabel(ctx.gpa, main, "browser-run-count", "span", view.recent.items.len, "run", "runs");
 }
-fn injectBrowserResult(ctx: context.Context, run_value: std.json.Value, main: *[]u8) !void {
+fn injectBrowserResult(ctx: context.Context, view: app_browser_run.View, run_value: db_store.BrowserRun, main: *[]u8) !void {
     try html.replaceExact(ctx.gpa, main, "id=\"browser-result-panel\" class=\"panel hidden\"", "id=\"browser-result-panel\" class=\"panel\"");
-    const state = html.strField(run_value, "state");
-    const summary = if (html.strField(run_value, "error_summary").len > 0)
-        html.strField(run_value, "error_summary")
-    else if (html.strField(run_value, "title").len > 0)
-        html.strField(run_value, "title")
+    const state = run_value.state;
+    const summary = if (nonEmpty(run_value.error_summary)) |value|
+        value
+    else if (nonEmpty(run_value.title)) |value|
+        value
     else
         "The Browser Run result was persisted by Cloudio.";
     try html.replaceEscapedElement(ctx.gpa, main, "browser-result-summary", "p", summary);
@@ -130,29 +122,29 @@ fn injectBrowserResult(ctx: context.Context, run_value: std.json.Value, main: *[
     defer status.deinit();
     try html.writeStatus(&status.writer, state);
     try html.replaceElementInner(ctx.gpa, main, "browser-result-status", "span", status.written());
-    try html.replaceEscapedElement(ctx.gpa, main, "browser-result-target", "dd", html.strField(run_value, "target_url"));
-    try html.replaceEscapedElement(ctx.gpa, main, "browser-result-action", "dd", browserActionLabel(html.strField(run_value, "action")));
+    try html.replaceEscapedElement(ctx.gpa, main, "browser-result-target", "dd", run_value.target_url);
+    try html.replaceEscapedElement(ctx.gpa, main, "browser-result-action", "dd", browserActionLabel(run_value.action));
     var number_buffer: [64]u8 = undefined;
-    const origin = if (html.intField(run_value, "origin_status") > 0) try std.fmt.bufPrint(&number_buffer, "HTTP {d}", .{html.intField(run_value, "origin_status")}) else "—";
+    const origin = if (run_value.origin_status orelse 0 > 0) try std.fmt.bufPrint(&number_buffer, "HTTP {d}", .{run_value.origin_status.?}) else "—";
     try html.replaceEscapedElement(ctx.gpa, main, "browser-result-origin", "dd", origin);
     var size_buffer: [64]u8 = undefined;
-    const size = if (html.intField(run_value, "size_bytes") > 0) try formatBytes(&size_buffer, html.intField(run_value, "size_bytes")) else "—";
+    const size = if (run_value.size_bytes orelse 0 > 0) try formatBytes(&size_buffer, run_value.size_bytes.?) else "—";
     try html.replaceEscapedElement(ctx.gpa, main, "browser-result-size", "dd", size);
     var usage_buffer: [64]u8 = undefined;
-    const usage = if (html.intField(run_value, "browser_ms_used") > 0) try std.fmt.bufPrint(&usage_buffer, "{d} ms", .{html.intField(run_value, "browser_ms_used")}) else "Not reported";
+    const usage = if (run_value.browser_ms_used orelse 0 > 0) try std.fmt.bufPrint(&usage_buffer, "{d} ms", .{run_value.browser_ms_used.?}) else "Not reported";
     try html.replaceEscapedElement(ctx.gpa, main, "browser-result-usage", "dd", usage);
-    try html.replaceEscapedElement(ctx.gpa, main, "browser-result-ray", "dd", if (html.strField(run_value, "cf_ray").len > 0) html.strField(run_value, "cf_ray") else "Not reported");
-    try html.replaceEscapedElement(ctx.gpa, main, "browser-result-sha", "dd", if (html.strField(run_value, "artifact_sha256").len > 0) html.strField(run_value, "artifact_sha256") else "—");
+    try html.replaceEscapedElement(ctx.gpa, main, "browser-result-ray", "dd", nonEmpty(run_value.cf_ray) orelse "Not reported");
+    try html.replaceEscapedElement(ctx.gpa, main, "browser-result-sha", "dd", nonEmpty(run_value.artifact_sha256) orelse "—");
     var expiry = std.Io.Writer.Allocating.init(ctx.gpa);
     defer expiry.deinit();
-    try writeEpoch(&expiry.writer, html.intField(run_value, "expires_at"));
+    try writeEpoch(&expiry.writer, run_value.expires_at);
     try html.replaceElementInner(ctx.gpa, main, "browser-result-expiry", "dd", expiry.written());
 
     var output = std.Io.Writer.Allocating.init(ctx.gpa);
     defer output.deinit();
-    const id = html.strField(run_value, "id");
-    if (std.mem.eql(u8, state, "succeeded") and html.boolField(run_value, "artifact") and !html.boolField(run_value, "expired")) {
-        if (std.mem.eql(u8, html.strField(run_value, "action"), "screenshot")) {
+    const id = run_value.id;
+    if (std.mem.eql(u8, state, "succeeded") and run_value.artifact_path != null and !view.expired(run_value)) {
+        if (std.mem.eql(u8, run_value.action, "screenshot")) {
             try output.writer.writeAll("<figure class=\"browser-preview\"><img src=\"/browser/artifact?id=");
             try url.writeComponent(&output.writer, id);
             try output.writer.writeAll("\" alt=\"Screenshot captured by Kitesurf\"><figcaption><a href=\"/browser/artifact?id=");
@@ -162,14 +154,14 @@ fn injectBrowserResult(ctx: context.Context, run_value: std.json.Value, main: *[
             try output.writer.writeAll("<div class=\"cluster\"><a class=\"button\" href=\"/browser/artifact?id=");
             try url.writeComponent(&output.writer, id);
             try output.writer.writeAll("&amp;download=1\">Download rendered HTML</a></div><pre class=\"log-viewer browser-html-preview\">");
-            try web_html.text(&output.writer, html.strField(run_value, "preview"));
+            try web_html.text(&output.writer, view.preview orelse "");
             try output.writer.writeAll("</pre>");
         }
-    } else if (html.strField(run_value, "error_summary").len > 0) {
+    } else if (nonEmpty(run_value.error_summary)) |error_summary| {
         try output.writer.writeAll("<div class=\"notice tone-danger\">");
-        try web_html.text(&output.writer, html.strField(run_value, "error_summary"));
-        if (html.intField(run_value, "retry_after_seconds") > 0) {
-            try output.writer.print(" Retry after {d} seconds.", .{html.intField(run_value, "retry_after_seconds")});
+        try web_html.text(&output.writer, error_summary);
+        if (run_value.retry_after_seconds orelse 0 > 0) {
+            try output.writer.print(" Retry after {d} seconds.", .{run_value.retry_after_seconds.?});
         }
         try output.writer.writeAll("</div>");
     }
@@ -213,4 +205,8 @@ fn writeEpoch(out: *std.Io.Writer, value: i64) !void {
         day_seconds.getHoursIntoDay(),
         day_seconds.getMinutesIntoHour(),
     });
+}
+fn nonEmpty(value: ?[]const u8) ?[]const u8 {
+    const present = value orelse return null;
+    return if (present.len > 0) present else null;
 }

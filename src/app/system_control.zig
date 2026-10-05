@@ -5,9 +5,10 @@
 const std = @import("std");
 const app_writes = @import("writes.zig");
 const collector_system = @import("../collectors/system.zig");
-const core_json = @import("../core/json.zig");
+const core_config = @import("../core/config.zig");
 const core_process = @import("../core/process.zig");
 const db_store = @import("../db/store.zig");
+const observation = @import("observation.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -35,7 +36,7 @@ pub fn isSafeContainerName(name: []const u8) bool {
     return collector_system.isSafeContainerName(name);
 }
 
-pub fn containerAction(ctx: Context, name: []const u8, action: ContainerAction, writer: anytype) !void {
+pub fn containerAction(ctx: Context, name: []const u8, action: ContainerAction) !void {
     if (!collector_system.isSafeContainerName(name)) return error.InvalidContainerName;
     var before = try ctx.db.containerRow(ctx.gpa, name) orelse return error.ContainerNotObserved;
     defer before.deinit(ctx.gpa);
@@ -84,23 +85,75 @@ pub fn containerAction(ctx: Context, name: []const u8, action: ContainerAction, 
     const kind = try std.fmt.allocPrint(ctx.gpa, "docker.{s}", .{action_text});
     defer ctx.gpa.free(kind);
     _ = try app_writes.recordWithMetadata(ctx.gpa, ctx.db, ctx.write_meta, kind, name, null, .ok, after.status);
-
-    try writer.writeByte('{');
-    try core_json.writeStringField(writer, "container", name, true);
-    try core_json.writeStringField(writer, "action", action_text, true);
-    try core_json.writeStringField(writer, "state", after_state.label(), true);
-    try core_json.writeStringField(writer, "status", after.status, true);
-    try core_json.writeStringField(writer, "observed_at", after.updated_at, false);
-    try writer.writeAll("}\n");
 }
+
+pub const Container = struct {
+    row: db_store.ContainerRow,
+    state: ContainerState,
+    actions: std.EnumSet(ContainerAction),
+};
+
+/// What the Docker page shows: stored containers and which lifecycle actions
+/// the latest collection allows.
+pub const View = struct {
+    freshness: observation.Freshness,
+    latest: ?db_store.Observation,
+    can_act: bool,
+    reason: []const u8,
+    containers: []Container,
+    rows: db_store.ContainerRows,
+
+    pub fn load(ctx: Context, config: core_config.Config) !View {
+        var rows = try ctx.db.system().containerRows(ctx.gpa, 200);
+        errdefer rows.deinit(ctx.gpa);
+        const latest = try ctx.db.latestObservation(ctx.gpa, "system", "containers");
+        errdefer if (latest) |value| value.deinit(ctx.gpa);
+        // Lifecycle actions need runtime access proven by the latest attempt;
+        // age alone does not make the runtime unreachable.
+        const can_act = if (latest) |value| std.mem.eql(u8, value.attempt_status, "ok") else false;
+        const containers = try ctx.gpa.alloc(Container, rows.items.len);
+        for (rows.items, containers) |row, *slot| {
+            const state = containerState(row.status);
+            var actions: std.EnumSet(ContainerAction) = .empty;
+            for ([_]ContainerAction{ .start, .stop, .restart }) |action| {
+                actions.setPresent(action, can_act and isSafeContainerName(row.name) and containerActionAllowed(state, action));
+            }
+            slot.* = .{ .row = row, .state = state, .actions = actions };
+        }
+        return .{
+            .freshness = observation.freshness(latest, config),
+            .latest = latest,
+            .can_act = can_act,
+            .reason = if (can_act)
+                "Container runtime access was confirmed by the latest collection."
+            else if (latest) |value| (if (value.hasSuccessfulObservation())
+                "Container actions are unavailable because the latest collection failed; last-good rows are read-only."
+            else
+                "Container actions are unavailable because the runtime has not completed a successful collection.") else "Container actions are unavailable until the runtime is refreshed successfully.",
+            .containers = containers,
+            .rows = rows,
+        };
+    }
+
+    pub fn deinit(self: *View, gpa: Allocator) void {
+        gpa.free(self.containers);
+        if (self.latest) |value| value.deinit(gpa);
+        self.rows.deinit(gpa);
+    }
+
+    pub fn container(self: View, name: []const u8) ?Container {
+        for (self.containers) |item| if (std.mem.eql(u8, item.row.name, name)) return item;
+        return null;
+    }
+};
 
 pub fn refreshContainers(ctx: Context) !void {
     return collector_system.collectContainers(ctx.io, ctx.gpa, ctx.db);
 }
 
 /// Reads bounded logs for an exact observed container; no audit row because
-/// this is a read.
-pub fn containerLogs(ctx: Context, name: []const u8, tail: i64, writer: anytype) !void {
+/// this is a read. The caller owns the returned text.
+pub fn containerLogs(ctx: Context, name: []const u8, tail: i64) ![]u8 {
     if (!collector_system.isSafeContainerName(name)) return error.InvalidContainerName;
     var observed = try ctx.db.containerRow(ctx.gpa, name) orelse return error.ContainerNotObserved;
     defer observed.deinit(ctx.gpa);
@@ -112,15 +165,8 @@ pub fn containerLogs(ctx: Context, name: []const u8, tail: i64, writer: anytype)
         return error.ContainerRuntimeUnavailable;
     defer result.deinit(ctx.gpa);
 
-    const combined = try combineOutput(ctx.gpa, result);
-    defer ctx.gpa.free(combined);
     if (!result.ok()) return error.ContainerLogsFailed;
-
-    try writer.writeByte('{');
-    try core_json.writeStringField(writer, "container", name, true);
-    try core_json.writeIntField(writer, "tail", effective_tail, true);
-    try core_json.writeStringField(writer, "logs", combined, false);
-    try writer.writeAll("}\n");
+    return combineOutput(ctx.gpa, result);
 }
 
 pub fn validateTail(tail: i64) !i64 {

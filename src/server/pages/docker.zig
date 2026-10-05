@@ -1,5 +1,5 @@
 const app_system_control = @import("../../app/system_control.zig");
-const app_web_resources = @import("../../app/web_resources.zig");
+const observation = @import("../../app/observation.zig");
 const context = @import("../context.zig");
 const form = @import("../form.zig");
 const html = @import("../html.zig");
@@ -8,30 +8,18 @@ const std = @import("std");
 const web_html = @import("web_html");
 
 pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
-    var json = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer json.deinit();
-    const refresh_seconds: i64 = @intCast(ctx.config.refresh_seconds);
-    try app_web_resources.writeContainersJson(.{
-        .gpa = ctx.gpa,
-        .db = ctx.db,
-        .fresh_after_seconds = @max(refresh_seconds * 2, 60),
-    }, &json.writer);
-    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, json.written(), .{});
-    defer parsed.deinit();
-    const containers = html.arrayItems(html.member(parsed.value, "containers"));
-    const collection = html.member(parsed.value, "collection") orelse .null;
-    const capability = html.member(parsed.value, "capability") orelse .null;
-    const capability_available = html.boolField(capability, "available");
+    var view = try app_system_control.View.load(context.system(ctx), ctx.config);
+    defer view.deinit(ctx.gpa);
 
-    try html.replaceEscapedElement(ctx.gpa, main, "docker-freshness", "dd", html.strField(parsed.value, "freshness"));
-    const observed_at = html.strField(parsed.value, "observed_at");
+    try html.replaceEscapedElement(ctx.gpa, main, "docker-freshness", "dd", @tagName(view.freshness));
+    const observed_at = observation.observedAt(view.latest);
     try html.replaceEscapedElement(ctx.gpa, main, "docker-observed-at", "dd", if (observed_at.len == 0) "Never" else observed_at);
     var collection_text = std.Io.Writer.Allocating.init(ctx.gpa);
     defer collection_text.deinit();
-    const collection_status = html.strField(collection, "status");
-    const attempted_at = html.strField(collection, "attempted_at");
-    const collection_summary = html.strField(collection, "summary");
-    try web_html.text(&collection_text.writer, if (collection_status.len == 0) "unavailable" else collection_status);
+    const collection_status = if (view.latest) |value| value.attempt_status else "unavailable";
+    const attempted_at = if (view.latest) |value| value.attempted_at else "";
+    const collection_summary = if (view.latest) |value| value.attempt_summary else "No collection has run.";
+    try web_html.text(&collection_text.writer, collection_status);
     if (attempted_at.len > 0) {
         try collection_text.writer.writeAll(" at ");
         try web_html.text(&collection_text.writer, attempted_at);
@@ -41,8 +29,8 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
         try web_html.text(&collection_text.writer, collection_summary);
     }
     try html.replaceElementInner(ctx.gpa, main, "docker-collection", "dd", collection_text.written());
-    try html.replaceEscapedElement(ctx.gpa, main, "docker-capability", "p", html.strField(capability, "reason"));
-    if (capability_available) {
+    try html.replaceEscapedElement(ctx.gpa, main, "docker-capability", "p", view.reason);
+    if (view.can_act) {
         try html.replaceExact(
             ctx.gpa,
             main,
@@ -69,10 +57,10 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
 
     var rows = std.Io.Writer.Allocating.init(ctx.gpa);
     defer rows.deinit();
-    if (containers.len == 0) {
+    if (view.containers.len == 0) {
         try html.emptyRow(&rows.writer, 5, if (observed_at.len == 0) "Refresh to observe local containers." else "No containers were observed.");
-    } else for (containers) |container| {
-        const container_name = html.strField(container, "name");
+    } else for (view.containers) |container| {
+        const container_name = container.row.name;
         try rows.writer.writeAll("<tr><td><a class=\"button-link mono\" data-select-container=\"");
         try web_html.attribute(&rows.writer, container_name);
         try rows.writer.writeAll("\" href=\"/docker.html?container=");
@@ -82,19 +70,18 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
         try rows.writer.writeAll("\">");
         try web_html.text(&rows.writer, container_name);
         try rows.writer.writeAll("</a></td>");
-        try html.cellText(&rows.writer, html.strField(container, "image"), "mono breakable");
+        try html.cellText(&rows.writer, container.row.image, "mono breakable");
         try rows.writer.writeAll("<td>");
-        try html.writeStatus(&rows.writer, html.strField(container, "state"));
+        try html.writeStatus(&rows.writer, container.state.label());
         try rows.writer.writeAll("<div class=\"muted\">");
-        try web_html.text(&rows.writer, html.strField(container, "status"));
+        try web_html.text(&rows.writer, container.row.status);
         try rows.writer.writeAll("</div></td>");
-        try html.cellText(&rows.writer, html.strField(container, "ports"), "mono breakable");
+        try html.cellText(&rows.writer, container.row.ports, "mono breakable");
         try rows.writer.writeAll("<td class=\"cell-actions\"><div class=\"table-actions\">");
-        const actions = html.member(container, "actions") orelse .null;
         var rendered_action = false;
-        const container_actions = [_][]const u8{ "start", "stop", "restart" };
-        for (container_actions) |action| {
-            if (!html.boolField(actions, action)) continue;
+        var actions = container.actions.iterator();
+        while (actions.next()) |action_tag| {
+            const action = @tagName(action_tag);
             rendered_action = true;
             try rows.writer.writeAll("<a class=\"button button-small");
             if (std.mem.eql(u8, action, "stop")) try rows.writer.writeAll(" button-danger");
@@ -115,10 +102,10 @@ pub fn inject(ctx: context.Context, request: http.Request, main: *[]u8) !void {
         try rows.writer.writeAll("</div></td></tr>");
     }
     try html.replaceElementInner(ctx.gpa, main, "containers-body", "tbody", rows.written());
-    try html.replaceCountLabel(ctx.gpa, main, "containers-count", "p", containers.len, "container", "containers");
+    try html.replaceCountLabel(ctx.gpa, main, "containers-count", "p", view.containers.len, "container", "containers");
 
-    try injectDockerConfirmation(ctx, request, containers, capability_available, csrf, main);
-    try injectDockerLogs(ctx, request, containers, main);
+    try injectDockerConfirmation(ctx, request, view, csrf, main);
+    try injectDockerLogs(ctx, request, view, main);
 }
 const DockerFeedback = struct { tone: []const u8, message: []const u8 };
 fn dockerFeedback(request: http.Request) ?DockerFeedback {
@@ -147,24 +134,15 @@ fn dockerFeedback(request: http.Request) ?DockerFeedback {
 fn injectDockerConfirmation(
     ctx: context.Context,
     request: http.Request,
-    containers: []const std.json.Value,
-    capability_available: bool,
+    view: app_system_control.View,
     csrf: []const u8,
     main: *[]u8,
 ) !void {
     const action_text = request.query("confirm") orelse return;
     const name = request.query("container") orelse return;
     const action = std.meta.stringToEnum(app_system_control.ContainerAction, action_text) orelse return;
-    var selected: ?std.json.Value = null;
-    for (containers) |container| {
-        if (std.mem.eql(u8, html.strField(container, "name"), name)) {
-            selected = container;
-            break;
-        }
-    }
-    const container = selected orelse return;
-    const actions = html.member(container, "actions") orelse .null;
-    if (!capability_available or !html.boolField(actions, action_text)) return;
+    const container = view.container(name) orelse return;
+    if (!container.actions.contains(action)) return;
 
     var summary = std.Io.Writer.Allocating.init(ctx.gpa);
     defer summary.deinit();
@@ -173,7 +151,7 @@ fn injectDockerConfirmation(
     try summary.writer.writeAll(" for ");
     try web_html.text(&summary.writer, name);
     try summary.writer.writeAll(". The current observed state is ");
-    try web_html.text(&summary.writer, html.strField(container, "state"));
+    try web_html.text(&summary.writer, container.state.label());
     try summary.writer.writeByte('.');
     try html.replaceElementInner(ctx.gpa, main, "container-confirmation-summary", "p", summary.written());
 
@@ -205,7 +183,7 @@ fn injectDockerConfirmation(
 fn injectDockerLogs(
     ctx: context.Context,
     request: http.Request,
-    containers: []const std.json.Value,
+    view: app_system_control.View,
     main: *[]u8,
 ) !void {
     const selected_name = request.query("container") orelse "";
@@ -215,8 +193,8 @@ fn injectDockerLogs(
     try options.writer.writeAll("<option value=\"\"");
     if (selected_name.len == 0) try options.writer.writeAll(" selected");
     try options.writer.writeAll(">Select a container</option>");
-    for (containers) |container| {
-        const name = html.strField(container, "name");
+    for (view.containers) |container| {
+        const name = container.row.name;
         const selected = std.mem.eql(u8, name, selected_name);
         selected_observed = selected_observed or selected;
         try options.writer.writeAll("<option value=\"");
@@ -256,9 +234,7 @@ fn injectDockerLogs(
         return;
     }
 
-    var logs_json = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer logs_json.deinit();
-    app_system_control.containerLogs(context.system(ctx), selected_name, parsed_tail, &logs_json.writer) catch |err| {
+    const logs = app_system_control.containerLogs(context.system(ctx), selected_name, parsed_tail) catch |err| {
         const message: []const u8 = switch (err) {
             error.ContainerLogsFailed => "The runtime rejected the bounded log read.",
             error.ContainerRuntimeUnavailable => "The local container runtime is unavailable.",
@@ -270,9 +246,7 @@ fn injectDockerLogs(
         try html.replaceExact(ctx.gpa, main, "id=\"container-logs\" class=\"log-viewer\" data-state=\"empty\"", "id=\"container-logs\" class=\"log-viewer\" data-state=\"error\"");
         return;
     };
-    var logs_parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, logs_json.written(), .{});
-    defer logs_parsed.deinit();
-    const logs = html.strField(logs_parsed.value, "logs");
+    defer ctx.gpa.free(logs);
     try html.replaceEscapedElement(ctx.gpa, main, "logs-status", "span", "Logs updated.");
     try html.replaceEscapedElement(ctx.gpa, main, "container-logs", "pre", if (logs.len == 0) "(empty log)" else logs);
     try html.replaceExact(ctx.gpa, main, "id=\"container-logs\" class=\"log-viewer\" data-state=\"empty\"", "id=\"container-logs\" class=\"log-viewer\" data-state=\"ready\"");

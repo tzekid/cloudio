@@ -317,93 +317,59 @@ fn audit(ctx: Context, host: []const u8, action: Action, result: app_writes.Resu
     );
 }
 
-pub fn writeJson(ctx: Context, selected_id: ?[]const u8, writer: anytype) !void {
-    var accounts = try ctx.db.cloudflare().cloudflareAccountRows(ctx.gpa, 100);
-    defer accounts.deinit(ctx.gpa);
-    var recent = try ctx.db.browserRun().recent(ctx.gpa, 20);
-    defer recent.deinit(ctx.gpa);
-    const selected: ?db_store.BrowserRun = if (selected_id) |id|
-        if (isSafeRunId(id)) try ctx.db.browserRun().get(ctx.gpa, id) else null
-    else
-        null;
-    defer if (selected) |run_value| run_value.deinit(ctx.gpa);
+/// What the Browser Run page shows: capability, observed accounts, recent
+/// runs, and one selected result with a bounded HTML preview.
+pub const View = struct {
+    can_run: bool,
+    has_token: bool,
+    reason: []const u8,
+    accounts: db_store.CloudflareAccountRows,
+    recent: db_store.BrowserRuns,
+    selected: ?db_store.BrowserRun,
+    preview: ?[]u8,
+    now: i64,
 
-    const has_token = ctx.config.hasCloudflareApiToken();
-    const has_accounts = accounts.items.len != 0;
-    const has_policy = ctx.config.browser_run_allowed_hosts.len != 0;
-    const available = has_token and has_accounts and has_policy;
-    try writer.writeAll("{\"kind\":\"browser_run\",\"capability\":{");
-    try core_json.writeBoolField(writer, "available", available, true);
-    try core_json.writeBoolField(writer, "token", has_token, true);
-    try core_json.writeBoolField(writer, "accounts", has_accounts, true);
-    try core_json.writeBoolField(writer, "destination_policy", has_policy, true);
-    try core_json.writeStringField(writer, "reason", capabilityReason(has_token, has_accounts, has_policy), false);
-    try writer.writeAll("},\"engine\":\"kitesurf\",\"beta\":true,");
-    try core_json.writeIntField(writer, "retention_hours", ctx.config.browser_run_retention_hours, true);
-    try writer.writeAll("\"allowed_hosts\":[");
-    for (ctx.config.browser_run_allowed_hosts, 0..) |host, index| {
-        if (index != 0) try writer.writeByte(',');
-        try core_json.writeString(writer, host);
+    pub fn load(ctx: Context, selected_id: ?[]const u8) !View {
+        var accounts = try ctx.db.cloudflare().cloudflareAccountRows(ctx.gpa, 100);
+        errdefer accounts.deinit(ctx.gpa);
+        var recent = try ctx.db.browserRun().recent(ctx.gpa, 20);
+        errdefer recent.deinit(ctx.gpa);
+        const selected: ?db_store.BrowserRun = if (selected_id) |id|
+            if (isSafeRunId(id)) try ctx.db.browserRun().get(ctx.gpa, id) else null
+        else
+            null;
+        errdefer if (selected) |value| value.deinit(ctx.gpa);
+        const now = nowSeconds();
+        const preview = if (selected) |value|
+            (if (std.mem.eql(u8, value.action, "content") and std.mem.eql(u8, value.state, "succeeded") and value.expires_at > now) try contentPreview(ctx, value) else null)
+        else
+            null;
+        const has_token = ctx.config.hasCloudflareApiToken();
+        const has_accounts = accounts.items.len != 0;
+        const has_policy = ctx.config.browser_run_allowed_hosts.len != 0;
+        return .{
+            .can_run = has_token and has_accounts and has_policy,
+            .has_token = has_token,
+            .reason = capabilityReason(has_token, has_accounts, has_policy),
+            .accounts = accounts,
+            .recent = recent,
+            .selected = selected,
+            .preview = preview,
+            .now = now,
+        };
     }
-    try writer.writeAll("],\"accounts\":[");
-    for (accounts.items, 0..) |account, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.writeByte('{');
-        try core_json.writeStringField(writer, "id", account.id, true);
-        try core_json.writeStringField(writer, "name", account.name, true);
-        try core_json.writeStringField(writer, "status", account.status, false);
-        try writer.writeByte('}');
-    }
-    try writer.writeAll("],\"selected\":");
-    if (selected) |run_value| {
-        try writeRunJson(ctx, writer, run_value, true);
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"recent\":[");
-    for (recent.items, 0..) |run_value, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writeRunJson(ctx, writer, run_value, false);
-    }
-    try writer.writeAll("]}\n");
-}
 
-fn writeRunJson(ctx: Context, writer: anytype, run_value: db_store.BrowserRun, include_preview: bool) !void {
-    try writer.writeByte('{');
-    try core_json.writeStringField(writer, "id", run_value.id, true);
-    try core_json.writeStringField(writer, "account_id", run_value.account_id, true);
-    try core_json.writeStringField(writer, "action", run_value.action, true);
-    try core_json.writeStringField(writer, "engine", run_value.engine, true);
-    try core_json.writeStringField(writer, "target_url", run_value.target_url, true);
-    try core_json.writeStringField(writer, "target_host", run_value.target_host, true);
-    try core_json.writeStringField(writer, "state", run_value.state, true);
-    try writeNullableInt(writer, "origin_status", run_value.origin_status, true);
-    try core_json.writeNullableStringField(writer, "title", run_value.title, true);
-    try core_json.writeNullableStringField(writer, "content_type", run_value.content_type, true);
-    try writeNullableInt(writer, "size_bytes", run_value.size_bytes, true);
-    try writeNullableInt(writer, "browser_ms_used", run_value.browser_ms_used, true);
-    try writeNullableInt(writer, "retry_after_seconds", run_value.retry_after_seconds, true);
-    try core_json.writeNullableStringField(writer, "cf_ray", run_value.cf_ray, true);
-    try core_json.writeNullableStringField(writer, "artifact_sha256", run_value.artifact_sha256, true);
-    try core_json.writeNullableStringField(writer, "error_code", run_value.error_code, true);
-    try core_json.writeNullableStringField(writer, "error_summary", run_value.error_summary, true);
-    try core_json.writeIntField(writer, "created_at", run_value.created_at, true);
-    try writeNullableInt(writer, "finished_at", run_value.finished_at, true);
-    try core_json.writeIntField(writer, "expires_at", run_value.expires_at, true);
-    try core_json.writeBoolField(writer, "expired", run_value.expires_at <= nowSeconds(), true);
-    try core_json.writeBoolField(writer, "artifact", run_value.artifact_path != null, true);
-    try writer.writeAll("\"preview\":");
-    if (include_preview and std.mem.eql(u8, run_value.action, "content") and
-        std.mem.eql(u8, run_value.state, "succeeded") and run_value.expires_at > nowSeconds())
-    {
-        const preview = try contentPreview(ctx, run_value);
-        defer if (preview) |bytes| ctx.gpa.free(bytes);
-        if (preview) |bytes| try core_json.writeString(writer, bytes) else try writer.writeAll("null");
-    } else {
-        try writer.writeAll("null");
+    pub fn deinit(self: *View, gpa: Allocator) void {
+        if (self.preview) |bytes| gpa.free(bytes);
+        if (self.selected) |value| value.deinit(gpa);
+        self.recent.deinit(gpa);
+        self.accounts.deinit(gpa);
     }
-    try writer.writeByte('}');
-}
+
+    pub fn expired(self: View, run_value: db_store.BrowserRun) bool {
+        return run_value.expires_at <= self.now;
+    }
+};
 
 fn contentPreview(ctx: Context, run_value: db_store.BrowserRun) !?[]u8 {
     const stored = run_value.artifact_path orelse return null;
@@ -628,12 +594,6 @@ fn capabilityReason(has_token: bool, has_accounts: bool, has_policy: bool) []con
     return "Kitesurf is available for the observed account and configured destinations. Token permission is checked on each run.";
 }
 
-fn writeNullableInt(writer: anytype, name: []const u8, value: ?i64, trailing: bool) !void {
-    try core_json.writeString(writer, name);
-    try writer.writeByte(':');
-    if (value) |present| try writer.print("{d}", .{present}) else try writer.writeAll("null");
-    if (trailing) try writer.writeByte(',');
-}
 
 fn toI64(value: ?u64) ?i64 {
     const present = value orelse return null;

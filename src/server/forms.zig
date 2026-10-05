@@ -616,8 +616,7 @@ fn docker(s: *Submission) !void {
     if (!auth.constantTimeEqual(s.field("confirmation") orelse "", name)) return s.reject(428, "confirmation");
     if (!try s.claim("container_refresh_in_progress")) return;
     system_ctx.write_meta = s.writeMeta();
-    var discard = std.Io.Writer.Allocating.init(s.arena);
-    app_system_control.containerAction(system_ctx, name, action, &discard.writer) catch |err| return s.fail(err);
+    app_system_control.containerAction(system_ctx, name, action) catch |err| return s.fail(err);
     try s.finish(303, try s.url("/docker.html?result={s}&container={s}", .{ @tagName(action), name }));
 }
 
