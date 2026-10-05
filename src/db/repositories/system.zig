@@ -172,15 +172,6 @@ pub const Repository = struct {
         try stepDone(stmt);
     }
 
-    pub fn insertSystemMetric(self: Repository, metric: []const u8, value: []const u8, unit: ?[]const u8) !void {
-        const stmt = try self.prepare("INSERT INTO system_metrics(metric, value, unit) VALUES (?, ?, ?)");
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, metric);
-        try bindText(stmt, 2, value);
-        try bindTextOpt(stmt, 3, unit);
-        try stepDone(stmt);
-    }
-
     pub fn upsertService(self: Repository, name: []const u8, scope: []const u8, state: ?[]const u8, sub_state: ?[]const u8, description: ?[]const u8, raw: []const u8) !void {
         const stmt = try self.prepare(
             \\INSERT INTO services(name, scope, state, sub_state, description, raw_text, updated_at)

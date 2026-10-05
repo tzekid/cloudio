@@ -148,46 +148,6 @@ pub const Repository = struct {
         try stepDone(stmt);
     }
 
-    pub fn upsertHostingerInventoryItem(
-        self: Repository,
-        key: []const u8,
-        kind: []const u8,
-        resource_id: []const u8,
-        display_name: ?[]const u8,
-        status: ?[]const u8,
-        category: ?[]const u8,
-        domain: ?[]const u8,
-        username: ?[]const u8,
-        related_id: ?[]const u8,
-        flag: ?[]const u8,
-        created_at_source: ?[]const u8,
-        updated_at_source: ?[]const u8,
-        expires_at_source: ?[]const u8,
-        raw: []const u8,
-    ) !void {
-        const stmt = try self.prepare(
-            \\INSERT INTO hostinger_inventory_items(key, kind, resource_id, display_name, status, category, domain, username, related_id, flag, created_at_source, updated_at_source, expires_at_source, raw_json, updated_at)
-            \\VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            \\ON CONFLICT(key) DO UPDATE SET kind=excluded.kind, resource_id=excluded.resource_id, display_name=excluded.display_name, status=excluded.status, category=excluded.category, domain=excluded.domain, username=excluded.username, related_id=excluded.related_id, flag=excluded.flag, created_at_source=excluded.created_at_source, updated_at_source=excluded.updated_at_source, expires_at_source=excluded.expires_at_source, raw_json=excluded.raw_json, updated_at=CURRENT_TIMESTAMP
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, key);
-        try bindText(stmt, 2, kind);
-        try bindText(stmt, 3, resource_id);
-        try bindTextOpt(stmt, 4, display_name);
-        try bindTextOpt(stmt, 5, status);
-        try bindTextOpt(stmt, 6, category);
-        try bindTextOpt(stmt, 7, domain);
-        try bindTextOpt(stmt, 8, username);
-        try bindTextOpt(stmt, 9, related_id);
-        try bindTextOpt(stmt, 10, flag);
-        try bindTextOpt(stmt, 11, created_at_source);
-        try bindTextOpt(stmt, 12, updated_at_source);
-        try bindTextOpt(stmt, 13, expires_at_source);
-        try bindText(stmt, 14, raw);
-        try stepDone(stmt);
-    }
-
     pub fn hostingerVpsRows(self: Repository, gpa: Allocator, limit: i64) !HostingerVpsRows {
         const stmt = try self.prepare(
             \\SELECT id, COALESCE(name,''), COALESCE(status,''), COALESCE(ipv4,''), COALESCE(plan,''), updated_at
@@ -201,28 +161,6 @@ pub const Repository = struct {
         errdefer deinitHostingerVpsRowList(&rows, gpa);
         while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
             var row = try hostingerVpsRowFromStmt(gpa, stmt);
-            rows.append(gpa, row) catch |err| {
-                row.deinit(gpa);
-                return err;
-            };
-        }
-        return .{ .items = try rows.toOwnedSlice(gpa) };
-    }
-
-    pub fn hostingerMetricSummaries(self: Repository, gpa: Allocator, limit: i64) !HostingerMetricSummaries {
-        const stmt = try self.prepare(
-            \\SELECT COALESCE(vm_id,''), metric, COUNT(*) AS sample_count, COALESCE(MAX(captured_at), '') AS latest_captured
-            \\FROM hostinger_metrics
-            \\GROUP BY vm_id, metric
-            \\ORDER BY latest_captured DESC, vm_id, metric
-            \\LIMIT ?
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindI64(stmt, 1, positiveLimit(limit, 200));
-        var rows = std.ArrayList(HostingerMetricSummary).empty;
-        errdefer deinitHostingerMetricSummaryList(&rows, gpa);
-        while (sqlite.sqlite3_step(stmt) == sqlite.SQLITE_ROW) {
-            var row = try hostingerMetricSummaryFromStmt(gpa, stmt);
             rows.append(gpa, row) catch |err| {
                 row.deinit(gpa);
                 return err;

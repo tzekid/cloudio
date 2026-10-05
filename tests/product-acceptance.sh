@@ -149,7 +149,7 @@ chmod 600 "$nob_secret_file"
 ln -s "$repo_dir/tests/fixtures/fake-docker" "$fake_bin/docker"
 ln -s "$repo_dir/tests/fixtures/fake-caddy" "$fake_bin/caddy"
 ln -s "$repo_dir/tests/fixtures/fake-caddy-curl" "$fake_bin/curl"
-for command in hostnamectl systemctl df uptime ss uname; do
+for command in systemctl ss; do
   ln -s /bin/true "$fake_bin/$command"
 done
 CLOUDIO_FAKE_CADDY_ROOT="$caddy_root" \

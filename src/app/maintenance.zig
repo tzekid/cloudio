@@ -19,10 +19,7 @@ pub const Policy = struct {
     database_path: []const u8 = ".cloudio/cloudio.db",
     backup_root: []const u8 = ".cloudio/backups",
     disk_budget_bytes: u64 = 0,
-    log_path: []const u8 = ".cloudio/latest-run.log",
     snapshot_days: u32 = 14,
-    provider_raw_days: u32 = 14,
-    metrics_days: u32 = 30,
     nob_plan_days: u32 = 7,
     nob_operation_days: u32 = 30,
     nob_min_operations_per_project: u16 = 20,
@@ -36,10 +33,7 @@ pub const Policy = struct {
             .database_path = config.db_path,
             .backup_root = config.storage_backup_root,
             .disk_budget_bytes = config.storage_disk_budget_bytes,
-            .log_path = config.log_path,
             .snapshot_days = config.snapshot_retention_days,
-            .provider_raw_days = config.provider_raw_retention_days,
-            .metrics_days = config.metrics_retention_days,
             .nob_plan_days = config.nob_plan_retention_days,
             .nob_operation_days = config.nob_operation_retention_days,
             .nob_min_operations_per_project = config.nob_min_operations_per_project,
@@ -68,9 +62,6 @@ pub const FileInventory = struct {
 
 pub const Stats = struct {
     snapshots: TableStats = .{},
-    provider_raw: TableStats = .{},
-    hostinger_metrics: TableStats = .{},
-    system_metrics: TableStats = .{},
     nob_plans: TableStats = .{},
     nob_operations: TableStats = .{},
     page_size: i64 = 0,
@@ -79,7 +70,6 @@ pub const Stats = struct {
     database_file_bytes: i64 = 0,
     wal_bytes: i64 = 0,
     shm_bytes: i64 = 0,
-    log_bytes: i64 = 0,
     backups: FileInventory = .{},
     nob_operation_state: FileInventory = .{},
     nob_runner_cache: FileInventory = .{},
@@ -97,7 +87,6 @@ pub const Stats = struct {
         var total = self.database_file_bytes;
         total +|= self.wal_bytes;
         total +|= self.shm_bytes;
-        total +|= self.log_bytes;
         total +|= self.backups.bytes;
         total +|= self.nob_operation_state.bytes;
         total +|= self.nob_runner_cache.bytes;
@@ -149,18 +138,6 @@ pub const Result = struct {
 
     pub fn deletedSnapshots(self: Result) i64 {
         return self.before.snapshots.total - self.after.snapshots.total;
-    }
-
-    pub fn deletedProviderRaw(self: Result) i64 {
-        return self.before.provider_raw.total - self.after.provider_raw.total;
-    }
-
-    pub fn deletedHostingerMetrics(self: Result) i64 {
-        return self.before.hostinger_metrics.total - self.after.hostinger_metrics.total;
-    }
-
-    pub fn deletedSystemMetrics(self: Result) i64 {
-        return self.before.system_metrics.total - self.after.system_metrics.total;
     }
 
     pub fn deletedNobPlans(self: Result) i64 {
@@ -238,24 +215,6 @@ pub fn inspect(ctx: Context, policy: Policy) !Stats {
             "SELECT COUNT(*) FROM snapshots WHERE captured_at < datetime('now', '-' || ? || ' days')",
             policy.snapshot_days,
         ),
-        .provider_raw = try tableStats(
-            db,
-            "SELECT COUNT(*) FROM provider_raw",
-            "SELECT COUNT(*) FROM provider_raw WHERE captured_at < datetime('now', '-' || ? || ' days')",
-            policy.provider_raw_days,
-        ),
-        .hostinger_metrics = try tableStats(
-            db,
-            "SELECT COUNT(*) FROM hostinger_metrics",
-            "SELECT COUNT(*) FROM hostinger_metrics WHERE captured_at < datetime('now', '-' || ? || ' days')",
-            policy.metrics_days,
-        ),
-        .system_metrics = try tableStats(
-            db,
-            "SELECT COUNT(*) FROM system_metrics",
-            "SELECT COUNT(*) FROM system_metrics WHERE captured_at < datetime('now', '-' || ? || ' days')",
-            policy.metrics_days,
-        ),
         .nob_plans = try nobPlanStats(db, policy.nob_plan_days),
         .nob_operations = try nobOperationStats(db, policy.nob_operation_days, policy.nob_min_operations_per_project),
         .page_size = try scalar(db, "PRAGMA page_size"),
@@ -269,7 +228,6 @@ pub fn inspect(ctx: Context, policy: Policy) !Stats {
     const shm_path = try std.fmt.allocPrint(ctx.gpa, "{s}-shm", .{policy.database_path});
     defer ctx.gpa.free(shm_path);
     stats.shm_bytes = try fileBytes(ctx.io, shm_path);
-    stats.log_bytes = try fileBytes(ctx.io, policy.log_path);
     stats.backups = try inventory(ctx, policy.backup_root);
     stats.nob_operation_state = try inventory(ctx, policy.nob_state_root);
     stats.nob_runner_cache = try inventory(ctx, policy.nob_cache_root);
@@ -309,24 +267,6 @@ pub fn prune(ctx: Context, policy: Policy) !void {
         \\)
     ,
         policy.nob_plan_days,
-        policy.batch_rows,
-    );
-    try pruneBatches(
-        db,
-        "DELETE FROM provider_raw WHERE id IN (SELECT id FROM provider_raw WHERE captured_at < datetime('now', '-' || ? || ' days') LIMIT ?)",
-        policy.provider_raw_days,
-        policy.batch_rows,
-    );
-    try pruneBatches(
-        db,
-        "DELETE FROM hostinger_metrics WHERE id IN (SELECT id FROM hostinger_metrics WHERE captured_at < datetime('now', '-' || ? || ' days') LIMIT ?)",
-        policy.metrics_days,
-        policy.batch_rows,
-    );
-    try pruneBatches(
-        db,
-        "DELETE FROM system_metrics WHERE id IN (SELECT id FROM system_metrics WHERE captured_at < datetime('now', '-' || ? || ' days') LIMIT ?)",
-        policy.metrics_days,
         policy.batch_rows,
     );
     // Checkpointing bounds the WAL after a large batch run. A busy reader may
@@ -399,10 +339,8 @@ pub fn writeText(result: Result, policy: Policy, writer: anytype) !void {
         policy.backup_root,
         policy.disk_budget_bytes,
     });
-    try writer.print("retention: snapshots={d}d provider_raw={d}d metrics={d}d nob_plans={d}d nob_operations={d}d keep_operations={d} batch={d}\n", .{
+    try writer.print("retention: snapshots={d}d nob_plans={d}d nob_operations={d}d keep_operations={d} batch={d}\n", .{
         policy.snapshot_days,
-        policy.provider_raw_days,
-        policy.metrics_days,
         policy.nob_plan_days,
         policy.nob_operation_days,
         policy.nob_min_operations_per_project,
@@ -412,11 +350,8 @@ pub fn writeText(result: Result, policy: Policy, writer: anytype) !void {
     try writeStatsText("before", result.before, writer);
     if (result.applied) {
         try writeStatsText("after", result.after, writer);
-        try writer.print("deleted: snapshots={d} provider_raw={d} hostinger_metrics={d} system_metrics={d} nob_plans={d} nob_operations={d}\n", .{
+        try writer.print("deleted: snapshots={d} nob_plans={d} nob_operations={d}\n", .{
             result.deletedSnapshots(),
-            result.deletedProviderRaw(),
-            result.deletedHostingerMetrics(),
-            result.deletedSystemMetrics(),
             result.deletedNobPlans(),
             result.deletedNobOperations(),
         });
@@ -438,8 +373,6 @@ pub fn writeJson(result: Result, policy: Policy, writer: anytype) !void {
     try core_json.writeStringField(writer, "backup_root", policy.backup_root, true);
     try core_json.writeIntField(writer, "disk_budget_bytes", policy.disk_budget_bytes, true);
     try core_json.writeIntField(writer, "snapshot_days", policy.snapshot_days, true);
-    try core_json.writeIntField(writer, "provider_raw_days", policy.provider_raw_days, true);
-    try core_json.writeIntField(writer, "metrics_days", policy.metrics_days, true);
     try core_json.writeIntField(writer, "nob_plan_days", policy.nob_plan_days, true);
     try core_json.writeIntField(writer, "nob_operation_days", policy.nob_operation_days, true);
     try core_json.writeIntField(writer, "nob_min_operations_per_project", policy.nob_min_operations_per_project, true);
@@ -450,9 +383,6 @@ pub fn writeJson(result: Result, policy: Policy, writer: anytype) !void {
     try writeStatsJson(result.after, writer);
     try writer.writeAll(",\"deleted\":{");
     try core_json.writeIntField(writer, "snapshots", result.deletedSnapshots(), true);
-    try core_json.writeIntField(writer, "provider_raw", result.deletedProviderRaw(), true);
-    try core_json.writeIntField(writer, "hostinger_metrics", result.deletedHostingerMetrics(), true);
-    try core_json.writeIntField(writer, "system_metrics", result.deletedSystemMetrics(), true);
     try core_json.writeIntField(writer, "nob_plans", result.deletedNobPlans(), true);
     try core_json.writeIntField(writer, "nob_operations", result.deletedNobOperations(), false);
     try writer.writeAll("}}\n");
@@ -460,13 +390,12 @@ pub fn writeJson(result: Result, policy: Policy, writer: anytype) !void {
 
 fn writeStatsText(label: []const u8, stats: Stats, writer: anytype) !void {
     try writer.print(
-        "{s} storage: database_file_bytes={d} wal_bytes={d} shm_bytes={d} log_bytes={d} backups={d}/{d} nob_operation_state={d}/{d} nob_runner_cache={d}/{d} managed_bytes={d} maintenance_headroom_bytes={d} disk_budget_bytes={d} budget_warning={}\n",
+        "{s} storage: database_file_bytes={d} wal_bytes={d} shm_bytes={d} backups={d}/{d} nob_operation_state={d}/{d} nob_runner_cache={d}/{d} managed_bytes={d} maintenance_headroom_bytes={d} disk_budget_bytes={d} budget_warning={}\n",
         .{
             label,
             stats.database_file_bytes,
             stats.wal_bytes,
             stats.shm_bytes,
-            stats.log_bytes,
             stats.backups.files,
             stats.backups.bytes,
             stats.nob_operation_state.files,
@@ -480,19 +409,13 @@ fn writeStatsText(label: []const u8, stats: Stats, writer: anytype) !void {
         },
     );
     try writer.print(
-        "{s} rows: db_logical_bytes={d} reclaimable_bytes={d} snapshots={d}/{d} provider_raw={d}/{d} hostinger_metrics={d}/{d} system_metrics={d}/{d} nob_plans={d}/{d} nob_operations={d}/{d}\n",
+        "{s} rows: db_logical_bytes={d} reclaimable_bytes={d} snapshots={d}/{d} nob_plans={d}/{d} nob_operations={d}/{d}\n",
         .{
             label,
             stats.databaseBytes(),
             stats.reclaimableBytes(),
             stats.snapshots.total,
             stats.snapshots.eligible,
-            stats.provider_raw.total,
-            stats.provider_raw.eligible,
-            stats.hostinger_metrics.total,
-            stats.hostinger_metrics.eligible,
-            stats.system_metrics.total,
-            stats.system_metrics.eligible,
             stats.nob_plans.total,
             stats.nob_plans.eligible,
             stats.nob_operations.total,
@@ -507,7 +430,6 @@ fn writeStatsJson(stats: Stats, writer: anytype) !void {
     try core_json.writeIntField(writer, "database_file_bytes", stats.database_file_bytes, true);
     try core_json.writeIntField(writer, "wal_bytes", stats.wal_bytes, true);
     try core_json.writeIntField(writer, "shm_bytes", stats.shm_bytes, true);
-    try core_json.writeIntField(writer, "log_bytes", stats.log_bytes, true);
     try core_json.writeIntField(writer, "managed_bytes", stats.managedBytes(), true);
     try core_json.writeIntField(writer, "maintenance_headroom_bytes", stats.maintenanceHeadroomBytes(), true);
     try core_json.writeIntField(writer, "disk_budget_bytes", stats.disk_budget_bytes, true);
@@ -525,12 +447,6 @@ fn writeStatsJson(stats: Stats, writer: anytype) !void {
     try core_json.writeIntField(writer, "freelist_pages", stats.freelist_pages, true);
     try writer.writeAll("\"snapshots\":");
     try writeTableStatsJson(stats.snapshots, writer);
-    try writer.writeAll(",\"provider_raw\":");
-    try writeTableStatsJson(stats.provider_raw, writer);
-    try writer.writeAll(",\"hostinger_metrics\":");
-    try writeTableStatsJson(stats.hostinger_metrics, writer);
-    try writer.writeAll(",\"system_metrics\":");
-    try writeTableStatsJson(stats.system_metrics, writer);
     try writer.writeAll(",\"nob_plans\":");
     try writeTableStatsJson(stats.nob_plans, writer);
     try writer.writeAll(",\"nob_operations\":");
@@ -834,8 +750,6 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
     defer allocator.free(nob_cache_root);
     const cache_marker = try std.fmt.allocPrint(allocator, "{s}/runner.bin", .{nob_cache_root});
     defer allocator.free(cache_marker);
-    const log_path = try std.fmt.allocPrint(allocator, "{s}/cloudio.log", .{base});
-    defer allocator.free(log_path);
     const operation_prefix = "01ARZ3NDEKTSV4RRFFQ69G5F";
     const retained_operation = operation_prefix ++ "01";
     const pruned_operation = operation_prefix ++ "02";
@@ -855,16 +769,12 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
     try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = retained_backup, .data = "operator-owned-backup" });
     try core_fs.ensureParentDir(std.testing.io, cache_marker);
     try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = cache_marker, .data = "runner-cache" });
-    try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = log_path, .data = "latest log" });
 
     var db = try Db.open(std.testing.io, db_path);
     defer db.close();
     try db.initSchema();
     try db.exec(
         \\INSERT INTO snapshots(source,kind,status,captured_at) VALUES ('system','old','ok','2020-01-01'),('system','new','ok',CURRENT_TIMESTAMP);
-        \\INSERT INTO provider_raw(provider,endpoint,captured_at) VALUES ('cloudflare','old','2020-01-01'),('cloudflare','new',CURRENT_TIMESTAMP);
-        \\INSERT INTO hostinger_metrics(vm_id,metric,captured_at) VALUES ('1','old','2020-01-01'),('1','new',CURRENT_TIMESTAMP);
-        \\INSERT INTO system_metrics(metric,value,captured_at) VALUES ('old','1','2020-01-01'),('new','1',CURRENT_TIMESTAMP);
         \\INSERT INTO audit_actions(kind,result,created_at) VALUES ('fixture.required','ok','2020-01-01');
         \\INSERT INTO audit_events(action,status,created_at) VALUES ('fixture.required','error','2020-01-01');
         \\INSERT INTO managed_projects(
@@ -930,10 +840,7 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
         .database_path = db_path,
         .backup_root = backup_root,
         .disk_budget_bytes = 1,
-        .log_path = log_path,
         .snapshot_days = 7,
-        .provider_raw_days = 7,
-        .metrics_days = 7,
         .nob_plan_days = 7,
         .nob_operation_days = 7,
         .nob_min_operations_per_project = 20,
@@ -950,7 +857,6 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
     try std.testing.expectEqual(@as(i64, 1), preview.before.backups.files);
     try std.testing.expect(preview.before.nob_operation_state.bytes > 0);
     try std.testing.expect(preview.before.nob_runner_cache.bytes > 0);
-    try std.testing.expect(preview.before.log_bytes > 0);
     try std.testing.expect(preview.before.budgetWarning());
     try std.testing.expectError(Error.ScheduledRetentionDisabled, pruneScheduled(ctx, policy));
 
@@ -959,9 +865,6 @@ test "maintenance previews, backs up, prunes, and compacts safely" {
     try std.testing.expect(applied.pruned);
     try std.testing.expect(applied.compacted);
     try std.testing.expectEqual(@as(i64, 1), applied.after.snapshots.total);
-    try std.testing.expectEqual(@as(i64, 1), applied.after.provider_raw.total);
-    try std.testing.expectEqual(@as(i64, 1), applied.after.hostinger_metrics.total);
-    try std.testing.expectEqual(@as(i64, 1), applied.after.system_metrics.total);
     try std.testing.expectEqual(@as(i64, 1), applied.after.nob_plans.total);
     try std.testing.expectEqual(@as(i64, 21), applied.after.nob_operations.total);
     try std.testing.expectEqual(@as(i64, 1), try scalar(&db, "SELECT COUNT(*) FROM audit_actions"));
@@ -1016,8 +919,6 @@ test "verified backup and maintenance survive interruption and database reopen" 
         .database_path = db_path,
         .backup_root = backup_root,
         .snapshot_days = 1,
-        .provider_raw_days = 1,
-        .metrics_days = 1,
         .nob_plan_days = 1,
         .nob_operation_days = 1,
         .nob_state_root = missing_state,

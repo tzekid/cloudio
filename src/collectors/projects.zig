@@ -41,11 +41,6 @@ fn projectNameFromPath(path: []const u8) []const u8 {
     return std.fs.path.basename(dir);
 }
 
-test "project name comes from compose file directory" {
-    try std.testing.expectEqualStrings("app", projectNameFromPath("/srv/app/docker-compose.yml"));
-    try std.testing.expectEqualStrings("nested", projectNameFromPath("/home/kid/Projects/foo/nested/compose.yaml"));
-}
-
 test "persists compose project paths" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -59,4 +54,9 @@ test "persists compose project paths" {
     try persistComposePath(&db, "/srv/app/docker-compose.yml");
 
     try std.testing.expectEqual(@as(i64, 1), try db.countTable("projects"));
+}
+
+test "project name comes from compose file directory" {
+    try std.testing.expectEqualStrings("app", projectNameFromPath("/srv/app/docker-compose.yml"));
+    try std.testing.expectEqualStrings("nested", projectNameFromPath("/home/kid/Projects/foo/nested/compose.yaml"));
 }

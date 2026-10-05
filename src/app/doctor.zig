@@ -45,7 +45,6 @@ pub const NobCheck = struct {
 pub const Report = struct {
     version: []const u8,
     db_path: []const u8,
-    log_path: []const u8,
     config_path: []const u8,
     config_present: bool,
     loaded_dotenv: bool,
@@ -79,7 +78,6 @@ pub const Report = struct {
     pub fn writeText(self: Report, writer: anytype) !void {
         try writer.print("cloudio {s}\n", .{self.version});
         try writer.print("db: {s}\n", .{self.db_path});
-        try writer.print("run log: {s}\n", .{self.log_path});
         try writer.print("config: {s} ({s})\n", .{ self.config_path, presentLabel(self.config_present) });
         try writer.print(".env: {s}\n", .{loadedLabel(self.loaded_dotenv)});
         try writer.print(".env.fish: {s}\n", .{loadedLabel(self.loaded_fish_env)});
@@ -118,7 +116,6 @@ pub const Report = struct {
         try app_render.writeJsonStringField(writer, "version", self.version, true);
         try writer.writeAll("\"paths\":{");
         try app_render.writeJsonStringField(writer, "db", self.db_path, true);
-        try app_render.writeJsonStringField(writer, "log", self.log_path, true);
         try writer.writeAll("\"config\":{");
         try app_render.writeJsonStringField(writer, "path", self.config_path, true);
         try app_render.writeJsonBoolField(writer, "present", self.config_present, false);
@@ -244,7 +241,6 @@ pub fn collect(ctx: Context) !Report {
     return .{
         .version = ctx.version,
         .db_path = cfg.db_path,
-        .log_path = cfg.log_path,
         .config_path = cfg.config_path,
         .config_present = config_present,
         .loaded_dotenv = cfg.loaded_dotenv,
@@ -451,7 +447,6 @@ test "doctor report renders reusable health output without credentials" {
     var report = Report{
         .version = "0.1.0-poc",
         .db_path = ".cloudio/cloudio.db",
-        .log_path = ".cloudio/latest-run.log",
         .config_path = "cloudio.local.toml",
         .config_present = true,
         .loaded_dotenv = true,

@@ -143,9 +143,6 @@ pub const Db = struct {
     pub fn insertSnapshot(self: *Db, source: []const u8, kind: []const u8, target: ?[]const u8, status: []const u8, summary: ?[]const u8, raw_json: ?[]const u8, raw_text: ?[]const u8) !i64 {
         return self.captures().insertSnapshot(source, kind, target, status, summary, raw_json, raw_text);
     }
-    pub fn insertProviderRaw(self: *Db, provider: []const u8, endpoint: []const u8, status: i64, body: []const u8) !void {
-        return self.captures().insertProviderRaw(provider, endpoint, status, body);
-    }
     pub fn insertAudit(self: *Db, action: []const u8, status: []const u8, detail: []const u8) !void {
         return self.audit().insertAudit(action, status, detail);
     }
@@ -154,9 +151,6 @@ pub const Db = struct {
     }
     pub fn countTable(self: *Db, table: []const u8) !i64 {
         return self.maintenance().countTable(table);
-    }
-    pub fn countSecretNeedle(self: *Db, surface: SecretScanSurface, needle: []const u8) !i64 {
-        return self.maintenance().countSecretNeedle(surface, needle);
     }
     pub fn upsertCloudflareAccount(self: *Db, id: []const u8, name: ?[]const u8, typ: ?[]const u8, status: ?[]const u8, raw: []const u8) !void {
         return self.cloudflare().upsertCloudflareAccount(id, name, typ, status, raw);
@@ -167,49 +161,8 @@ pub const Db = struct {
     pub fn upsertDnsRecord(self: *Db, id: []const u8, zone_id: []const u8, name: ?[]const u8, typ: ?[]const u8, content: ?[]const u8, ttl: ?i64, proxied: ?bool, raw: []const u8) !void {
         return self.cloudflare().upsertDnsRecord(id, zone_id, name, typ, content, ttl, proxied, raw);
     }
-    pub fn upsertCloudflareInventoryItem(
-        self: *Db,
-        key: []const u8,
-        kind: []const u8,
-        resource_id: []const u8,
-        scope: ?[]const u8,
-        scope_id: ?[]const u8,
-        display_name: ?[]const u8,
-        status: ?[]const u8,
-        category: ?[]const u8,
-        domain: ?[]const u8,
-        account_id: ?[]const u8,
-        zone_id: ?[]const u8,
-        related_id: ?[]const u8,
-        flag: ?[]const u8,
-        created_at_source: ?[]const u8,
-        updated_at_source: ?[]const u8,
-        expires_at_source: ?[]const u8,
-        raw: []const u8,
-    ) !void {
-        return self.cloudflare().upsertCloudflareInventoryItem(key, kind, resource_id, scope, scope_id, display_name, status, category, domain, account_id, zone_id, related_id, flag, created_at_source, updated_at_source, expires_at_source, raw);
-    }
     pub fn upsertHostingerVps(self: *Db, id: []const u8, name: ?[]const u8, status: ?[]const u8, ipv4: ?[]const u8, plan: ?[]const u8, raw: []const u8) !void {
         return self.hostinger().upsertHostingerVps(id, name, status, ipv4, plan, raw);
-    }
-    pub fn upsertHostingerInventoryItem(
-        self: *Db,
-        key: []const u8,
-        kind: []const u8,
-        resource_id: []const u8,
-        display_name: ?[]const u8,
-        status: ?[]const u8,
-        category: ?[]const u8,
-        domain: ?[]const u8,
-        username: ?[]const u8,
-        related_id: ?[]const u8,
-        flag: ?[]const u8,
-        created_at_source: ?[]const u8,
-        updated_at_source: ?[]const u8,
-        expires_at_source: ?[]const u8,
-        raw: []const u8,
-    ) !void {
-        return self.hostinger().upsertHostingerInventoryItem(key, kind, resource_id, display_name, status, category, domain, username, related_id, flag, created_at_source, updated_at_source, expires_at_source, raw);
     }
     pub fn upsertCaddySite(self: *Db, host: []const u8, source_path: []const u8, raw_block: ?[]const u8) !void {
         return self.system().upsertCaddySite(host, source_path, raw_block);
@@ -219,9 +172,6 @@ pub const Db = struct {
     }
     pub fn upsertProject(self: *Db, name: []const u8, source: []const u8, path: ?[]const u8, host: ?[]const u8, upstream: ?[]const u8, service: ?[]const u8, container: ?[]const u8, raw: ?[]const u8) !void {
         return self.system().upsertProject(name, source, path, host, upstream, service, container, raw);
-    }
-    pub fn insertSystemMetric(self: *Db, metric: []const u8, value: []const u8, unit: ?[]const u8) !void {
-        return self.system().insertSystemMetric(metric, value, unit);
     }
     pub fn upsertService(self: *Db, name: []const u8, scope: []const u8, state: ?[]const u8, sub_state: ?[]const u8, description: ?[]const u8, raw: []const u8) !void {
         return self.system().upsertService(name, scope, state, sub_state, description, raw);
@@ -264,29 +214,5 @@ pub const Db = struct {
     }
     pub fn hostingerVpsRows(self: *Db, gpa: Allocator, limit: i64) !HostingerVpsRows {
         return self.hostinger().hostingerVpsRows(gpa, limit);
-    }
-    pub fn hostingerMetricSummaries(self: *Db, gpa: Allocator, limit: i64) !HostingerMetricSummaries {
-        return self.hostinger().hostingerMetricSummaries(gpa, limit);
-    }
-    pub fn inventoryItems(self: *Db, gpa: Allocator, filter: InventoryFilter) !InventoryItems {
-        return self.inventory().inventoryItems(gpa, filter);
-    }
-    pub fn inventoryFacets(self: *Db, gpa: Allocator, filter: InventoryFilter) !InventoryFacets {
-        return self.inventory().inventoryFacets(gpa, filter);
-    }
-    pub fn recentAuditEvents(self: *Db, gpa: Allocator, limit: i64) !AuditEvents {
-        return self.audit().recentAuditEvents(gpa, limit);
-    }
-    pub fn providerEvidenceEvents(self: *Db, gpa: Allocator, filter: ProviderEvidenceFilter) !ProviderEvidenceEvents {
-        return self.audit().providerEvidenceEvents(gpa, filter);
-    }
-    pub fn providerEvidenceSummary(self: *Db, gpa: Allocator, provider: ?[]const u8) !ProviderEvidenceSummaryRows {
-        return self.audit().providerEvidenceSummary(gpa, provider);
-    }
-    pub fn routeCaptureEvidence(self: *Db, gpa: Allocator, filter: RouteCaptureEvidenceFilter) !RouteCaptureEvidenceRows {
-        return self.audit().routeCaptureEvidence(gpa, filter);
-    }
-    pub fn routeSourceEvidence(self: *Db, gpa: Allocator, filter: RouteCaptureEvidenceFilter) !RouteSourceEvidenceRows {
-        return self.audit().routeSourceEvidence(gpa, filter);
     }
 };

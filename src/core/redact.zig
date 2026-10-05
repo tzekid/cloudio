@@ -66,18 +66,6 @@ pub fn secrets(allocator: Allocator, input: []const u8) ![]u8 {
     return try redactJsonSecretStringKeys(allocator, line_redacted);
 }
 
-pub fn tokenResponse(allocator: Allocator, input: []const u8) ![]u8 {
-    const redacted = try providerResponse(allocator, input);
-    defer allocator.free(redacted);
-    return try redactJsonStringKey(allocator, redacted, "value");
-}
-
-pub fn secretResponse(allocator: Allocator, input: []const u8) ![]u8 {
-    const value_redacted = try tokenResponse(allocator, input);
-    defer allocator.free(value_redacted);
-    return try redactJsonStringKey(allocator, value_redacted, "text");
-}
-
 pub fn providerResponse(allocator: Allocator, input: []const u8) ![]u8 {
     const redacted = try secrets(allocator, input);
     if (try redactJsonCursorContinuations(allocator, redacted)) |rewritten| {
@@ -85,36 +73,6 @@ pub fn providerResponse(allocator: Allocator, input: []const u8) ![]u8 {
         return rewritten;
     }
     return redacted;
-}
-
-fn redactJsonStringKey(allocator: Allocator, input: []const u8, key: []const u8) ![]u8 {
-    var out = std.ArrayList(u8).empty;
-    errdefer out.deinit(allocator);
-    var idx: usize = 0;
-    while (idx < input.len) {
-        if (input[idx] == '"') {
-            if (jsonKeyEnd(input, idx, key)) |key_end| {
-                var scan = key_end;
-                while (scan < input.len and std.ascii.isWhitespace(input[scan])) : (scan += 1) {}
-                if (scan < input.len and input[scan] == ':') {
-                    scan += 1;
-                    while (scan < input.len and std.ascii.isWhitespace(input[scan])) : (scan += 1) {}
-                    if (scan < input.len and input[scan] == '"') {
-                        if (jsonStringEnd(input, scan)) |value_end| {
-                            try out.appendSlice(allocator, input[idx .. scan + 1]);
-                            try out.appendSlice(allocator, "[REDACTED]");
-                            try out.append(allocator, '"');
-                            idx = value_end;
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-        try out.append(allocator, input[idx]);
-        idx += 1;
-    }
-    return try out.toOwnedSlice(allocator);
 }
 
 fn redactJsonSecretStringKeys(allocator: Allocator, input: []const u8) ![]u8 {
@@ -227,22 +185,6 @@ fn jsonSimpleKey(input: []const u8, start: usize) ?JsonKey {
             .key = input[start + 1 .. idx],
             .end = idx + 1,
         };
-    }
-    return null;
-}
-
-fn jsonKeyEnd(input: []const u8, start: usize, key: []const u8) ?usize {
-    var idx = start + 1;
-    var key_idx: usize = 0;
-    while (idx < input.len) : (idx += 1) {
-        const ch = input[idx];
-        if (ch == '\\') return null;
-        if (ch == '"') {
-            if (key_idx == key.len) return idx + 1;
-            return null;
-        }
-        if (key_idx >= key.len or ch != key[key_idx]) return null;
-        key_idx += 1;
     }
     return null;
 }
@@ -452,32 +394,6 @@ test "redaction hides JSON private key material without hiding DNSSEC public key
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"kek\":\"[REDACTED]\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"pubkey\":\"public-zsk\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, redacted, "\"PublicKey\":\"dns-public-key\"") != null);
-}
-
-test "token response redaction hides JSON token value fields" {
-    const allocator = std.testing.allocator;
-    const input =
-        \\{"result":{"id":"abc","value":"abcdefghijklmnopqrstuvwxyz0123456789abcd","name":"token"},"success":true}
-    ;
-    const redacted = try tokenResponse(allocator, input);
-    defer allocator.free(redacted);
-    try std.testing.expect(std.mem.indexOf(u8, redacted, "abcdefghijklmnopqrstuvwxyz0123456789abcd") == null);
-    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"value\":\"[REDACTED]\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"name\":\"token\"") != null);
-}
-
-test "secret response redaction hides JSON secret text and value fields" {
-    const allocator = std.testing.allocator;
-    const input =
-        \\{"result":{"name":"myBinding","type":"secret_text","text":"plain-secret","value":"secret-value"},"success":true}
-    ;
-    const redacted = try secretResponse(allocator, input);
-    defer allocator.free(redacted);
-    try std.testing.expect(std.mem.indexOf(u8, redacted, "plain-secret") == null);
-    try std.testing.expect(std.mem.indexOf(u8, redacted, "secret-value") == null);
-    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"text\":\"[REDACTED]\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"value\":\"[REDACTED]\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, redacted, "\"name\":\"myBinding\"") != null);
 }
 
 test "provider response redaction hides realtime stream keys without hiding public keys" {

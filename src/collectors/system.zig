@@ -30,53 +30,11 @@ pub const ContainerAction = enum { start, stop, restart };
 pub const Output = core_output.Output;
 
 pub fn collect(io: Io, gpa: Allocator, db: *Db) !void {
-    try collectMetrics(io, gpa, db);
     try collectServices(io, gpa, db);
     try collectSockets(io, gpa, db);
     // The collector records its own failed attempt while retaining last-good
     // rows. A local runtime outage must not abort unrelated system sources.
     collectContainers(io, gpa, db) catch {};
-}
-
-pub fn collectMetrics(io: Io, gpa: Allocator, db: *Db) !void {
-    const commands = [_]struct { kind: []const u8, argv: []const []const u8 }{
-        .{ .kind = "uname", .argv = &.{ "uname", "-a" } },
-        .{ .kind = "hostnamectl", .argv = &.{"hostnamectl"} },
-        .{ .kind = "system-running", .argv = &.{ "systemctl", "is-system-running" } },
-        .{ .kind = "df", .argv = &.{ "df", "-hP" } },
-        .{ .kind = "uptime", .argv = &.{ "uptime", "-p" } },
-    };
-    for (commands) |command| {
-        const result = core_process.run(gpa, io, command.argv, max_command_bytes) catch |err| {
-            const summary = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ command.kind, @errorName(err) });
-            defer gpa.free(summary);
-            _ = try db.insertSnapshot("system", command.kind, null, "error", summary, null, null);
-            continue;
-        };
-        defer result.deinit(gpa);
-        const redacted = try core_redact.secrets(gpa, result.stdout);
-        defer gpa.free(redacted);
-        _ = try db.insertSnapshot("system", command.kind, null, if (result.ok()) "ok" else "error", firstLine(redacted), null, redacted);
-    }
-
-    const loadavg_result = core_process.run(gpa, io, &.{ "cat", "/proc/loadavg" }, 1024) catch null;
-    if (loadavg_result) |result| {
-        defer result.deinit(gpa);
-        try db.insertSystemMetric("loadavg", trim(result.stdout), null);
-    }
-    const meminfo_result = core_process.run(gpa, io, &.{ "cat", "/proc/meminfo" }, 128 * 1024) catch null;
-    if (meminfo_result) |result| {
-        defer result.deinit(gpa);
-        var lines = std.mem.splitScalar(u8, result.stdout, '\n');
-        while (lines.next()) |line| {
-            const clean = trim(line);
-            if (std.mem.startsWith(u8, clean, "MemTotal:") or std.mem.startsWith(u8, clean, "MemAvailable:") or std.mem.startsWith(u8, clean, "SwapTotal:") or std.mem.startsWith(u8, clean, "SwapFree:")) {
-                if (std.mem.indexOfScalar(u8, clean, ':')) |idx| {
-                    try db.insertSystemMetric(clean[0..idx], trim(clean[idx + 1 ..]), null);
-                }
-            }
-        }
-    }
 }
 
 pub fn collectServices(io: Io, gpa: Allocator, db: *Db) !void {

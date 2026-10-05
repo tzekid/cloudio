@@ -1956,7 +1956,6 @@ fn injectVps(ctx: context.Context, request: http.Request, main: *[]u8) !void {
     var parsed = try std.json.parseFromSlice(std.json.Value, ctx.gpa, json.written(), .{});
     defer parsed.deinit();
     const machines = arrayItems(member(parsed.value, "machines"));
-    const metrics = arrayItems(member(parsed.value, "metrics"));
     const collection = member(parsed.value, "collection") orelse .null;
     const capability = member(parsed.value, "capability") orelse .null;
 
@@ -2020,30 +2019,6 @@ fn injectVps(ctx: context.Context, request: http.Request, main: *[]u8) !void {
     try replaceExact(ctx.gpa, main, "<div id=\"machines\" class=\"resource-grid\">\n        <div class=\"resource-card empty-state loading-state\">Loading machines…</div>\n      </div>", cards.written());
     try replaceCountLabel(ctx.gpa, main, "machine-count", "p", machines.len, "machine", "machines");
 
-    var metric_html = std.Io.Writer.Allocating.init(ctx.gpa);
-    defer metric_html.deinit();
-    try metric_html.writer.writeAll("<div id=\"metrics\" class=\"table-scroll\">");
-    if (metrics.len == 0) {
-        try metric_html.writer.writeAll("<div class=\"empty-state\">No metric rows.</div>");
-    } else {
-        try metric_html.writer.writeAll("<table><thead><tr><th>VM</th><th>Metric</th><th>Samples</th><th>Latest captured</th></tr></thead><tbody>");
-        for (metrics) |metric| {
-            try metric_html.writer.writeAll("<tr>");
-            try cellText(&metric_html.writer, strField(metric, "vm_id"), "mono");
-            try cellText(&metric_html.writer, strField(metric, "metric"), "");
-            try cellValue(&metric_html.writer, member(metric, "count"), "");
-            try cellText(&metric_html.writer, strField(metric, "latest_captured"), "muted");
-            try metric_html.writer.writeAll("</tr>");
-        }
-        try metric_html.writer.writeAll("</tbody></table>");
-    }
-    try metric_html.writer.writeAll("</div>");
-    try replaceExact(
-        ctx.gpa,
-        main,
-        "<div id=\"metrics\" class=\"table-scroll\">\n        <div class=\"empty-state loading-state\">Loading metrics…</div>\n      </div>",
-        metric_html.written(),
-    );
 
     try injectVpsConfirmation(ctx, request, machines, main);
     if (vpsFeedback(request)) |feedback| {
@@ -2704,12 +2679,6 @@ fn injectSettings(
 fn member(value: std.json.Value, name: []const u8) ?std.json.Value {
     if (value != .object) return null;
     return value.object.get(name);
-}
-
-fn nested(root: std.json.Value, path: []const []const u8) ?std.json.Value {
-    var current = root;
-    for (path) |name| current = member(current, name) orelse return null;
-    return current;
 }
 
 fn arrayItems(value: ?std.json.Value) []const std.json.Value {

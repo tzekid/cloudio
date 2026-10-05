@@ -22,9 +22,5 @@ test "openInitialized opens the store and applies migrations" {
     defer db.close();
 
     try db.insertAudit("database", "initialized", "ok");
-    var events = try db.recentAuditEvents(allocator, 1);
-    defer events.deinit(allocator);
-
-    try std.testing.expectEqual(@as(usize, 1), events.items.len);
-    try std.testing.expectEqualStrings("database", events.items[0].action);
+    try std.testing.expectEqual(@as(i64, 1), try db.countTable("audit_events"));
 }

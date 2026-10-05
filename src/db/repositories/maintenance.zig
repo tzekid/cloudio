@@ -151,13 +151,4 @@ pub const Repository = struct {
         return sqlite.sqlite3_column_int64(stmt, 0);
     }
 
-    pub fn countSecretNeedle(self: Repository, surface: SecretScanSurface, needle: []const u8) !i64 {
-        if (needle.len == 0) return 0;
-        const stmt = try self.prepare(secretScanSql(surface));
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, needle);
-        if (sqlite.sqlite3_step(stmt) != sqlite.SQLITE_ROW) return DbError.SqliteStep;
-        return sqlite.sqlite3_column_int64(stmt, 0);
-    }
-
 };

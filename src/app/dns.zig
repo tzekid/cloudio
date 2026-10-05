@@ -261,7 +261,6 @@ fn refreshLocked(ctx: Context, domain: []const u8) !void {
         defer response.deinit(ctx.gpa);
         const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
         defer ctx.gpa.free(redacted);
-        try ctx.db.insertProviderRaw("cloudflare", "/zones", @backingInt(response.status), redacted);
         if (!net_http.isOk(response.status) or !validCloudflareEnvelope(ctx.gpa, redacted, .array)) {
             try recordRefreshAttempt(ctx, domain, "error", "Cloudflare rejected the zone lookup.", redacted);
             return error.DnsProviderRejected;
@@ -292,7 +291,6 @@ fn refreshLocked(ctx: Context, domain: []const u8) !void {
     defer response.deinit(ctx.gpa);
     const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
     defer ctx.gpa.free(redacted);
-    try ctx.db.insertProviderRaw("cloudflare", "/zones/:zone_id/dns_records", @backingInt(response.status), redacted);
     if (!net_http.isOk(response.status) or !validCloudflareEnvelope(ctx.gpa, redacted, .array)) {
         try recordRefreshAttempt(ctx, domain, "error", "Cloudflare rejected the DNS record read.", redacted);
         return error.DnsProviderRejected;

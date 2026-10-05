@@ -60,8 +60,6 @@ const JobState = enum { pending, succeeded, failed };
 pub fn writeJson(ctx: Context, writer: anytype) !void {
     var machines = try ctx.db.hostinger().hostingerVpsRows(ctx.gpa, 200);
     defer machines.deinit(ctx.gpa);
-    var metrics = try ctx.db.hostinger().hostingerMetricSummaries(ctx.gpa, 200);
-    defer metrics.deinit(ctx.gpa);
     const observation_optional = try ctx.db.latestObservation(ctx.gpa, "hostinger", "vps");
     defer if (observation_optional) |observation| observation.deinit(ctx.gpa);
     const freshness = observationFreshness(observation_optional, freshAfterSeconds(ctx.config));
@@ -115,16 +113,6 @@ pub fn writeJson(ctx: Context, writer: anytype) !void {
         try core_json.writeBoolField(writer, "stop", actionable and actionAllowed(machine.status, .stop), true);
         try core_json.writeBoolField(writer, "restart", actionable and actionAllowed(machine.status, .restart), false);
         try writer.writeAll("}}");
-    }
-    try writer.writeAll("],\"metrics\":[");
-    for (metrics.items, 0..) |metric, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.writeByte('{');
-        try core_json.writeStringField(writer, "vm_id", metric.vm_id, true);
-        try core_json.writeStringField(writer, "metric", metric.metric, true);
-        try core_json.writeIntField(writer, "count", metric.count, true);
-        try core_json.writeStringField(writer, "latest_captured", metric.latest_captured, false);
-        try writer.writeByte('}');
     }
     try writer.writeAll("]}\n");
 }
@@ -198,7 +186,6 @@ fn refreshLocked(ctx: Context) !void {
     defer response.deinit(ctx.gpa);
     const redacted = try core_redact.providerResponse(ctx.gpa, response.body);
     defer ctx.gpa.free(redacted);
-    try ctx.db.insertProviderRaw("hostinger", provider_hostinger.routes.virtual_machines_path, @backingInt(response.status), redacted);
     if (!net_http.isOk(response.status) or !validVpsCollection(ctx.gpa, redacted)) {
         try recordListAttempt(ctx, "error", "Hostinger rejected the machine inventory read.", redacted);
         return error.VpsProviderRejected;
@@ -276,7 +263,6 @@ fn readJobState(ctx: Context, vm_id: []const u8, job_id: []const u8) !JobState {
     defer ctx.gpa.free(redacted);
     const endpoint = try std.fmt.allocPrint(ctx.gpa, "{s}/{s}/actions/{s}", .{ provider_hostinger.routes.virtual_machines_path, vm_id, job_id });
     defer ctx.gpa.free(endpoint);
-    try ctx.db.insertProviderRaw("hostinger", endpoint, @backingInt(response.status), redacted);
     if (!net_http.isOk(response.status)) return error.VpsProviderRejected;
     return parseJobState(ctx.gpa, redacted) orelse error.VpsProviderRejected;
 }
@@ -291,7 +277,6 @@ fn readMachineState(ctx: Context, vm_id: []const u8) ![]u8 {
     defer ctx.gpa.free(redacted);
     const endpoint = try std.fmt.allocPrint(ctx.gpa, "{s}/{s}", .{ provider_hostinger.routes.virtual_machines_path, vm_id });
     defer ctx.gpa.free(endpoint);
-    try ctx.db.insertProviderRaw("hostinger", endpoint, @backingInt(response.status), redacted);
     if (!net_http.isOk(response.status) or !validVpsDetail(ctx.gpa, redacted)) return error.VpsProviderRejected;
     var rows = try provider_hostinger_models.parseVpsRows(ctx.gpa, redacted);
     defer rows.deinit(ctx.gpa);

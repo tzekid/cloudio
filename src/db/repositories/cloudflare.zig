@@ -190,52 +190,6 @@ pub const Repository = struct {
         try stepDone(stmt);
     }
 
-    pub fn upsertCloudflareInventoryItem(
-        self: Repository,
-        key: []const u8,
-        kind: []const u8,
-        resource_id: []const u8,
-        scope: ?[]const u8,
-        scope_id: ?[]const u8,
-        display_name: ?[]const u8,
-        status: ?[]const u8,
-        category: ?[]const u8,
-        domain: ?[]const u8,
-        account_id: ?[]const u8,
-        zone_id: ?[]const u8,
-        related_id: ?[]const u8,
-        flag: ?[]const u8,
-        created_at_source: ?[]const u8,
-        updated_at_source: ?[]const u8,
-        expires_at_source: ?[]const u8,
-        raw: []const u8,
-    ) !void {
-        const stmt = try self.prepare(
-            \\INSERT INTO cloudflare_inventory_items(key, kind, resource_id, scope, scope_id, display_name, status, category, domain, account_id, zone_id, related_id, flag, created_at_source, updated_at_source, expires_at_source, raw_json, updated_at)
-            \\VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            \\ON CONFLICT(key) DO UPDATE SET kind=excluded.kind, resource_id=excluded.resource_id, scope=excluded.scope, scope_id=excluded.scope_id, display_name=excluded.display_name, status=excluded.status, category=excluded.category, domain=excluded.domain, account_id=excluded.account_id, zone_id=excluded.zone_id, related_id=excluded.related_id, flag=excluded.flag, created_at_source=excluded.created_at_source, updated_at_source=excluded.updated_at_source, expires_at_source=excluded.expires_at_source, raw_json=excluded.raw_json, updated_at=CURRENT_TIMESTAMP
-        );
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, key);
-        try bindText(stmt, 2, kind);
-        try bindText(stmt, 3, resource_id);
-        try bindTextOpt(stmt, 4, scope);
-        try bindTextOpt(stmt, 5, scope_id);
-        try bindTextOpt(stmt, 6, display_name);
-        try bindTextOpt(stmt, 7, status);
-        try bindTextOpt(stmt, 8, category);
-        try bindTextOpt(stmt, 9, domain);
-        try bindTextOpt(stmt, 10, account_id);
-        try bindTextOpt(stmt, 11, zone_id);
-        try bindTextOpt(stmt, 12, related_id);
-        try bindTextOpt(stmt, 13, flag);
-        try bindTextOpt(stmt, 14, created_at_source);
-        try bindTextOpt(stmt, 15, updated_at_source);
-        try bindTextOpt(stmt, 16, expires_at_source);
-        try bindText(stmt, 17, raw);
-        try stepDone(stmt);
-    }
-
     pub fn cloudflareAccountRows(self: Repository, gpa: Allocator, limit: i64) !CloudflareAccountRows {
         const stmt = try self.prepare(
             \\SELECT id, COALESCE(name,''), COALESCE(type,''), COALESCE(status,''), updated_at

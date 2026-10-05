@@ -7,7 +7,6 @@ const max_config_bytes = 256 * 1024;
 
 const Setting = enum {
     db_path,
-    log_path,
     domains,
     caddyfile_path,
     caddy_sites_path,
@@ -30,8 +29,6 @@ const Setting = enum {
     storage_backup_root,
     storage_disk_budget_bytes,
     snapshot_retention_days,
-    provider_raw_retention_days,
-    metrics_retention_days,
     maintenance_interval_hours,
     maintenance_batch_rows,
     nob_enabled,
@@ -63,8 +60,6 @@ const ConfigBinding = struct {
 const env_bindings = [_]EnvBinding{
     .{ .key = "CLOUDIO_DB", .setting = .db_path },
     .{ .key = "CLOUDIO_DB_PATH", .setting = .db_path },
-    .{ .key = "CLOUDIO_LOG", .setting = .log_path },
-    .{ .key = "CLOUDIO_LOG_PATH", .setting = .log_path },
     .{ .key = "CLOUDIO_DOMAINS", .setting = .domains },
     .{ .key = "DOMAINS", .setting = .domains },
     .{ .key = "DOMAIN", .setting = .domains },
@@ -86,8 +81,6 @@ const env_bindings = [_]EnvBinding{
     .{ .key = "CLOUDIO_STORAGE_BACKUP_ROOT", .setting = .storage_backup_root },
     .{ .key = "CLOUDIO_STORAGE_DISK_BUDGET_BYTES", .setting = .storage_disk_budget_bytes },
     .{ .key = "CLOUDIO_SNAPSHOT_RETENTION_DAYS", .setting = .snapshot_retention_days },
-    .{ .key = "CLOUDIO_PROVIDER_RAW_RETENTION_DAYS", .setting = .provider_raw_retention_days },
-    .{ .key = "CLOUDIO_METRICS_RETENTION_DAYS", .setting = .metrics_retention_days },
     .{ .key = "CLOUDIO_MAINTENANCE_INTERVAL_HOURS", .setting = .maintenance_interval_hours },
     .{ .key = "CLOUDIO_MAINTENANCE_BATCH_ROWS", .setting = .maintenance_batch_rows },
     .{ .key = "CLOUDIO_NOB_ENABLED", .setting = .nob_enabled },
@@ -107,7 +100,6 @@ const env_bindings = [_]EnvBinding{
 
 const config_bindings = [_]ConfigBinding{
     .{ .section = "", .key = "db_path", .setting = .db_path },
-    .{ .section = "", .key = "log_path", .setting = .log_path },
     .{ .section = "", .key = "domains", .setting = .domains },
     .{ .section = "", .key = "caddyfile_path", .setting = .caddyfile_path },
     .{ .section = "", .key = "caddy_sites_path", .setting = .caddy_sites_path },
@@ -130,8 +122,6 @@ const config_bindings = [_]ConfigBinding{
     .{ .section = "storage", .key = "backup_root", .setting = .storage_backup_root },
     .{ .section = "storage", .key = "disk_budget_bytes", .setting = .storage_disk_budget_bytes },
     .{ .section = "storage", .key = "snapshot_retention_days", .setting = .snapshot_retention_days },
-    .{ .section = "storage", .key = "provider_raw_retention_days", .setting = .provider_raw_retention_days },
-    .{ .section = "storage", .key = "metrics_retention_days", .setting = .metrics_retention_days },
     .{ .section = "storage", .key = "maintenance_interval_hours", .setting = .maintenance_interval_hours },
     .{ .section = "storage", .key = "maintenance_batch_rows", .setting = .maintenance_batch_rows },
     .{ .section = "nob", .key = "enabled", .setting = .nob_enabled },
@@ -166,7 +156,6 @@ pub const RuntimeEnvironment = struct {
 
 pub const Config = struct {
     db_path: []const u8 = ".cloudio/cloudio.db",
-    log_path: []const u8 = ".cloudio/latest-run.log",
     config_path: []const u8 = "cloudio.local.toml",
     loaded_dotenv: bool = false,
     loaded_fish_env: bool = false,
@@ -192,8 +181,6 @@ pub const Config = struct {
     storage_backup_root: []const u8 = ".cloudio/backups",
     storage_disk_budget_bytes: u64 = 0,
     snapshot_retention_days: u32 = 14,
-    provider_raw_retention_days: u32 = 14,
-    metrics_retention_days: u32 = 30,
     maintenance_interval_hours: u32 = 24,
     maintenance_batch_rows: u32 = 5000,
     nob_enabled: bool = true,
@@ -339,7 +326,6 @@ fn applySetting(arena: Allocator, cfg: *Config, setting: Setting, raw_value: []c
     switch (setting) {
         .domains => cfg.domains = try parseList(arena, value),
         .db_path => cfg.db_path = try arena.dupe(u8, value),
-        .log_path => cfg.log_path = try arena.dupe(u8, value),
         .caddyfile_path => cfg.caddyfile_path = try arena.dupe(u8, value),
         .caddy_sites_path => cfg.caddy_sites_path = try arena.dupe(u8, value),
         .caddy_owned_path => cfg.caddy_owned_path = try arena.dupe(u8, value),
@@ -361,8 +347,6 @@ fn applySetting(arena: Allocator, cfg: *Config, setting: Setting, raw_value: []c
         .storage_backup_root => cfg.storage_backup_root = try arena.dupe(u8, value),
         .storage_disk_budget_bytes => cfg.storage_disk_budget_bytes = std.fmt.parseInt(u64, value, 10) catch return,
         .snapshot_retention_days => cfg.snapshot_retention_days = parsePositiveU32(value) orelse return,
-        .provider_raw_retention_days => cfg.provider_raw_retention_days = parsePositiveU32(value) orelse return,
-        .metrics_retention_days => cfg.metrics_retention_days = parsePositiveU32(value) orelse return,
         .maintenance_interval_hours => cfg.maintenance_interval_hours = parsePositiveU32(value) orelse return,
         .maintenance_batch_rows => cfg.maintenance_batch_rows = parsePositiveU32(value) orelse return,
         .nob_enabled => cfg.nob_enabled = parseBool(value) orelse return,
@@ -570,8 +554,6 @@ test "config parser reads storage lifecycle settings" {
         \\backup_root = "/var/backups/cloudio"
         \\disk_budget_bytes = 1073741824
         \\snapshot_retention_days = 21
-        \\provider_raw_retention_days = 10
-        \\metrics_retention_days = 45
         \\maintenance_interval_hours = 12
         \\maintenance_batch_rows = 2500
     );
@@ -579,8 +561,6 @@ test "config parser reads storage lifecycle settings" {
     try std.testing.expectEqualStrings("/var/backups/cloudio", cfg.storage_backup_root);
     try std.testing.expectEqual(@as(u64, 1073741824), cfg.storage_disk_budget_bytes);
     try std.testing.expectEqual(@as(u32, 21), cfg.snapshot_retention_days);
-    try std.testing.expectEqual(@as(u32, 10), cfg.provider_raw_retention_days);
-    try std.testing.expectEqual(@as(u32, 45), cfg.metrics_retention_days);
     try std.testing.expectEqual(@as(u32, 12), cfg.maintenance_interval_hours);
     try std.testing.expectEqual(@as(u32, 2500), cfg.maintenance_batch_rows);
 }
@@ -663,11 +643,11 @@ test "storage lifecycle settings reject zero and malformed values" {
         \\[storage]
         \\auto_prune = maybe
         \\snapshot_retention_days = 0
-        \\provider_raw_retention_days = nope
+        \\maintenance_batch_rows = nope
     );
     try std.testing.expect(!cfg.storage_auto_prune);
     try std.testing.expectEqual(@as(u32, 14), cfg.snapshot_retention_days);
-    try std.testing.expectEqual(@as(u32, 14), cfg.provider_raw_retention_days);
+    try std.testing.expectEqual(@as(u32, 5000), cfg.maintenance_batch_rows);
 }
 
 test "config parser reads provider settings" {
@@ -733,12 +713,10 @@ test "dotenv parser reads canonical env names" {
         \\CLOUDFLARE_API_KEY='legacy'
         \\HOSTINGER_API_TOKEN="hostinger"
         \\DOMAINS="plosca.ru sparkdate.love"
-        \\CLOUDIO_LOG=".cloudio/test-run.log"
     , .dotenv);
     try std.testing.expect(cfg.hasCloudflareAuth());
     try std.testing.expect(cfg.hasHostingerAuth());
     try std.testing.expectEqual(@as(usize, 2), cfg.domains.len);
-    try std.testing.expectEqualStrings(".cloudio/test-run.log", cfg.log_path);
 }
 
 test "process env parser uses shared aliases with later aliases taking precedence" {
@@ -748,7 +726,6 @@ test "process env parser uses shared aliases with later aliases taking precedenc
     defer env.deinit();
     try env.put("CLOUDIO_DB", ".cloudio/env.db");
     try env.put("CLOUDIO_DB_PATH", ".cloudio/env-path.db");
-    try env.put("CLOUDIO_LOG_PATH", ".cloudio/env-path.log");
     try env.put("CLOUDIO_PROJECTS_ROOT", "/srv/env-projects");
     try env.put("CLOUDIO_DOMAINS", "one.example two.example");
     try env.put("CLOUDFLARE_API_TOKEN", "cf-token");
@@ -759,7 +736,6 @@ test "process env parser uses shared aliases with later aliases taking precedenc
     try applyProcessEnv(arena.allocator(), &cfg, &env);
 
     try std.testing.expectEqualStrings(".cloudio/env-path.db", cfg.db_path);
-    try std.testing.expectEqualStrings(".cloudio/env-path.log", cfg.log_path);
     try std.testing.expectEqualStrings("/srv/env-projects", cfg.projects_root);
     try std.testing.expectEqual(@as(usize, 2), cfg.domains.len);
     try std.testing.expectEqualStrings("one.example", cfg.domains[0]);

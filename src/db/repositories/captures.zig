@@ -150,16 +150,6 @@ pub const Repository = struct {
         return sqlite.sqlite3_last_insert_rowid(self.handle);
     }
 
-    pub fn insertProviderRaw(self: Repository, provider: []const u8, endpoint: []const u8, status: i64, body: []const u8) !void {
-        const stmt = try self.prepare("INSERT INTO provider_raw(provider, endpoint, status, body_json) VALUES (?, ?, ?, ?)");
-        defer _ = sqlite.sqlite3_finalize(stmt);
-        try bindText(stmt, 1, provider);
-        try bindText(stmt, 2, endpoint);
-        try bindI64(stmt, 3, status);
-        try bindText(stmt, 4, body);
-        try stepDone(stmt);
-    }
-
     pub fn latestObservation(self: Repository, gpa: Allocator, source: []const u8, kind: []const u8) !?Observation {
         const stmt = try self.prepare(
             \\SELECT latest.source,

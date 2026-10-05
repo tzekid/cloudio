@@ -758,6 +758,26 @@ pub const migrations = [_]Migration{
         \\  ON browser_runs(expires_at, state);
         ,
     },
+    .{
+        .version = 20,
+        .name = "drop_unread_tables",
+        .sql =
+        \\DROP TABLE IF EXISTS deploys;
+        \\DROP TABLE IF EXISTS app_operation_locks;
+        \\DROP TABLE IF EXISTS apps;
+        \\DROP TABLE IF EXISTS cloudflare_resources;
+        \\DROP TABLE IF EXISTS cloudflare_inventory_items;
+        \\DROP TABLE IF EXISTS cloudflare_security_items;
+        \\DROP TABLE IF EXISTS hostinger_resources;
+        \\DROP TABLE IF EXISTS hostinger_inventory_items;
+        \\DROP TABLE IF EXISTS hostinger_metrics;
+        \\DROP TABLE IF EXISTS system_metrics;
+        \\DROP TABLE IF EXISTS provider_raw;
+        \\DROP TABLE IF EXISTS topology_changes;
+        \\DROP TABLE IF EXISTS topology_state;
+        \\DROP TABLE IF EXISTS settings;
+        ,
+    },
 };
 
 pub const latest_version = migrations[migrations.len - 1].version;
@@ -847,19 +867,16 @@ test "applies migrations idempotently" {
 
     try std.testing.expectEqual(latest_version, try latestAppliedVersion(handle.?));
     try std.testing.expect(try tableExists(handle.?, "snapshots"));
+    for ([_][]const u8{ "apps", "deploys", "provider_raw", "cloudflare_resources", "system_metrics", "topology_state", "settings" }) |dropped| {
+        try std.testing.expect(!try tableExists(handle.?, dropped));
+    }
     try std.testing.expect(try tableExists(handle.?, "audit_events"));
-    try std.testing.expect(try tableExists(handle.?, "cloudflare_security_items"));
-    try std.testing.expect(try tableExists(handle.?, "apps"));
     try std.testing.expect(try tableExists(handle.?, "auth_credentials"));
     try std.testing.expect(try tableExists(handle.?, "auth_sessions"));
-    try std.testing.expect(try tableExists(handle.?, "deploys"));
     try std.testing.expect(try tableExists(handle.?, "caddy_desired_routes"));
     try std.testing.expect(try tableExists(handle.?, "audit_actions"));
     try std.testing.expect(try tableExists(handle.?, "browser_runs"));
     try std.testing.expect(try tableExists(handle.?, "mutation_requests"));
-    try std.testing.expect(try tableExists(handle.?, "app_operation_locks"));
-    try std.testing.expect(try tableExists(handle.?, "topology_state"));
-    try std.testing.expect(try tableExists(handle.?, "topology_changes"));
     try std.testing.expect(try tableExists(handle.?, "managed_projects"));
     try std.testing.expect(try tableExists(handle.?, "project_resources"));
     try std.testing.expect(try tableExists(handle.?, "project_actions"));
@@ -873,7 +890,6 @@ test "applies migrations idempotently" {
     try std.testing.expect(try tableExists(handle.?, "project_managed_units"));
     try std.testing.expect(try tableExists(handle.?, "systemd_units"));
     try std.testing.expect(try indexExists(handle.?, "idx_snapshots_captured_at"));
-    try std.testing.expect(try indexExists(handle.?, "idx_provider_raw_captured_at"));
     try std.testing.expect(try indexExists(handle.?, "idx_audit_actions_idempotency_key"));
     try std.testing.expect(try indexExists(handle.?, "idx_project_operations_retention"));
     try std.testing.expect(try indexExists(handle.?, "idx_project_operations_rank"));

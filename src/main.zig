@@ -37,7 +37,6 @@ test {
     _ = @import("core/config.zig");
     _ = @import("core/fs.zig");
     _ = @import("core/json.zig");
-    _ = @import("core/log.zig");
     _ = @import("core/output.zig");
     _ = @import("core/process.zig");
     _ = @import("core/redact.zig");
