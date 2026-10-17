@@ -24,7 +24,7 @@
             .path = "vendor/hostinger",
         },
     },
-    .minimum_zig_version = "0.17.0",
+    .minimum_zig_version = "0.18.0-dev.253+16d31ceed",
     .paths = .{""},
     .fingerprint = 0x396b39ced4202bc9,
 }
